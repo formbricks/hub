@@ -11,9 +11,10 @@ services:
     ports:
       - '5432:5432'
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
+      - ./init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U formbricks -d hub']
+      test: [ 'CMD-SHELL', 'pg_isready -U formbricks -d hub' ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,34 +32,34 @@ services:
     environment:
       # Required: Database connection
       SERVICE_DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_secure_password}@postgres:5432/hub?sslmode=disable
-      
+
       # Required: API authentication key
       SERVICE_API_KEY: ${SERVICE_API_KEY}
-      
+
       # Optional: Server configuration
       SERVICE_PORT: ${SERVICE_PORT:-8080}
       SERVICE_HOST: 0.0.0.0
       SERVICE_ENVIRONMENT: ${SERVICE_ENVIRONMENT:-production}
-      
+
       # Optional: Logging
       SERVICE_LOG_LEVEL: ${SERVICE_LOG_LEVEL:-info}
-      
+
       # Optional: AI Enrichment (requires OpenAI API key)
       SERVICE_OPEN_AI_KEY: ${SERVICE_OPEN_AI_KEY:-}
       SERVICE_OPENAI_ENRICHMENT_MODEL: ${SERVICE_OPENAI_ENRICHMENT_MODEL:-gpt-4o-mini}
       SERVICE_ENRICHMENT_TIMEOUT: ${SERVICE_ENRICHMENT_TIMEOUT:-10}
       SERVICE_ENRICHMENT_WORKERS: ${SERVICE_ENRICHMENT_WORKERS:-3}
       SERVICE_ENRICHMENT_POLL_INTERVAL: ${SERVICE_ENRICHMENT_POLL_INTERVAL:-1}
-      
+
       # Optional: AI Embeddings for semantic search
       SERVICE_OPENAI_EMBEDDING_MODEL: ${SERVICE_OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      
+
       # Optional: Webhook notifications
       SERVICE_WEBHOOK_URLS: ${SERVICE_WEBHOOK_URLS:-}
     ports:
       - '8080:8080'
     healthcheck:
-      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:8080/health']
+      test: [ 'CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:8080/health' ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -73,4 +74,3 @@ volumes:
 networks:
   formbricks_hub:
     driver: bridge
-

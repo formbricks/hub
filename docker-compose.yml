@@ -5,12 +5,12 @@ services:
     container_name: formbricks_postgres
     environment:
       POSTGRES_USER: formbricks
-      POSTGRES_PASSWORD: formbricks_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-formbricks_dev}
       POSTGRES_DB: hub_dev
     ports:
       - '5432:5432'
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U formbricks -d hub_dev']
       interval: 10s

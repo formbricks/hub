@@ -140,7 +140,7 @@ curl -o docker-compose.yml https://raw.githubusercontent.com/formbricks/hub/main
 
 **2. Configure your environment:**
 
-Create a `.env` file:
+Create a `.env` file with secure passwords:
 
 ```bash
 # Required: Secure passwords
@@ -160,12 +160,12 @@ SERVICE_LOG_LEVEL=info
 **3. Start the services:**
 
 ```bash
-docker-compose up -d
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 This starts:
 - **Formbricks Hub API** (port 8080)
-- **PostgreSQL** (port 5432)
+- **PostgreSQL with pgvector** (port 5432, automatically installs vector extension)
 
 **4. Verify it's running:**
 
