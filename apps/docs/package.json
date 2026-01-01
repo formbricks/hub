@@ -26,10 +26,10 @@
     "buffer": "^6.0.3",
     "clsx": "^2.1.1",
     "prism-react-renderer": "^2.4.1",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "stream-browserify": "^3.0.0",
-    "swagger-ui-react": "^5.29.5"
+    "swagger-ui-react": "^5.31.0"
   },
   "devDependencies": {
     "@docusaurus/module-type-aliases": "3.9.2",
@@ -37,9 +37,9 @@
     "@docusaurus/types": "3.9.2",
     "@formbricks/eslint-config": "workspace:*",
     "@formbricks/typescript-config": "workspace:*",
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
-    "eslint": "^9.38.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.2",
     "typescript": "^5.9.3"
   },
   "browserslist": {
