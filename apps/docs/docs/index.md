@@ -5,21 +5,32 @@ slug: /
 
 # Formbricks Hub
 
-The foundational data service for the Formbricks experience management platform.
+Standalone, fully open-source Experience Data Hub built for human and AI analytics.
 
-## What is Hub?
+## What is it?
 
-Hub is an open-source, self-hostable microservice for collecting and serving experience data – survey responses, NPS scores, product reviews, support feedback, and more. Built in Go for performance and simplicity.
+Hub is an open-source, self-hostable microservice for **collecting, serving and enriching** experience data: Survey responses, NPS scores, product reviews, support feedback, and more. Built entirely in Go for performance and simplicity.
 
-**Part of the Formbricks Ecosystem**: Hub serves as the data foundation for survey delivery, analytics, AI agents, and custom workflows.
-
-## Why Hub?
+## Why should you use Hub?
 
 - 🚀 **High Performance**: Go-powered microservice handles high write volume
-- 🤖 **AI-Powered**: Automatic sentiment analysis, topic extraction, and semantic search
-- 📊 **Analytics-Ready**: Optimized for Apache Superset, Power BI, Tableau, Looker, Snowflake
+- 🤖 **AI-Native**: Automatic sentiment analysis, topic extraction, semantic search, and more
+- 📊 **Analytics-Ready**: Plug-and-play integrations for Apache Superset, Power BI, Tableau, Looker, Snowflake, etc.
 - 🔐 **Self-Hostable**: Run in a single Docker container with PostgreSQL
 - 🛠️ **Developer-Friendly**: OpenAPI spec, webhooks, clean REST API
+- ⚡ **Event-driven**: Everything that happens in the Hub triggers an event. Send anywhere with webhooks!
+- 💸 **Fully open-source**: The full Hub is and will be available open-source
+
+## Why are we building the Hub? 🤔
+We, like you, are passionate about living enjoyable lives. And we, like you, live in organized, highly structured societies where organizations shape the experiences we have day-to-day: Taking public transport, going to the gym, seeing the doctor, purchasing something, etc. Behind each of these experiences sits an organization that tries to provide you with the best possible experience - and more often than not, simply fails to do so.
+
+We don't think they fail because they are bad people and want to see you suffer, quite the opposite: Over the years, we've seen from the inside that many try to do better, try to make your life better, but they are stuck with and closed, scattered systems and a lot of "we have always done it like that" or "we don't have money for that" from their bosses.
+
+The Hub is a cornerstone of our work at Formbricks to help alleviate that burden and, ultimately, make your life better 😇
+
+We are engineers, not consultants, and we bring open-source tooling to the table. We work closely with organizations and consultants to get them implemented and improve experiences. The past few years have been fun and challenging and we now understand one thing: 10 organizations do Experience Management in 10 different ways. It's doesn't really work to force-feed them this new way of gathering data, this new framework to see their data in, this new approach to convince your peers to now actually make decisions based on experience data. It's simply to costly to setup and to complicated to weave into existing processes and workflows.
+
+This is where the Hub comes in: It's free, it's simple, and, most importantly, it's built for the people who have to carry a lot of the burden around wrestling with experience data: Software engineers.
 
 ## Use Cases
 
@@ -50,34 +61,21 @@ Hub automatically enriches text feedback with actionable insights:
 
 [Learn more about AI enrichment →](./core-concepts/ai-enrichment)
 
-### Build Custom Workflows
+### Listen to all Hub Events via Webhooks
 
-Use webhooks to trigger actions based on enriched feedback:
+Each Hub event is available as a webhook. Use webhooks to trigger actions based on enriched feedback:
+
 - Send Slack notifications for low NPS scores or negative sentiment
 - Route negative reviews to your support team automatically
 - Update CRM records with AI-extracted insights
 - Build custom dashboards with semantic search capabilities
 
+Workflows are not a native part of the Hub, but you can connect it with solution like n8n, Zapier and soon Formbricks Workflows.
+
 ### Future: Connector Ecosystem
 
 An open connector ecosystem is planned to simplify data integration. [Learn more →](./core-concepts/connectors)
 
-## Key Features
-
-### AI Enrichment
-Automatic sentiment, emotion, and topic analysis powered by OpenAI for text feedback.
-
-### Semantic Search
-Find similar feedback using natural language queries with pgvector embeddings.
-
-### Real-Time Webhooks
-Trigger workflows instantly when new feedback arrives or insights are generated.
-
-### SQL-Friendly Schema
-Query directly with your favorite BI tool – no complex transformations needed.
-
-### Open Source
-Apache 2.0 licensed. Self-host, modify, and own your data completely.
 
 ## Quick Links
 
