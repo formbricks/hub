@@ -22,15 +22,15 @@ Hub is an open-source, self-hostable microservice for **collecting, serving and 
 - 💸 **Fully open-source**: The full Hub is and will be available open-source
 
 ## Why are we building the Hub? 🤔
-We, like you, are passionate about living enjoyable lives. And we, like you, live in organized, highly structured societies where organizations shape the experiences we have day-to-day: Taking public transport, going to the gym, seeing the doctor, purchasing something, etc. Behind each of these experiences sits an organization that tries to provide you with the best possible experience - and more often than not, simply fails to do so.
+We, like you, are passionate about living enjoyable lives. And we, like you, live in organized, highly structured societies where organizations shape the experiences we have day-to-day: taking public transport, going to the gym, seeing the doctor, purchasing something, etc. Behind each of these experiences sits an organization that tries to provide you with the best possible experience - and more often than not, simply fails to do so.
 
-We don't think they fail because they are don't try hard enough or are incapable, quite the opposite: Over the years, we've seen from the inside that many want to do better, try to make your life better, but they are stuck with closed, scattered systems and a lot of "we have always done it like that" and "we don't have money for that" from their bosses.
+We don't think they fail because they don't try hard enough or are incapable, quite the opposite: over the years, we've seen from the inside that many want to do better, try to make your life better, but they are stuck with closed, scattered systems and a lot of "we have always done it like that" and "we don't have money for that" from their bosses.
 
-The Hub is a cornerstone of our work at Formbricks to help alleviate that burden and, ultimately, make your life better 😇
+The Hub is a cornerstone of our work at Formbricks to help alleviate that burden and, ultimately, make your life better.
 
-We are engineers, not consultants, and we bring open-source tooling to the table. We work closely with organizations and consultants to get them implemented and improve experiences. The past few years have been fun and challenging and we now understand one thing: 10 organizations do Experience Management in 10 different ways. It doesn't really work to force-feed them this new way of gathering data, this new framework to see their data in, this new approach to convince your peers to now actually make decisions based on experience data. It's simply to costly to setup and to complicated to weave into existing processes and workflows.
+We are engineers, not consultants, and we bring open-source tooling to the table. We work closely with organizations and consultants to get them implemented and improve experiences. The past few years have been fun and challenging and we now understand one thing: 10 organizations do Experience Management in 10 different ways. It doesn't really work to force-feed them this new way of gathering data, that new tool to see their data in, another approach to convince your peers to now actually make decisions based on experience data. It's simply too costly to setup and too complicated to weave into existing processes and workflows.
 
-This is where the Hub comes in: It's free, it's simple, and, most importantly, it's built for the people who have to carry a lot of the burden around wrestling with experience data: software engineers.
+This is where the Hub comes in: it's free, it's simple, and, most importantly, it's built for the people who have to carry a lot of the burden around wrestling with experience data: software engineers.
 
 ## Use Cases
 
