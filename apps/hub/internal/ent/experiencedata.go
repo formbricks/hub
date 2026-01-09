@@ -27,6 +27,10 @@ type ExperienceData struct {
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// When this record was last updated
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	// Tenant/organization identifier for multi-tenancy (optional for self-hosted single-tenant deployments)
+	TenantID string `json:"tenant_id,omitempty"`
+	// Groups multiple answers from a single submission/session (e.g., all answers from one survey response)
+	ResponseID string `json:"response_id,omitempty"`
 	// Type of feedback source (e.g., survey, review, feedback_form, support, social)
 	SourceType string `json:"source_type,omitempty"`
 	// Reference to survey/form/ticket ID
@@ -37,7 +41,7 @@ type ExperienceData struct {
 	FieldID string `json:"field_id,omitempty"`
 	// The actual question text (e.g., 'How satisfied are you?')
 	FieldLabel string `json:"field_label,omitempty"`
-	// Type of field: text (enrichable), categorical, nps, csat, rating, number, boolean, date
+	// Type of field: text (enrichable), categorical, nps, csat, ces, rating, number, boolean, date
 	FieldType string `json:"field_type,omitempty"`
 	// For open-ended text responses
 	ValueText *string `json:"value_text,omitempty"`
@@ -83,7 +87,7 @@ func (*ExperienceData) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case experiencedata.FieldValueNumber, experiencedata.FieldSentimentScore:
 			values[i] = new(sql.NullFloat64)
-		case experiencedata.FieldSourceType, experiencedata.FieldSourceID, experiencedata.FieldSourceName, experiencedata.FieldFieldID, experiencedata.FieldFieldLabel, experiencedata.FieldFieldType, experiencedata.FieldValueText, experiencedata.FieldLanguage, experiencedata.FieldSentiment, experiencedata.FieldEmotion, experiencedata.FieldUserIdentifier, experiencedata.FieldEmbeddingModel:
+		case experiencedata.FieldTenantID, experiencedata.FieldResponseID, experiencedata.FieldSourceType, experiencedata.FieldSourceID, experiencedata.FieldSourceName, experiencedata.FieldFieldID, experiencedata.FieldFieldLabel, experiencedata.FieldFieldType, experiencedata.FieldValueText, experiencedata.FieldLanguage, experiencedata.FieldSentiment, experiencedata.FieldEmotion, experiencedata.FieldUserIdentifier, experiencedata.FieldEmbeddingModel:
 			values[i] = new(sql.NullString)
 		case experiencedata.FieldCollectedAt, experiencedata.FieldCreatedAt, experiencedata.FieldUpdatedAt, experiencedata.FieldValueDate:
 			values[i] = new(sql.NullTime)
@@ -98,7 +102,7 @@ func (*ExperienceData) scanValues(columns []string) ([]any, error) {
 
 // assignValues assigns the values that were returned from sql.Rows (after scanning)
 // to the ExperienceData fields.
-func (ed *ExperienceData) assignValues(columns []string, values []any) error {
+func (_m *ExperienceData) assignValues(columns []string, values []any) error {
 	if m, n := len(values), len(columns); m < n {
 		return fmt.Errorf("mismatch number of scan values: %d != %d", m, n)
 	}
@@ -108,95 +112,107 @@ func (ed *ExperienceData) assignValues(columns []string, values []any) error {
 			if value, ok := values[i].(*uuid.UUID); !ok {
 				return fmt.Errorf("unexpected type %T for field id", values[i])
 			} else if value != nil {
-				ed.ID = *value
+				_m.ID = *value
 			}
 		case experiencedata.FieldCollectedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field collected_at", values[i])
 			} else if value.Valid {
-				ed.CollectedAt = value.Time
+				_m.CollectedAt = value.Time
 			}
 		case experiencedata.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
 			} else if value.Valid {
-				ed.CreatedAt = value.Time
+				_m.CreatedAt = value.Time
 			}
 		case experiencedata.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
 			} else if value.Valid {
-				ed.UpdatedAt = value.Time
+				_m.UpdatedAt = value.Time
+			}
+		case experiencedata.FieldTenantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field tenant_id", values[i])
+			} else if value.Valid {
+				_m.TenantID = value.String
+			}
+		case experiencedata.FieldResponseID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field response_id", values[i])
+			} else if value.Valid {
+				_m.ResponseID = value.String
 			}
 		case experiencedata.FieldSourceType:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field source_type", values[i])
 			} else if value.Valid {
-				ed.SourceType = value.String
+				_m.SourceType = value.String
 			}
 		case experiencedata.FieldSourceID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field source_id", values[i])
 			} else if value.Valid {
-				ed.SourceID = value.String
+				_m.SourceID = value.String
 			}
 		case experiencedata.FieldSourceName:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field source_name", values[i])
 			} else if value.Valid {
-				ed.SourceName = value.String
+				_m.SourceName = value.String
 			}
 		case experiencedata.FieldFieldID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field field_id", values[i])
 			} else if value.Valid {
-				ed.FieldID = value.String
+				_m.FieldID = value.String
 			}
 		case experiencedata.FieldFieldLabel:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field field_label", values[i])
 			} else if value.Valid {
-				ed.FieldLabel = value.String
+				_m.FieldLabel = value.String
 			}
 		case experiencedata.FieldFieldType:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field field_type", values[i])
 			} else if value.Valid {
-				ed.FieldType = value.String
+				_m.FieldType = value.String
 			}
 		case experiencedata.FieldValueText:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field value_text", values[i])
 			} else if value.Valid {
-				ed.ValueText = new(string)
-				*ed.ValueText = value.String
+				_m.ValueText = new(string)
+				*_m.ValueText = value.String
 			}
 		case experiencedata.FieldValueNumber:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
 				return fmt.Errorf("unexpected type %T for field value_number", values[i])
 			} else if value.Valid {
-				ed.ValueNumber = new(float64)
-				*ed.ValueNumber = value.Float64
+				_m.ValueNumber = new(float64)
+				*_m.ValueNumber = value.Float64
 			}
 		case experiencedata.FieldValueBoolean:
 			if value, ok := values[i].(*sql.NullBool); !ok {
 				return fmt.Errorf("unexpected type %T for field value_boolean", values[i])
 			} else if value.Valid {
-				ed.ValueBoolean = new(bool)
-				*ed.ValueBoolean = value.Bool
+				_m.ValueBoolean = new(bool)
+				*_m.ValueBoolean = value.Bool
 			}
 		case experiencedata.FieldValueDate:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field value_date", values[i])
 			} else if value.Valid {
-				ed.ValueDate = new(time.Time)
-				*ed.ValueDate = value.Time
+				_m.ValueDate = new(time.Time)
+				*_m.ValueDate = value.Time
 			}
 		case experiencedata.FieldValueJSON:
 			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field value_json", values[i])
 			} else if value != nil && len(*value) > 0 {
-				if err := json.Unmarshal(*value, &ed.ValueJSON); err != nil {
+				if err := json.Unmarshal(*value, &_m.ValueJSON); err != nil {
 					return fmt.Errorf("unmarshal field value_json: %w", err)
 				}
 			}
@@ -204,7 +220,7 @@ func (ed *ExperienceData) assignValues(columns []string, values []any) error {
 			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field metadata", values[i])
 			} else if value != nil && len(*value) > 0 {
-				if err := json.Unmarshal(*value, &ed.Metadata); err != nil {
+				if err := json.Unmarshal(*value, &_m.Metadata); err != nil {
 					return fmt.Errorf("unmarshal field metadata: %w", err)
 				}
 			}
@@ -212,34 +228,34 @@ func (ed *ExperienceData) assignValues(columns []string, values []any) error {
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field language", values[i])
 			} else if value.Valid {
-				ed.Language = value.String
+				_m.Language = value.String
 			}
 		case experiencedata.FieldSentiment:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field sentiment", values[i])
 			} else if value.Valid {
-				ed.Sentiment = new(string)
-				*ed.Sentiment = value.String
+				_m.Sentiment = new(string)
+				*_m.Sentiment = value.String
 			}
 		case experiencedata.FieldSentimentScore:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
 				return fmt.Errorf("unexpected type %T for field sentiment_score", values[i])
 			} else if value.Valid {
-				ed.SentimentScore = new(float64)
-				*ed.SentimentScore = value.Float64
+				_m.SentimentScore = new(float64)
+				*_m.SentimentScore = value.Float64
 			}
 		case experiencedata.FieldEmotion:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field emotion", values[i])
 			} else if value.Valid {
-				ed.Emotion = new(string)
-				*ed.Emotion = value.String
+				_m.Emotion = new(string)
+				*_m.Emotion = value.String
 			}
 		case experiencedata.FieldTopics:
 			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field topics", values[i])
 			} else if value != nil && len(*value) > 0 {
-				if err := json.Unmarshal(*value, &ed.Topics); err != nil {
+				if err := json.Unmarshal(*value, &_m.Topics); err != nil {
 					return fmt.Errorf("unmarshal field topics: %w", err)
 				}
 			}
@@ -247,24 +263,24 @@ func (ed *ExperienceData) assignValues(columns []string, values []any) error {
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field user_identifier", values[i])
 			} else if value.Valid {
-				ed.UserIdentifier = value.String
+				_m.UserIdentifier = value.String
 			}
 		case experiencedata.FieldEmbedding:
 			if value, ok := values[i].(*sql.NullScanner); !ok {
 				return fmt.Errorf("unexpected type %T for field embedding", values[i])
 			} else if value.Valid {
-				ed.Embedding = new(pgvector.Vector)
-				*ed.Embedding = *value.S.(*pgvector.Vector)
+				_m.Embedding = new(pgvector.Vector)
+				*_m.Embedding = *value.S.(*pgvector.Vector)
 			}
 		case experiencedata.FieldEmbeddingModel:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field embedding_model", values[i])
 			} else if value.Valid {
-				ed.EmbeddingModel = new(string)
-				*ed.EmbeddingModel = value.String
+				_m.EmbeddingModel = new(string)
+				*_m.EmbeddingModel = value.String
 			}
 		default:
-			ed.selectValues.Set(columns[i], values[i])
+			_m.selectValues.Set(columns[i], values[i])
 		}
 	}
 	return nil
@@ -272,116 +288,122 @@ func (ed *ExperienceData) assignValues(columns []string, values []any) error {
 
 // Value returns the ent.Value that was dynamically selected and assigned to the ExperienceData.
 // This includes values selected through modifiers, order, etc.
-func (ed *ExperienceData) Value(name string) (ent.Value, error) {
-	return ed.selectValues.Get(name)
+func (_m *ExperienceData) Value(name string) (ent.Value, error) {
+	return _m.selectValues.Get(name)
 }
 
 // Update returns a builder for updating this ExperienceData.
 // Note that you need to call ExperienceData.Unwrap() before calling this method if this ExperienceData
 // was returned from a transaction, and the transaction was committed or rolled back.
-func (ed *ExperienceData) Update() *ExperienceDataUpdateOne {
-	return NewExperienceDataClient(ed.config).UpdateOne(ed)
+func (_m *ExperienceData) Update() *ExperienceDataUpdateOne {
+	return NewExperienceDataClient(_m.config).UpdateOne(_m)
 }
 
 // Unwrap unwraps the ExperienceData entity that was returned from a transaction after it was closed,
 // so that all future queries will be executed through the driver which created the transaction.
-func (ed *ExperienceData) Unwrap() *ExperienceData {
-	_tx, ok := ed.config.driver.(*txDriver)
+func (_m *ExperienceData) Unwrap() *ExperienceData {
+	_tx, ok := _m.config.driver.(*txDriver)
 	if !ok {
 		panic("ent: ExperienceData is not a transactional entity")
 	}
-	ed.config.driver = _tx.drv
-	return ed
+	_m.config.driver = _tx.drv
+	return _m
 }
 
 // String implements the fmt.Stringer.
-func (ed *ExperienceData) String() string {
+func (_m *ExperienceData) String() string {
 	var builder strings.Builder
 	builder.WriteString("ExperienceData(")
-	builder.WriteString(fmt.Sprintf("id=%v, ", ed.ID))
+	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
 	builder.WriteString("collected_at=")
-	builder.WriteString(ed.CollectedAt.Format(time.ANSIC))
+	builder.WriteString(_m.CollectedAt.Format(time.ANSIC))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
-	builder.WriteString(ed.CreatedAt.Format(time.ANSIC))
+	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")
-	builder.WriteString(ed.UpdatedAt.Format(time.ANSIC))
+	builder.WriteString(_m.UpdatedAt.Format(time.ANSIC))
+	builder.WriteString(", ")
+	builder.WriteString("tenant_id=")
+	builder.WriteString(_m.TenantID)
+	builder.WriteString(", ")
+	builder.WriteString("response_id=")
+	builder.WriteString(_m.ResponseID)
 	builder.WriteString(", ")
 	builder.WriteString("source_type=")
-	builder.WriteString(ed.SourceType)
+	builder.WriteString(_m.SourceType)
 	builder.WriteString(", ")
 	builder.WriteString("source_id=")
-	builder.WriteString(ed.SourceID)
+	builder.WriteString(_m.SourceID)
 	builder.WriteString(", ")
 	builder.WriteString("source_name=")
-	builder.WriteString(ed.SourceName)
+	builder.WriteString(_m.SourceName)
 	builder.WriteString(", ")
 	builder.WriteString("field_id=")
-	builder.WriteString(ed.FieldID)
+	builder.WriteString(_m.FieldID)
 	builder.WriteString(", ")
 	builder.WriteString("field_label=")
-	builder.WriteString(ed.FieldLabel)
+	builder.WriteString(_m.FieldLabel)
 	builder.WriteString(", ")
 	builder.WriteString("field_type=")
-	builder.WriteString(ed.FieldType)
+	builder.WriteString(_m.FieldType)
 	builder.WriteString(", ")
-	if v := ed.ValueText; v != nil {
+	if v := _m.ValueText; v != nil {
 		builder.WriteString("value_text=")
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
-	if v := ed.ValueNumber; v != nil {
+	if v := _m.ValueNumber; v != nil {
 		builder.WriteString("value_number=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
-	if v := ed.ValueBoolean; v != nil {
+	if v := _m.ValueBoolean; v != nil {
 		builder.WriteString("value_boolean=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
-	if v := ed.ValueDate; v != nil {
+	if v := _m.ValueDate; v != nil {
 		builder.WriteString("value_date=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
 	builder.WriteString(", ")
 	builder.WriteString("value_json=")
-	builder.WriteString(fmt.Sprintf("%v", ed.ValueJSON))
+	builder.WriteString(fmt.Sprintf("%v", _m.ValueJSON))
 	builder.WriteString(", ")
 	builder.WriteString("metadata=")
-	builder.WriteString(fmt.Sprintf("%v", ed.Metadata))
+	builder.WriteString(fmt.Sprintf("%v", _m.Metadata))
 	builder.WriteString(", ")
 	builder.WriteString("language=")
-	builder.WriteString(ed.Language)
+	builder.WriteString(_m.Language)
 	builder.WriteString(", ")
-	if v := ed.Sentiment; v != nil {
+	if v := _m.Sentiment; v != nil {
 		builder.WriteString("sentiment=")
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
-	if v := ed.SentimentScore; v != nil {
+	if v := _m.SentimentScore; v != nil {
 		builder.WriteString("sentiment_score=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
-	if v := ed.Emotion; v != nil {
+	if v := _m.Emotion; v != nil {
 		builder.WriteString("emotion=")
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
 	builder.WriteString("topics=")
-	builder.WriteString(fmt.Sprintf("%v", ed.Topics))
+	builder.WriteString(fmt.Sprintf("%v", _m.Topics))
 	builder.WriteString(", ")
 	builder.WriteString("user_identifier=")
-	builder.WriteString(ed.UserIdentifier)
+	builder.WriteString(_m.UserIdentifier)
 	builder.WriteString(", ")
-	if v := ed.Embedding; v != nil {
+	if v := _m.Embedding; v != nil {
 		builder.WriteString("embedding=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
-	if v := ed.EmbeddingModel; v != nil {
+	if v := _m.EmbeddingModel; v != nil {
 		builder.WriteString("embedding_model=")
 		builder.WriteString(*v)
 	}

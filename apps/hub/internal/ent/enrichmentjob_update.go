@@ -23,127 +23,127 @@ type EnrichmentJobUpdate struct {
 }
 
 // Where appends a list predicates to the EnrichmentJobUpdate builder.
-func (eju *EnrichmentJobUpdate) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobUpdate {
-	eju.mutation.Where(ps...)
-	return eju
+func (_u *EnrichmentJobUpdate) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobUpdate {
+	_u.mutation.Where(ps...)
+	return _u
 }
 
 // SetJobType sets the "job_type" field.
-func (eju *EnrichmentJobUpdate) SetJobType(s string) *EnrichmentJobUpdate {
-	eju.mutation.SetJobType(s)
-	return eju
+func (_u *EnrichmentJobUpdate) SetJobType(v string) *EnrichmentJobUpdate {
+	_u.mutation.SetJobType(v)
+	return _u
 }
 
 // SetNillableJobType sets the "job_type" field if the given value is not nil.
-func (eju *EnrichmentJobUpdate) SetNillableJobType(s *string) *EnrichmentJobUpdate {
-	if s != nil {
-		eju.SetJobType(*s)
+func (_u *EnrichmentJobUpdate) SetNillableJobType(v *string) *EnrichmentJobUpdate {
+	if v != nil {
+		_u.SetJobType(*v)
 	}
-	return eju
+	return _u
 }
 
 // SetStatus sets the "status" field.
-func (eju *EnrichmentJobUpdate) SetStatus(s string) *EnrichmentJobUpdate {
-	eju.mutation.SetStatus(s)
-	return eju
+func (_u *EnrichmentJobUpdate) SetStatus(v string) *EnrichmentJobUpdate {
+	_u.mutation.SetStatus(v)
+	return _u
 }
 
 // SetNillableStatus sets the "status" field if the given value is not nil.
-func (eju *EnrichmentJobUpdate) SetNillableStatus(s *string) *EnrichmentJobUpdate {
-	if s != nil {
-		eju.SetStatus(*s)
+func (_u *EnrichmentJobUpdate) SetNillableStatus(v *string) *EnrichmentJobUpdate {
+	if v != nil {
+		_u.SetStatus(*v)
 	}
-	return eju
+	return _u
 }
 
 // SetText sets the "text" field.
-func (eju *EnrichmentJobUpdate) SetText(s string) *EnrichmentJobUpdate {
-	eju.mutation.SetText(s)
-	return eju
+func (_u *EnrichmentJobUpdate) SetText(v string) *EnrichmentJobUpdate {
+	_u.mutation.SetText(v)
+	return _u
 }
 
 // SetNillableText sets the "text" field if the given value is not nil.
-func (eju *EnrichmentJobUpdate) SetNillableText(s *string) *EnrichmentJobUpdate {
-	if s != nil {
-		eju.SetText(*s)
+func (_u *EnrichmentJobUpdate) SetNillableText(v *string) *EnrichmentJobUpdate {
+	if v != nil {
+		_u.SetText(*v)
 	}
-	return eju
+	return _u
 }
 
 // SetError sets the "error" field.
-func (eju *EnrichmentJobUpdate) SetError(s string) *EnrichmentJobUpdate {
-	eju.mutation.SetError(s)
-	return eju
+func (_u *EnrichmentJobUpdate) SetError(v string) *EnrichmentJobUpdate {
+	_u.mutation.SetError(v)
+	return _u
 }
 
 // SetNillableError sets the "error" field if the given value is not nil.
-func (eju *EnrichmentJobUpdate) SetNillableError(s *string) *EnrichmentJobUpdate {
-	if s != nil {
-		eju.SetError(*s)
+func (_u *EnrichmentJobUpdate) SetNillableError(v *string) *EnrichmentJobUpdate {
+	if v != nil {
+		_u.SetError(*v)
 	}
-	return eju
+	return _u
 }
 
 // ClearError clears the value of the "error" field.
-func (eju *EnrichmentJobUpdate) ClearError() *EnrichmentJobUpdate {
-	eju.mutation.ClearError()
-	return eju
+func (_u *EnrichmentJobUpdate) ClearError() *EnrichmentJobUpdate {
+	_u.mutation.ClearError()
+	return _u
 }
 
 // SetAttempts sets the "attempts" field.
-func (eju *EnrichmentJobUpdate) SetAttempts(i int) *EnrichmentJobUpdate {
-	eju.mutation.ResetAttempts()
-	eju.mutation.SetAttempts(i)
-	return eju
+func (_u *EnrichmentJobUpdate) SetAttempts(v int) *EnrichmentJobUpdate {
+	_u.mutation.ResetAttempts()
+	_u.mutation.SetAttempts(v)
+	return _u
 }
 
 // SetNillableAttempts sets the "attempts" field if the given value is not nil.
-func (eju *EnrichmentJobUpdate) SetNillableAttempts(i *int) *EnrichmentJobUpdate {
-	if i != nil {
-		eju.SetAttempts(*i)
+func (_u *EnrichmentJobUpdate) SetNillableAttempts(v *int) *EnrichmentJobUpdate {
+	if v != nil {
+		_u.SetAttempts(*v)
 	}
-	return eju
+	return _u
 }
 
-// AddAttempts adds i to the "attempts" field.
-func (eju *EnrichmentJobUpdate) AddAttempts(i int) *EnrichmentJobUpdate {
-	eju.mutation.AddAttempts(i)
-	return eju
+// AddAttempts adds value to the "attempts" field.
+func (_u *EnrichmentJobUpdate) AddAttempts(v int) *EnrichmentJobUpdate {
+	_u.mutation.AddAttempts(v)
+	return _u
 }
 
 // SetProcessedAt sets the "processed_at" field.
-func (eju *EnrichmentJobUpdate) SetProcessedAt(t time.Time) *EnrichmentJobUpdate {
-	eju.mutation.SetProcessedAt(t)
-	return eju
+func (_u *EnrichmentJobUpdate) SetProcessedAt(v time.Time) *EnrichmentJobUpdate {
+	_u.mutation.SetProcessedAt(v)
+	return _u
 }
 
 // SetNillableProcessedAt sets the "processed_at" field if the given value is not nil.
-func (eju *EnrichmentJobUpdate) SetNillableProcessedAt(t *time.Time) *EnrichmentJobUpdate {
-	if t != nil {
-		eju.SetProcessedAt(*t)
+func (_u *EnrichmentJobUpdate) SetNillableProcessedAt(v *time.Time) *EnrichmentJobUpdate {
+	if v != nil {
+		_u.SetProcessedAt(*v)
 	}
-	return eju
+	return _u
 }
 
 // ClearProcessedAt clears the value of the "processed_at" field.
-func (eju *EnrichmentJobUpdate) ClearProcessedAt() *EnrichmentJobUpdate {
-	eju.mutation.ClearProcessedAt()
-	return eju
+func (_u *EnrichmentJobUpdate) ClearProcessedAt() *EnrichmentJobUpdate {
+	_u.mutation.ClearProcessedAt()
+	return _u
 }
 
 // Mutation returns the EnrichmentJobMutation object of the builder.
-func (eju *EnrichmentJobUpdate) Mutation() *EnrichmentJobMutation {
-	return eju.mutation
+func (_u *EnrichmentJobUpdate) Mutation() *EnrichmentJobMutation {
+	return _u.mutation
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
-func (eju *EnrichmentJobUpdate) Save(ctx context.Context) (int, error) {
-	return withHooks(ctx, eju.sqlSave, eju.mutation, eju.hooks)
+func (_u *EnrichmentJobUpdate) Save(ctx context.Context) (int, error) {
+	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (eju *EnrichmentJobUpdate) SaveX(ctx context.Context) int {
-	affected, err := eju.Save(ctx)
+func (_u *EnrichmentJobUpdate) SaveX(ctx context.Context) int {
+	affected, err := _u.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -151,66 +151,66 @@ func (eju *EnrichmentJobUpdate) SaveX(ctx context.Context) int {
 }
 
 // Exec executes the query.
-func (eju *EnrichmentJobUpdate) Exec(ctx context.Context) error {
-	_, err := eju.Save(ctx)
+func (_u *EnrichmentJobUpdate) Exec(ctx context.Context) error {
+	_, err := _u.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (eju *EnrichmentJobUpdate) ExecX(ctx context.Context) {
-	if err := eju.Exec(ctx); err != nil {
+func (_u *EnrichmentJobUpdate) ExecX(ctx context.Context) {
+	if err := _u.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
 // check runs all checks and user-defined validators on the builder.
-func (eju *EnrichmentJobUpdate) check() error {
-	if eju.mutation.ExperienceCleared() && len(eju.mutation.ExperienceIDs()) > 0 {
+func (_u *EnrichmentJobUpdate) check() error {
+	if _u.mutation.ExperienceCleared() && len(_u.mutation.ExperienceIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "EnrichmentJob.experience"`)
 	}
 	return nil
 }
 
-func (eju *EnrichmentJobUpdate) sqlSave(ctx context.Context) (n int, err error) {
-	if err := eju.check(); err != nil {
-		return n, err
+func (_u *EnrichmentJobUpdate) sqlSave(ctx context.Context) (_node int, err error) {
+	if err := _u.check(); err != nil {
+		return _node, err
 	}
 	_spec := sqlgraph.NewUpdateSpec(enrichmentjob.Table, enrichmentjob.Columns, sqlgraph.NewFieldSpec(enrichmentjob.FieldID, field.TypeUUID))
-	if ps := eju.mutation.predicates; len(ps) > 0 {
+	if ps := _u.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	if value, ok := eju.mutation.JobType(); ok {
+	if value, ok := _u.mutation.JobType(); ok {
 		_spec.SetField(enrichmentjob.FieldJobType, field.TypeString, value)
 	}
-	if value, ok := eju.mutation.Status(); ok {
+	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(enrichmentjob.FieldStatus, field.TypeString, value)
 	}
-	if value, ok := eju.mutation.Text(); ok {
+	if value, ok := _u.mutation.Text(); ok {
 		_spec.SetField(enrichmentjob.FieldText, field.TypeString, value)
 	}
-	if value, ok := eju.mutation.Error(); ok {
+	if value, ok := _u.mutation.Error(); ok {
 		_spec.SetField(enrichmentjob.FieldError, field.TypeString, value)
 	}
-	if eju.mutation.ErrorCleared() {
+	if _u.mutation.ErrorCleared() {
 		_spec.ClearField(enrichmentjob.FieldError, field.TypeString)
 	}
-	if value, ok := eju.mutation.Attempts(); ok {
+	if value, ok := _u.mutation.Attempts(); ok {
 		_spec.SetField(enrichmentjob.FieldAttempts, field.TypeInt, value)
 	}
-	if value, ok := eju.mutation.AddedAttempts(); ok {
+	if value, ok := _u.mutation.AddedAttempts(); ok {
 		_spec.AddField(enrichmentjob.FieldAttempts, field.TypeInt, value)
 	}
-	if value, ok := eju.mutation.ProcessedAt(); ok {
+	if value, ok := _u.mutation.ProcessedAt(); ok {
 		_spec.SetField(enrichmentjob.FieldProcessedAt, field.TypeTime, value)
 	}
-	if eju.mutation.ProcessedAtCleared() {
+	if _u.mutation.ProcessedAtCleared() {
 		_spec.ClearField(enrichmentjob.FieldProcessedAt, field.TypeTime)
 	}
-	if n, err = sqlgraph.UpdateNodes(ctx, eju.driver, _spec); err != nil {
+	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{enrichmentjob.Label}
 		} else if sqlgraph.IsConstraintError(err) {
@@ -218,8 +218,8 @@ func (eju *EnrichmentJobUpdate) sqlSave(ctx context.Context) (n int, err error) 
 		}
 		return 0, err
 	}
-	eju.mutation.done = true
-	return n, nil
+	_u.mutation.done = true
+	return _node, nil
 }
 
 // EnrichmentJobUpdateOne is the builder for updating a single EnrichmentJob entity.
@@ -231,134 +231,134 @@ type EnrichmentJobUpdateOne struct {
 }
 
 // SetJobType sets the "job_type" field.
-func (ejuo *EnrichmentJobUpdateOne) SetJobType(s string) *EnrichmentJobUpdateOne {
-	ejuo.mutation.SetJobType(s)
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) SetJobType(v string) *EnrichmentJobUpdateOne {
+	_u.mutation.SetJobType(v)
+	return _u
 }
 
 // SetNillableJobType sets the "job_type" field if the given value is not nil.
-func (ejuo *EnrichmentJobUpdateOne) SetNillableJobType(s *string) *EnrichmentJobUpdateOne {
-	if s != nil {
-		ejuo.SetJobType(*s)
+func (_u *EnrichmentJobUpdateOne) SetNillableJobType(v *string) *EnrichmentJobUpdateOne {
+	if v != nil {
+		_u.SetJobType(*v)
 	}
-	return ejuo
+	return _u
 }
 
 // SetStatus sets the "status" field.
-func (ejuo *EnrichmentJobUpdateOne) SetStatus(s string) *EnrichmentJobUpdateOne {
-	ejuo.mutation.SetStatus(s)
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) SetStatus(v string) *EnrichmentJobUpdateOne {
+	_u.mutation.SetStatus(v)
+	return _u
 }
 
 // SetNillableStatus sets the "status" field if the given value is not nil.
-func (ejuo *EnrichmentJobUpdateOne) SetNillableStatus(s *string) *EnrichmentJobUpdateOne {
-	if s != nil {
-		ejuo.SetStatus(*s)
+func (_u *EnrichmentJobUpdateOne) SetNillableStatus(v *string) *EnrichmentJobUpdateOne {
+	if v != nil {
+		_u.SetStatus(*v)
 	}
-	return ejuo
+	return _u
 }
 
 // SetText sets the "text" field.
-func (ejuo *EnrichmentJobUpdateOne) SetText(s string) *EnrichmentJobUpdateOne {
-	ejuo.mutation.SetText(s)
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) SetText(v string) *EnrichmentJobUpdateOne {
+	_u.mutation.SetText(v)
+	return _u
 }
 
 // SetNillableText sets the "text" field if the given value is not nil.
-func (ejuo *EnrichmentJobUpdateOne) SetNillableText(s *string) *EnrichmentJobUpdateOne {
-	if s != nil {
-		ejuo.SetText(*s)
+func (_u *EnrichmentJobUpdateOne) SetNillableText(v *string) *EnrichmentJobUpdateOne {
+	if v != nil {
+		_u.SetText(*v)
 	}
-	return ejuo
+	return _u
 }
 
 // SetError sets the "error" field.
-func (ejuo *EnrichmentJobUpdateOne) SetError(s string) *EnrichmentJobUpdateOne {
-	ejuo.mutation.SetError(s)
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) SetError(v string) *EnrichmentJobUpdateOne {
+	_u.mutation.SetError(v)
+	return _u
 }
 
 // SetNillableError sets the "error" field if the given value is not nil.
-func (ejuo *EnrichmentJobUpdateOne) SetNillableError(s *string) *EnrichmentJobUpdateOne {
-	if s != nil {
-		ejuo.SetError(*s)
+func (_u *EnrichmentJobUpdateOne) SetNillableError(v *string) *EnrichmentJobUpdateOne {
+	if v != nil {
+		_u.SetError(*v)
 	}
-	return ejuo
+	return _u
 }
 
 // ClearError clears the value of the "error" field.
-func (ejuo *EnrichmentJobUpdateOne) ClearError() *EnrichmentJobUpdateOne {
-	ejuo.mutation.ClearError()
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) ClearError() *EnrichmentJobUpdateOne {
+	_u.mutation.ClearError()
+	return _u
 }
 
 // SetAttempts sets the "attempts" field.
-func (ejuo *EnrichmentJobUpdateOne) SetAttempts(i int) *EnrichmentJobUpdateOne {
-	ejuo.mutation.ResetAttempts()
-	ejuo.mutation.SetAttempts(i)
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) SetAttempts(v int) *EnrichmentJobUpdateOne {
+	_u.mutation.ResetAttempts()
+	_u.mutation.SetAttempts(v)
+	return _u
 }
 
 // SetNillableAttempts sets the "attempts" field if the given value is not nil.
-func (ejuo *EnrichmentJobUpdateOne) SetNillableAttempts(i *int) *EnrichmentJobUpdateOne {
-	if i != nil {
-		ejuo.SetAttempts(*i)
+func (_u *EnrichmentJobUpdateOne) SetNillableAttempts(v *int) *EnrichmentJobUpdateOne {
+	if v != nil {
+		_u.SetAttempts(*v)
 	}
-	return ejuo
+	return _u
 }
 
-// AddAttempts adds i to the "attempts" field.
-func (ejuo *EnrichmentJobUpdateOne) AddAttempts(i int) *EnrichmentJobUpdateOne {
-	ejuo.mutation.AddAttempts(i)
-	return ejuo
+// AddAttempts adds value to the "attempts" field.
+func (_u *EnrichmentJobUpdateOne) AddAttempts(v int) *EnrichmentJobUpdateOne {
+	_u.mutation.AddAttempts(v)
+	return _u
 }
 
 // SetProcessedAt sets the "processed_at" field.
-func (ejuo *EnrichmentJobUpdateOne) SetProcessedAt(t time.Time) *EnrichmentJobUpdateOne {
-	ejuo.mutation.SetProcessedAt(t)
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) SetProcessedAt(v time.Time) *EnrichmentJobUpdateOne {
+	_u.mutation.SetProcessedAt(v)
+	return _u
 }
 
 // SetNillableProcessedAt sets the "processed_at" field if the given value is not nil.
-func (ejuo *EnrichmentJobUpdateOne) SetNillableProcessedAt(t *time.Time) *EnrichmentJobUpdateOne {
-	if t != nil {
-		ejuo.SetProcessedAt(*t)
+func (_u *EnrichmentJobUpdateOne) SetNillableProcessedAt(v *time.Time) *EnrichmentJobUpdateOne {
+	if v != nil {
+		_u.SetProcessedAt(*v)
 	}
-	return ejuo
+	return _u
 }
 
 // ClearProcessedAt clears the value of the "processed_at" field.
-func (ejuo *EnrichmentJobUpdateOne) ClearProcessedAt() *EnrichmentJobUpdateOne {
-	ejuo.mutation.ClearProcessedAt()
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) ClearProcessedAt() *EnrichmentJobUpdateOne {
+	_u.mutation.ClearProcessedAt()
+	return _u
 }
 
 // Mutation returns the EnrichmentJobMutation object of the builder.
-func (ejuo *EnrichmentJobUpdateOne) Mutation() *EnrichmentJobMutation {
-	return ejuo.mutation
+func (_u *EnrichmentJobUpdateOne) Mutation() *EnrichmentJobMutation {
+	return _u.mutation
 }
 
 // Where appends a list predicates to the EnrichmentJobUpdate builder.
-func (ejuo *EnrichmentJobUpdateOne) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobUpdateOne {
-	ejuo.mutation.Where(ps...)
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobUpdateOne {
+	_u.mutation.Where(ps...)
+	return _u
 }
 
 // Select allows selecting one or more fields (columns) of the returned entity.
 // The default is selecting all fields defined in the entity schema.
-func (ejuo *EnrichmentJobUpdateOne) Select(field string, fields ...string) *EnrichmentJobUpdateOne {
-	ejuo.fields = append([]string{field}, fields...)
-	return ejuo
+func (_u *EnrichmentJobUpdateOne) Select(field string, fields ...string) *EnrichmentJobUpdateOne {
+	_u.fields = append([]string{field}, fields...)
+	return _u
 }
 
 // Save executes the query and returns the updated EnrichmentJob entity.
-func (ejuo *EnrichmentJobUpdateOne) Save(ctx context.Context) (*EnrichmentJob, error) {
-	return withHooks(ctx, ejuo.sqlSave, ejuo.mutation, ejuo.hooks)
+func (_u *EnrichmentJobUpdateOne) Save(ctx context.Context) (*EnrichmentJob, error) {
+	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (ejuo *EnrichmentJobUpdateOne) SaveX(ctx context.Context) *EnrichmentJob {
-	node, err := ejuo.Save(ctx)
+func (_u *EnrichmentJobUpdateOne) SaveX(ctx context.Context) *EnrichmentJob {
+	node, err := _u.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -366,37 +366,37 @@ func (ejuo *EnrichmentJobUpdateOne) SaveX(ctx context.Context) *EnrichmentJob {
 }
 
 // Exec executes the query on the entity.
-func (ejuo *EnrichmentJobUpdateOne) Exec(ctx context.Context) error {
-	_, err := ejuo.Save(ctx)
+func (_u *EnrichmentJobUpdateOne) Exec(ctx context.Context) error {
+	_, err := _u.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (ejuo *EnrichmentJobUpdateOne) ExecX(ctx context.Context) {
-	if err := ejuo.Exec(ctx); err != nil {
+func (_u *EnrichmentJobUpdateOne) ExecX(ctx context.Context) {
+	if err := _u.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
 // check runs all checks and user-defined validators on the builder.
-func (ejuo *EnrichmentJobUpdateOne) check() error {
-	if ejuo.mutation.ExperienceCleared() && len(ejuo.mutation.ExperienceIDs()) > 0 {
+func (_u *EnrichmentJobUpdateOne) check() error {
+	if _u.mutation.ExperienceCleared() && len(_u.mutation.ExperienceIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "EnrichmentJob.experience"`)
 	}
 	return nil
 }
 
-func (ejuo *EnrichmentJobUpdateOne) sqlSave(ctx context.Context) (_node *EnrichmentJob, err error) {
-	if err := ejuo.check(); err != nil {
+func (_u *EnrichmentJobUpdateOne) sqlSave(ctx context.Context) (_node *EnrichmentJob, err error) {
+	if err := _u.check(); err != nil {
 		return _node, err
 	}
 	_spec := sqlgraph.NewUpdateSpec(enrichmentjob.Table, enrichmentjob.Columns, sqlgraph.NewFieldSpec(enrichmentjob.FieldID, field.TypeUUID))
-	id, ok := ejuo.mutation.ID()
+	id, ok := _u.mutation.ID()
 	if !ok {
 		return nil, &ValidationError{Name: "id", err: errors.New(`ent: missing "EnrichmentJob.id" for update`)}
 	}
 	_spec.Node.ID.Value = id
-	if fields := ejuo.fields; len(fields) > 0 {
+	if fields := _u.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
 		_spec.Node.Columns = append(_spec.Node.Columns, enrichmentjob.FieldID)
 		for _, f := range fields {
@@ -408,44 +408,44 @@ func (ejuo *EnrichmentJobUpdateOne) sqlSave(ctx context.Context) (_node *Enrichm
 			}
 		}
 	}
-	if ps := ejuo.mutation.predicates; len(ps) > 0 {
+	if ps := _u.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	if value, ok := ejuo.mutation.JobType(); ok {
+	if value, ok := _u.mutation.JobType(); ok {
 		_spec.SetField(enrichmentjob.FieldJobType, field.TypeString, value)
 	}
-	if value, ok := ejuo.mutation.Status(); ok {
+	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(enrichmentjob.FieldStatus, field.TypeString, value)
 	}
-	if value, ok := ejuo.mutation.Text(); ok {
+	if value, ok := _u.mutation.Text(); ok {
 		_spec.SetField(enrichmentjob.FieldText, field.TypeString, value)
 	}
-	if value, ok := ejuo.mutation.Error(); ok {
+	if value, ok := _u.mutation.Error(); ok {
 		_spec.SetField(enrichmentjob.FieldError, field.TypeString, value)
 	}
-	if ejuo.mutation.ErrorCleared() {
+	if _u.mutation.ErrorCleared() {
 		_spec.ClearField(enrichmentjob.FieldError, field.TypeString)
 	}
-	if value, ok := ejuo.mutation.Attempts(); ok {
+	if value, ok := _u.mutation.Attempts(); ok {
 		_spec.SetField(enrichmentjob.FieldAttempts, field.TypeInt, value)
 	}
-	if value, ok := ejuo.mutation.AddedAttempts(); ok {
+	if value, ok := _u.mutation.AddedAttempts(); ok {
 		_spec.AddField(enrichmentjob.FieldAttempts, field.TypeInt, value)
 	}
-	if value, ok := ejuo.mutation.ProcessedAt(); ok {
+	if value, ok := _u.mutation.ProcessedAt(); ok {
 		_spec.SetField(enrichmentjob.FieldProcessedAt, field.TypeTime, value)
 	}
-	if ejuo.mutation.ProcessedAtCleared() {
+	if _u.mutation.ProcessedAtCleared() {
 		_spec.ClearField(enrichmentjob.FieldProcessedAt, field.TypeTime)
 	}
-	_node = &EnrichmentJob{config: ejuo.config}
+	_node = &EnrichmentJob{config: _u.config}
 	_spec.Assign = _node.assignValues
 	_spec.ScanValues = _node.scanValues
-	if err = sqlgraph.UpdateNode(ctx, ejuo.driver, _spec); err != nil {
+	if err = sqlgraph.UpdateNode(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{enrichmentjob.Label}
 		} else if sqlgraph.IsConstraintError(err) {
@@ -453,6 +453,6 @@ func (ejuo *EnrichmentJobUpdateOne) sqlSave(ctx context.Context) (_node *Enrichm
 		}
 		return nil, err
 	}
-	ejuo.mutation.done = true
+	_u.mutation.done = true
 	return _node, nil
 }

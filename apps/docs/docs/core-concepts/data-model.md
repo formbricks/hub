@@ -59,6 +59,21 @@ qualitative feedback.
 | **`created_at`**   | Timestamp | Auto     | When the record was created in the Hub                     |
 | **`updated_at`**   | Timestamp | Auto     | When the record was last updated                             |
 
+#### Multi-Tenancy & Response Grouping
+
+| Field           | Type   | Required | Description                                                         |
+| --------------- | ------ | -------- | ------------------------------------------------------------------- |
+| `tenant_id`     | String | Optional | Tenant/organization identifier for multi-tenant deployments         |
+| `response_id`   | String | Optional | Groups multiple answers from a single submission/session            |
+
+:::tip Response Grouping
+Use `response_id` to link all answers from a single survey submission. This enables:
+- Querying complete responses: `WHERE response_id = 'resp-abc-123'`
+- Calculating completion rates
+- GDPR compliance: delete all answers from one submission together
+- Response-level analysis across multiple questions
+:::
+
 #### Source Tracking
 
 | Field             | Type   | Required | Description                                          |
@@ -104,7 +119,7 @@ qualitative feedback.
 ### Field Types
 
 The `field_type` field uses **validated enums** to categorize responses and determine which
-`value_*` field to use. Hub enforces these 8 standardized types optimized for analytics:
+`value_*` field to use. Hub enforces these 9 standardized types optimized for analytics:
 
 | Type              | Description                        | Value Field     | AI Enrichment | Analytics Use                                    |
 | ----------------- | ---------------------------------- | --------------- | ------------- | ------------------------------------------------ |
@@ -112,6 +127,7 @@ The `field_type` field uses **validated enums** to categorize responses and dete
 | **`categorical`** | Pre-defined discrete options       | `value_text`    | ❌ No         | Frequency distribution, most popular choices     |
 | **`nps`**         | Net Promoter Score (0-10)          | `value_number`  | ❌ No         | NPS calculation, promoter/detractor segmentation |
 | **`csat`**        | Customer Satisfaction (1-5 or 1-7) | `value_number`  | ❌ No         | Average satisfaction, benchmarking               |
+| **`ces`**         | Customer Effort Score (1-7)        | `value_number`  | ❌ No         | Effort analysis, ease-of-use tracking            |
 | **`rating`**      | Generic rating scale               | `value_number`  | ❌ No         | Average rating, distribution, star ratings       |
 | **`number`**      | Quantitative measurements          | `value_number`  | ❌ No         | Sum, average, min/max, aggregations              |
 | **`boolean`**     | Binary yes/no responses            | `value_boolean` | ❌ No         | True/false counts, percentages                   |
@@ -121,11 +137,11 @@ The `field_type` field uses **validated enums** to categorize responses and dete
 Only `text` field types are automatically enriched with AI-powered sentiment, emotion, and topic extraction. This happens asynchronously after data is saved, optimizing costs and performance. [Learn more about AI enrichment →](./ai-enrichment)
 :::
 
-:::info Why These 8 Types?
+:::info Why These 9 Types?
 These types cover 95% of experience management use cases while keeping the model simple. They map directly to common analytics patterns:
 
 - **Qualitative**: `text` → AI analysis for themes and sentiment
-- **Quantitative**: `nps`, `csat`, `rating`, `number` → Statistical aggregations
+- **Quantitative**: `nps`, `csat`, `ces`, `rating`, `number` → Statistical aggregations
 - **Categorical**: `categorical` → Frequency and distribution analysis
 - **Binary/Temporal**: `boolean`, `date` → Filtering and segmentation
 :::
@@ -408,11 +424,47 @@ Use snake_case naming and consistent key names across your metadata to make quer
 
 [Learn more in PostgreSQL JSONB docs →](https://www.postgresql.org/docs/current/functions-json.html)
 
+### Journey & Touchpoint Metadata (Recommended Convention)
+
+For customer journey analysis, we recommend using these standardized metadata keys:
+
+```json
+{
+  "metadata": {
+    "journey_stage": "onboarding",
+    "touchpoint": "checkout",
+    "channel": "mobile_app",
+    "interaction_type": "transaction"
+  }
+}
+```
+
+| Key | Recommended Values | Description |
+| --- | ------------------ | ----------- |
+| `journey_stage` | `awareness`, `consideration`, `purchase`, `onboarding`, `usage`, `renewal`, `advocacy` | Where the customer is in their lifecycle |
+| `touchpoint` | Free-form (e.g., `checkout`, `support_ticket`, `feature_x`) | Specific interaction point |
+| `channel` | `web`, `mobile_app`, `email`, `support`, `in_store`, `social` | Channel of interaction |
+| `interaction_type` | `transaction`, `support`, `feedback_request`, `proactive` | Type of interaction that triggered feedback |
+
+:::tip Journey Analysis Example
+```sql
+-- NPS by journey stage
+SELECT 
+  metadata->>'journey_stage' as stage,
+  ROUND(AVG(value_number), 1) as avg_nps,
+  COUNT(*) as responses
+FROM experience_data
+WHERE field_type = 'nps' AND metadata->>'journey_stage' IS NOT NULL
+GROUP BY stage
+ORDER BY avg_nps DESC;
+```
+:::
+
 ## Best Practices
 
 ### 1. Use Validated Field Types
 
-Always use one of the 8 standardized field types. The API will reject invalid types:
+Always use one of the 9 standardized field types. The API will reject invalid types:
 
 ✅ **Good:**
 
@@ -420,7 +472,8 @@ Always use one of the 8 standardized field types. The API will reject invalid ty
 {
   "field_type": "text", // Valid enum
   "field_type": "categorical", // Valid enum
-  "field_type": "nps" // Valid enum
+  "field_type": "nps", // Valid enum
+  "field_type": "ces" // Valid enum (Customer Effort Score)
 }
 ```
 
@@ -438,12 +491,12 @@ Always use one of the 8 standardized field types. The API will reject invalid ty
 
 Only populate the appropriate `value_*` field based on `field_type`:
 
-| Field Type                        | Correct Value Column | Example                  |
-| --------------------------------- | -------------------- | ------------------------ |
-| `text`, `categorical`             | `value_text`         | `"Great product!"`       |
-| `nps`, `csat`, `rating`, `number` | `value_number`       | `9`                      |
-| `boolean`                         | `value_boolean`      | `true`                   |
-| `date`                            | `value_date`         | `"2025-01-15T10:00:00Z"` |
+| Field Type                               | Correct Value Column | Example                  |
+| ---------------------------------------- | -------------------- | ------------------------ |
+| `text`, `categorical`                    | `value_text`         | `"Great product!"`       |
+| `nps`, `csat`, `ces`, `rating`, `number` | `value_number`       | `9`                      |
+| `boolean`                                | `value_boolean`      | `true`                   |
+| `date`                                   | `value_date`         | `"2025-01-15T10:00:00Z"` |
 
 ✅ **Good:**
 

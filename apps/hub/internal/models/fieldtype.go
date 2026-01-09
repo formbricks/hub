@@ -25,6 +25,11 @@ const (
 	// Value stored in: value_number
 	FieldTypeCSAT FieldType = "csat"
 
+	// FieldTypeCES represents Customer Effort Score (typically 1-7 scale).
+	// Used for "How easy was it to...?" questions.
+	// Value stored in: value_number
+	FieldTypeCES FieldType = "ces"
+
 	// FieldTypeRating represents generic rating scales (e.g., star ratings).
 	// Used for ordinal scales like 1-5 stars or 1-10 scales.
 	// Value stored in: value_number
@@ -50,7 +55,7 @@ const (
 func (f FieldType) IsValid() bool {
 	switch f {
 	case FieldTypeText, FieldTypeCategorical, FieldTypeNPS,
-		FieldTypeCSAT, FieldTypeRating, FieldTypeNumber,
+		FieldTypeCSAT, FieldTypeCES, FieldTypeRating, FieldTypeNumber,
 		FieldTypeBoolean, FieldTypeDate:
 		return true
 	}
@@ -76,6 +81,7 @@ func AllFieldTypes() []FieldType {
 		FieldTypeCategorical,
 		FieldTypeNPS,
 		FieldTypeCSAT,
+		FieldTypeCES,
 		FieldTypeRating,
 		FieldTypeNumber,
 		FieldTypeBoolean,

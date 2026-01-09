@@ -23,307 +23,335 @@ type ExperienceDataCreate struct {
 }
 
 // SetCollectedAt sets the "collected_at" field.
-func (edc *ExperienceDataCreate) SetCollectedAt(t time.Time) *ExperienceDataCreate {
-	edc.mutation.SetCollectedAt(t)
-	return edc
+func (_c *ExperienceDataCreate) SetCollectedAt(v time.Time) *ExperienceDataCreate {
+	_c.mutation.SetCollectedAt(v)
+	return _c
 }
 
 // SetNillableCollectedAt sets the "collected_at" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableCollectedAt(t *time.Time) *ExperienceDataCreate {
-	if t != nil {
-		edc.SetCollectedAt(*t)
+func (_c *ExperienceDataCreate) SetNillableCollectedAt(v *time.Time) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetCollectedAt(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetCreatedAt sets the "created_at" field.
-func (edc *ExperienceDataCreate) SetCreatedAt(t time.Time) *ExperienceDataCreate {
-	edc.mutation.SetCreatedAt(t)
-	return edc
+func (_c *ExperienceDataCreate) SetCreatedAt(v time.Time) *ExperienceDataCreate {
+	_c.mutation.SetCreatedAt(v)
+	return _c
 }
 
 // SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableCreatedAt(t *time.Time) *ExperienceDataCreate {
-	if t != nil {
-		edc.SetCreatedAt(*t)
+func (_c *ExperienceDataCreate) SetNillableCreatedAt(v *time.Time) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetCreatedAt(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetUpdatedAt sets the "updated_at" field.
-func (edc *ExperienceDataCreate) SetUpdatedAt(t time.Time) *ExperienceDataCreate {
-	edc.mutation.SetUpdatedAt(t)
-	return edc
+func (_c *ExperienceDataCreate) SetUpdatedAt(v time.Time) *ExperienceDataCreate {
+	_c.mutation.SetUpdatedAt(v)
+	return _c
 }
 
 // SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableUpdatedAt(t *time.Time) *ExperienceDataCreate {
-	if t != nil {
-		edc.SetUpdatedAt(*t)
+func (_c *ExperienceDataCreate) SetNillableUpdatedAt(v *time.Time) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetUpdatedAt(*v)
 	}
-	return edc
+	return _c
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (_c *ExperienceDataCreate) SetTenantID(v string) *ExperienceDataCreate {
+	_c.mutation.SetTenantID(v)
+	return _c
+}
+
+// SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
+func (_c *ExperienceDataCreate) SetNillableTenantID(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetTenantID(*v)
+	}
+	return _c
+}
+
+// SetResponseID sets the "response_id" field.
+func (_c *ExperienceDataCreate) SetResponseID(v string) *ExperienceDataCreate {
+	_c.mutation.SetResponseID(v)
+	return _c
+}
+
+// SetNillableResponseID sets the "response_id" field if the given value is not nil.
+func (_c *ExperienceDataCreate) SetNillableResponseID(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetResponseID(*v)
+	}
+	return _c
 }
 
 // SetSourceType sets the "source_type" field.
-func (edc *ExperienceDataCreate) SetSourceType(s string) *ExperienceDataCreate {
-	edc.mutation.SetSourceType(s)
-	return edc
+func (_c *ExperienceDataCreate) SetSourceType(v string) *ExperienceDataCreate {
+	_c.mutation.SetSourceType(v)
+	return _c
 }
 
 // SetSourceID sets the "source_id" field.
-func (edc *ExperienceDataCreate) SetSourceID(s string) *ExperienceDataCreate {
-	edc.mutation.SetSourceID(s)
-	return edc
+func (_c *ExperienceDataCreate) SetSourceID(v string) *ExperienceDataCreate {
+	_c.mutation.SetSourceID(v)
+	return _c
 }
 
 // SetNillableSourceID sets the "source_id" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableSourceID(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetSourceID(*s)
+func (_c *ExperienceDataCreate) SetNillableSourceID(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetSourceID(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetSourceName sets the "source_name" field.
-func (edc *ExperienceDataCreate) SetSourceName(s string) *ExperienceDataCreate {
-	edc.mutation.SetSourceName(s)
-	return edc
+func (_c *ExperienceDataCreate) SetSourceName(v string) *ExperienceDataCreate {
+	_c.mutation.SetSourceName(v)
+	return _c
 }
 
 // SetNillableSourceName sets the "source_name" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableSourceName(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetSourceName(*s)
+func (_c *ExperienceDataCreate) SetNillableSourceName(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetSourceName(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetFieldID sets the "field_id" field.
-func (edc *ExperienceDataCreate) SetFieldID(s string) *ExperienceDataCreate {
-	edc.mutation.SetFieldID(s)
-	return edc
+func (_c *ExperienceDataCreate) SetFieldID(v string) *ExperienceDataCreate {
+	_c.mutation.SetFieldID(v)
+	return _c
 }
 
 // SetFieldLabel sets the "field_label" field.
-func (edc *ExperienceDataCreate) SetFieldLabel(s string) *ExperienceDataCreate {
-	edc.mutation.SetFieldLabel(s)
-	return edc
+func (_c *ExperienceDataCreate) SetFieldLabel(v string) *ExperienceDataCreate {
+	_c.mutation.SetFieldLabel(v)
+	return _c
 }
 
 // SetNillableFieldLabel sets the "field_label" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableFieldLabel(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetFieldLabel(*s)
+func (_c *ExperienceDataCreate) SetNillableFieldLabel(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetFieldLabel(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetFieldType sets the "field_type" field.
-func (edc *ExperienceDataCreate) SetFieldType(s string) *ExperienceDataCreate {
-	edc.mutation.SetFieldType(s)
-	return edc
+func (_c *ExperienceDataCreate) SetFieldType(v string) *ExperienceDataCreate {
+	_c.mutation.SetFieldType(v)
+	return _c
 }
 
 // SetValueText sets the "value_text" field.
-func (edc *ExperienceDataCreate) SetValueText(s string) *ExperienceDataCreate {
-	edc.mutation.SetValueText(s)
-	return edc
+func (_c *ExperienceDataCreate) SetValueText(v string) *ExperienceDataCreate {
+	_c.mutation.SetValueText(v)
+	return _c
 }
 
 // SetNillableValueText sets the "value_text" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableValueText(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetValueText(*s)
+func (_c *ExperienceDataCreate) SetNillableValueText(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetValueText(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetValueNumber sets the "value_number" field.
-func (edc *ExperienceDataCreate) SetValueNumber(f float64) *ExperienceDataCreate {
-	edc.mutation.SetValueNumber(f)
-	return edc
+func (_c *ExperienceDataCreate) SetValueNumber(v float64) *ExperienceDataCreate {
+	_c.mutation.SetValueNumber(v)
+	return _c
 }
 
 // SetNillableValueNumber sets the "value_number" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableValueNumber(f *float64) *ExperienceDataCreate {
-	if f != nil {
-		edc.SetValueNumber(*f)
+func (_c *ExperienceDataCreate) SetNillableValueNumber(v *float64) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetValueNumber(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetValueBoolean sets the "value_boolean" field.
-func (edc *ExperienceDataCreate) SetValueBoolean(b bool) *ExperienceDataCreate {
-	edc.mutation.SetValueBoolean(b)
-	return edc
+func (_c *ExperienceDataCreate) SetValueBoolean(v bool) *ExperienceDataCreate {
+	_c.mutation.SetValueBoolean(v)
+	return _c
 }
 
 // SetNillableValueBoolean sets the "value_boolean" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableValueBoolean(b *bool) *ExperienceDataCreate {
-	if b != nil {
-		edc.SetValueBoolean(*b)
+func (_c *ExperienceDataCreate) SetNillableValueBoolean(v *bool) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetValueBoolean(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetValueDate sets the "value_date" field.
-func (edc *ExperienceDataCreate) SetValueDate(t time.Time) *ExperienceDataCreate {
-	edc.mutation.SetValueDate(t)
-	return edc
+func (_c *ExperienceDataCreate) SetValueDate(v time.Time) *ExperienceDataCreate {
+	_c.mutation.SetValueDate(v)
+	return _c
 }
 
 // SetNillableValueDate sets the "value_date" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableValueDate(t *time.Time) *ExperienceDataCreate {
-	if t != nil {
-		edc.SetValueDate(*t)
+func (_c *ExperienceDataCreate) SetNillableValueDate(v *time.Time) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetValueDate(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetValueJSON sets the "value_json" field.
-func (edc *ExperienceDataCreate) SetValueJSON(m map[string]interface{}) *ExperienceDataCreate {
-	edc.mutation.SetValueJSON(m)
-	return edc
+func (_c *ExperienceDataCreate) SetValueJSON(v map[string]interface{}) *ExperienceDataCreate {
+	_c.mutation.SetValueJSON(v)
+	return _c
 }
 
 // SetMetadata sets the "metadata" field.
-func (edc *ExperienceDataCreate) SetMetadata(m map[string]interface{}) *ExperienceDataCreate {
-	edc.mutation.SetMetadata(m)
-	return edc
+func (_c *ExperienceDataCreate) SetMetadata(v map[string]interface{}) *ExperienceDataCreate {
+	_c.mutation.SetMetadata(v)
+	return _c
 }
 
 // SetLanguage sets the "language" field.
-func (edc *ExperienceDataCreate) SetLanguage(s string) *ExperienceDataCreate {
-	edc.mutation.SetLanguage(s)
-	return edc
+func (_c *ExperienceDataCreate) SetLanguage(v string) *ExperienceDataCreate {
+	_c.mutation.SetLanguage(v)
+	return _c
 }
 
 // SetNillableLanguage sets the "language" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableLanguage(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetLanguage(*s)
+func (_c *ExperienceDataCreate) SetNillableLanguage(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetLanguage(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetSentiment sets the "sentiment" field.
-func (edc *ExperienceDataCreate) SetSentiment(s string) *ExperienceDataCreate {
-	edc.mutation.SetSentiment(s)
-	return edc
+func (_c *ExperienceDataCreate) SetSentiment(v string) *ExperienceDataCreate {
+	_c.mutation.SetSentiment(v)
+	return _c
 }
 
 // SetNillableSentiment sets the "sentiment" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableSentiment(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetSentiment(*s)
+func (_c *ExperienceDataCreate) SetNillableSentiment(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetSentiment(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetSentimentScore sets the "sentiment_score" field.
-func (edc *ExperienceDataCreate) SetSentimentScore(f float64) *ExperienceDataCreate {
-	edc.mutation.SetSentimentScore(f)
-	return edc
+func (_c *ExperienceDataCreate) SetSentimentScore(v float64) *ExperienceDataCreate {
+	_c.mutation.SetSentimentScore(v)
+	return _c
 }
 
 // SetNillableSentimentScore sets the "sentiment_score" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableSentimentScore(f *float64) *ExperienceDataCreate {
-	if f != nil {
-		edc.SetSentimentScore(*f)
+func (_c *ExperienceDataCreate) SetNillableSentimentScore(v *float64) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetSentimentScore(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetEmotion sets the "emotion" field.
-func (edc *ExperienceDataCreate) SetEmotion(s string) *ExperienceDataCreate {
-	edc.mutation.SetEmotion(s)
-	return edc
+func (_c *ExperienceDataCreate) SetEmotion(v string) *ExperienceDataCreate {
+	_c.mutation.SetEmotion(v)
+	return _c
 }
 
 // SetNillableEmotion sets the "emotion" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableEmotion(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetEmotion(*s)
+func (_c *ExperienceDataCreate) SetNillableEmotion(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetEmotion(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetTopics sets the "topics" field.
-func (edc *ExperienceDataCreate) SetTopics(s []string) *ExperienceDataCreate {
-	edc.mutation.SetTopics(s)
-	return edc
+func (_c *ExperienceDataCreate) SetTopics(v []string) *ExperienceDataCreate {
+	_c.mutation.SetTopics(v)
+	return _c
 }
 
 // SetUserIdentifier sets the "user_identifier" field.
-func (edc *ExperienceDataCreate) SetUserIdentifier(s string) *ExperienceDataCreate {
-	edc.mutation.SetUserIdentifier(s)
-	return edc
+func (_c *ExperienceDataCreate) SetUserIdentifier(v string) *ExperienceDataCreate {
+	_c.mutation.SetUserIdentifier(v)
+	return _c
 }
 
 // SetNillableUserIdentifier sets the "user_identifier" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableUserIdentifier(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetUserIdentifier(*s)
+func (_c *ExperienceDataCreate) SetNillableUserIdentifier(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetUserIdentifier(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetEmbedding sets the "embedding" field.
-func (edc *ExperienceDataCreate) SetEmbedding(pg pgvector.Vector) *ExperienceDataCreate {
-	edc.mutation.SetEmbedding(pg)
-	return edc
+func (_c *ExperienceDataCreate) SetEmbedding(v pgvector.Vector) *ExperienceDataCreate {
+	_c.mutation.SetEmbedding(v)
+	return _c
 }
 
 // SetNillableEmbedding sets the "embedding" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableEmbedding(pg *pgvector.Vector) *ExperienceDataCreate {
-	if pg != nil {
-		edc.SetEmbedding(*pg)
+func (_c *ExperienceDataCreate) SetNillableEmbedding(v *pgvector.Vector) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetEmbedding(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetEmbeddingModel sets the "embedding_model" field.
-func (edc *ExperienceDataCreate) SetEmbeddingModel(s string) *ExperienceDataCreate {
-	edc.mutation.SetEmbeddingModel(s)
-	return edc
+func (_c *ExperienceDataCreate) SetEmbeddingModel(v string) *ExperienceDataCreate {
+	_c.mutation.SetEmbeddingModel(v)
+	return _c
 }
 
 // SetNillableEmbeddingModel sets the "embedding_model" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableEmbeddingModel(s *string) *ExperienceDataCreate {
-	if s != nil {
-		edc.SetEmbeddingModel(*s)
+func (_c *ExperienceDataCreate) SetNillableEmbeddingModel(v *string) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetEmbeddingModel(*v)
 	}
-	return edc
+	return _c
 }
 
 // SetID sets the "id" field.
-func (edc *ExperienceDataCreate) SetID(u uuid.UUID) *ExperienceDataCreate {
-	edc.mutation.SetID(u)
-	return edc
+func (_c *ExperienceDataCreate) SetID(v uuid.UUID) *ExperienceDataCreate {
+	_c.mutation.SetID(v)
+	return _c
 }
 
 // SetNillableID sets the "id" field if the given value is not nil.
-func (edc *ExperienceDataCreate) SetNillableID(u *uuid.UUID) *ExperienceDataCreate {
-	if u != nil {
-		edc.SetID(*u)
+func (_c *ExperienceDataCreate) SetNillableID(v *uuid.UUID) *ExperienceDataCreate {
+	if v != nil {
+		_c.SetID(*v)
 	}
-	return edc
+	return _c
 }
 
 // Mutation returns the ExperienceDataMutation object of the builder.
-func (edc *ExperienceDataCreate) Mutation() *ExperienceDataMutation {
-	return edc.mutation
+func (_c *ExperienceDataCreate) Mutation() *ExperienceDataMutation {
+	return _c.mutation
 }
 
 // Save creates the ExperienceData in the database.
-func (edc *ExperienceDataCreate) Save(ctx context.Context) (*ExperienceData, error) {
-	edc.defaults()
-	return withHooks(ctx, edc.sqlSave, edc.mutation, edc.hooks)
+func (_c *ExperienceDataCreate) Save(ctx context.Context) (*ExperienceData, error) {
+	_c.defaults()
+	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
 // SaveX calls Save and panics if Save returns an error.
-func (edc *ExperienceDataCreate) SaveX(ctx context.Context) *ExperienceData {
-	v, err := edc.Save(ctx)
+func (_c *ExperienceDataCreate) SaveX(ctx context.Context) *ExperienceData {
+	v, err := _c.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -331,74 +359,84 @@ func (edc *ExperienceDataCreate) SaveX(ctx context.Context) *ExperienceData {
 }
 
 // Exec executes the query.
-func (edc *ExperienceDataCreate) Exec(ctx context.Context) error {
-	_, err := edc.Save(ctx)
+func (_c *ExperienceDataCreate) Exec(ctx context.Context) error {
+	_, err := _c.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (edc *ExperienceDataCreate) ExecX(ctx context.Context) {
-	if err := edc.Exec(ctx); err != nil {
+func (_c *ExperienceDataCreate) ExecX(ctx context.Context) {
+	if err := _c.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
 // defaults sets the default values of the builder before save.
-func (edc *ExperienceDataCreate) defaults() {
-	if _, ok := edc.mutation.CollectedAt(); !ok {
+func (_c *ExperienceDataCreate) defaults() {
+	if _, ok := _c.mutation.CollectedAt(); !ok {
 		v := experiencedata.DefaultCollectedAt()
-		edc.mutation.SetCollectedAt(v)
+		_c.mutation.SetCollectedAt(v)
 	}
-	if _, ok := edc.mutation.CreatedAt(); !ok {
+	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := experiencedata.DefaultCreatedAt()
-		edc.mutation.SetCreatedAt(v)
+		_c.mutation.SetCreatedAt(v)
 	}
-	if _, ok := edc.mutation.UpdatedAt(); !ok {
+	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		v := experiencedata.DefaultUpdatedAt()
-		edc.mutation.SetUpdatedAt(v)
+		_c.mutation.SetUpdatedAt(v)
 	}
-	if _, ok := edc.mutation.ID(); !ok {
+	if _, ok := _c.mutation.ID(); !ok {
 		v := experiencedata.DefaultID()
-		edc.mutation.SetID(v)
+		_c.mutation.SetID(v)
 	}
 }
 
 // check runs all checks and user-defined validators on the builder.
-func (edc *ExperienceDataCreate) check() error {
-	if _, ok := edc.mutation.CollectedAt(); !ok {
+func (_c *ExperienceDataCreate) check() error {
+	if _, ok := _c.mutation.CollectedAt(); !ok {
 		return &ValidationError{Name: "collected_at", err: errors.New(`ent: missing required field "ExperienceData.collected_at"`)}
 	}
-	if _, ok := edc.mutation.CreatedAt(); !ok {
+	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "ExperienceData.created_at"`)}
 	}
-	if _, ok := edc.mutation.UpdatedAt(); !ok {
+	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "ExperienceData.updated_at"`)}
 	}
-	if _, ok := edc.mutation.SourceType(); !ok {
+	if v, ok := _c.mutation.TenantID(); ok {
+		if err := experiencedata.TenantIDValidator(v); err != nil {
+			return &ValidationError{Name: "tenant_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.tenant_id": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.ResponseID(); ok {
+		if err := experiencedata.ResponseIDValidator(v); err != nil {
+			return &ValidationError{Name: "response_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.response_id": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.SourceType(); !ok {
 		return &ValidationError{Name: "source_type", err: errors.New(`ent: missing required field "ExperienceData.source_type"`)}
 	}
-	if v, ok := edc.mutation.SourceType(); ok {
+	if v, ok := _c.mutation.SourceType(); ok {
 		if err := experiencedata.SourceTypeValidator(v); err != nil {
 			return &ValidationError{Name: "source_type", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.source_type": %w`, err)}
 		}
 	}
-	if _, ok := edc.mutation.FieldID(); !ok {
+	if _, ok := _c.mutation.FieldID(); !ok {
 		return &ValidationError{Name: "field_id", err: errors.New(`ent: missing required field "ExperienceData.field_id"`)}
 	}
-	if v, ok := edc.mutation.FieldID(); ok {
+	if v, ok := _c.mutation.FieldID(); ok {
 		if err := experiencedata.FieldIDValidator(v); err != nil {
 			return &ValidationError{Name: "field_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.field_id": %w`, err)}
 		}
 	}
-	if _, ok := edc.mutation.FieldType(); !ok {
+	if _, ok := _c.mutation.FieldType(); !ok {
 		return &ValidationError{Name: "field_type", err: errors.New(`ent: missing required field "ExperienceData.field_type"`)}
 	}
-	if v, ok := edc.mutation.FieldType(); ok {
+	if v, ok := _c.mutation.FieldType(); ok {
 		if err := experiencedata.FieldTypeValidator(v); err != nil {
 			return &ValidationError{Name: "field_type", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.field_type": %w`, err)}
 		}
 	}
-	if v, ok := edc.mutation.Language(); ok {
+	if v, ok := _c.mutation.Language(); ok {
 		if err := experiencedata.LanguageValidator(v); err != nil {
 			return &ValidationError{Name: "language", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.language": %w`, err)}
 		}
@@ -406,12 +444,12 @@ func (edc *ExperienceDataCreate) check() error {
 	return nil
 }
 
-func (edc *ExperienceDataCreate) sqlSave(ctx context.Context) (*ExperienceData, error) {
-	if err := edc.check(); err != nil {
+func (_c *ExperienceDataCreate) sqlSave(ctx context.Context) (*ExperienceData, error) {
+	if err := _c.check(); err != nil {
 		return nil, err
 	}
-	_node, _spec := edc.createSpec()
-	if err := sqlgraph.CreateNode(ctx, edc.driver, _spec); err != nil {
+	_node, _spec := _c.createSpec()
+	if err := sqlgraph.CreateNode(ctx, _c.driver, _spec); err != nil {
 		if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
 		}
@@ -424,109 +462,117 @@ func (edc *ExperienceDataCreate) sqlSave(ctx context.Context) (*ExperienceData, 
 			return nil, err
 		}
 	}
-	edc.mutation.id = &_node.ID
-	edc.mutation.done = true
+	_c.mutation.id = &_node.ID
+	_c.mutation.done = true
 	return _node, nil
 }
 
-func (edc *ExperienceDataCreate) createSpec() (*ExperienceData, *sqlgraph.CreateSpec) {
+func (_c *ExperienceDataCreate) createSpec() (*ExperienceData, *sqlgraph.CreateSpec) {
 	var (
-		_node = &ExperienceData{config: edc.config}
+		_node = &ExperienceData{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(experiencedata.Table, sqlgraph.NewFieldSpec(experiencedata.FieldID, field.TypeUUID))
 	)
-	if id, ok := edc.mutation.ID(); ok {
+	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
 	}
-	if value, ok := edc.mutation.CollectedAt(); ok {
+	if value, ok := _c.mutation.CollectedAt(); ok {
 		_spec.SetField(experiencedata.FieldCollectedAt, field.TypeTime, value)
 		_node.CollectedAt = value
 	}
-	if value, ok := edc.mutation.CreatedAt(); ok {
+	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(experiencedata.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
 	}
-	if value, ok := edc.mutation.UpdatedAt(); ok {
+	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(experiencedata.FieldUpdatedAt, field.TypeTime, value)
 		_node.UpdatedAt = value
 	}
-	if value, ok := edc.mutation.SourceType(); ok {
+	if value, ok := _c.mutation.TenantID(); ok {
+		_spec.SetField(experiencedata.FieldTenantID, field.TypeString, value)
+		_node.TenantID = value
+	}
+	if value, ok := _c.mutation.ResponseID(); ok {
+		_spec.SetField(experiencedata.FieldResponseID, field.TypeString, value)
+		_node.ResponseID = value
+	}
+	if value, ok := _c.mutation.SourceType(); ok {
 		_spec.SetField(experiencedata.FieldSourceType, field.TypeString, value)
 		_node.SourceType = value
 	}
-	if value, ok := edc.mutation.SourceID(); ok {
+	if value, ok := _c.mutation.SourceID(); ok {
 		_spec.SetField(experiencedata.FieldSourceID, field.TypeString, value)
 		_node.SourceID = value
 	}
-	if value, ok := edc.mutation.SourceName(); ok {
+	if value, ok := _c.mutation.SourceName(); ok {
 		_spec.SetField(experiencedata.FieldSourceName, field.TypeString, value)
 		_node.SourceName = value
 	}
-	if value, ok := edc.mutation.FieldID(); ok {
+	if value, ok := _c.mutation.FieldID(); ok {
 		_spec.SetField(experiencedata.FieldFieldID, field.TypeString, value)
 		_node.FieldID = value
 	}
-	if value, ok := edc.mutation.FieldLabel(); ok {
+	if value, ok := _c.mutation.FieldLabel(); ok {
 		_spec.SetField(experiencedata.FieldFieldLabel, field.TypeString, value)
 		_node.FieldLabel = value
 	}
-	if value, ok := edc.mutation.FieldType(); ok {
+	if value, ok := _c.mutation.FieldType(); ok {
 		_spec.SetField(experiencedata.FieldFieldType, field.TypeString, value)
 		_node.FieldType = value
 	}
-	if value, ok := edc.mutation.ValueText(); ok {
+	if value, ok := _c.mutation.ValueText(); ok {
 		_spec.SetField(experiencedata.FieldValueText, field.TypeString, value)
 		_node.ValueText = &value
 	}
-	if value, ok := edc.mutation.ValueNumber(); ok {
+	if value, ok := _c.mutation.ValueNumber(); ok {
 		_spec.SetField(experiencedata.FieldValueNumber, field.TypeFloat64, value)
 		_node.ValueNumber = &value
 	}
-	if value, ok := edc.mutation.ValueBoolean(); ok {
+	if value, ok := _c.mutation.ValueBoolean(); ok {
 		_spec.SetField(experiencedata.FieldValueBoolean, field.TypeBool, value)
 		_node.ValueBoolean = &value
 	}
-	if value, ok := edc.mutation.ValueDate(); ok {
+	if value, ok := _c.mutation.ValueDate(); ok {
 		_spec.SetField(experiencedata.FieldValueDate, field.TypeTime, value)
 		_node.ValueDate = &value
 	}
-	if value, ok := edc.mutation.ValueJSON(); ok {
+	if value, ok := _c.mutation.ValueJSON(); ok {
 		_spec.SetField(experiencedata.FieldValueJSON, field.TypeJSON, value)
 		_node.ValueJSON = value
 	}
-	if value, ok := edc.mutation.Metadata(); ok {
+	if value, ok := _c.mutation.Metadata(); ok {
 		_spec.SetField(experiencedata.FieldMetadata, field.TypeJSON, value)
 		_node.Metadata = value
 	}
-	if value, ok := edc.mutation.Language(); ok {
+	if value, ok := _c.mutation.Language(); ok {
 		_spec.SetField(experiencedata.FieldLanguage, field.TypeString, value)
 		_node.Language = value
 	}
-	if value, ok := edc.mutation.Sentiment(); ok {
+	if value, ok := _c.mutation.Sentiment(); ok {
 		_spec.SetField(experiencedata.FieldSentiment, field.TypeString, value)
 		_node.Sentiment = &value
 	}
-	if value, ok := edc.mutation.SentimentScore(); ok {
+	if value, ok := _c.mutation.SentimentScore(); ok {
 		_spec.SetField(experiencedata.FieldSentimentScore, field.TypeFloat64, value)
 		_node.SentimentScore = &value
 	}
-	if value, ok := edc.mutation.Emotion(); ok {
+	if value, ok := _c.mutation.Emotion(); ok {
 		_spec.SetField(experiencedata.FieldEmotion, field.TypeString, value)
 		_node.Emotion = &value
 	}
-	if value, ok := edc.mutation.Topics(); ok {
+	if value, ok := _c.mutation.Topics(); ok {
 		_spec.SetField(experiencedata.FieldTopics, field.TypeJSON, value)
 		_node.Topics = value
 	}
-	if value, ok := edc.mutation.UserIdentifier(); ok {
+	if value, ok := _c.mutation.UserIdentifier(); ok {
 		_spec.SetField(experiencedata.FieldUserIdentifier, field.TypeString, value)
 		_node.UserIdentifier = value
 	}
-	if value, ok := edc.mutation.Embedding(); ok {
+	if value, ok := _c.mutation.Embedding(); ok {
 		_spec.SetField(experiencedata.FieldEmbedding, field.TypeOther, value)
 		_node.Embedding = &value
 	}
-	if value, ok := edc.mutation.EmbeddingModel(); ok {
+	if value, ok := _c.mutation.EmbeddingModel(); ok {
 		_spec.SetField(experiencedata.FieldEmbeddingModel, field.TypeString, value)
 		_node.EmbeddingModel = &value
 	}
@@ -541,16 +587,16 @@ type ExperienceDataCreateBulk struct {
 }
 
 // Save creates the ExperienceData entities in the database.
-func (edcb *ExperienceDataCreateBulk) Save(ctx context.Context) ([]*ExperienceData, error) {
-	if edcb.err != nil {
-		return nil, edcb.err
+func (_c *ExperienceDataCreateBulk) Save(ctx context.Context) ([]*ExperienceData, error) {
+	if _c.err != nil {
+		return nil, _c.err
 	}
-	specs := make([]*sqlgraph.CreateSpec, len(edcb.builders))
-	nodes := make([]*ExperienceData, len(edcb.builders))
-	mutators := make([]Mutator, len(edcb.builders))
-	for i := range edcb.builders {
+	specs := make([]*sqlgraph.CreateSpec, len(_c.builders))
+	nodes := make([]*ExperienceData, len(_c.builders))
+	mutators := make([]Mutator, len(_c.builders))
+	for i := range _c.builders {
 		func(i int, root context.Context) {
-			builder := edcb.builders[i]
+			builder := _c.builders[i]
 			builder.defaults()
 			var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
 				mutation, ok := m.(*ExperienceDataMutation)
@@ -564,11 +610,11 @@ func (edcb *ExperienceDataCreateBulk) Save(ctx context.Context) ([]*ExperienceDa
 				var err error
 				nodes[i], specs[i] = builder.createSpec()
 				if i < len(mutators)-1 {
-					_, err = mutators[i+1].Mutate(root, edcb.builders[i+1].mutation)
+					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
 					// Invoke the actual operation on the latest mutation in the chain.
-					if err = sqlgraph.BatchCreate(ctx, edcb.driver, spec); err != nil {
+					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
 							err = &ConstraintError{msg: err.Error(), wrap: err}
 						}
@@ -588,7 +634,7 @@ func (edcb *ExperienceDataCreateBulk) Save(ctx context.Context) ([]*ExperienceDa
 		}(i, ctx)
 	}
 	if len(mutators) > 0 {
-		if _, err := mutators[0].Mutate(ctx, edcb.builders[0].mutation); err != nil {
+		if _, err := mutators[0].Mutate(ctx, _c.builders[0].mutation); err != nil {
 			return nil, err
 		}
 	}
@@ -596,8 +642,8 @@ func (edcb *ExperienceDataCreateBulk) Save(ctx context.Context) ([]*ExperienceDa
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (edcb *ExperienceDataCreateBulk) SaveX(ctx context.Context) []*ExperienceData {
-	v, err := edcb.Save(ctx)
+func (_c *ExperienceDataCreateBulk) SaveX(ctx context.Context) []*ExperienceData {
+	v, err := _c.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -605,14 +651,14 @@ func (edcb *ExperienceDataCreateBulk) SaveX(ctx context.Context) []*ExperienceDa
 }
 
 // Exec executes the query.
-func (edcb *ExperienceDataCreateBulk) Exec(ctx context.Context) error {
-	_, err := edcb.Save(ctx)
+func (_c *ExperienceDataCreateBulk) Exec(ctx context.Context) error {
+	_, err := _c.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (edcb *ExperienceDataCreateBulk) ExecX(ctx context.Context) {
-	if err := edcb.Exec(ctx); err != nil {
+func (_c *ExperienceDataCreateBulk) ExecX(ctx context.Context) {
+	if err := _c.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

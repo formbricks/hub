@@ -19,6 +19,8 @@ type Experience struct {
 	CollectedAt    time.Time              `json:"collected_at"`
 	CreatedAt      time.Time              `json:"created_at"`
 	UpdatedAt      time.Time              `json:"updated_at"`
+	TenantID       *string                `json:"tenant_id,omitempty"`
+	ResponseID     *string                `json:"response_id,omitempty"`
 	SourceType     string                 `json:"source_type"`
 	SourceID       *string                `json:"source_id,omitempty"`
 	SourceName     *string                `json:"source_name,omitempty"`
@@ -47,6 +49,8 @@ func FromEnt(e *ent.ExperienceData) *Experience {
 		CollectedAt:    e.CollectedAt,
 		CreatedAt:      e.CreatedAt,
 		UpdatedAt:      e.UpdatedAt,
+		TenantID:       stringToPtr(e.TenantID),
+		ResponseID:     stringToPtr(e.ResponseID),
 		SourceType:     e.SourceType,
 		SourceID:       stringToPtr(e.SourceID),
 		SourceName:     stringToPtr(e.SourceName),
@@ -76,6 +80,8 @@ func (e *Experience) ToEnt(entity *ent.ExperienceData) {
 	entity.CollectedAt = e.CollectedAt
 	entity.CreatedAt = e.CreatedAt
 	entity.UpdatedAt = e.UpdatedAt
+	entity.TenantID = ptrToString(e.TenantID)
+	entity.ResponseID = ptrToString(e.ResponseID)
 	entity.SourceType = e.SourceType
 	entity.SourceID = ptrToString(e.SourceID)
 	entity.SourceName = ptrToString(e.SourceName)

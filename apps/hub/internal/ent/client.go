@@ -263,8 +263,8 @@ func (c *EnrichmentJobClient) Update() *EnrichmentJobUpdate {
 }
 
 // UpdateOne returns an update builder for the given entity.
-func (c *EnrichmentJobClient) UpdateOne(ej *EnrichmentJob) *EnrichmentJobUpdateOne {
-	mutation := newEnrichmentJobMutation(c.config, OpUpdateOne, withEnrichmentJob(ej))
+func (c *EnrichmentJobClient) UpdateOne(_m *EnrichmentJob) *EnrichmentJobUpdateOne {
+	mutation := newEnrichmentJobMutation(c.config, OpUpdateOne, withEnrichmentJob(_m))
 	return &EnrichmentJobUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
@@ -281,8 +281,8 @@ func (c *EnrichmentJobClient) Delete() *EnrichmentJobDelete {
 }
 
 // DeleteOne returns a builder for deleting the given entity.
-func (c *EnrichmentJobClient) DeleteOne(ej *EnrichmentJob) *EnrichmentJobDeleteOne {
-	return c.DeleteOneID(ej.ID)
+func (c *EnrichmentJobClient) DeleteOne(_m *EnrichmentJob) *EnrichmentJobDeleteOne {
+	return c.DeleteOneID(_m.ID)
 }
 
 // DeleteOneID returns a builder for deleting the given entity by its id.
@@ -317,16 +317,16 @@ func (c *EnrichmentJobClient) GetX(ctx context.Context, id uuid.UUID) *Enrichmen
 }
 
 // QueryExperience queries the experience edge of a EnrichmentJob.
-func (c *EnrichmentJobClient) QueryExperience(ej *EnrichmentJob) *ExperienceDataQuery {
+func (c *EnrichmentJobClient) QueryExperience(_m *EnrichmentJob) *ExperienceDataQuery {
 	query := (&ExperienceDataClient{config: c.config}).Query()
 	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
-		id := ej.ID
+		id := _m.ID
 		step := sqlgraph.NewStep(
 			sqlgraph.From(enrichmentjob.Table, enrichmentjob.FieldID, id),
 			sqlgraph.To(experiencedata.Table, experiencedata.FieldID),
 			sqlgraph.Edge(sqlgraph.M2O, false, enrichmentjob.ExperienceTable, enrichmentjob.ExperienceColumn),
 		)
-		fromV = sqlgraph.Neighbors(ej.driver.Dialect(), step)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
 	}
 	return query
@@ -412,8 +412,8 @@ func (c *ExperienceDataClient) Update() *ExperienceDataUpdate {
 }
 
 // UpdateOne returns an update builder for the given entity.
-func (c *ExperienceDataClient) UpdateOne(ed *ExperienceData) *ExperienceDataUpdateOne {
-	mutation := newExperienceDataMutation(c.config, OpUpdateOne, withExperienceData(ed))
+func (c *ExperienceDataClient) UpdateOne(_m *ExperienceData) *ExperienceDataUpdateOne {
+	mutation := newExperienceDataMutation(c.config, OpUpdateOne, withExperienceData(_m))
 	return &ExperienceDataUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
@@ -430,8 +430,8 @@ func (c *ExperienceDataClient) Delete() *ExperienceDataDelete {
 }
 
 // DeleteOne returns a builder for deleting the given entity.
-func (c *ExperienceDataClient) DeleteOne(ed *ExperienceData) *ExperienceDataDeleteOne {
-	return c.DeleteOneID(ed.ID)
+func (c *ExperienceDataClient) DeleteOne(_m *ExperienceData) *ExperienceDataDeleteOne {
+	return c.DeleteOneID(_m.ID)
 }
 
 // DeleteOneID returns a builder for deleting the given entity by its id.

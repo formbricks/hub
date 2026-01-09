@@ -53,6 +53,8 @@ var (
 		{Name: "collected_at", Type: field.TypeTime},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "tenant_id", Type: field.TypeString, Nullable: true, Size: 255},
+		{Name: "response_id", Type: field.TypeString, Nullable: true, Size: 255},
 		{Name: "source_type", Type: field.TypeString},
 		{Name: "source_id", Type: field.TypeString, Nullable: true},
 		{Name: "source_name", Type: field.TypeString, Nullable: true},
@@ -81,9 +83,29 @@ var (
 		PrimaryKey: []*schema.Column{ExperienceDataColumns[0]},
 		Indexes: []*schema.Index{
 			{
+				Name:    "experiencedata_tenant_id_collected_at",
+				Unique:  false,
+				Columns: []*schema.Column{ExperienceDataColumns[4], ExperienceDataColumns[1]},
+			},
+			{
+				Name:    "experiencedata_tenant_id_source_type_source_id_collected_at",
+				Unique:  false,
+				Columns: []*schema.Column{ExperienceDataColumns[4], ExperienceDataColumns[6], ExperienceDataColumns[7], ExperienceDataColumns[1]},
+			},
+			{
+				Name:    "experiencedata_response_id",
+				Unique:  false,
+				Columns: []*schema.Column{ExperienceDataColumns[5]},
+			},
+			{
+				Name:    "experiencedata_tenant_id_response_id",
+				Unique:  false,
+				Columns: []*schema.Column{ExperienceDataColumns[4], ExperienceDataColumns[5]},
+			},
+			{
 				Name:    "experiencedata_source_type_source_id_collected_at",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[4], ExperienceDataColumns[5], ExperienceDataColumns[1]},
+				Columns: []*schema.Column{ExperienceDataColumns[6], ExperienceDataColumns[7], ExperienceDataColumns[1]},
 				Annotation: &entsql.IndexAnnotation{
 					Types: map[string]string{
 						"metadata": "GIN",
@@ -93,17 +115,22 @@ var (
 			{
 				Name:    "experiencedata_field_type_collected_at",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[9], ExperienceDataColumns[1]},
+				Columns: []*schema.Column{ExperienceDataColumns[11], ExperienceDataColumns[1]},
+			},
+			{
+				Name:    "experiencedata_field_id",
+				Unique:  false,
+				Columns: []*schema.Column{ExperienceDataColumns[9]},
 			},
 			{
 				Name:    "experiencedata_value_number",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[11]},
+				Columns: []*schema.Column{ExperienceDataColumns[13]},
 			},
 			{
 				Name:    "experiencedata_user_identifier",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[21]},
+				Columns: []*schema.Column{ExperienceDataColumns[23]},
 			},
 			{
 				Name:    "experiencedata_collected_at",
@@ -113,17 +140,17 @@ var (
 			{
 				Name:    "experiencedata_sentiment",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[17]},
+				Columns: []*schema.Column{ExperienceDataColumns[19]},
 			},
 			{
 				Name:    "experiencedata_emotion",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[19]},
+				Columns: []*schema.Column{ExperienceDataColumns[21]},
 			},
 			{
 				Name:    "experiencedata_embedding",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[22]},
+				Columns: []*schema.Column{ExperienceDataColumns[24]},
 				Annotation: &entsql.IndexAnnotation{
 					OpClass: "vector_cosine_ops",
 					Type:    "hnsw",

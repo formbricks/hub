@@ -83,7 +83,7 @@ func (*EnrichmentJob) scanValues(columns []string) ([]any, error) {
 
 // assignValues assigns the values that were returned from sql.Rows (after scanning)
 // to the EnrichmentJob fields.
-func (ej *EnrichmentJob) assignValues(columns []string, values []any) error {
+func (_m *EnrichmentJob) assignValues(columns []string, values []any) error {
 	if m, n := len(values), len(columns); m < n {
 		return fmt.Errorf("mismatch number of scan values: %d != %d", m, n)
 	}
@@ -93,60 +93,60 @@ func (ej *EnrichmentJob) assignValues(columns []string, values []any) error {
 			if value, ok := values[i].(*uuid.UUID); !ok {
 				return fmt.Errorf("unexpected type %T for field id", values[i])
 			} else if value != nil {
-				ej.ID = *value
+				_m.ID = *value
 			}
 		case enrichmentjob.FieldExperienceID:
 			if value, ok := values[i].(*uuid.UUID); !ok {
 				return fmt.Errorf("unexpected type %T for field experience_id", values[i])
 			} else if value != nil {
-				ej.ExperienceID = *value
+				_m.ExperienceID = *value
 			}
 		case enrichmentjob.FieldJobType:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field job_type", values[i])
 			} else if value.Valid {
-				ej.JobType = value.String
+				_m.JobType = value.String
 			}
 		case enrichmentjob.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field status", values[i])
 			} else if value.Valid {
-				ej.Status = value.String
+				_m.Status = value.String
 			}
 		case enrichmentjob.FieldText:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field text", values[i])
 			} else if value.Valid {
-				ej.Text = value.String
+				_m.Text = value.String
 			}
 		case enrichmentjob.FieldError:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field error", values[i])
 			} else if value.Valid {
-				ej.Error = new(string)
-				*ej.Error = value.String
+				_m.Error = new(string)
+				*_m.Error = value.String
 			}
 		case enrichmentjob.FieldAttempts:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field attempts", values[i])
 			} else if value.Valid {
-				ej.Attempts = int(value.Int64)
+				_m.Attempts = int(value.Int64)
 			}
 		case enrichmentjob.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
 			} else if value.Valid {
-				ej.CreatedAt = value.Time
+				_m.CreatedAt = value.Time
 			}
 		case enrichmentjob.FieldProcessedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field processed_at", values[i])
 			} else if value.Valid {
-				ej.ProcessedAt = new(time.Time)
-				*ej.ProcessedAt = value.Time
+				_m.ProcessedAt = new(time.Time)
+				*_m.ProcessedAt = value.Time
 			}
 		default:
-			ej.selectValues.Set(columns[i], values[i])
+			_m.selectValues.Set(columns[i], values[i])
 		}
 	}
 	return nil
@@ -154,62 +154,62 @@ func (ej *EnrichmentJob) assignValues(columns []string, values []any) error {
 
 // Value returns the ent.Value that was dynamically selected and assigned to the EnrichmentJob.
 // This includes values selected through modifiers, order, etc.
-func (ej *EnrichmentJob) Value(name string) (ent.Value, error) {
-	return ej.selectValues.Get(name)
+func (_m *EnrichmentJob) Value(name string) (ent.Value, error) {
+	return _m.selectValues.Get(name)
 }
 
 // QueryExperience queries the "experience" edge of the EnrichmentJob entity.
-func (ej *EnrichmentJob) QueryExperience() *ExperienceDataQuery {
-	return NewEnrichmentJobClient(ej.config).QueryExperience(ej)
+func (_m *EnrichmentJob) QueryExperience() *ExperienceDataQuery {
+	return NewEnrichmentJobClient(_m.config).QueryExperience(_m)
 }
 
 // Update returns a builder for updating this EnrichmentJob.
 // Note that you need to call EnrichmentJob.Unwrap() before calling this method if this EnrichmentJob
 // was returned from a transaction, and the transaction was committed or rolled back.
-func (ej *EnrichmentJob) Update() *EnrichmentJobUpdateOne {
-	return NewEnrichmentJobClient(ej.config).UpdateOne(ej)
+func (_m *EnrichmentJob) Update() *EnrichmentJobUpdateOne {
+	return NewEnrichmentJobClient(_m.config).UpdateOne(_m)
 }
 
 // Unwrap unwraps the EnrichmentJob entity that was returned from a transaction after it was closed,
 // so that all future queries will be executed through the driver which created the transaction.
-func (ej *EnrichmentJob) Unwrap() *EnrichmentJob {
-	_tx, ok := ej.config.driver.(*txDriver)
+func (_m *EnrichmentJob) Unwrap() *EnrichmentJob {
+	_tx, ok := _m.config.driver.(*txDriver)
 	if !ok {
 		panic("ent: EnrichmentJob is not a transactional entity")
 	}
-	ej.config.driver = _tx.drv
-	return ej
+	_m.config.driver = _tx.drv
+	return _m
 }
 
 // String implements the fmt.Stringer.
-func (ej *EnrichmentJob) String() string {
+func (_m *EnrichmentJob) String() string {
 	var builder strings.Builder
 	builder.WriteString("EnrichmentJob(")
-	builder.WriteString(fmt.Sprintf("id=%v, ", ej.ID))
+	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
 	builder.WriteString("experience_id=")
-	builder.WriteString(fmt.Sprintf("%v", ej.ExperienceID))
+	builder.WriteString(fmt.Sprintf("%v", _m.ExperienceID))
 	builder.WriteString(", ")
 	builder.WriteString("job_type=")
-	builder.WriteString(ej.JobType)
+	builder.WriteString(_m.JobType)
 	builder.WriteString(", ")
 	builder.WriteString("status=")
-	builder.WriteString(ej.Status)
+	builder.WriteString(_m.Status)
 	builder.WriteString(", ")
 	builder.WriteString("text=")
-	builder.WriteString(ej.Text)
+	builder.WriteString(_m.Text)
 	builder.WriteString(", ")
-	if v := ej.Error; v != nil {
+	if v := _m.Error; v != nil {
 		builder.WriteString("error=")
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
 	builder.WriteString("attempts=")
-	builder.WriteString(fmt.Sprintf("%v", ej.Attempts))
+	builder.WriteString(fmt.Sprintf("%v", _m.Attempts))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
-	builder.WriteString(ej.CreatedAt.Format(time.ANSIC))
+	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))
 	builder.WriteString(", ")
-	if v := ej.ProcessedAt; v != nil {
+	if v := _m.ProcessedAt; v != nil {
 		builder.WriteString("processed_at=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
