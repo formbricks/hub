@@ -23,134 +23,134 @@ type EnrichmentJobCreate struct {
 }
 
 // SetExperienceID sets the "experience_id" field.
-func (ejc *EnrichmentJobCreate) SetExperienceID(u uuid.UUID) *EnrichmentJobCreate {
-	ejc.mutation.SetExperienceID(u)
-	return ejc
+func (_c *EnrichmentJobCreate) SetExperienceID(v uuid.UUID) *EnrichmentJobCreate {
+	_c.mutation.SetExperienceID(v)
+	return _c
 }
 
 // SetJobType sets the "job_type" field.
-func (ejc *EnrichmentJobCreate) SetJobType(s string) *EnrichmentJobCreate {
-	ejc.mutation.SetJobType(s)
-	return ejc
+func (_c *EnrichmentJobCreate) SetJobType(v string) *EnrichmentJobCreate {
+	_c.mutation.SetJobType(v)
+	return _c
 }
 
 // SetNillableJobType sets the "job_type" field if the given value is not nil.
-func (ejc *EnrichmentJobCreate) SetNillableJobType(s *string) *EnrichmentJobCreate {
-	if s != nil {
-		ejc.SetJobType(*s)
+func (_c *EnrichmentJobCreate) SetNillableJobType(v *string) *EnrichmentJobCreate {
+	if v != nil {
+		_c.SetJobType(*v)
 	}
-	return ejc
+	return _c
 }
 
 // SetStatus sets the "status" field.
-func (ejc *EnrichmentJobCreate) SetStatus(s string) *EnrichmentJobCreate {
-	ejc.mutation.SetStatus(s)
-	return ejc
+func (_c *EnrichmentJobCreate) SetStatus(v string) *EnrichmentJobCreate {
+	_c.mutation.SetStatus(v)
+	return _c
 }
 
 // SetNillableStatus sets the "status" field if the given value is not nil.
-func (ejc *EnrichmentJobCreate) SetNillableStatus(s *string) *EnrichmentJobCreate {
-	if s != nil {
-		ejc.SetStatus(*s)
+func (_c *EnrichmentJobCreate) SetNillableStatus(v *string) *EnrichmentJobCreate {
+	if v != nil {
+		_c.SetStatus(*v)
 	}
-	return ejc
+	return _c
 }
 
 // SetText sets the "text" field.
-func (ejc *EnrichmentJobCreate) SetText(s string) *EnrichmentJobCreate {
-	ejc.mutation.SetText(s)
-	return ejc
+func (_c *EnrichmentJobCreate) SetText(v string) *EnrichmentJobCreate {
+	_c.mutation.SetText(v)
+	return _c
 }
 
 // SetError sets the "error" field.
-func (ejc *EnrichmentJobCreate) SetError(s string) *EnrichmentJobCreate {
-	ejc.mutation.SetError(s)
-	return ejc
+func (_c *EnrichmentJobCreate) SetError(v string) *EnrichmentJobCreate {
+	_c.mutation.SetError(v)
+	return _c
 }
 
 // SetNillableError sets the "error" field if the given value is not nil.
-func (ejc *EnrichmentJobCreate) SetNillableError(s *string) *EnrichmentJobCreate {
-	if s != nil {
-		ejc.SetError(*s)
+func (_c *EnrichmentJobCreate) SetNillableError(v *string) *EnrichmentJobCreate {
+	if v != nil {
+		_c.SetError(*v)
 	}
-	return ejc
+	return _c
 }
 
 // SetAttempts sets the "attempts" field.
-func (ejc *EnrichmentJobCreate) SetAttempts(i int) *EnrichmentJobCreate {
-	ejc.mutation.SetAttempts(i)
-	return ejc
+func (_c *EnrichmentJobCreate) SetAttempts(v int) *EnrichmentJobCreate {
+	_c.mutation.SetAttempts(v)
+	return _c
 }
 
 // SetNillableAttempts sets the "attempts" field if the given value is not nil.
-func (ejc *EnrichmentJobCreate) SetNillableAttempts(i *int) *EnrichmentJobCreate {
-	if i != nil {
-		ejc.SetAttempts(*i)
+func (_c *EnrichmentJobCreate) SetNillableAttempts(v *int) *EnrichmentJobCreate {
+	if v != nil {
+		_c.SetAttempts(*v)
 	}
-	return ejc
+	return _c
 }
 
 // SetCreatedAt sets the "created_at" field.
-func (ejc *EnrichmentJobCreate) SetCreatedAt(t time.Time) *EnrichmentJobCreate {
-	ejc.mutation.SetCreatedAt(t)
-	return ejc
+func (_c *EnrichmentJobCreate) SetCreatedAt(v time.Time) *EnrichmentJobCreate {
+	_c.mutation.SetCreatedAt(v)
+	return _c
 }
 
 // SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (ejc *EnrichmentJobCreate) SetNillableCreatedAt(t *time.Time) *EnrichmentJobCreate {
-	if t != nil {
-		ejc.SetCreatedAt(*t)
+func (_c *EnrichmentJobCreate) SetNillableCreatedAt(v *time.Time) *EnrichmentJobCreate {
+	if v != nil {
+		_c.SetCreatedAt(*v)
 	}
-	return ejc
+	return _c
 }
 
 // SetProcessedAt sets the "processed_at" field.
-func (ejc *EnrichmentJobCreate) SetProcessedAt(t time.Time) *EnrichmentJobCreate {
-	ejc.mutation.SetProcessedAt(t)
-	return ejc
+func (_c *EnrichmentJobCreate) SetProcessedAt(v time.Time) *EnrichmentJobCreate {
+	_c.mutation.SetProcessedAt(v)
+	return _c
 }
 
 // SetNillableProcessedAt sets the "processed_at" field if the given value is not nil.
-func (ejc *EnrichmentJobCreate) SetNillableProcessedAt(t *time.Time) *EnrichmentJobCreate {
-	if t != nil {
-		ejc.SetProcessedAt(*t)
+func (_c *EnrichmentJobCreate) SetNillableProcessedAt(v *time.Time) *EnrichmentJobCreate {
+	if v != nil {
+		_c.SetProcessedAt(*v)
 	}
-	return ejc
+	return _c
 }
 
 // SetID sets the "id" field.
-func (ejc *EnrichmentJobCreate) SetID(u uuid.UUID) *EnrichmentJobCreate {
-	ejc.mutation.SetID(u)
-	return ejc
+func (_c *EnrichmentJobCreate) SetID(v uuid.UUID) *EnrichmentJobCreate {
+	_c.mutation.SetID(v)
+	return _c
 }
 
 // SetNillableID sets the "id" field if the given value is not nil.
-func (ejc *EnrichmentJobCreate) SetNillableID(u *uuid.UUID) *EnrichmentJobCreate {
-	if u != nil {
-		ejc.SetID(*u)
+func (_c *EnrichmentJobCreate) SetNillableID(v *uuid.UUID) *EnrichmentJobCreate {
+	if v != nil {
+		_c.SetID(*v)
 	}
-	return ejc
+	return _c
 }
 
 // SetExperience sets the "experience" edge to the ExperienceData entity.
-func (ejc *EnrichmentJobCreate) SetExperience(e *ExperienceData) *EnrichmentJobCreate {
-	return ejc.SetExperienceID(e.ID)
+func (_c *EnrichmentJobCreate) SetExperience(v *ExperienceData) *EnrichmentJobCreate {
+	return _c.SetExperienceID(v.ID)
 }
 
 // Mutation returns the EnrichmentJobMutation object of the builder.
-func (ejc *EnrichmentJobCreate) Mutation() *EnrichmentJobMutation {
-	return ejc.mutation
+func (_c *EnrichmentJobCreate) Mutation() *EnrichmentJobMutation {
+	return _c.mutation
 }
 
 // Save creates the EnrichmentJob in the database.
-func (ejc *EnrichmentJobCreate) Save(ctx context.Context) (*EnrichmentJob, error) {
-	ejc.defaults()
-	return withHooks(ctx, ejc.sqlSave, ejc.mutation, ejc.hooks)
+func (_c *EnrichmentJobCreate) Save(ctx context.Context) (*EnrichmentJob, error) {
+	_c.defaults()
+	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
 // SaveX calls Save and panics if Save returns an error.
-func (ejc *EnrichmentJobCreate) SaveX(ctx context.Context) *EnrichmentJob {
-	v, err := ejc.Save(ctx)
+func (_c *EnrichmentJobCreate) SaveX(ctx context.Context) *EnrichmentJob {
+	v, err := _c.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -158,74 +158,74 @@ func (ejc *EnrichmentJobCreate) SaveX(ctx context.Context) *EnrichmentJob {
 }
 
 // Exec executes the query.
-func (ejc *EnrichmentJobCreate) Exec(ctx context.Context) error {
-	_, err := ejc.Save(ctx)
+func (_c *EnrichmentJobCreate) Exec(ctx context.Context) error {
+	_, err := _c.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (ejc *EnrichmentJobCreate) ExecX(ctx context.Context) {
-	if err := ejc.Exec(ctx); err != nil {
+func (_c *EnrichmentJobCreate) ExecX(ctx context.Context) {
+	if err := _c.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
 // defaults sets the default values of the builder before save.
-func (ejc *EnrichmentJobCreate) defaults() {
-	if _, ok := ejc.mutation.JobType(); !ok {
+func (_c *EnrichmentJobCreate) defaults() {
+	if _, ok := _c.mutation.JobType(); !ok {
 		v := enrichmentjob.DefaultJobType
-		ejc.mutation.SetJobType(v)
+		_c.mutation.SetJobType(v)
 	}
-	if _, ok := ejc.mutation.Status(); !ok {
+	if _, ok := _c.mutation.Status(); !ok {
 		v := enrichmentjob.DefaultStatus
-		ejc.mutation.SetStatus(v)
+		_c.mutation.SetStatus(v)
 	}
-	if _, ok := ejc.mutation.Attempts(); !ok {
+	if _, ok := _c.mutation.Attempts(); !ok {
 		v := enrichmentjob.DefaultAttempts
-		ejc.mutation.SetAttempts(v)
+		_c.mutation.SetAttempts(v)
 	}
-	if _, ok := ejc.mutation.CreatedAt(); !ok {
+	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := enrichmentjob.DefaultCreatedAt()
-		ejc.mutation.SetCreatedAt(v)
+		_c.mutation.SetCreatedAt(v)
 	}
-	if _, ok := ejc.mutation.ID(); !ok {
+	if _, ok := _c.mutation.ID(); !ok {
 		v := enrichmentjob.DefaultID()
-		ejc.mutation.SetID(v)
+		_c.mutation.SetID(v)
 	}
 }
 
 // check runs all checks and user-defined validators on the builder.
-func (ejc *EnrichmentJobCreate) check() error {
-	if _, ok := ejc.mutation.ExperienceID(); !ok {
+func (_c *EnrichmentJobCreate) check() error {
+	if _, ok := _c.mutation.ExperienceID(); !ok {
 		return &ValidationError{Name: "experience_id", err: errors.New(`ent: missing required field "EnrichmentJob.experience_id"`)}
 	}
-	if _, ok := ejc.mutation.JobType(); !ok {
+	if _, ok := _c.mutation.JobType(); !ok {
 		return &ValidationError{Name: "job_type", err: errors.New(`ent: missing required field "EnrichmentJob.job_type"`)}
 	}
-	if _, ok := ejc.mutation.Status(); !ok {
+	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "EnrichmentJob.status"`)}
 	}
-	if _, ok := ejc.mutation.Text(); !ok {
+	if _, ok := _c.mutation.Text(); !ok {
 		return &ValidationError{Name: "text", err: errors.New(`ent: missing required field "EnrichmentJob.text"`)}
 	}
-	if _, ok := ejc.mutation.Attempts(); !ok {
+	if _, ok := _c.mutation.Attempts(); !ok {
 		return &ValidationError{Name: "attempts", err: errors.New(`ent: missing required field "EnrichmentJob.attempts"`)}
 	}
-	if _, ok := ejc.mutation.CreatedAt(); !ok {
+	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "EnrichmentJob.created_at"`)}
 	}
-	if len(ejc.mutation.ExperienceIDs()) == 0 {
+	if len(_c.mutation.ExperienceIDs()) == 0 {
 		return &ValidationError{Name: "experience", err: errors.New(`ent: missing required edge "EnrichmentJob.experience"`)}
 	}
 	return nil
 }
 
-func (ejc *EnrichmentJobCreate) sqlSave(ctx context.Context) (*EnrichmentJob, error) {
-	if err := ejc.check(); err != nil {
+func (_c *EnrichmentJobCreate) sqlSave(ctx context.Context) (*EnrichmentJob, error) {
+	if err := _c.check(); err != nil {
 		return nil, err
 	}
-	_node, _spec := ejc.createSpec()
-	if err := sqlgraph.CreateNode(ctx, ejc.driver, _spec); err != nil {
+	_node, _spec := _c.createSpec()
+	if err := sqlgraph.CreateNode(ctx, _c.driver, _spec); err != nil {
 		if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
 		}
@@ -238,49 +238,49 @@ func (ejc *EnrichmentJobCreate) sqlSave(ctx context.Context) (*EnrichmentJob, er
 			return nil, err
 		}
 	}
-	ejc.mutation.id = &_node.ID
-	ejc.mutation.done = true
+	_c.mutation.id = &_node.ID
+	_c.mutation.done = true
 	return _node, nil
 }
 
-func (ejc *EnrichmentJobCreate) createSpec() (*EnrichmentJob, *sqlgraph.CreateSpec) {
+func (_c *EnrichmentJobCreate) createSpec() (*EnrichmentJob, *sqlgraph.CreateSpec) {
 	var (
-		_node = &EnrichmentJob{config: ejc.config}
+		_node = &EnrichmentJob{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(enrichmentjob.Table, sqlgraph.NewFieldSpec(enrichmentjob.FieldID, field.TypeUUID))
 	)
-	if id, ok := ejc.mutation.ID(); ok {
+	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
 	}
-	if value, ok := ejc.mutation.JobType(); ok {
+	if value, ok := _c.mutation.JobType(); ok {
 		_spec.SetField(enrichmentjob.FieldJobType, field.TypeString, value)
 		_node.JobType = value
 	}
-	if value, ok := ejc.mutation.Status(); ok {
+	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(enrichmentjob.FieldStatus, field.TypeString, value)
 		_node.Status = value
 	}
-	if value, ok := ejc.mutation.Text(); ok {
+	if value, ok := _c.mutation.Text(); ok {
 		_spec.SetField(enrichmentjob.FieldText, field.TypeString, value)
 		_node.Text = value
 	}
-	if value, ok := ejc.mutation.Error(); ok {
+	if value, ok := _c.mutation.Error(); ok {
 		_spec.SetField(enrichmentjob.FieldError, field.TypeString, value)
 		_node.Error = &value
 	}
-	if value, ok := ejc.mutation.Attempts(); ok {
+	if value, ok := _c.mutation.Attempts(); ok {
 		_spec.SetField(enrichmentjob.FieldAttempts, field.TypeInt, value)
 		_node.Attempts = value
 	}
-	if value, ok := ejc.mutation.CreatedAt(); ok {
+	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(enrichmentjob.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
 	}
-	if value, ok := ejc.mutation.ProcessedAt(); ok {
+	if value, ok := _c.mutation.ProcessedAt(); ok {
 		_spec.SetField(enrichmentjob.FieldProcessedAt, field.TypeTime, value)
 		_node.ProcessedAt = &value
 	}
-	if nodes := ejc.mutation.ExperienceIDs(); len(nodes) > 0 {
+	if nodes := _c.mutation.ExperienceIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
 			Inverse: false,
@@ -308,16 +308,16 @@ type EnrichmentJobCreateBulk struct {
 }
 
 // Save creates the EnrichmentJob entities in the database.
-func (ejcb *EnrichmentJobCreateBulk) Save(ctx context.Context) ([]*EnrichmentJob, error) {
-	if ejcb.err != nil {
-		return nil, ejcb.err
+func (_c *EnrichmentJobCreateBulk) Save(ctx context.Context) ([]*EnrichmentJob, error) {
+	if _c.err != nil {
+		return nil, _c.err
 	}
-	specs := make([]*sqlgraph.CreateSpec, len(ejcb.builders))
-	nodes := make([]*EnrichmentJob, len(ejcb.builders))
-	mutators := make([]Mutator, len(ejcb.builders))
-	for i := range ejcb.builders {
+	specs := make([]*sqlgraph.CreateSpec, len(_c.builders))
+	nodes := make([]*EnrichmentJob, len(_c.builders))
+	mutators := make([]Mutator, len(_c.builders))
+	for i := range _c.builders {
 		func(i int, root context.Context) {
-			builder := ejcb.builders[i]
+			builder := _c.builders[i]
 			builder.defaults()
 			var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
 				mutation, ok := m.(*EnrichmentJobMutation)
@@ -331,11 +331,11 @@ func (ejcb *EnrichmentJobCreateBulk) Save(ctx context.Context) ([]*EnrichmentJob
 				var err error
 				nodes[i], specs[i] = builder.createSpec()
 				if i < len(mutators)-1 {
-					_, err = mutators[i+1].Mutate(root, ejcb.builders[i+1].mutation)
+					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
 					// Invoke the actual operation on the latest mutation in the chain.
-					if err = sqlgraph.BatchCreate(ctx, ejcb.driver, spec); err != nil {
+					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
 							err = &ConstraintError{msg: err.Error(), wrap: err}
 						}
@@ -355,7 +355,7 @@ func (ejcb *EnrichmentJobCreateBulk) Save(ctx context.Context) ([]*EnrichmentJob
 		}(i, ctx)
 	}
 	if len(mutators) > 0 {
-		if _, err := mutators[0].Mutate(ctx, ejcb.builders[0].mutation); err != nil {
+		if _, err := mutators[0].Mutate(ctx, _c.builders[0].mutation); err != nil {
 			return nil, err
 		}
 	}
@@ -363,8 +363,8 @@ func (ejcb *EnrichmentJobCreateBulk) Save(ctx context.Context) ([]*EnrichmentJob
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (ejcb *EnrichmentJobCreateBulk) SaveX(ctx context.Context) []*EnrichmentJob {
-	v, err := ejcb.Save(ctx)
+func (_c *EnrichmentJobCreateBulk) SaveX(ctx context.Context) []*EnrichmentJob {
+	v, err := _c.Save(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -372,14 +372,14 @@ func (ejcb *EnrichmentJobCreateBulk) SaveX(ctx context.Context) []*EnrichmentJob
 }
 
 // Exec executes the query.
-func (ejcb *EnrichmentJobCreateBulk) Exec(ctx context.Context) error {
-	_, err := ejcb.Save(ctx)
+func (_c *EnrichmentJobCreateBulk) Exec(ctx context.Context) error {
+	_, err := _c.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (ejcb *EnrichmentJobCreateBulk) ExecX(ctx context.Context) {
-	if err := ejcb.Exec(ctx); err != nil {
+func (_c *EnrichmentJobCreateBulk) ExecX(ctx context.Context) {
+	if err := _c.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

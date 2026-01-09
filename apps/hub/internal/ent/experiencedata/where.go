@@ -71,6 +71,16 @@ func UpdatedAt(v time.Time) predicate.ExperienceData {
 	return predicate.ExperienceData(sql.FieldEQ(FieldUpdatedAt, v))
 }
 
+// TenantID applies equality check predicate on the "tenant_id" field. It's identical to TenantIDEQ.
+func TenantID(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldEQ(FieldTenantID, v))
+}
+
+// ResponseID applies equality check predicate on the "response_id" field. It's identical to ResponseIDEQ.
+func ResponseID(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldEQ(FieldResponseID, v))
+}
+
 // SourceType applies equality check predicate on the "source_type" field. It's identical to SourceTypeEQ.
 func SourceType(v string) predicate.ExperienceData {
 	return predicate.ExperienceData(sql.FieldEQ(FieldSourceType, v))
@@ -269,6 +279,156 @@ func UpdatedAtLT(v time.Time) predicate.ExperienceData {
 // UpdatedAtLTE applies the LTE predicate on the "updated_at" field.
 func UpdatedAtLTE(v time.Time) predicate.ExperienceData {
 	return predicate.ExperienceData(sql.FieldLTE(FieldUpdatedAt, v))
+}
+
+// TenantIDEQ applies the EQ predicate on the "tenant_id" field.
+func TenantIDEQ(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldEQ(FieldTenantID, v))
+}
+
+// TenantIDNEQ applies the NEQ predicate on the "tenant_id" field.
+func TenantIDNEQ(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldNEQ(FieldTenantID, v))
+}
+
+// TenantIDIn applies the In predicate on the "tenant_id" field.
+func TenantIDIn(vs ...string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldIn(FieldTenantID, vs...))
+}
+
+// TenantIDNotIn applies the NotIn predicate on the "tenant_id" field.
+func TenantIDNotIn(vs ...string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldNotIn(FieldTenantID, vs...))
+}
+
+// TenantIDGT applies the GT predicate on the "tenant_id" field.
+func TenantIDGT(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldGT(FieldTenantID, v))
+}
+
+// TenantIDGTE applies the GTE predicate on the "tenant_id" field.
+func TenantIDGTE(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldGTE(FieldTenantID, v))
+}
+
+// TenantIDLT applies the LT predicate on the "tenant_id" field.
+func TenantIDLT(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldLT(FieldTenantID, v))
+}
+
+// TenantIDLTE applies the LTE predicate on the "tenant_id" field.
+func TenantIDLTE(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldLTE(FieldTenantID, v))
+}
+
+// TenantIDContains applies the Contains predicate on the "tenant_id" field.
+func TenantIDContains(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldContains(FieldTenantID, v))
+}
+
+// TenantIDHasPrefix applies the HasPrefix predicate on the "tenant_id" field.
+func TenantIDHasPrefix(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldHasPrefix(FieldTenantID, v))
+}
+
+// TenantIDHasSuffix applies the HasSuffix predicate on the "tenant_id" field.
+func TenantIDHasSuffix(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldHasSuffix(FieldTenantID, v))
+}
+
+// TenantIDIsNil applies the IsNil predicate on the "tenant_id" field.
+func TenantIDIsNil() predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldIsNull(FieldTenantID))
+}
+
+// TenantIDNotNil applies the NotNil predicate on the "tenant_id" field.
+func TenantIDNotNil() predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldNotNull(FieldTenantID))
+}
+
+// TenantIDEqualFold applies the EqualFold predicate on the "tenant_id" field.
+func TenantIDEqualFold(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldEqualFold(FieldTenantID, v))
+}
+
+// TenantIDContainsFold applies the ContainsFold predicate on the "tenant_id" field.
+func TenantIDContainsFold(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldContainsFold(FieldTenantID, v))
+}
+
+// ResponseIDEQ applies the EQ predicate on the "response_id" field.
+func ResponseIDEQ(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldEQ(FieldResponseID, v))
+}
+
+// ResponseIDNEQ applies the NEQ predicate on the "response_id" field.
+func ResponseIDNEQ(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldNEQ(FieldResponseID, v))
+}
+
+// ResponseIDIn applies the In predicate on the "response_id" field.
+func ResponseIDIn(vs ...string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldIn(FieldResponseID, vs...))
+}
+
+// ResponseIDNotIn applies the NotIn predicate on the "response_id" field.
+func ResponseIDNotIn(vs ...string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldNotIn(FieldResponseID, vs...))
+}
+
+// ResponseIDGT applies the GT predicate on the "response_id" field.
+func ResponseIDGT(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldGT(FieldResponseID, v))
+}
+
+// ResponseIDGTE applies the GTE predicate on the "response_id" field.
+func ResponseIDGTE(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldGTE(FieldResponseID, v))
+}
+
+// ResponseIDLT applies the LT predicate on the "response_id" field.
+func ResponseIDLT(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldLT(FieldResponseID, v))
+}
+
+// ResponseIDLTE applies the LTE predicate on the "response_id" field.
+func ResponseIDLTE(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldLTE(FieldResponseID, v))
+}
+
+// ResponseIDContains applies the Contains predicate on the "response_id" field.
+func ResponseIDContains(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldContains(FieldResponseID, v))
+}
+
+// ResponseIDHasPrefix applies the HasPrefix predicate on the "response_id" field.
+func ResponseIDHasPrefix(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldHasPrefix(FieldResponseID, v))
+}
+
+// ResponseIDHasSuffix applies the HasSuffix predicate on the "response_id" field.
+func ResponseIDHasSuffix(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldHasSuffix(FieldResponseID, v))
+}
+
+// ResponseIDIsNil applies the IsNil predicate on the "response_id" field.
+func ResponseIDIsNil() predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldIsNull(FieldResponseID))
+}
+
+// ResponseIDNotNil applies the NotNil predicate on the "response_id" field.
+func ResponseIDNotNil() predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldNotNull(FieldResponseID))
+}
+
+// ResponseIDEqualFold applies the EqualFold predicate on the "response_id" field.
+func ResponseIDEqualFold(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldEqualFold(FieldResponseID, v))
+}
+
+// ResponseIDContainsFold applies the ContainsFold predicate on the "response_id" field.
+func ResponseIDContainsFold(v string) predicate.ExperienceData {
+	return predicate.ExperienceData(sql.FieldContainsFold(FieldResponseID, v))
 }
 
 // SourceTypeEQ applies the EQ predicate on the "source_type" field.

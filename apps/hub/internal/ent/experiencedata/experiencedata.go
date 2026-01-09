@@ -20,6 +20,10 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
+	// FieldTenantID holds the string denoting the tenant_id field in the database.
+	FieldTenantID = "tenant_id"
+	// FieldResponseID holds the string denoting the response_id field in the database.
+	FieldResponseID = "response_id"
 	// FieldSourceType holds the string denoting the source_type field in the database.
 	FieldSourceType = "source_type"
 	// FieldSourceID holds the string denoting the source_id field in the database.
@@ -70,6 +74,8 @@ var Columns = []string{
 	FieldCollectedAt,
 	FieldCreatedAt,
 	FieldUpdatedAt,
+	FieldTenantID,
+	FieldResponseID,
 	FieldSourceType,
 	FieldSourceID,
 	FieldSourceName,
@@ -111,6 +117,10 @@ var (
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
 	UpdateDefaultUpdatedAt func() time.Time
+	// TenantIDValidator is a validator for the "tenant_id" field. It is called by the builders before save.
+	TenantIDValidator func(string) error
+	// ResponseIDValidator is a validator for the "response_id" field. It is called by the builders before save.
+	ResponseIDValidator func(string) error
 	// SourceTypeValidator is a validator for the "source_type" field. It is called by the builders before save.
 	SourceTypeValidator func(string) error
 	// FieldIDValidator is a validator for the "field_id" field. It is called by the builders before save.
@@ -144,6 +154,16 @@ func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByUpdatedAt orders the results by the updated_at field.
 func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpdatedAt, opts...).ToFunc()
+}
+
+// ByTenantID orders the results by the tenant_id field.
+func ByTenantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTenantID, opts...).ToFunc()
+}
+
+// ByResponseID orders the results by the response_id field.
+func ByResponseID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldResponseID, opts...).ToFunc()
 }
 
 // BySourceType orders the results by the source_type field.

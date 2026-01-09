@@ -62,6 +62,14 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 			SetFieldType(input.Body.FieldType).
 			SetCollectedAt(collectedAt)
 
+		// Set multi-tenancy and response grouping fields
+		if input.Body.TenantID != nil {
+			builder.SetTenantID(*input.Body.TenantID)
+		}
+		if input.Body.ResponseID != nil {
+			builder.SetResponseID(*input.Body.ResponseID)
+		}
+
 		// Set optional fields
 		if input.Body.SourceID != nil {
 			builder.SetSourceID(*input.Body.SourceID)
@@ -162,6 +170,14 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 
 		// Build query
 		query := client.ExperienceData.Query()
+
+		// Apply multi-tenancy and response grouping filters
+		if input.TenantID != "" {
+			query = query.Where(experiencedata.TenantIDEQ(input.TenantID))
+		}
+		if input.ResponseID != "" {
+			query = query.Where(experiencedata.ResponseIDEQ(input.ResponseID))
+		}
 
 		// Apply filters (check for non-empty strings)
 		if input.SourceType != "" {
@@ -336,6 +352,83 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 		dispatcher.DispatchAsync(webhook.EventExperienceDeleted, entityToOutput(exp))
 
 		return &struct{}{}, nil
+	})
+
+	// DELETE /v1/experiences - Bulk delete experiences (GDPR compliance)
+	huma.Register(api, huma.Operation{
+		OperationID:   "bulk-delete-experiences",
+		Method:        "DELETE",
+		Path:          "/v1/experiences",
+		Summary:       "Bulk delete experiences by user identifier",
+		Description:   "Permanently deletes all experience data records matching the specified user_identifier. This endpoint supports GDPR Article 17 (Right to Erasure) requests.",
+		Tags:          []string{"Experiences"},
+		DefaultStatus: 200,
+	}, func(ctx context.Context, input *BulkDeleteExperiencesInput) (*BulkDeleteExperiencesOutput, error) {
+		if input.UserIdentifier == "" {
+			return nil, huma.Error400BadRequest("user_identifier query parameter is required for bulk deletion")
+		}
+
+		// Build query to find matching records
+		query := client.ExperienceData.Query().
+			Where(experiencedata.UserIdentifierEQ(input.UserIdentifier))
+
+		// Apply optional tenant filter for multi-tenant deployments
+		if input.TenantID != "" {
+			query = query.Where(experiencedata.TenantIDEQ(input.TenantID))
+		}
+
+		// Get experiences before deleting (for webhooks)
+		experiences, err := query.All(ctx)
+		if err != nil {
+			return nil, handleDatabaseError(logger, err, "query for bulk deletion", input.UserIdentifier)
+		}
+
+		if len(experiences) == 0 {
+			return &BulkDeleteExperiencesOutput{
+				Body: struct {
+					DeletedCount int    `json:"deleted_count" doc:"Number of records deleted"`
+					Message      string `json:"message" doc:"Human-readable status message"`
+				}{
+					DeletedCount: 0,
+					Message:      "No records found matching the specified user_identifier",
+				},
+			}, nil
+		}
+
+		// Build delete query
+		deleteQuery := client.ExperienceData.Delete().
+			Where(experiencedata.UserIdentifierEQ(input.UserIdentifier))
+
+		if input.TenantID != "" {
+			deleteQuery = deleteQuery.Where(experiencedata.TenantIDEQ(input.TenantID))
+		}
+
+		// Execute bulk deletion
+		deletedCount, err := deleteQuery.Exec(ctx)
+		if err != nil {
+			return nil, handleDatabaseError(logger, err, "bulk delete", input.UserIdentifier)
+		}
+
+		logger.Info("bulk deletion completed",
+			"user_identifier", input.UserIdentifier,
+			"tenant_id", input.TenantID,
+			"deleted_count", deletedCount,
+		)
+
+		// Dispatch webhooks for each deleted experience
+		for _, exp := range experiences {
+			dispatcher.DispatchAsync(webhook.EventExperienceDeleted, entityToOutput(exp))
+		}
+
+		return &BulkDeleteExperiencesOutput{
+			Body: struct {
+				DeletedCount int    `json:"deleted_count" doc:"Number of records deleted"`
+				Message      string `json:"message" doc:"Human-readable status message"`
+			}{
+				DeletedCount: deletedCount,
+				Message:      fmt.Sprintf("Successfully deleted %d experience record(s) for user_identifier: %s", deletedCount, input.UserIdentifier),
+			},
+		}, nil
 	})
 }
 

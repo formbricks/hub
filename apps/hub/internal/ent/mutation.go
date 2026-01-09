@@ -881,6 +881,8 @@ type ExperienceDataMutation struct {
 	collected_at       *time.Time
 	created_at         *time.Time
 	updated_at         *time.Time
+	tenant_id          *string
+	response_id        *string
 	source_type        *string
 	source_id          *string
 	source_name        *string
@@ -1120,6 +1122,104 @@ func (m *ExperienceDataMutation) OldUpdatedAt(ctx context.Context) (v time.Time,
 // ResetUpdatedAt resets all changes to the "updated_at" field.
 func (m *ExperienceDataMutation) ResetUpdatedAt() {
 	m.updated_at = nil
+}
+
+// SetTenantID sets the "tenant_id" field.
+func (m *ExperienceDataMutation) SetTenantID(s string) {
+	m.tenant_id = &s
+}
+
+// TenantID returns the value of the "tenant_id" field in the mutation.
+func (m *ExperienceDataMutation) TenantID() (r string, exists bool) {
+	v := m.tenant_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTenantID returns the old "tenant_id" field's value of the ExperienceData entity.
+// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExperienceDataMutation) OldTenantID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTenantID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTenantID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTenantID: %w", err)
+	}
+	return oldValue.TenantID, nil
+}
+
+// ClearTenantID clears the value of the "tenant_id" field.
+func (m *ExperienceDataMutation) ClearTenantID() {
+	m.tenant_id = nil
+	m.clearedFields[experiencedata.FieldTenantID] = struct{}{}
+}
+
+// TenantIDCleared returns if the "tenant_id" field was cleared in this mutation.
+func (m *ExperienceDataMutation) TenantIDCleared() bool {
+	_, ok := m.clearedFields[experiencedata.FieldTenantID]
+	return ok
+}
+
+// ResetTenantID resets all changes to the "tenant_id" field.
+func (m *ExperienceDataMutation) ResetTenantID() {
+	m.tenant_id = nil
+	delete(m.clearedFields, experiencedata.FieldTenantID)
+}
+
+// SetResponseID sets the "response_id" field.
+func (m *ExperienceDataMutation) SetResponseID(s string) {
+	m.response_id = &s
+}
+
+// ResponseID returns the value of the "response_id" field in the mutation.
+func (m *ExperienceDataMutation) ResponseID() (r string, exists bool) {
+	v := m.response_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResponseID returns the old "response_id" field's value of the ExperienceData entity.
+// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExperienceDataMutation) OldResponseID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResponseID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResponseID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResponseID: %w", err)
+	}
+	return oldValue.ResponseID, nil
+}
+
+// ClearResponseID clears the value of the "response_id" field.
+func (m *ExperienceDataMutation) ClearResponseID() {
+	m.response_id = nil
+	m.clearedFields[experiencedata.FieldResponseID] = struct{}{}
+}
+
+// ResponseIDCleared returns if the "response_id" field was cleared in this mutation.
+func (m *ExperienceDataMutation) ResponseIDCleared() bool {
+	_, ok := m.clearedFields[experiencedata.FieldResponseID]
+	return ok
+}
+
+// ResetResponseID resets all changes to the "response_id" field.
+func (m *ExperienceDataMutation) ResetResponseID() {
+	m.response_id = nil
+	delete(m.clearedFields, experiencedata.FieldResponseID)
 }
 
 // SetSourceType sets the "source_type" field.
@@ -2155,7 +2255,7 @@ func (m *ExperienceDataMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ExperienceDataMutation) Fields() []string {
-	fields := make([]string, 0, 23)
+	fields := make([]string, 0, 25)
 	if m.collected_at != nil {
 		fields = append(fields, experiencedata.FieldCollectedAt)
 	}
@@ -2164,6 +2264,12 @@ func (m *ExperienceDataMutation) Fields() []string {
 	}
 	if m.updated_at != nil {
 		fields = append(fields, experiencedata.FieldUpdatedAt)
+	}
+	if m.tenant_id != nil {
+		fields = append(fields, experiencedata.FieldTenantID)
+	}
+	if m.response_id != nil {
+		fields = append(fields, experiencedata.FieldResponseID)
 	}
 	if m.source_type != nil {
 		fields = append(fields, experiencedata.FieldSourceType)
@@ -2239,6 +2345,10 @@ func (m *ExperienceDataMutation) Field(name string) (ent.Value, bool) {
 		return m.CreatedAt()
 	case experiencedata.FieldUpdatedAt:
 		return m.UpdatedAt()
+	case experiencedata.FieldTenantID:
+		return m.TenantID()
+	case experiencedata.FieldResponseID:
+		return m.ResponseID()
 	case experiencedata.FieldSourceType:
 		return m.SourceType()
 	case experiencedata.FieldSourceID:
@@ -2294,6 +2404,10 @@ func (m *ExperienceDataMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldCreatedAt(ctx)
 	case experiencedata.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
+	case experiencedata.FieldTenantID:
+		return m.OldTenantID(ctx)
+	case experiencedata.FieldResponseID:
+		return m.OldResponseID(ctx)
 	case experiencedata.FieldSourceType:
 		return m.OldSourceType(ctx)
 	case experiencedata.FieldSourceID:
@@ -2363,6 +2477,20 @@ func (m *ExperienceDataMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpdatedAt(v)
+		return nil
+	case experiencedata.FieldTenantID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTenantID(v)
+		return nil
+	case experiencedata.FieldResponseID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResponseID(v)
 		return nil
 	case experiencedata.FieldSourceType:
 		v, ok := value.(string)
@@ -2561,6 +2689,12 @@ func (m *ExperienceDataMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *ExperienceDataMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(experiencedata.FieldTenantID) {
+		fields = append(fields, experiencedata.FieldTenantID)
+	}
+	if m.FieldCleared(experiencedata.FieldResponseID) {
+		fields = append(fields, experiencedata.FieldResponseID)
+	}
 	if m.FieldCleared(experiencedata.FieldSourceID) {
 		fields = append(fields, experiencedata.FieldSourceID)
 	}
@@ -2626,6 +2760,12 @@ func (m *ExperienceDataMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *ExperienceDataMutation) ClearField(name string) error {
 	switch name {
+	case experiencedata.FieldTenantID:
+		m.ClearTenantID()
+		return nil
+	case experiencedata.FieldResponseID:
+		m.ClearResponseID()
+		return nil
 	case experiencedata.FieldSourceID:
 		m.ClearSourceID()
 		return nil
@@ -2693,6 +2833,12 @@ func (m *ExperienceDataMutation) ResetField(name string) error {
 		return nil
 	case experiencedata.FieldUpdatedAt:
 		m.ResetUpdatedAt()
+		return nil
+	case experiencedata.FieldTenantID:
+		m.ResetTenantID()
+		return nil
+	case experiencedata.FieldResponseID:
+		m.ResetResponseID()
 		return nil
 	case experiencedata.FieldSourceType:
 		m.ResetSourceType()

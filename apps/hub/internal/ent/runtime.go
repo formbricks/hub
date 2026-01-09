@@ -53,16 +53,24 @@ func init() {
 	experiencedata.DefaultUpdatedAt = experiencedataDescUpdatedAt.Default.(func() time.Time)
 	// experiencedata.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	experiencedata.UpdateDefaultUpdatedAt = experiencedataDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// experiencedataDescTenantID is the schema descriptor for tenant_id field.
+	experiencedataDescTenantID := experiencedataFields[4].Descriptor()
+	// experiencedata.TenantIDValidator is a validator for the "tenant_id" field. It is called by the builders before save.
+	experiencedata.TenantIDValidator = experiencedataDescTenantID.Validators[0].(func(string) error)
+	// experiencedataDescResponseID is the schema descriptor for response_id field.
+	experiencedataDescResponseID := experiencedataFields[5].Descriptor()
+	// experiencedata.ResponseIDValidator is a validator for the "response_id" field. It is called by the builders before save.
+	experiencedata.ResponseIDValidator = experiencedataDescResponseID.Validators[0].(func(string) error)
 	// experiencedataDescSourceType is the schema descriptor for source_type field.
-	experiencedataDescSourceType := experiencedataFields[4].Descriptor()
+	experiencedataDescSourceType := experiencedataFields[6].Descriptor()
 	// experiencedata.SourceTypeValidator is a validator for the "source_type" field. It is called by the builders before save.
 	experiencedata.SourceTypeValidator = experiencedataDescSourceType.Validators[0].(func(string) error)
 	// experiencedataDescFieldID is the schema descriptor for field_id field.
-	experiencedataDescFieldID := experiencedataFields[7].Descriptor()
+	experiencedataDescFieldID := experiencedataFields[9].Descriptor()
 	// experiencedata.FieldIDValidator is a validator for the "field_id" field. It is called by the builders before save.
 	experiencedata.FieldIDValidator = experiencedataDescFieldID.Validators[0].(func(string) error)
 	// experiencedataDescFieldType is the schema descriptor for field_type field.
-	experiencedataDescFieldType := experiencedataFields[9].Descriptor()
+	experiencedataDescFieldType := experiencedataFields[11].Descriptor()
 	// experiencedata.FieldTypeValidator is a validator for the "field_type" field. It is called by the builders before save.
 	experiencedata.FieldTypeValidator = func() func(string) error {
 		validators := experiencedataDescFieldType.Validators
@@ -80,7 +88,7 @@ func init() {
 		}
 	}()
 	// experiencedataDescLanguage is the schema descriptor for language field.
-	experiencedataDescLanguage := experiencedataFields[16].Descriptor()
+	experiencedataDescLanguage := experiencedataFields[18].Descriptor()
 	// experiencedata.LanguageValidator is a validator for the "language" field. It is called by the builders before save.
 	experiencedata.LanguageValidator = experiencedataDescLanguage.Validators[0].(func(string) error)
 	// experiencedataDescID is the schema descriptor for id field.

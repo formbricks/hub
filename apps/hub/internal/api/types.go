@@ -11,6 +11,10 @@ import (
 // CreateExperienceInput represents the input for creating an experience
 type CreateExperienceInput struct {
 	Body struct {
+		// Multi-tenancy and response grouping
+		TenantID   *string `json:"tenant_id,omitempty" example:"org-123" doc:"Tenant/organization identifier for multi-tenancy" maxLength:"255"`
+		ResponseID *string `json:"response_id,omitempty" example:"resp-abc-123" doc:"Groups multiple answers from a single submission/session" maxLength:"255"`
+
 		// Source tracking
 		SourceType string  `json:"source_type" example:"survey" doc:"Type of feedback source (e.g., survey, review, feedback_form)" minLength:"1" maxLength:"255"`
 		SourceID   *string `json:"source_id,omitempty" example:"survey-123" doc:"Reference to survey/form/ticket ID"`
@@ -19,7 +23,7 @@ type CreateExperienceInput struct {
 		// Question/Field identification
 		FieldID    string  `json:"field_id" example:"q1" doc:"Identifier for the question/field" minLength:"1" maxLength:"255"`
 		FieldLabel *string `json:"field_label,omitempty" example:"How satisfied are you?" doc:"The actual question text"`
-		FieldType  string  `json:"field_type" example:"rating" doc:"Field type: text (enrichable), categorical, nps, csat, rating, number, boolean, date" enum:"text,categorical,nps,csat,rating,number,boolean,date" minLength:"1" maxLength:"255"`
+		FieldType  string  `json:"field_type" example:"rating" doc:"Field type: text (enrichable), categorical, nps, csat, ces, rating, number, boolean, date" enum:"text,categorical,nps,csat,ces,rating,number,boolean,date" minLength:"1" maxLength:"255"`
 
 		// Response values
 		ValueText    *string                `json:"value_text,omitempty" example:"Great service!" doc:"For open-ended text responses"`
@@ -61,8 +65,24 @@ type DeleteExperienceInput struct {
 	ID string `path:"id" doc:"Experience ID (UUID)" format:"uuid"`
 }
 
+// BulkDeleteExperiencesInput represents the input for bulk deleting experiences (GDPR compliance)
+type BulkDeleteExperiencesInput struct {
+	UserIdentifier string `query:"user_identifier" doc:"Delete all records matching this user identifier (required)" minLength:"1"`
+	TenantID       string `query:"tenant_id" doc:"Filter by tenant ID (optional, for multi-tenant deployments)"`
+}
+
+// BulkDeleteExperiencesOutput represents the output for bulk deletion
+type BulkDeleteExperiencesOutput struct {
+	Body struct {
+		DeletedCount int    `json:"deleted_count" doc:"Number of records deleted"`
+		Message      string `json:"message" doc:"Human-readable status message"`
+	}
+}
+
 // ListExperiencesInput represents the input for listing experiences
 type ListExperiencesInput struct {
+	TenantID       string `query:"tenant_id" doc:"Filter by tenant ID (for multi-tenant deployments)"`
+	ResponseID     string `query:"response_id" doc:"Filter by response ID (get all answers from one submission)"`
 	SourceType     string `query:"source_type" doc:"Filter by source type"`
 	SourceID       string `query:"source_id" doc:"Filter by source ID"`
 	FieldType      string `query:"field_type" doc:"Filter by field type"`
@@ -79,6 +99,8 @@ type ExperienceData struct {
 	CollectedAt    time.Time              `json:"collected_at" doc:"When the feedback was collected"`
 	CreatedAt      time.Time              `json:"created_at" doc:"When this record was created"`
 	UpdatedAt      time.Time              `json:"updated_at" doc:"When this record was last updated"`
+	TenantID       *string                `json:"tenant_id,omitempty" doc:"Tenant/organization identifier"`
+	ResponseID     *string                `json:"response_id,omitempty" doc:"Groups answers from a single submission"`
 	SourceType     string                 `json:"source_type" doc:"Type of feedback source"`
 	SourceID       *string                `json:"source_id,omitempty" doc:"Reference to survey/form/ticket ID"`
 	SourceName     *string                `json:"source_name,omitempty" doc:"Human-readable name"`
@@ -121,6 +143,8 @@ func (e *ExperienceData) FromModel(m *models.Experience) {
 	e.CollectedAt = m.CollectedAt
 	e.CreatedAt = m.CreatedAt
 	e.UpdatedAt = m.UpdatedAt
+	e.TenantID = m.TenantID
+	e.ResponseID = m.ResponseID
 	e.SourceType = m.SourceType
 	e.SourceID = m.SourceID
 	e.SourceName = m.SourceName

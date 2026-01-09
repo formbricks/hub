@@ -29,40 +29,40 @@ type ExperienceDataQuery struct {
 }
 
 // Where adds a new predicate for the ExperienceDataQuery builder.
-func (edq *ExperienceDataQuery) Where(ps ...predicate.ExperienceData) *ExperienceDataQuery {
-	edq.predicates = append(edq.predicates, ps...)
-	return edq
+func (_q *ExperienceDataQuery) Where(ps ...predicate.ExperienceData) *ExperienceDataQuery {
+	_q.predicates = append(_q.predicates, ps...)
+	return _q
 }
 
 // Limit the number of records to be returned by this query.
-func (edq *ExperienceDataQuery) Limit(limit int) *ExperienceDataQuery {
-	edq.ctx.Limit = &limit
-	return edq
+func (_q *ExperienceDataQuery) Limit(limit int) *ExperienceDataQuery {
+	_q.ctx.Limit = &limit
+	return _q
 }
 
 // Offset to start from.
-func (edq *ExperienceDataQuery) Offset(offset int) *ExperienceDataQuery {
-	edq.ctx.Offset = &offset
-	return edq
+func (_q *ExperienceDataQuery) Offset(offset int) *ExperienceDataQuery {
+	_q.ctx.Offset = &offset
+	return _q
 }
 
 // Unique configures the query builder to filter duplicate records on query.
 // By default, unique is set to true, and can be disabled using this method.
-func (edq *ExperienceDataQuery) Unique(unique bool) *ExperienceDataQuery {
-	edq.ctx.Unique = &unique
-	return edq
+func (_q *ExperienceDataQuery) Unique(unique bool) *ExperienceDataQuery {
+	_q.ctx.Unique = &unique
+	return _q
 }
 
 // Order specifies how the records should be ordered.
-func (edq *ExperienceDataQuery) Order(o ...experiencedata.OrderOption) *ExperienceDataQuery {
-	edq.order = append(edq.order, o...)
-	return edq
+func (_q *ExperienceDataQuery) Order(o ...experiencedata.OrderOption) *ExperienceDataQuery {
+	_q.order = append(_q.order, o...)
+	return _q
 }
 
 // First returns the first ExperienceData entity from the query.
 // Returns a *NotFoundError when no ExperienceData was found.
-func (edq *ExperienceDataQuery) First(ctx context.Context) (*ExperienceData, error) {
-	nodes, err := edq.Limit(1).All(setContextOp(ctx, edq.ctx, ent.OpQueryFirst))
+func (_q *ExperienceDataQuery) First(ctx context.Context) (*ExperienceData, error) {
+	nodes, err := _q.Limit(1).All(setContextOp(ctx, _q.ctx, ent.OpQueryFirst))
 	if err != nil {
 		return nil, err
 	}
@@ -73,8 +73,8 @@ func (edq *ExperienceDataQuery) First(ctx context.Context) (*ExperienceData, err
 }
 
 // FirstX is like First, but panics if an error occurs.
-func (edq *ExperienceDataQuery) FirstX(ctx context.Context) *ExperienceData {
-	node, err := edq.First(ctx)
+func (_q *ExperienceDataQuery) FirstX(ctx context.Context) *ExperienceData {
+	node, err := _q.First(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
 	}
@@ -83,9 +83,9 @@ func (edq *ExperienceDataQuery) FirstX(ctx context.Context) *ExperienceData {
 
 // FirstID returns the first ExperienceData ID from the query.
 // Returns a *NotFoundError when no ExperienceData ID was found.
-func (edq *ExperienceDataQuery) FirstID(ctx context.Context) (id uuid.UUID, err error) {
+func (_q *ExperienceDataQuery) FirstID(ctx context.Context) (id uuid.UUID, err error) {
 	var ids []uuid.UUID
-	if ids, err = edq.Limit(1).IDs(setContextOp(ctx, edq.ctx, ent.OpQueryFirstID)); err != nil {
+	if ids, err = _q.Limit(1).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryFirstID)); err != nil {
 		return
 	}
 	if len(ids) == 0 {
@@ -96,8 +96,8 @@ func (edq *ExperienceDataQuery) FirstID(ctx context.Context) (id uuid.UUID, err 
 }
 
 // FirstIDX is like FirstID, but panics if an error occurs.
-func (edq *ExperienceDataQuery) FirstIDX(ctx context.Context) uuid.UUID {
-	id, err := edq.FirstID(ctx)
+func (_q *ExperienceDataQuery) FirstIDX(ctx context.Context) uuid.UUID {
+	id, err := _q.FirstID(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
 	}
@@ -107,8 +107,8 @@ func (edq *ExperienceDataQuery) FirstIDX(ctx context.Context) uuid.UUID {
 // Only returns a single ExperienceData entity found by the query, ensuring it only returns one.
 // Returns a *NotSingularError when more than one ExperienceData entity is found.
 // Returns a *NotFoundError when no ExperienceData entities are found.
-func (edq *ExperienceDataQuery) Only(ctx context.Context) (*ExperienceData, error) {
-	nodes, err := edq.Limit(2).All(setContextOp(ctx, edq.ctx, ent.OpQueryOnly))
+func (_q *ExperienceDataQuery) Only(ctx context.Context) (*ExperienceData, error) {
+	nodes, err := _q.Limit(2).All(setContextOp(ctx, _q.ctx, ent.OpQueryOnly))
 	if err != nil {
 		return nil, err
 	}
@@ -123,8 +123,8 @@ func (edq *ExperienceDataQuery) Only(ctx context.Context) (*ExperienceData, erro
 }
 
 // OnlyX is like Only, but panics if an error occurs.
-func (edq *ExperienceDataQuery) OnlyX(ctx context.Context) *ExperienceData {
-	node, err := edq.Only(ctx)
+func (_q *ExperienceDataQuery) OnlyX(ctx context.Context) *ExperienceData {
+	node, err := _q.Only(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -134,9 +134,9 @@ func (edq *ExperienceDataQuery) OnlyX(ctx context.Context) *ExperienceData {
 // OnlyID is like Only, but returns the only ExperienceData ID in the query.
 // Returns a *NotSingularError when more than one ExperienceData ID is found.
 // Returns a *NotFoundError when no entities are found.
-func (edq *ExperienceDataQuery) OnlyID(ctx context.Context) (id uuid.UUID, err error) {
+func (_q *ExperienceDataQuery) OnlyID(ctx context.Context) (id uuid.UUID, err error) {
 	var ids []uuid.UUID
-	if ids, err = edq.Limit(2).IDs(setContextOp(ctx, edq.ctx, ent.OpQueryOnlyID)); err != nil {
+	if ids, err = _q.Limit(2).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryOnlyID)); err != nil {
 		return
 	}
 	switch len(ids) {
@@ -151,8 +151,8 @@ func (edq *ExperienceDataQuery) OnlyID(ctx context.Context) (id uuid.UUID, err e
 }
 
 // OnlyIDX is like OnlyID, but panics if an error occurs.
-func (edq *ExperienceDataQuery) OnlyIDX(ctx context.Context) uuid.UUID {
-	id, err := edq.OnlyID(ctx)
+func (_q *ExperienceDataQuery) OnlyIDX(ctx context.Context) uuid.UUID {
+	id, err := _q.OnlyID(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -160,18 +160,18 @@ func (edq *ExperienceDataQuery) OnlyIDX(ctx context.Context) uuid.UUID {
 }
 
 // All executes the query and returns a list of ExperienceDataSlice.
-func (edq *ExperienceDataQuery) All(ctx context.Context) ([]*ExperienceData, error) {
-	ctx = setContextOp(ctx, edq.ctx, ent.OpQueryAll)
-	if err := edq.prepareQuery(ctx); err != nil {
+func (_q *ExperienceDataQuery) All(ctx context.Context) ([]*ExperienceData, error) {
+	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryAll)
+	if err := _q.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
 	qr := querierAll[[]*ExperienceData, *ExperienceDataQuery]()
-	return withInterceptors[[]*ExperienceData](ctx, edq, qr, edq.inters)
+	return withInterceptors[[]*ExperienceData](ctx, _q, qr, _q.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
-func (edq *ExperienceDataQuery) AllX(ctx context.Context) []*ExperienceData {
-	nodes, err := edq.All(ctx)
+func (_q *ExperienceDataQuery) AllX(ctx context.Context) []*ExperienceData {
+	nodes, err := _q.All(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -179,20 +179,20 @@ func (edq *ExperienceDataQuery) AllX(ctx context.Context) []*ExperienceData {
 }
 
 // IDs executes the query and returns a list of ExperienceData IDs.
-func (edq *ExperienceDataQuery) IDs(ctx context.Context) (ids []uuid.UUID, err error) {
-	if edq.ctx.Unique == nil && edq.path != nil {
-		edq.Unique(true)
+func (_q *ExperienceDataQuery) IDs(ctx context.Context) (ids []uuid.UUID, err error) {
+	if _q.ctx.Unique == nil && _q.path != nil {
+		_q.Unique(true)
 	}
-	ctx = setContextOp(ctx, edq.ctx, ent.OpQueryIDs)
-	if err = edq.Select(experiencedata.FieldID).Scan(ctx, &ids); err != nil {
+	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryIDs)
+	if err = _q.Select(experiencedata.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
 // IDsX is like IDs, but panics if an error occurs.
-func (edq *ExperienceDataQuery) IDsX(ctx context.Context) []uuid.UUID {
-	ids, err := edq.IDs(ctx)
+func (_q *ExperienceDataQuery) IDsX(ctx context.Context) []uuid.UUID {
+	ids, err := _q.IDs(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -200,17 +200,17 @@ func (edq *ExperienceDataQuery) IDsX(ctx context.Context) []uuid.UUID {
 }
 
 // Count returns the count of the given query.
-func (edq *ExperienceDataQuery) Count(ctx context.Context) (int, error) {
-	ctx = setContextOp(ctx, edq.ctx, ent.OpQueryCount)
-	if err := edq.prepareQuery(ctx); err != nil {
+func (_q *ExperienceDataQuery) Count(ctx context.Context) (int, error) {
+	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryCount)
+	if err := _q.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return withInterceptors[int](ctx, edq, querierCount[*ExperienceDataQuery](), edq.inters)
+	return withInterceptors[int](ctx, _q, querierCount[*ExperienceDataQuery](), _q.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
-func (edq *ExperienceDataQuery) CountX(ctx context.Context) int {
-	count, err := edq.Count(ctx)
+func (_q *ExperienceDataQuery) CountX(ctx context.Context) int {
+	count, err := _q.Count(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -218,9 +218,9 @@ func (edq *ExperienceDataQuery) CountX(ctx context.Context) int {
 }
 
 // Exist returns true if the query has elements in the graph.
-func (edq *ExperienceDataQuery) Exist(ctx context.Context) (bool, error) {
-	ctx = setContextOp(ctx, edq.ctx, ent.OpQueryExist)
-	switch _, err := edq.FirstID(ctx); {
+func (_q *ExperienceDataQuery) Exist(ctx context.Context) (bool, error) {
+	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryExist)
+	switch _, err := _q.FirstID(ctx); {
 	case IsNotFound(err):
 		return false, nil
 	case err != nil:
@@ -231,8 +231,8 @@ func (edq *ExperienceDataQuery) Exist(ctx context.Context) (bool, error) {
 }
 
 // ExistX is like Exist, but panics if an error occurs.
-func (edq *ExperienceDataQuery) ExistX(ctx context.Context) bool {
-	exist, err := edq.Exist(ctx)
+func (_q *ExperienceDataQuery) ExistX(ctx context.Context) bool {
+	exist, err := _q.Exist(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -241,19 +241,19 @@ func (edq *ExperienceDataQuery) ExistX(ctx context.Context) bool {
 
 // Clone returns a duplicate of the ExperienceDataQuery builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
-func (edq *ExperienceDataQuery) Clone() *ExperienceDataQuery {
-	if edq == nil {
+func (_q *ExperienceDataQuery) Clone() *ExperienceDataQuery {
+	if _q == nil {
 		return nil
 	}
 	return &ExperienceDataQuery{
-		config:     edq.config,
-		ctx:        edq.ctx.Clone(),
-		order:      append([]experiencedata.OrderOption{}, edq.order...),
-		inters:     append([]Interceptor{}, edq.inters...),
-		predicates: append([]predicate.ExperienceData{}, edq.predicates...),
+		config:     _q.config,
+		ctx:        _q.ctx.Clone(),
+		order:      append([]experiencedata.OrderOption{}, _q.order...),
+		inters:     append([]Interceptor{}, _q.inters...),
+		predicates: append([]predicate.ExperienceData{}, _q.predicates...),
 		// clone intermediate query.
-		sql:  edq.sql.Clone(),
-		path: edq.path,
+		sql:  _q.sql.Clone(),
+		path: _q.path,
 	}
 }
 
@@ -271,10 +271,10 @@ func (edq *ExperienceDataQuery) Clone() *ExperienceDataQuery {
 //		GroupBy(experiencedata.FieldCollectedAt).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
-func (edq *ExperienceDataQuery) GroupBy(field string, fields ...string) *ExperienceDataGroupBy {
-	edq.ctx.Fields = append([]string{field}, fields...)
-	grbuild := &ExperienceDataGroupBy{build: edq}
-	grbuild.flds = &edq.ctx.Fields
+func (_q *ExperienceDataQuery) GroupBy(field string, fields ...string) *ExperienceDataGroupBy {
+	_q.ctx.Fields = append([]string{field}, fields...)
+	grbuild := &ExperienceDataGroupBy{build: _q}
+	grbuild.flds = &_q.ctx.Fields
 	grbuild.label = experiencedata.Label
 	grbuild.scan = grbuild.Scan
 	return grbuild
@@ -292,62 +292,62 @@ func (edq *ExperienceDataQuery) GroupBy(field string, fields ...string) *Experie
 //	client.ExperienceData.Query().
 //		Select(experiencedata.FieldCollectedAt).
 //		Scan(ctx, &v)
-func (edq *ExperienceDataQuery) Select(fields ...string) *ExperienceDataSelect {
-	edq.ctx.Fields = append(edq.ctx.Fields, fields...)
-	sbuild := &ExperienceDataSelect{ExperienceDataQuery: edq}
+func (_q *ExperienceDataQuery) Select(fields ...string) *ExperienceDataSelect {
+	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
+	sbuild := &ExperienceDataSelect{ExperienceDataQuery: _q}
 	sbuild.label = experiencedata.Label
-	sbuild.flds, sbuild.scan = &edq.ctx.Fields, sbuild.Scan
+	sbuild.flds, sbuild.scan = &_q.ctx.Fields, sbuild.Scan
 	return sbuild
 }
 
 // Aggregate returns a ExperienceDataSelect configured with the given aggregations.
-func (edq *ExperienceDataQuery) Aggregate(fns ...AggregateFunc) *ExperienceDataSelect {
-	return edq.Select().Aggregate(fns...)
+func (_q *ExperienceDataQuery) Aggregate(fns ...AggregateFunc) *ExperienceDataSelect {
+	return _q.Select().Aggregate(fns...)
 }
 
-func (edq *ExperienceDataQuery) prepareQuery(ctx context.Context) error {
-	for _, inter := range edq.inters {
+func (_q *ExperienceDataQuery) prepareQuery(ctx context.Context) error {
+	for _, inter := range _q.inters {
 		if inter == nil {
 			return fmt.Errorf("ent: uninitialized interceptor (forgotten import ent/runtime?)")
 		}
 		if trv, ok := inter.(Traverser); ok {
-			if err := trv.Traverse(ctx, edq); err != nil {
+			if err := trv.Traverse(ctx, _q); err != nil {
 				return err
 			}
 		}
 	}
-	for _, f := range edq.ctx.Fields {
+	for _, f := range _q.ctx.Fields {
 		if !experiencedata.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
 		}
 	}
-	if edq.path != nil {
-		prev, err := edq.path(ctx)
+	if _q.path != nil {
+		prev, err := _q.path(ctx)
 		if err != nil {
 			return err
 		}
-		edq.sql = prev
+		_q.sql = prev
 	}
 	return nil
 }
 
-func (edq *ExperienceDataQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*ExperienceData, error) {
+func (_q *ExperienceDataQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*ExperienceData, error) {
 	var (
 		nodes = []*ExperienceData{}
-		_spec = edq.querySpec()
+		_spec = _q.querySpec()
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
 		return (*ExperienceData).scanValues(nil, columns)
 	}
 	_spec.Assign = func(columns []string, values []any) error {
-		node := &ExperienceData{config: edq.config}
+		node := &ExperienceData{config: _q.config}
 		nodes = append(nodes, node)
 		return node.assignValues(columns, values)
 	}
 	for i := range hooks {
 		hooks[i](ctx, _spec)
 	}
-	if err := sqlgraph.QueryNodes(ctx, edq.driver, _spec); err != nil {
+	if err := sqlgraph.QueryNodes(ctx, _q.driver, _spec); err != nil {
 		return nil, err
 	}
 	if len(nodes) == 0 {
@@ -356,24 +356,24 @@ func (edq *ExperienceDataQuery) sqlAll(ctx context.Context, hooks ...queryHook) 
 	return nodes, nil
 }
 
-func (edq *ExperienceDataQuery) sqlCount(ctx context.Context) (int, error) {
-	_spec := edq.querySpec()
-	_spec.Node.Columns = edq.ctx.Fields
-	if len(edq.ctx.Fields) > 0 {
-		_spec.Unique = edq.ctx.Unique != nil && *edq.ctx.Unique
+func (_q *ExperienceDataQuery) sqlCount(ctx context.Context) (int, error) {
+	_spec := _q.querySpec()
+	_spec.Node.Columns = _q.ctx.Fields
+	if len(_q.ctx.Fields) > 0 {
+		_spec.Unique = _q.ctx.Unique != nil && *_q.ctx.Unique
 	}
-	return sqlgraph.CountNodes(ctx, edq.driver, _spec)
+	return sqlgraph.CountNodes(ctx, _q.driver, _spec)
 }
 
-func (edq *ExperienceDataQuery) querySpec() *sqlgraph.QuerySpec {
+func (_q *ExperienceDataQuery) querySpec() *sqlgraph.QuerySpec {
 	_spec := sqlgraph.NewQuerySpec(experiencedata.Table, experiencedata.Columns, sqlgraph.NewFieldSpec(experiencedata.FieldID, field.TypeUUID))
-	_spec.From = edq.sql
-	if unique := edq.ctx.Unique; unique != nil {
+	_spec.From = _q.sql
+	if unique := _q.ctx.Unique; unique != nil {
 		_spec.Unique = *unique
-	} else if edq.path != nil {
+	} else if _q.path != nil {
 		_spec.Unique = true
 	}
-	if fields := edq.ctx.Fields; len(fields) > 0 {
+	if fields := _q.ctx.Fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
 		_spec.Node.Columns = append(_spec.Node.Columns, experiencedata.FieldID)
 		for i := range fields {
@@ -382,20 +382,20 @@ func (edq *ExperienceDataQuery) querySpec() *sqlgraph.QuerySpec {
 			}
 		}
 	}
-	if ps := edq.predicates; len(ps) > 0 {
+	if ps := _q.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	if limit := edq.ctx.Limit; limit != nil {
+	if limit := _q.ctx.Limit; limit != nil {
 		_spec.Limit = *limit
 	}
-	if offset := edq.ctx.Offset; offset != nil {
+	if offset := _q.ctx.Offset; offset != nil {
 		_spec.Offset = *offset
 	}
-	if ps := edq.order; len(ps) > 0 {
+	if ps := _q.order; len(ps) > 0 {
 		_spec.Order = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
@@ -405,33 +405,33 @@ func (edq *ExperienceDataQuery) querySpec() *sqlgraph.QuerySpec {
 	return _spec
 }
 
-func (edq *ExperienceDataQuery) sqlQuery(ctx context.Context) *sql.Selector {
-	builder := sql.Dialect(edq.driver.Dialect())
+func (_q *ExperienceDataQuery) sqlQuery(ctx context.Context) *sql.Selector {
+	builder := sql.Dialect(_q.driver.Dialect())
 	t1 := builder.Table(experiencedata.Table)
-	columns := edq.ctx.Fields
+	columns := _q.ctx.Fields
 	if len(columns) == 0 {
 		columns = experiencedata.Columns
 	}
 	selector := builder.Select(t1.Columns(columns...)...).From(t1)
-	if edq.sql != nil {
-		selector = edq.sql
+	if _q.sql != nil {
+		selector = _q.sql
 		selector.Select(selector.Columns(columns...)...)
 	}
-	if edq.ctx.Unique != nil && *edq.ctx.Unique {
+	if _q.ctx.Unique != nil && *_q.ctx.Unique {
 		selector.Distinct()
 	}
-	for _, p := range edq.predicates {
+	for _, p := range _q.predicates {
 		p(selector)
 	}
-	for _, p := range edq.order {
+	for _, p := range _q.order {
 		p(selector)
 	}
-	if offset := edq.ctx.Offset; offset != nil {
+	if offset := _q.ctx.Offset; offset != nil {
 		// limit is mandatory for offset clause. We start
 		// with default value, and override it below if needed.
 		selector.Offset(*offset).Limit(math.MaxInt32)
 	}
-	if limit := edq.ctx.Limit; limit != nil {
+	if limit := _q.ctx.Limit; limit != nil {
 		selector.Limit(*limit)
 	}
 	return selector
@@ -444,41 +444,41 @@ type ExperienceDataGroupBy struct {
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
-func (edgb *ExperienceDataGroupBy) Aggregate(fns ...AggregateFunc) *ExperienceDataGroupBy {
-	edgb.fns = append(edgb.fns, fns...)
-	return edgb
+func (_g *ExperienceDataGroupBy) Aggregate(fns ...AggregateFunc) *ExperienceDataGroupBy {
+	_g.fns = append(_g.fns, fns...)
+	return _g
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (edgb *ExperienceDataGroupBy) Scan(ctx context.Context, v any) error {
-	ctx = setContextOp(ctx, edgb.build.ctx, ent.OpQueryGroupBy)
-	if err := edgb.build.prepareQuery(ctx); err != nil {
+func (_g *ExperienceDataGroupBy) Scan(ctx context.Context, v any) error {
+	ctx = setContextOp(ctx, _g.build.ctx, ent.OpQueryGroupBy)
+	if err := _g.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*ExperienceDataQuery, *ExperienceDataGroupBy](ctx, edgb.build, edgb, edgb.build.inters, v)
+	return scanWithInterceptors[*ExperienceDataQuery, *ExperienceDataGroupBy](ctx, _g.build, _g, _g.build.inters, v)
 }
 
-func (edgb *ExperienceDataGroupBy) sqlScan(ctx context.Context, root *ExperienceDataQuery, v any) error {
+func (_g *ExperienceDataGroupBy) sqlScan(ctx context.Context, root *ExperienceDataQuery, v any) error {
 	selector := root.sqlQuery(ctx).Select()
-	aggregation := make([]string, 0, len(edgb.fns))
-	for _, fn := range edgb.fns {
+	aggregation := make([]string, 0, len(_g.fns))
+	for _, fn := range _g.fns {
 		aggregation = append(aggregation, fn(selector))
 	}
 	if len(selector.SelectedColumns()) == 0 {
-		columns := make([]string, 0, len(*edgb.flds)+len(edgb.fns))
-		for _, f := range *edgb.flds {
+		columns := make([]string, 0, len(*_g.flds)+len(_g.fns))
+		for _, f := range *_g.flds {
 			columns = append(columns, selector.C(f))
 		}
 		columns = append(columns, aggregation...)
 		selector.Select(columns...)
 	}
-	selector.GroupBy(selector.Columns(*edgb.flds...)...)
+	selector.GroupBy(selector.Columns(*_g.flds...)...)
 	if err := selector.Err(); err != nil {
 		return err
 	}
 	rows := &sql.Rows{}
 	query, args := selector.Query()
-	if err := edgb.build.driver.Query(ctx, query, args, rows); err != nil {
+	if err := _g.build.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}
 	defer rows.Close()
@@ -492,27 +492,27 @@ type ExperienceDataSelect struct {
 }
 
 // Aggregate adds the given aggregation functions to the selector query.
-func (eds *ExperienceDataSelect) Aggregate(fns ...AggregateFunc) *ExperienceDataSelect {
-	eds.fns = append(eds.fns, fns...)
-	return eds
+func (_s *ExperienceDataSelect) Aggregate(fns ...AggregateFunc) *ExperienceDataSelect {
+	_s.fns = append(_s.fns, fns...)
+	return _s
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (eds *ExperienceDataSelect) Scan(ctx context.Context, v any) error {
-	ctx = setContextOp(ctx, eds.ctx, ent.OpQuerySelect)
-	if err := eds.prepareQuery(ctx); err != nil {
+func (_s *ExperienceDataSelect) Scan(ctx context.Context, v any) error {
+	ctx = setContextOp(ctx, _s.ctx, ent.OpQuerySelect)
+	if err := _s.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*ExperienceDataQuery, *ExperienceDataSelect](ctx, eds.ExperienceDataQuery, eds, eds.inters, v)
+	return scanWithInterceptors[*ExperienceDataQuery, *ExperienceDataSelect](ctx, _s.ExperienceDataQuery, _s, _s.inters, v)
 }
 
-func (eds *ExperienceDataSelect) sqlScan(ctx context.Context, root *ExperienceDataQuery, v any) error {
+func (_s *ExperienceDataSelect) sqlScan(ctx context.Context, root *ExperienceDataQuery, v any) error {
 	selector := root.sqlQuery(ctx)
-	aggregation := make([]string, 0, len(eds.fns))
-	for _, fn := range eds.fns {
+	aggregation := make([]string, 0, len(_s.fns))
+	for _, fn := range _s.fns {
 		aggregation = append(aggregation, fn(selector))
 	}
-	switch n := len(*eds.selector.flds); {
+	switch n := len(*_s.selector.flds); {
 	case n == 0 && len(aggregation) > 0:
 		selector.Select(aggregation...)
 	case n != 0 && len(aggregation) > 0:
@@ -520,7 +520,7 @@ func (eds *ExperienceDataSelect) sqlScan(ctx context.Context, root *ExperienceDa
 	}
 	rows := &sql.Rows{}
 	query, args := selector.Query()
-	if err := eds.driver.Query(ctx, query, args, rows); err != nil {
+	if err := _s.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}
 	defer rows.Close()

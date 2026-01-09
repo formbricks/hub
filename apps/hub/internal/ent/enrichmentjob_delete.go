@@ -20,56 +20,56 @@ type EnrichmentJobDelete struct {
 }
 
 // Where appends a list predicates to the EnrichmentJobDelete builder.
-func (ejd *EnrichmentJobDelete) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobDelete {
-	ejd.mutation.Where(ps...)
-	return ejd
+func (_d *EnrichmentJobDelete) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobDelete {
+	_d.mutation.Where(ps...)
+	return _d
 }
 
 // Exec executes the deletion query and returns how many vertices were deleted.
-func (ejd *EnrichmentJobDelete) Exec(ctx context.Context) (int, error) {
-	return withHooks(ctx, ejd.sqlExec, ejd.mutation, ejd.hooks)
+func (_d *EnrichmentJobDelete) Exec(ctx context.Context) (int, error) {
+	return withHooks(ctx, _d.sqlExec, _d.mutation, _d.hooks)
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (ejd *EnrichmentJobDelete) ExecX(ctx context.Context) int {
-	n, err := ejd.Exec(ctx)
+func (_d *EnrichmentJobDelete) ExecX(ctx context.Context) int {
+	n, err := _d.Exec(ctx)
 	if err != nil {
 		panic(err)
 	}
 	return n
 }
 
-func (ejd *EnrichmentJobDelete) sqlExec(ctx context.Context) (int, error) {
+func (_d *EnrichmentJobDelete) sqlExec(ctx context.Context) (int, error) {
 	_spec := sqlgraph.NewDeleteSpec(enrichmentjob.Table, sqlgraph.NewFieldSpec(enrichmentjob.FieldID, field.TypeUUID))
-	if ps := ejd.mutation.predicates; len(ps) > 0 {
+	if ps := _d.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	affected, err := sqlgraph.DeleteNodes(ctx, ejd.driver, _spec)
+	affected, err := sqlgraph.DeleteNodes(ctx, _d.driver, _spec)
 	if err != nil && sqlgraph.IsConstraintError(err) {
 		err = &ConstraintError{msg: err.Error(), wrap: err}
 	}
-	ejd.mutation.done = true
+	_d.mutation.done = true
 	return affected, err
 }
 
 // EnrichmentJobDeleteOne is the builder for deleting a single EnrichmentJob entity.
 type EnrichmentJobDeleteOne struct {
-	ejd *EnrichmentJobDelete
+	_d *EnrichmentJobDelete
 }
 
 // Where appends a list predicates to the EnrichmentJobDelete builder.
-func (ejdo *EnrichmentJobDeleteOne) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobDeleteOne {
-	ejdo.ejd.mutation.Where(ps...)
-	return ejdo
+func (_d *EnrichmentJobDeleteOne) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobDeleteOne {
+	_d._d.mutation.Where(ps...)
+	return _d
 }
 
 // Exec executes the deletion query.
-func (ejdo *EnrichmentJobDeleteOne) Exec(ctx context.Context) error {
-	n, err := ejdo.ejd.Exec(ctx)
+func (_d *EnrichmentJobDeleteOne) Exec(ctx context.Context) error {
+	n, err := _d._d.Exec(ctx)
 	switch {
 	case err != nil:
 		return err
@@ -81,8 +81,8 @@ func (ejdo *EnrichmentJobDeleteOne) Exec(ctx context.Context) error {
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (ejdo *EnrichmentJobDeleteOne) ExecX(ctx context.Context) {
-	if err := ejdo.Exec(ctx); err != nil {
+func (_d *EnrichmentJobDeleteOne) ExecX(ctx context.Context) {
+	if err := _d.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

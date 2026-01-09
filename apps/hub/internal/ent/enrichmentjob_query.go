@@ -31,44 +31,44 @@ type EnrichmentJobQuery struct {
 }
 
 // Where adds a new predicate for the EnrichmentJobQuery builder.
-func (ejq *EnrichmentJobQuery) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobQuery {
-	ejq.predicates = append(ejq.predicates, ps...)
-	return ejq
+func (_q *EnrichmentJobQuery) Where(ps ...predicate.EnrichmentJob) *EnrichmentJobQuery {
+	_q.predicates = append(_q.predicates, ps...)
+	return _q
 }
 
 // Limit the number of records to be returned by this query.
-func (ejq *EnrichmentJobQuery) Limit(limit int) *EnrichmentJobQuery {
-	ejq.ctx.Limit = &limit
-	return ejq
+func (_q *EnrichmentJobQuery) Limit(limit int) *EnrichmentJobQuery {
+	_q.ctx.Limit = &limit
+	return _q
 }
 
 // Offset to start from.
-func (ejq *EnrichmentJobQuery) Offset(offset int) *EnrichmentJobQuery {
-	ejq.ctx.Offset = &offset
-	return ejq
+func (_q *EnrichmentJobQuery) Offset(offset int) *EnrichmentJobQuery {
+	_q.ctx.Offset = &offset
+	return _q
 }
 
 // Unique configures the query builder to filter duplicate records on query.
 // By default, unique is set to true, and can be disabled using this method.
-func (ejq *EnrichmentJobQuery) Unique(unique bool) *EnrichmentJobQuery {
-	ejq.ctx.Unique = &unique
-	return ejq
+func (_q *EnrichmentJobQuery) Unique(unique bool) *EnrichmentJobQuery {
+	_q.ctx.Unique = &unique
+	return _q
 }
 
 // Order specifies how the records should be ordered.
-func (ejq *EnrichmentJobQuery) Order(o ...enrichmentjob.OrderOption) *EnrichmentJobQuery {
-	ejq.order = append(ejq.order, o...)
-	return ejq
+func (_q *EnrichmentJobQuery) Order(o ...enrichmentjob.OrderOption) *EnrichmentJobQuery {
+	_q.order = append(_q.order, o...)
+	return _q
 }
 
 // QueryExperience chains the current query on the "experience" edge.
-func (ejq *EnrichmentJobQuery) QueryExperience() *ExperienceDataQuery {
-	query := (&ExperienceDataClient{config: ejq.config}).Query()
+func (_q *EnrichmentJobQuery) QueryExperience() *ExperienceDataQuery {
+	query := (&ExperienceDataClient{config: _q.config}).Query()
 	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
-		if err := ejq.prepareQuery(ctx); err != nil {
+		if err := _q.prepareQuery(ctx); err != nil {
 			return nil, err
 		}
-		selector := ejq.sqlQuery(ctx)
+		selector := _q.sqlQuery(ctx)
 		if err := selector.Err(); err != nil {
 			return nil, err
 		}
@@ -77,7 +77,7 @@ func (ejq *EnrichmentJobQuery) QueryExperience() *ExperienceDataQuery {
 			sqlgraph.To(experiencedata.Table, experiencedata.FieldID),
 			sqlgraph.Edge(sqlgraph.M2O, false, enrichmentjob.ExperienceTable, enrichmentjob.ExperienceColumn),
 		)
-		fromU = sqlgraph.SetNeighbors(ejq.driver.Dialect(), step)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
 	}
 	return query
@@ -85,8 +85,8 @@ func (ejq *EnrichmentJobQuery) QueryExperience() *ExperienceDataQuery {
 
 // First returns the first EnrichmentJob entity from the query.
 // Returns a *NotFoundError when no EnrichmentJob was found.
-func (ejq *EnrichmentJobQuery) First(ctx context.Context) (*EnrichmentJob, error) {
-	nodes, err := ejq.Limit(1).All(setContextOp(ctx, ejq.ctx, ent.OpQueryFirst))
+func (_q *EnrichmentJobQuery) First(ctx context.Context) (*EnrichmentJob, error) {
+	nodes, err := _q.Limit(1).All(setContextOp(ctx, _q.ctx, ent.OpQueryFirst))
 	if err != nil {
 		return nil, err
 	}
@@ -97,8 +97,8 @@ func (ejq *EnrichmentJobQuery) First(ctx context.Context) (*EnrichmentJob, error
 }
 
 // FirstX is like First, but panics if an error occurs.
-func (ejq *EnrichmentJobQuery) FirstX(ctx context.Context) *EnrichmentJob {
-	node, err := ejq.First(ctx)
+func (_q *EnrichmentJobQuery) FirstX(ctx context.Context) *EnrichmentJob {
+	node, err := _q.First(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
 	}
@@ -107,9 +107,9 @@ func (ejq *EnrichmentJobQuery) FirstX(ctx context.Context) *EnrichmentJob {
 
 // FirstID returns the first EnrichmentJob ID from the query.
 // Returns a *NotFoundError when no EnrichmentJob ID was found.
-func (ejq *EnrichmentJobQuery) FirstID(ctx context.Context) (id uuid.UUID, err error) {
+func (_q *EnrichmentJobQuery) FirstID(ctx context.Context) (id uuid.UUID, err error) {
 	var ids []uuid.UUID
-	if ids, err = ejq.Limit(1).IDs(setContextOp(ctx, ejq.ctx, ent.OpQueryFirstID)); err != nil {
+	if ids, err = _q.Limit(1).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryFirstID)); err != nil {
 		return
 	}
 	if len(ids) == 0 {
@@ -120,8 +120,8 @@ func (ejq *EnrichmentJobQuery) FirstID(ctx context.Context) (id uuid.UUID, err e
 }
 
 // FirstIDX is like FirstID, but panics if an error occurs.
-func (ejq *EnrichmentJobQuery) FirstIDX(ctx context.Context) uuid.UUID {
-	id, err := ejq.FirstID(ctx)
+func (_q *EnrichmentJobQuery) FirstIDX(ctx context.Context) uuid.UUID {
+	id, err := _q.FirstID(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
 	}
@@ -131,8 +131,8 @@ func (ejq *EnrichmentJobQuery) FirstIDX(ctx context.Context) uuid.UUID {
 // Only returns a single EnrichmentJob entity found by the query, ensuring it only returns one.
 // Returns a *NotSingularError when more than one EnrichmentJob entity is found.
 // Returns a *NotFoundError when no EnrichmentJob entities are found.
-func (ejq *EnrichmentJobQuery) Only(ctx context.Context) (*EnrichmentJob, error) {
-	nodes, err := ejq.Limit(2).All(setContextOp(ctx, ejq.ctx, ent.OpQueryOnly))
+func (_q *EnrichmentJobQuery) Only(ctx context.Context) (*EnrichmentJob, error) {
+	nodes, err := _q.Limit(2).All(setContextOp(ctx, _q.ctx, ent.OpQueryOnly))
 	if err != nil {
 		return nil, err
 	}
@@ -147,8 +147,8 @@ func (ejq *EnrichmentJobQuery) Only(ctx context.Context) (*EnrichmentJob, error)
 }
 
 // OnlyX is like Only, but panics if an error occurs.
-func (ejq *EnrichmentJobQuery) OnlyX(ctx context.Context) *EnrichmentJob {
-	node, err := ejq.Only(ctx)
+func (_q *EnrichmentJobQuery) OnlyX(ctx context.Context) *EnrichmentJob {
+	node, err := _q.Only(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -158,9 +158,9 @@ func (ejq *EnrichmentJobQuery) OnlyX(ctx context.Context) *EnrichmentJob {
 // OnlyID is like Only, but returns the only EnrichmentJob ID in the query.
 // Returns a *NotSingularError when more than one EnrichmentJob ID is found.
 // Returns a *NotFoundError when no entities are found.
-func (ejq *EnrichmentJobQuery) OnlyID(ctx context.Context) (id uuid.UUID, err error) {
+func (_q *EnrichmentJobQuery) OnlyID(ctx context.Context) (id uuid.UUID, err error) {
 	var ids []uuid.UUID
-	if ids, err = ejq.Limit(2).IDs(setContextOp(ctx, ejq.ctx, ent.OpQueryOnlyID)); err != nil {
+	if ids, err = _q.Limit(2).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryOnlyID)); err != nil {
 		return
 	}
 	switch len(ids) {
@@ -175,8 +175,8 @@ func (ejq *EnrichmentJobQuery) OnlyID(ctx context.Context) (id uuid.UUID, err er
 }
 
 // OnlyIDX is like OnlyID, but panics if an error occurs.
-func (ejq *EnrichmentJobQuery) OnlyIDX(ctx context.Context) uuid.UUID {
-	id, err := ejq.OnlyID(ctx)
+func (_q *EnrichmentJobQuery) OnlyIDX(ctx context.Context) uuid.UUID {
+	id, err := _q.OnlyID(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -184,18 +184,18 @@ func (ejq *EnrichmentJobQuery) OnlyIDX(ctx context.Context) uuid.UUID {
 }
 
 // All executes the query and returns a list of EnrichmentJobs.
-func (ejq *EnrichmentJobQuery) All(ctx context.Context) ([]*EnrichmentJob, error) {
-	ctx = setContextOp(ctx, ejq.ctx, ent.OpQueryAll)
-	if err := ejq.prepareQuery(ctx); err != nil {
+func (_q *EnrichmentJobQuery) All(ctx context.Context) ([]*EnrichmentJob, error) {
+	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryAll)
+	if err := _q.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
 	qr := querierAll[[]*EnrichmentJob, *EnrichmentJobQuery]()
-	return withInterceptors[[]*EnrichmentJob](ctx, ejq, qr, ejq.inters)
+	return withInterceptors[[]*EnrichmentJob](ctx, _q, qr, _q.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
-func (ejq *EnrichmentJobQuery) AllX(ctx context.Context) []*EnrichmentJob {
-	nodes, err := ejq.All(ctx)
+func (_q *EnrichmentJobQuery) AllX(ctx context.Context) []*EnrichmentJob {
+	nodes, err := _q.All(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -203,20 +203,20 @@ func (ejq *EnrichmentJobQuery) AllX(ctx context.Context) []*EnrichmentJob {
 }
 
 // IDs executes the query and returns a list of EnrichmentJob IDs.
-func (ejq *EnrichmentJobQuery) IDs(ctx context.Context) (ids []uuid.UUID, err error) {
-	if ejq.ctx.Unique == nil && ejq.path != nil {
-		ejq.Unique(true)
+func (_q *EnrichmentJobQuery) IDs(ctx context.Context) (ids []uuid.UUID, err error) {
+	if _q.ctx.Unique == nil && _q.path != nil {
+		_q.Unique(true)
 	}
-	ctx = setContextOp(ctx, ejq.ctx, ent.OpQueryIDs)
-	if err = ejq.Select(enrichmentjob.FieldID).Scan(ctx, &ids); err != nil {
+	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryIDs)
+	if err = _q.Select(enrichmentjob.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
 // IDsX is like IDs, but panics if an error occurs.
-func (ejq *EnrichmentJobQuery) IDsX(ctx context.Context) []uuid.UUID {
-	ids, err := ejq.IDs(ctx)
+func (_q *EnrichmentJobQuery) IDsX(ctx context.Context) []uuid.UUID {
+	ids, err := _q.IDs(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -224,17 +224,17 @@ func (ejq *EnrichmentJobQuery) IDsX(ctx context.Context) []uuid.UUID {
 }
 
 // Count returns the count of the given query.
-func (ejq *EnrichmentJobQuery) Count(ctx context.Context) (int, error) {
-	ctx = setContextOp(ctx, ejq.ctx, ent.OpQueryCount)
-	if err := ejq.prepareQuery(ctx); err != nil {
+func (_q *EnrichmentJobQuery) Count(ctx context.Context) (int, error) {
+	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryCount)
+	if err := _q.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return withInterceptors[int](ctx, ejq, querierCount[*EnrichmentJobQuery](), ejq.inters)
+	return withInterceptors[int](ctx, _q, querierCount[*EnrichmentJobQuery](), _q.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
-func (ejq *EnrichmentJobQuery) CountX(ctx context.Context) int {
-	count, err := ejq.Count(ctx)
+func (_q *EnrichmentJobQuery) CountX(ctx context.Context) int {
+	count, err := _q.Count(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -242,9 +242,9 @@ func (ejq *EnrichmentJobQuery) CountX(ctx context.Context) int {
 }
 
 // Exist returns true if the query has elements in the graph.
-func (ejq *EnrichmentJobQuery) Exist(ctx context.Context) (bool, error) {
-	ctx = setContextOp(ctx, ejq.ctx, ent.OpQueryExist)
-	switch _, err := ejq.FirstID(ctx); {
+func (_q *EnrichmentJobQuery) Exist(ctx context.Context) (bool, error) {
+	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryExist)
+	switch _, err := _q.FirstID(ctx); {
 	case IsNotFound(err):
 		return false, nil
 	case err != nil:
@@ -255,8 +255,8 @@ func (ejq *EnrichmentJobQuery) Exist(ctx context.Context) (bool, error) {
 }
 
 // ExistX is like Exist, but panics if an error occurs.
-func (ejq *EnrichmentJobQuery) ExistX(ctx context.Context) bool {
-	exist, err := ejq.Exist(ctx)
+func (_q *EnrichmentJobQuery) ExistX(ctx context.Context) bool {
+	exist, err := _q.Exist(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -265,32 +265,32 @@ func (ejq *EnrichmentJobQuery) ExistX(ctx context.Context) bool {
 
 // Clone returns a duplicate of the EnrichmentJobQuery builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
-func (ejq *EnrichmentJobQuery) Clone() *EnrichmentJobQuery {
-	if ejq == nil {
+func (_q *EnrichmentJobQuery) Clone() *EnrichmentJobQuery {
+	if _q == nil {
 		return nil
 	}
 	return &EnrichmentJobQuery{
-		config:         ejq.config,
-		ctx:            ejq.ctx.Clone(),
-		order:          append([]enrichmentjob.OrderOption{}, ejq.order...),
-		inters:         append([]Interceptor{}, ejq.inters...),
-		predicates:     append([]predicate.EnrichmentJob{}, ejq.predicates...),
-		withExperience: ejq.withExperience.Clone(),
+		config:         _q.config,
+		ctx:            _q.ctx.Clone(),
+		order:          append([]enrichmentjob.OrderOption{}, _q.order...),
+		inters:         append([]Interceptor{}, _q.inters...),
+		predicates:     append([]predicate.EnrichmentJob{}, _q.predicates...),
+		withExperience: _q.withExperience.Clone(),
 		// clone intermediate query.
-		sql:  ejq.sql.Clone(),
-		path: ejq.path,
+		sql:  _q.sql.Clone(),
+		path: _q.path,
 	}
 }
 
 // WithExperience tells the query-builder to eager-load the nodes that are connected to
 // the "experience" edge. The optional arguments are used to configure the query builder of the edge.
-func (ejq *EnrichmentJobQuery) WithExperience(opts ...func(*ExperienceDataQuery)) *EnrichmentJobQuery {
-	query := (&ExperienceDataClient{config: ejq.config}).Query()
+func (_q *EnrichmentJobQuery) WithExperience(opts ...func(*ExperienceDataQuery)) *EnrichmentJobQuery {
+	query := (&ExperienceDataClient{config: _q.config}).Query()
 	for _, opt := range opts {
 		opt(query)
 	}
-	ejq.withExperience = query
-	return ejq
+	_q.withExperience = query
+	return _q
 }
 
 // GroupBy is used to group vertices by one or more fields/columns.
@@ -307,10 +307,10 @@ func (ejq *EnrichmentJobQuery) WithExperience(opts ...func(*ExperienceDataQuery)
 //		GroupBy(enrichmentjob.FieldExperienceID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
-func (ejq *EnrichmentJobQuery) GroupBy(field string, fields ...string) *EnrichmentJobGroupBy {
-	ejq.ctx.Fields = append([]string{field}, fields...)
-	grbuild := &EnrichmentJobGroupBy{build: ejq}
-	grbuild.flds = &ejq.ctx.Fields
+func (_q *EnrichmentJobQuery) GroupBy(field string, fields ...string) *EnrichmentJobGroupBy {
+	_q.ctx.Fields = append([]string{field}, fields...)
+	grbuild := &EnrichmentJobGroupBy{build: _q}
+	grbuild.flds = &_q.ctx.Fields
 	grbuild.label = enrichmentjob.Label
 	grbuild.scan = grbuild.Scan
 	return grbuild
@@ -328,58 +328,58 @@ func (ejq *EnrichmentJobQuery) GroupBy(field string, fields ...string) *Enrichme
 //	client.EnrichmentJob.Query().
 //		Select(enrichmentjob.FieldExperienceID).
 //		Scan(ctx, &v)
-func (ejq *EnrichmentJobQuery) Select(fields ...string) *EnrichmentJobSelect {
-	ejq.ctx.Fields = append(ejq.ctx.Fields, fields...)
-	sbuild := &EnrichmentJobSelect{EnrichmentJobQuery: ejq}
+func (_q *EnrichmentJobQuery) Select(fields ...string) *EnrichmentJobSelect {
+	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
+	sbuild := &EnrichmentJobSelect{EnrichmentJobQuery: _q}
 	sbuild.label = enrichmentjob.Label
-	sbuild.flds, sbuild.scan = &ejq.ctx.Fields, sbuild.Scan
+	sbuild.flds, sbuild.scan = &_q.ctx.Fields, sbuild.Scan
 	return sbuild
 }
 
 // Aggregate returns a EnrichmentJobSelect configured with the given aggregations.
-func (ejq *EnrichmentJobQuery) Aggregate(fns ...AggregateFunc) *EnrichmentJobSelect {
-	return ejq.Select().Aggregate(fns...)
+func (_q *EnrichmentJobQuery) Aggregate(fns ...AggregateFunc) *EnrichmentJobSelect {
+	return _q.Select().Aggregate(fns...)
 }
 
-func (ejq *EnrichmentJobQuery) prepareQuery(ctx context.Context) error {
-	for _, inter := range ejq.inters {
+func (_q *EnrichmentJobQuery) prepareQuery(ctx context.Context) error {
+	for _, inter := range _q.inters {
 		if inter == nil {
 			return fmt.Errorf("ent: uninitialized interceptor (forgotten import ent/runtime?)")
 		}
 		if trv, ok := inter.(Traverser); ok {
-			if err := trv.Traverse(ctx, ejq); err != nil {
+			if err := trv.Traverse(ctx, _q); err != nil {
 				return err
 			}
 		}
 	}
-	for _, f := range ejq.ctx.Fields {
+	for _, f := range _q.ctx.Fields {
 		if !enrichmentjob.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
 		}
 	}
-	if ejq.path != nil {
-		prev, err := ejq.path(ctx)
+	if _q.path != nil {
+		prev, err := _q.path(ctx)
 		if err != nil {
 			return err
 		}
-		ejq.sql = prev
+		_q.sql = prev
 	}
 	return nil
 }
 
-func (ejq *EnrichmentJobQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*EnrichmentJob, error) {
+func (_q *EnrichmentJobQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*EnrichmentJob, error) {
 	var (
 		nodes       = []*EnrichmentJob{}
-		_spec       = ejq.querySpec()
+		_spec       = _q.querySpec()
 		loadedTypes = [1]bool{
-			ejq.withExperience != nil,
+			_q.withExperience != nil,
 		}
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
 		return (*EnrichmentJob).scanValues(nil, columns)
 	}
 	_spec.Assign = func(columns []string, values []any) error {
-		node := &EnrichmentJob{config: ejq.config}
+		node := &EnrichmentJob{config: _q.config}
 		nodes = append(nodes, node)
 		node.Edges.loadedTypes = loadedTypes
 		return node.assignValues(columns, values)
@@ -387,14 +387,14 @@ func (ejq *EnrichmentJobQuery) sqlAll(ctx context.Context, hooks ...queryHook) (
 	for i := range hooks {
 		hooks[i](ctx, _spec)
 	}
-	if err := sqlgraph.QueryNodes(ctx, ejq.driver, _spec); err != nil {
+	if err := sqlgraph.QueryNodes(ctx, _q.driver, _spec); err != nil {
 		return nil, err
 	}
 	if len(nodes) == 0 {
 		return nodes, nil
 	}
-	if query := ejq.withExperience; query != nil {
-		if err := ejq.loadExperience(ctx, query, nodes, nil,
+	if query := _q.withExperience; query != nil {
+		if err := _q.loadExperience(ctx, query, nodes, nil,
 			func(n *EnrichmentJob, e *ExperienceData) { n.Edges.Experience = e }); err != nil {
 			return nil, err
 		}
@@ -402,7 +402,7 @@ func (ejq *EnrichmentJobQuery) sqlAll(ctx context.Context, hooks ...queryHook) (
 	return nodes, nil
 }
 
-func (ejq *EnrichmentJobQuery) loadExperience(ctx context.Context, query *ExperienceDataQuery, nodes []*EnrichmentJob, init func(*EnrichmentJob), assign func(*EnrichmentJob, *ExperienceData)) error {
+func (_q *EnrichmentJobQuery) loadExperience(ctx context.Context, query *ExperienceDataQuery, nodes []*EnrichmentJob, init func(*EnrichmentJob), assign func(*EnrichmentJob, *ExperienceData)) error {
 	ids := make([]uuid.UUID, 0, len(nodes))
 	nodeids := make(map[uuid.UUID][]*EnrichmentJob)
 	for i := range nodes {
@@ -432,24 +432,24 @@ func (ejq *EnrichmentJobQuery) loadExperience(ctx context.Context, query *Experi
 	return nil
 }
 
-func (ejq *EnrichmentJobQuery) sqlCount(ctx context.Context) (int, error) {
-	_spec := ejq.querySpec()
-	_spec.Node.Columns = ejq.ctx.Fields
-	if len(ejq.ctx.Fields) > 0 {
-		_spec.Unique = ejq.ctx.Unique != nil && *ejq.ctx.Unique
+func (_q *EnrichmentJobQuery) sqlCount(ctx context.Context) (int, error) {
+	_spec := _q.querySpec()
+	_spec.Node.Columns = _q.ctx.Fields
+	if len(_q.ctx.Fields) > 0 {
+		_spec.Unique = _q.ctx.Unique != nil && *_q.ctx.Unique
 	}
-	return sqlgraph.CountNodes(ctx, ejq.driver, _spec)
+	return sqlgraph.CountNodes(ctx, _q.driver, _spec)
 }
 
-func (ejq *EnrichmentJobQuery) querySpec() *sqlgraph.QuerySpec {
+func (_q *EnrichmentJobQuery) querySpec() *sqlgraph.QuerySpec {
 	_spec := sqlgraph.NewQuerySpec(enrichmentjob.Table, enrichmentjob.Columns, sqlgraph.NewFieldSpec(enrichmentjob.FieldID, field.TypeUUID))
-	_spec.From = ejq.sql
-	if unique := ejq.ctx.Unique; unique != nil {
+	_spec.From = _q.sql
+	if unique := _q.ctx.Unique; unique != nil {
 		_spec.Unique = *unique
-	} else if ejq.path != nil {
+	} else if _q.path != nil {
 		_spec.Unique = true
 	}
-	if fields := ejq.ctx.Fields; len(fields) > 0 {
+	if fields := _q.ctx.Fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
 		_spec.Node.Columns = append(_spec.Node.Columns, enrichmentjob.FieldID)
 		for i := range fields {
@@ -457,24 +457,24 @@ func (ejq *EnrichmentJobQuery) querySpec() *sqlgraph.QuerySpec {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
 		}
-		if ejq.withExperience != nil {
+		if _q.withExperience != nil {
 			_spec.Node.AddColumnOnce(enrichmentjob.FieldExperienceID)
 		}
 	}
-	if ps := ejq.predicates; len(ps) > 0 {
+	if ps := _q.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
 			}
 		}
 	}
-	if limit := ejq.ctx.Limit; limit != nil {
+	if limit := _q.ctx.Limit; limit != nil {
 		_spec.Limit = *limit
 	}
-	if offset := ejq.ctx.Offset; offset != nil {
+	if offset := _q.ctx.Offset; offset != nil {
 		_spec.Offset = *offset
 	}
-	if ps := ejq.order; len(ps) > 0 {
+	if ps := _q.order; len(ps) > 0 {
 		_spec.Order = func(selector *sql.Selector) {
 			for i := range ps {
 				ps[i](selector)
@@ -484,33 +484,33 @@ func (ejq *EnrichmentJobQuery) querySpec() *sqlgraph.QuerySpec {
 	return _spec
 }
 
-func (ejq *EnrichmentJobQuery) sqlQuery(ctx context.Context) *sql.Selector {
-	builder := sql.Dialect(ejq.driver.Dialect())
+func (_q *EnrichmentJobQuery) sqlQuery(ctx context.Context) *sql.Selector {
+	builder := sql.Dialect(_q.driver.Dialect())
 	t1 := builder.Table(enrichmentjob.Table)
-	columns := ejq.ctx.Fields
+	columns := _q.ctx.Fields
 	if len(columns) == 0 {
 		columns = enrichmentjob.Columns
 	}
 	selector := builder.Select(t1.Columns(columns...)...).From(t1)
-	if ejq.sql != nil {
-		selector = ejq.sql
+	if _q.sql != nil {
+		selector = _q.sql
 		selector.Select(selector.Columns(columns...)...)
 	}
-	if ejq.ctx.Unique != nil && *ejq.ctx.Unique {
+	if _q.ctx.Unique != nil && *_q.ctx.Unique {
 		selector.Distinct()
 	}
-	for _, p := range ejq.predicates {
+	for _, p := range _q.predicates {
 		p(selector)
 	}
-	for _, p := range ejq.order {
+	for _, p := range _q.order {
 		p(selector)
 	}
-	if offset := ejq.ctx.Offset; offset != nil {
+	if offset := _q.ctx.Offset; offset != nil {
 		// limit is mandatory for offset clause. We start
 		// with default value, and override it below if needed.
 		selector.Offset(*offset).Limit(math.MaxInt32)
 	}
-	if limit := ejq.ctx.Limit; limit != nil {
+	if limit := _q.ctx.Limit; limit != nil {
 		selector.Limit(*limit)
 	}
 	return selector
@@ -523,41 +523,41 @@ type EnrichmentJobGroupBy struct {
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
-func (ejgb *EnrichmentJobGroupBy) Aggregate(fns ...AggregateFunc) *EnrichmentJobGroupBy {
-	ejgb.fns = append(ejgb.fns, fns...)
-	return ejgb
+func (_g *EnrichmentJobGroupBy) Aggregate(fns ...AggregateFunc) *EnrichmentJobGroupBy {
+	_g.fns = append(_g.fns, fns...)
+	return _g
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (ejgb *EnrichmentJobGroupBy) Scan(ctx context.Context, v any) error {
-	ctx = setContextOp(ctx, ejgb.build.ctx, ent.OpQueryGroupBy)
-	if err := ejgb.build.prepareQuery(ctx); err != nil {
+func (_g *EnrichmentJobGroupBy) Scan(ctx context.Context, v any) error {
+	ctx = setContextOp(ctx, _g.build.ctx, ent.OpQueryGroupBy)
+	if err := _g.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*EnrichmentJobQuery, *EnrichmentJobGroupBy](ctx, ejgb.build, ejgb, ejgb.build.inters, v)
+	return scanWithInterceptors[*EnrichmentJobQuery, *EnrichmentJobGroupBy](ctx, _g.build, _g, _g.build.inters, v)
 }
 
-func (ejgb *EnrichmentJobGroupBy) sqlScan(ctx context.Context, root *EnrichmentJobQuery, v any) error {
+func (_g *EnrichmentJobGroupBy) sqlScan(ctx context.Context, root *EnrichmentJobQuery, v any) error {
 	selector := root.sqlQuery(ctx).Select()
-	aggregation := make([]string, 0, len(ejgb.fns))
-	for _, fn := range ejgb.fns {
+	aggregation := make([]string, 0, len(_g.fns))
+	for _, fn := range _g.fns {
 		aggregation = append(aggregation, fn(selector))
 	}
 	if len(selector.SelectedColumns()) == 0 {
-		columns := make([]string, 0, len(*ejgb.flds)+len(ejgb.fns))
-		for _, f := range *ejgb.flds {
+		columns := make([]string, 0, len(*_g.flds)+len(_g.fns))
+		for _, f := range *_g.flds {
 			columns = append(columns, selector.C(f))
 		}
 		columns = append(columns, aggregation...)
 		selector.Select(columns...)
 	}
-	selector.GroupBy(selector.Columns(*ejgb.flds...)...)
+	selector.GroupBy(selector.Columns(*_g.flds...)...)
 	if err := selector.Err(); err != nil {
 		return err
 	}
 	rows := &sql.Rows{}
 	query, args := selector.Query()
-	if err := ejgb.build.driver.Query(ctx, query, args, rows); err != nil {
+	if err := _g.build.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}
 	defer rows.Close()
@@ -571,27 +571,27 @@ type EnrichmentJobSelect struct {
 }
 
 // Aggregate adds the given aggregation functions to the selector query.
-func (ejs *EnrichmentJobSelect) Aggregate(fns ...AggregateFunc) *EnrichmentJobSelect {
-	ejs.fns = append(ejs.fns, fns...)
-	return ejs
+func (_s *EnrichmentJobSelect) Aggregate(fns ...AggregateFunc) *EnrichmentJobSelect {
+	_s.fns = append(_s.fns, fns...)
+	return _s
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (ejs *EnrichmentJobSelect) Scan(ctx context.Context, v any) error {
-	ctx = setContextOp(ctx, ejs.ctx, ent.OpQuerySelect)
-	if err := ejs.prepareQuery(ctx); err != nil {
+func (_s *EnrichmentJobSelect) Scan(ctx context.Context, v any) error {
+	ctx = setContextOp(ctx, _s.ctx, ent.OpQuerySelect)
+	if err := _s.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*EnrichmentJobQuery, *EnrichmentJobSelect](ctx, ejs.EnrichmentJobQuery, ejs, ejs.inters, v)
+	return scanWithInterceptors[*EnrichmentJobQuery, *EnrichmentJobSelect](ctx, _s.EnrichmentJobQuery, _s, _s.inters, v)
 }
 
-func (ejs *EnrichmentJobSelect) sqlScan(ctx context.Context, root *EnrichmentJobQuery, v any) error {
+func (_s *EnrichmentJobSelect) sqlScan(ctx context.Context, root *EnrichmentJobQuery, v any) error {
 	selector := root.sqlQuery(ctx)
-	aggregation := make([]string, 0, len(ejs.fns))
-	for _, fn := range ejs.fns {
+	aggregation := make([]string, 0, len(_s.fns))
+	for _, fn := range _s.fns {
 		aggregation = append(aggregation, fn(selector))
 	}
-	switch n := len(*ejs.selector.flds); {
+	switch n := len(*_s.selector.flds); {
 	case n == 0 && len(aggregation) > 0:
 		selector.Select(aggregation...)
 	case n != 0 && len(aggregation) > 0:
@@ -599,7 +599,7 @@ func (ejs *EnrichmentJobSelect) sqlScan(ctx context.Context, root *EnrichmentJob
 	}
 	rows := &sql.Rows{}
 	query, args := selector.Query()
-	if err := ejs.driver.Query(ctx, query, args, rows); err != nil {
+	if err := _s.driver.Query(ctx, query, args, rows); err != nil {
 		return err
 	}
 	defer rows.Close()

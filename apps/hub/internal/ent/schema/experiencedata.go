@@ -19,6 +19,7 @@ var validFieldTypes = map[string]bool{
 	"categorical": true,
 	"nps":         true,
 	"csat":        true,
+	"ces":         true, // Customer Effort Score (typically 1-7 scale)
 	"rating":      true,
 	"number":      true,
 	"boolean":     true,
@@ -58,6 +59,17 @@ func (ExperienceData) Fields() []ent.Field {
 			UpdateDefault(time.Now).
 			Comment("When this record was last updated"),
 
+		// Multi-tenancy and response grouping
+		field.String("tenant_id").
+			Optional().
+			MaxLen(255).
+			Comment("Tenant/organization identifier for multi-tenancy (optional for self-hosted single-tenant deployments)"),
+
+		field.String("response_id").
+			Optional().
+			MaxLen(255).
+			Comment("Groups multiple answers from a single submission/session (e.g., all answers from one survey response)"),
+
 		// Source tracking
 		field.String("source_type").
 			NotEmpty().
@@ -84,11 +96,11 @@ func (ExperienceData) Fields() []ent.Field {
 			NotEmpty().
 			Validate(func(s string) error {
 				if !validFieldTypes[s] {
-					return fmt.Errorf("invalid field_type: %s (must be one of: text, categorical, nps, csat, rating, number, boolean, date)", s)
+					return fmt.Errorf("invalid field_type: %s (must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date)", s)
 				}
 				return nil
 			}).
-			Comment("Type of field: text (enrichable), categorical, nps, csat, rating, number, boolean, date"),
+			Comment("Type of field: text (enrichable), categorical, nps, csat, ces, rating, number, boolean, date"),
 
 		// Response values (typed for analytics)
 		field.Text("value_text").
@@ -173,6 +185,14 @@ func (ExperienceData) Edges() []ent.Edge {
 // Indexes of the ExperienceData.
 func (ExperienceData) Indexes() []ent.Index {
 	return []ent.Index{
+		// Multi-tenancy indexes
+		index.Fields("tenant_id", "collected_at"),
+		index.Fields("tenant_id", "source_type", "source_id", "collected_at"),
+
+		// Response grouping index
+		index.Fields("response_id"),
+		index.Fields("tenant_id", "response_id"),
+
 		// Composite index for querying by source
 		index.Fields("source_type", "source_id", "collected_at").
 			Annotations(entsql.IndexTypes(map[string]string{
@@ -181,6 +201,9 @@ func (ExperienceData) Indexes() []ent.Index {
 
 		// Composite index for querying by field type and time
 		index.Fields("field_type", "collected_at"),
+
+		// Index for field_id aggregations
+		index.Fields("field_id"),
 
 		// Index for numeric aggregations (AVG, SUM, etc.)
 		index.Fields("value_number"),
