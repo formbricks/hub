@@ -181,10 +181,10 @@ Omit `SERVICE_OPENAI_API_KEY` if you don't need AI enrichment features.
 
 ## Making Your First API Call
 
-### 1. Create an Experience
+### 1. Create a Feedback Record
 
 ```bash
-curl -X POST http://localhost:8080/v1/experiences \
+curl -X POST http://localhost:8080/v1/feedback-records \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your_secure_api_key_here" \
   -d '{
@@ -223,12 +223,12 @@ Expected response:
 }
 ```
 
-### 2. Create a Text Experience (with AI Enrichment)
+### 2. Create a Text Feedback Record (with AI Enrichment)
 
 If you've configured OpenAI keys, text responses will be automatically enriched:
 
 ```bash
-curl -X POST http://localhost:8080/v1/experiences \
+curl -X POST http://localhost:8080/v1/feedback-records \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your_secure_api_key_here" \
   -d '{
@@ -247,10 +247,10 @@ Hub will automatically:
 - Identify topics (e.g., ["checkout", "user experience"])
 - Generate embeddings for semantic search
 
-### 3. Query Experiences
+### 3. Query Feedback Records
 
 ```bash
-curl "http://localhost:8080/v1/experiences?limit=10" \
+curl "http://localhost:8080/v1/feedback-records?limit=10" \
   -H "X-API-Key: your_secure_api_key_here"
 ```
 
@@ -327,7 +327,7 @@ docker-compose down
 ### Stop and Remove Data
 
 :::danger Data Loss
-This will delete all stored experiences!
+This will delete all stored feedback records!
 :::
 
 ```bash

@@ -5,11 +5,11 @@ slug: /
 
 # Formbricks Hub
 
-Standalone, fully open-source Experience Data Hub built for human and AI analytics.
+Standalone, fully open-source Feedback Record Hub built for human and AI analytics.
 
 ## What is it?
 
-Hub is an open-source, self-hostable microservice for **collecting, serving and enriching** experience data: Survey responses, NPS scores, product reviews, support feedback, and more. Built entirely in Go for performance and simplicity.
+Hub is an open-source, self-hostable microservice for **collecting, serving and enriching** feedback records: Survey responses, NPS scores, product reviews, support feedback, and more. Built entirely in Go for performance and simplicity.
 
 ## Why should you use Hub?
 
@@ -30,13 +30,13 @@ The Hub is a cornerstone of our work at Formbricks to help alleviate that burden
 
 We are engineers, not consultants, and we bring open-source tooling to the table. We work closely with organizations and consultants to get them implemented and improve experiences. The past few years have been fun and challenging and we now understand one thing: 10 organizations do Experience Management in 10 different ways. It doesn't really work to force-feed them this new way of gathering data, that new tool to see their data in, another approach to convince your peers to now actually make decisions based on experience data. It's simply too costly to setup and too complicated to weave into existing processes and workflows.
 
-This is where the Hub comes in: it's free, it's simple, and, most importantly, it's built for the people who have to carry a lot of the burden around wrestling with experience data: software engineers.
+This is where the Hub comes in: it's free, it's simple, and, most importantly, it's built for the people who have to carry a lot of the burden around wrestling with feedback data: software engineers.
 
 ## Use Cases
 
 ### Centralize Feedback Data
 
-Collect experience data from multiple sources into one unified data hub:
+Collect feedback records from multiple sources into one unified data hub:
 - Survey responses from your app or website
 - App Hub and Google Play reviews
 - Trustpilot and other review platforms

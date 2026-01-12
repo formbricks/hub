@@ -31,7 +31,7 @@ Semantic search uses **vector embeddings**—numerical representations of text t
 - "The iOS app keeps freezing and shutting down" ✅ (88% match)
 - "Android version crashes on startup" ✅ (86% match)
 - "App is unstable, crashes frequently" ✅ (84% match)
-- "Love the mobile experience!" ❌ (15% match - not relevant)
+- "Love the mobile feedback record!" ❌ (15% match - not relevant)
 
 ## Quick Start
 
@@ -58,7 +58,7 @@ That's it! Embeddings are now generated automatically for all text responses.
 Use the semantic search API:
 
 ```bash
-curl "http://localhost:8080/v1/experiences/search?query=checkout+problems&limit=10" \
+curl "http://localhost:8080/v1/feedback-records/search?query=checkout+problems&limit=10" \
   -H "X-API-Key: your-api-key"
 ```
 
@@ -98,14 +98,14 @@ curl "http://localhost:8080/v1/experiences/search?query=checkout+problems&limit=
 
 When you create a text response:
 
-1. **Experience saved** → API returns immediately
+1. **Feedback record saved** → API returns immediately
 2. **Jobs queued** → Two background jobs created:
    - Enrichment job (sentiment, emotion, topics)
    - Embedding job (vector generation)
 3. **Workers process** → Background workers pick up both jobs
 4. **OpenAI called** → Text + question sent to embedding model
 5. **Vector stored** → 1536-dimensional vector saved to PostgreSQL
-6. **Ready to search** → Experience now searchable via semantic API
+6. **Ready to search** → Feedback record now searchable via semantic API
 
 **Processing time:** Typically 5-15 seconds per response
 
@@ -135,7 +135,7 @@ Vectors are **internal only**—never exposed in API responses to keep payloads 
 ### Endpoint
 
 ```
-GET /v1/experiences/search
+GET /v1/feedback-records/search
 ```
 
 ### Query Parameters
@@ -152,27 +152,27 @@ GET /v1/experiences/search
 
 **Basic search:**
 ```bash
-GET /v1/experiences/search?query=login+issues
+GET /v1/feedback-records/search?query=login+issues
 ```
 
 **Limit results:**
 ```bash
-GET /v1/experiences/search?query=dashboard+feedback&limit=5
+GET /v1/feedback-records/search?query=dashboard+feedback&limit=5
 ```
 
 **Filter by source:**
 ```bash
-GET /v1/experiences/search?query=bug+reports&source_type=support
+GET /v1/feedback-records/search?query=bug+reports&source_type=support
 ```
 
 **Date range:**
 ```bash
-GET /v1/experiences/search?query=pricing+concerns&since=2025-01-01&until=2025-03-31
+GET /v1/feedback-records/search?query=pricing+concerns&since=2025-01-01&until=2025-03-31
 ```
 
 **Combine filters:**
 ```bash
-GET /v1/experiences/search?query=mobile+app+crashes&source_type=review&limit=50&since=2025-01-01
+GET /v1/feedback-records/search?query=mobile+app+crashes&source_type=review&limit=50&since=2025-01-01
 ```
 
 ## Use Cases
@@ -183,7 +183,7 @@ GET /v1/experiences/search?query=mobile+app+crashes&source_type=review&limit=50&
 
 ```bash
 # Current ticket: "User can't log in with Google"
-GET /v1/experiences/search?query=google+login+not+working&source_type=support&limit=10
+GET /v1/feedback-records/search?query=google+login+not+working&source_type=support&limit=10
 ```
 
 Use results to:
@@ -197,7 +197,7 @@ Use results to:
 
 ```bash
 # What are users saying about our mobile app?
-GET /v1/experiences/search?query=mobile+app+experience&limit=100
+GET /v1/feedback-records/search?query=mobile+app+feedback+record&limit=100
 ```
 
 Analyze results to:
@@ -211,7 +211,7 @@ Analyze results to:
 
 ```bash
 # What are users comparing us to?
-GET /v1/experiences/search?query=competitor+comparison+features
+GET /v1/feedback-records/search?query=competitor+comparison+features
 ```
 
 Extract insights about:
@@ -225,10 +225,10 @@ Extract insights about:
 
 ```bash
 # Q1 pricing feedback
-GET /v1/experiences/search?query=pricing+expensive+cost&since=2025-01-01&until=2025-03-31
+GET /v1/feedback-records/search?query=pricing+expensive+cost&since=2025-01-01&until=2025-03-31
 
 # Q2 pricing feedback
-GET /v1/experiences/search?query=pricing+expensive+cost&since=2025-04-01&until=2025-06-30
+GET /v1/feedback-records/search?query=pricing+expensive+cost&since=2025-04-01&until=2025-06-30
 ```
 
 Compare `count` and `similarity_score` distributions to track changes.
@@ -293,7 +293,7 @@ SELECT
   COUNT(*) FILTER (WHERE embedding IS NULL) as not_embedded,
   COUNT(*) as total,
   ROUND(100.0 * COUNT(*) FILTER (WHERE embedding IS NOT NULL) / COUNT(*), 1) as percentage
-FROM experience_data
+FROM feedback_records
 WHERE field_type = 'text' AND value_text IS NOT NULL;
 ```
 
@@ -333,7 +333,7 @@ SELECT
   indexname,
   indexdef
 FROM pg_indexes
-WHERE tablename = 'experience_data'
+WHERE tablename = 'feedback_records'
   AND indexname LIKE '%embedding%';
 ```
 
@@ -355,51 +355,9 @@ The HNSW (Hierarchical Navigable Small Worlds) index provides **approximate near
 
 For exact results (research/analysis), query PostgreSQL directly with cosine similarity—but expect slower queries on large datasets.
 
-## Troubleshooting
-
-### No Search Results
-
-**Symptom:** API returns empty results
-
-**Common causes:**
-1. Embeddings not yet generated (wait 10-15 seconds after creating experiences)
-2. Query too specific or using exact keywords (try broader, more natural queries)
-3. No text responses in database
-
-**Check embedding status:**
-```sql
-SELECT COUNT(*) FROM experience_data WHERE embedding IS NOT NULL;
-```
-
-### Slow Embedding Generation
-
-**Symptom:** Embeddings taking 30+ seconds to generate
-
-**Solutions:**
-- Check OpenAI API status: [status.openai.com](https://status.openai.com)
-- Increase workers: `SERVICE_ENRICHMENT_WORKERS=5`
-- Check rate limits on OpenAI account
-
-### Poor Search Quality
-
-**Symptom:** Irrelevant results returned
-
-**Common causes:**
-- Query too vague (e.g., "feedback" matches everything)
-- Mixed languages (embeddings work best within same language)
-- Very short queries (try 3-5 words minimum)
-
-**Tips for better queries:**
-- ✅ "mobile app crashes on startup" (specific, descriptive)
-- ❌ "app" (too vague)
-- ✅ "slow checkout process payment timeout" (multiple related terms)
-- ❌ "bad" (too general)
-
 ## Next Steps
 
 - [AI Enrichment →](./ai-enrichment) - Understand how sentiment/topics are extracted
-- [Data Model →](./data-model) - Explore the experience data schema
+- [Data Model →](./data-model) - Explore the feedback record schema
 - [Webhooks →](./webhooks) - React to new feedback in real-time
 - [API Reference →](../api-reference) - Explore all endpoints
-
-
