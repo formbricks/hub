@@ -11,7 +11,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/formbricks/hub/apps/hub/internal/ent/enrichmentjob"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 	"github.com/google/uuid"
 )
 
@@ -22,9 +22,9 @@ type EnrichmentJobCreate struct {
 	hooks    []Hook
 }
 
-// SetExperienceID sets the "experience_id" field.
-func (_c *EnrichmentJobCreate) SetExperienceID(v uuid.UUID) *EnrichmentJobCreate {
-	_c.mutation.SetExperienceID(v)
+// SetFeedbackRecordID sets the "feedback_record_id" field.
+func (_c *EnrichmentJobCreate) SetFeedbackRecordID(v uuid.UUID) *EnrichmentJobCreate {
+	_c.mutation.SetFeedbackRecordID(v)
 	return _c
 }
 
@@ -132,9 +132,9 @@ func (_c *EnrichmentJobCreate) SetNillableID(v *uuid.UUID) *EnrichmentJobCreate 
 	return _c
 }
 
-// SetExperience sets the "experience" edge to the ExperienceData entity.
-func (_c *EnrichmentJobCreate) SetExperience(v *ExperienceData) *EnrichmentJobCreate {
-	return _c.SetExperienceID(v.ID)
+// SetFeedbackRecord sets the "feedback_record" edge to the FeedbackRecord entity.
+func (_c *EnrichmentJobCreate) SetFeedbackRecord(v *FeedbackRecord) *EnrichmentJobCreate {
+	return _c.SetFeedbackRecordID(v.ID)
 }
 
 // Mutation returns the EnrichmentJobMutation object of the builder.
@@ -196,8 +196,8 @@ func (_c *EnrichmentJobCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *EnrichmentJobCreate) check() error {
-	if _, ok := _c.mutation.ExperienceID(); !ok {
-		return &ValidationError{Name: "experience_id", err: errors.New(`ent: missing required field "EnrichmentJob.experience_id"`)}
+	if _, ok := _c.mutation.FeedbackRecordID(); !ok {
+		return &ValidationError{Name: "feedback_record_id", err: errors.New(`ent: missing required field "EnrichmentJob.feedback_record_id"`)}
 	}
 	if _, ok := _c.mutation.JobType(); !ok {
 		return &ValidationError{Name: "job_type", err: errors.New(`ent: missing required field "EnrichmentJob.job_type"`)}
@@ -214,8 +214,8 @@ func (_c *EnrichmentJobCreate) check() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "EnrichmentJob.created_at"`)}
 	}
-	if len(_c.mutation.ExperienceIDs()) == 0 {
-		return &ValidationError{Name: "experience", err: errors.New(`ent: missing required edge "EnrichmentJob.experience"`)}
+	if len(_c.mutation.FeedbackRecordIDs()) == 0 {
+		return &ValidationError{Name: "feedback_record", err: errors.New(`ent: missing required edge "EnrichmentJob.feedback_record"`)}
 	}
 	return nil
 }
@@ -280,21 +280,21 @@ func (_c *EnrichmentJobCreate) createSpec() (*EnrichmentJob, *sqlgraph.CreateSpe
 		_spec.SetField(enrichmentjob.FieldProcessedAt, field.TypeTime, value)
 		_node.ProcessedAt = &value
 	}
-	if nodes := _c.mutation.ExperienceIDs(); len(nodes) > 0 {
+	if nodes := _c.mutation.FeedbackRecordIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
 			Inverse: false,
-			Table:   enrichmentjob.ExperienceTable,
-			Columns: []string{enrichmentjob.ExperienceColumn},
+			Table:   enrichmentjob.FeedbackRecordTable,
+			Columns: []string{enrichmentjob.FeedbackRecordColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(experiencedata.FieldID, field.TypeUUID),
+				IDSpec: sqlgraph.NewFieldSpec(feedbackrecord.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
-		_node.ExperienceID = nodes[0]
+		_node.FeedbackRecordID = nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	return _node, _spec

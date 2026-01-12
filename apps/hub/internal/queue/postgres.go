@@ -23,25 +23,25 @@ func NewPostgresQueue(client *ent.Client) *PostgresQueue {
 }
 
 // Enqueue adds a new enrichment job to the queue
-func (q *PostgresQueue) Enqueue(ctx context.Context, experienceID, text string) error {
-	return q.enqueueJob(ctx, experienceID, text, JobTypeEnrichment)
+func (q *PostgresQueue) Enqueue(ctx context.Context, feedbackRecordID, text string) error {
+	return q.enqueueJob(ctx, feedbackRecordID, text, JobTypeEnrichment)
 }
 
 // EnqueueEmbedding adds a new embedding job to the queue
-func (q *PostgresQueue) EnqueueEmbedding(ctx context.Context, experienceID, text string) error {
-	return q.enqueueJob(ctx, experienceID, text, JobTypeEmbedding)
+func (q *PostgresQueue) EnqueueEmbedding(ctx context.Context, feedbackRecordID, text string) error {
+	return q.enqueueJob(ctx, feedbackRecordID, text, JobTypeEmbedding)
 }
 
 // enqueueJob is a helper to enqueue jobs of any type
-func (q *PostgresQueue) enqueueJob(ctx context.Context, experienceID, text string, jobType JobType) error {
-	expID, err := uuid.Parse(experienceID)
+func (q *PostgresQueue) enqueueJob(ctx context.Context, feedbackRecordID, text string, jobType JobType) error {
+	frID, err := uuid.Parse(feedbackRecordID)
 	if err != nil {
-		return fmt.Errorf("invalid experience ID: %w", err)
+		return fmt.Errorf("invalid feedback record ID: %w", err)
 	}
 
 	_, err = q.client.EnrichmentJob.
 		Create().
-		SetExperienceID(expID).
+		SetFeedbackRecordID(frID).
 		SetJobType(string(jobType)).
 		SetText(text).
 		SetStatus("pending").
@@ -102,10 +102,10 @@ func (q *PostgresQueue) Dequeue(ctx context.Context) (*EnrichmentJob, error) {
 	}
 
 	return &EnrichmentJob{
-		ID:           updatedJob.ID.String(),
-		ExperienceID: updatedJob.ExperienceID.String(),
-		JobType:      JobType(updatedJob.JobType),
-		Text:         updatedJob.Text,
+		ID:               updatedJob.ID.String(),
+		FeedbackRecordID: updatedJob.FeedbackRecordID.String(),
+		JobType:          JobType(updatedJob.JobType),
+		Text:             updatedJob.Text,
 	}, nil
 }
 

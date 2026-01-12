@@ -23,7 +23,7 @@ func GenerateOpenAPISpec(cfg *config.Config, client *ent.Client, dispatcher *web
 
 	// Create Huma API with Scalar docs
 	humaConfig := huma.DefaultConfig("Formbricks Hub API", "1.0.0")
-	humaConfig.Info.Description = `Experience data storage service for the Formbricks ecosystem.
+	humaConfig.Info.Description = `Feedback record storage service for the Formbricks ecosystem.
 
 📚 Full Documentation: https://hub.formbricks.com
 🚀 Quick Start: https://hub.formbricks.com/quickstart

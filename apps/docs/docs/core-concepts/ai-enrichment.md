@@ -55,7 +55,7 @@ The default configuration works great for most use cases. Advanced tuning option
 Create a text response:
 
 ```bash
-curl -X POST http://localhost:8080/v1/experiences \
+curl -X POST http://localhost:8080/v1/feedback-records \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
@@ -67,10 +67,10 @@ curl -X POST http://localhost:8080/v1/experiences \
   }'
 ```
 
-Within ~5-15 seconds, the enrichment completes. Query the experience to see the results:
+Within ~5-15 seconds, the enrichment completes. Query the feedback record to see the results:
 
 ```bash
-curl http://localhost:8080/v1/experiences/{id} \
+curl http://localhost:8080/v1/feedback-records/{id} \
   -H "X-API-Key: your-api-key"
 ```
 
@@ -95,14 +95,14 @@ Response with AI enrichment:
 
 Enrichment happens **asynchronously in the background**, so your API stays fast:
 
-1. **POST request arrives** → Experience saved immediately (~20-50ms)
+1. **POST request arrives** → Feedback record saved immediately (~20-50ms)
 2. **Return 201 Created** → API responds instantly
 3. **Job queued** → Enrichment job added to PostgreSQL queue
 4. **Workers process** → Background workers pick up pending jobs
 5. **Call OpenAI** → Text sent to `gpt-4o-mini` for analysis
 6. **Extract insights** → Parse sentiment, emotion, and topics
-7. **Update experience** → Enrichment fields populated
-8. **Fire webhook** → `experience.enriched` event dispatched
+7. **Update feedback record** → Enrichment fields populated
+8. **Fire webhook** → `feedback_record.enriched` event dispatched
 
 **Result:** Your users never wait for AI processing. Enrichment typically completes within 5-15 seconds.
 
@@ -136,7 +136,7 @@ Including the question helps the AI extract more accurate topics. For example, "
 
 Hub is designed to **never fail** because of AI enrichment:
 
-- ❌ **OpenAI timeout?** → Experience saved, enrichment skipped
+- ❌ **OpenAI timeout?** → Feedback record saved, enrichment skipped
 - ❌ **API rate limit?** → Job retried later  
 - ❌ **Network error?** → Job retried with backoff
 - ❌ **Invalid response?** → Enrichment skipped, logged for debugging
@@ -146,18 +146,18 @@ Your data is **always saved**, regardless of enrichment status.
 
 ## Webhooks
 
-When enrichment completes, Hub automatically sends an `experience.enriched` webhook to all configured endpoints.
+When enrichment completes, Hub automatically sends an `feedback_record.enriched` webhook to all configured endpoints.
 
 ### Event Flow
 
 ```
-1. POST /v1/experiences
+1. POST /v1/feedback-records
    ↓
-2. experience.created webhook fires immediately (no enrichment yet)
+2. feedback_record.created webhook fires immediately (no enrichment yet)
    ↓
 3. Background enrichment processes (5-15 seconds)
    ↓
-4. experience.enriched webhook fires (with sentiment, emotion, topics)
+4. feedback_record.enriched webhook fires (with sentiment, emotion, topics)
 ```
 
 ### Use Cases
@@ -171,7 +171,7 @@ When enrichment completes, Hub automatically sends an `experience.enriched` webh
 
 ```json
 {
-  "event": "experience.enriched",
+  "event": "feedback_record.enriched",
   "timestamp": "2025-10-24T10:30:12Z",
   "data": {
     "id": "01abc...",
@@ -215,7 +215,7 @@ LIMIT 10;
 -- Find failed jobs
 SELECT 
   id,
-  experience_id,
+  feedback_record_id,
   error,
   attempts,
   created_at
@@ -226,7 +226,7 @@ ORDER BY created_at DESC;
 
 ### Enrichment Progress
 
-Check how many experiences have been enriched:
+Check how many feedback records have been enriched:
 
 ```sql
 -- Overall enrichment progress
@@ -235,7 +235,7 @@ SELECT
   COUNT(*) FILTER (WHERE sentiment IS NULL) as not_enriched,
   COUNT(*) as total,
   ROUND(100.0 * COUNT(*) FILTER (WHERE sentiment IS NOT NULL) / COUNT(*), 1) as enrichment_percentage
-FROM experience_data
+FROM feedback_records
 WHERE field_type = 'text' AND value_text IS NOT NULL;
 ```
 
@@ -261,7 +261,7 @@ ORDER BY hour DESC;
 Workers log enrichment activity:
 
 ```
-INFO processing enrichment job worker_id=1 job_id=... experience_id=...
+INFO processing enrichment job worker_id=1 job_id=... feedback_record_id=...
 INFO enrichment completed successfully worker_id=1 sentiment=negative
 WARN enrichment failed worker_id=2 error="context deadline exceeded"
 ```
@@ -280,7 +280,7 @@ SELECT
   emotion,
   topics,
   collected_at
-FROM experience_data
+FROM feedback_records
 WHERE sentiment_score < -0.7  -- Very negative
   AND emotion IN ('anger', 'frustration')
 ORDER BY collected_at DESC
@@ -295,7 +295,7 @@ SELECT
   DATE_TRUNC('week', collected_at) as week,
   AVG(sentiment_score) as avg_sentiment,
   COUNT(*) as feedback_count
-FROM experience_data
+FROM feedback_records
 WHERE sentiment_score IS NOT NULL
 GROUP BY week
 ORDER BY week DESC;
@@ -309,7 +309,7 @@ SELECT
   unnest(topics) as topic,
   COUNT(*) as mentions,
   ROUND(AVG(sentiment_score)::numeric, 2) as avg_sentiment
-FROM experience_data
+FROM feedback_records
 WHERE topics IS NOT NULL
 GROUP BY topic
 ORDER BY mentions DESC
@@ -324,7 +324,7 @@ SELECT
   emotion,
   COUNT(*) as count,
   ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) as percentage
-FROM experience_data
+FROM feedback_records
 WHERE emotion IS NOT NULL
 GROUP BY emotion
 ORDER BY count DESC;
@@ -339,10 +339,9 @@ SELECT
   COUNT(*) FILTER (WHERE sentiment = 'negative') as negative_count,
   COUNT(*) as total_count,
   ROUND(100.0 * COUNT(*) FILTER (WHERE sentiment = 'negative') / COUNT(*), 1) as negative_percentage
-FROM experience_data
+FROM feedback_records
 WHERE topics IS NOT NULL
 GROUP BY topic
-HAVING COUNT(*) >= 10  -- At least 10 mentions
 ORDER BY negative_percentage DESC
 LIMIT 20;
 ```
@@ -437,7 +436,7 @@ If you see `text enrichment disabled`, the API key isn't set.
 **Test manually:**
 
 ```bash
-curl -X POST http://localhost:8080/v1/experiences \
+curl -X POST http://localhost:8080/v1/feedback-records \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
   -d '{
@@ -448,7 +447,7 @@ curl -X POST http://localhost:8080/v1/experiences \
   }'
 ```
 
-Wait 10-15 seconds, then query the experience. Check for `sentiment`, `emotion`, and `topics`.
+Wait 10-15 seconds, then query the feedback record. Check for `sentiment`, `emotion`, and `topics`.
 
 ### Slow Enrichment
 
@@ -478,4 +477,3 @@ Wait 10-15 seconds, then query the experience. Check for `sentiment`, `emotion`,
 - [Data Model →](./data-model) - Understanding the enriched fields
 - [Semantic Search →](./semantic-search) - Query feedback with natural language
 - [API Reference →](../api-reference) - Explore all endpoints
-

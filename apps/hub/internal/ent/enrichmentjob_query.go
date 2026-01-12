@@ -12,7 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/formbricks/hub/apps/hub/internal/ent/enrichmentjob"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 	"github.com/formbricks/hub/apps/hub/internal/ent/predicate"
 	"github.com/google/uuid"
 )
@@ -20,11 +20,11 @@ import (
 // EnrichmentJobQuery is the builder for querying EnrichmentJob entities.
 type EnrichmentJobQuery struct {
 	config
-	ctx            *QueryContext
-	order          []enrichmentjob.OrderOption
-	inters         []Interceptor
-	predicates     []predicate.EnrichmentJob
-	withExperience *ExperienceDataQuery
+	ctx                *QueryContext
+	order              []enrichmentjob.OrderOption
+	inters             []Interceptor
+	predicates         []predicate.EnrichmentJob
+	withFeedbackRecord *FeedbackRecordQuery
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -61,9 +61,9 @@ func (_q *EnrichmentJobQuery) Order(o ...enrichmentjob.OrderOption) *EnrichmentJ
 	return _q
 }
 
-// QueryExperience chains the current query on the "experience" edge.
-func (_q *EnrichmentJobQuery) QueryExperience() *ExperienceDataQuery {
-	query := (&ExperienceDataClient{config: _q.config}).Query()
+// QueryFeedbackRecord chains the current query on the "feedback_record" edge.
+func (_q *EnrichmentJobQuery) QueryFeedbackRecord() *FeedbackRecordQuery {
+	query := (&FeedbackRecordClient{config: _q.config}).Query()
 	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
 		if err := _q.prepareQuery(ctx); err != nil {
 			return nil, err
@@ -74,8 +74,8 @@ func (_q *EnrichmentJobQuery) QueryExperience() *ExperienceDataQuery {
 		}
 		step := sqlgraph.NewStep(
 			sqlgraph.From(enrichmentjob.Table, enrichmentjob.FieldID, selector),
-			sqlgraph.To(experiencedata.Table, experiencedata.FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, false, enrichmentjob.ExperienceTable, enrichmentjob.ExperienceColumn),
+			sqlgraph.To(feedbackrecord.Table, feedbackrecord.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, enrichmentjob.FeedbackRecordTable, enrichmentjob.FeedbackRecordColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -270,26 +270,26 @@ func (_q *EnrichmentJobQuery) Clone() *EnrichmentJobQuery {
 		return nil
 	}
 	return &EnrichmentJobQuery{
-		config:         _q.config,
-		ctx:            _q.ctx.Clone(),
-		order:          append([]enrichmentjob.OrderOption{}, _q.order...),
-		inters:         append([]Interceptor{}, _q.inters...),
-		predicates:     append([]predicate.EnrichmentJob{}, _q.predicates...),
-		withExperience: _q.withExperience.Clone(),
+		config:             _q.config,
+		ctx:                _q.ctx.Clone(),
+		order:              append([]enrichmentjob.OrderOption{}, _q.order...),
+		inters:             append([]Interceptor{}, _q.inters...),
+		predicates:         append([]predicate.EnrichmentJob{}, _q.predicates...),
+		withFeedbackRecord: _q.withFeedbackRecord.Clone(),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
 	}
 }
 
-// WithExperience tells the query-builder to eager-load the nodes that are connected to
-// the "experience" edge. The optional arguments are used to configure the query builder of the edge.
-func (_q *EnrichmentJobQuery) WithExperience(opts ...func(*ExperienceDataQuery)) *EnrichmentJobQuery {
-	query := (&ExperienceDataClient{config: _q.config}).Query()
+// WithFeedbackRecord tells the query-builder to eager-load the nodes that are connected to
+// the "feedback_record" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *EnrichmentJobQuery) WithFeedbackRecord(opts ...func(*FeedbackRecordQuery)) *EnrichmentJobQuery {
+	query := (&FeedbackRecordClient{config: _q.config}).Query()
 	for _, opt := range opts {
 		opt(query)
 	}
-	_q.withExperience = query
+	_q.withFeedbackRecord = query
 	return _q
 }
 
@@ -299,12 +299,12 @@ func (_q *EnrichmentJobQuery) WithExperience(opts ...func(*ExperienceDataQuery))
 // Example:
 //
 //	var v []struct {
-//		ExperienceID uuid.UUID `json:"experience_id,omitempty"`
+//		FeedbackRecordID uuid.UUID `json:"feedback_record_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.EnrichmentJob.Query().
-//		GroupBy(enrichmentjob.FieldExperienceID).
+//		GroupBy(enrichmentjob.FieldFeedbackRecordID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *EnrichmentJobQuery) GroupBy(field string, fields ...string) *EnrichmentJobGroupBy {
@@ -322,11 +322,11 @@ func (_q *EnrichmentJobQuery) GroupBy(field string, fields ...string) *Enrichmen
 // Example:
 //
 //	var v []struct {
-//		ExperienceID uuid.UUID `json:"experience_id,omitempty"`
+//		FeedbackRecordID uuid.UUID `json:"feedback_record_id,omitempty"`
 //	}
 //
 //	client.EnrichmentJob.Query().
-//		Select(enrichmentjob.FieldExperienceID).
+//		Select(enrichmentjob.FieldFeedbackRecordID).
 //		Scan(ctx, &v)
 func (_q *EnrichmentJobQuery) Select(fields ...string) *EnrichmentJobSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
@@ -372,7 +372,7 @@ func (_q *EnrichmentJobQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([
 		nodes       = []*EnrichmentJob{}
 		_spec       = _q.querySpec()
 		loadedTypes = [1]bool{
-			_q.withExperience != nil,
+			_q.withFeedbackRecord != nil,
 		}
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
@@ -393,20 +393,20 @@ func (_q *EnrichmentJobQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([
 	if len(nodes) == 0 {
 		return nodes, nil
 	}
-	if query := _q.withExperience; query != nil {
-		if err := _q.loadExperience(ctx, query, nodes, nil,
-			func(n *EnrichmentJob, e *ExperienceData) { n.Edges.Experience = e }); err != nil {
+	if query := _q.withFeedbackRecord; query != nil {
+		if err := _q.loadFeedbackRecord(ctx, query, nodes, nil,
+			func(n *EnrichmentJob, e *FeedbackRecord) { n.Edges.FeedbackRecord = e }); err != nil {
 			return nil, err
 		}
 	}
 	return nodes, nil
 }
 
-func (_q *EnrichmentJobQuery) loadExperience(ctx context.Context, query *ExperienceDataQuery, nodes []*EnrichmentJob, init func(*EnrichmentJob), assign func(*EnrichmentJob, *ExperienceData)) error {
+func (_q *EnrichmentJobQuery) loadFeedbackRecord(ctx context.Context, query *FeedbackRecordQuery, nodes []*EnrichmentJob, init func(*EnrichmentJob), assign func(*EnrichmentJob, *FeedbackRecord)) error {
 	ids := make([]uuid.UUID, 0, len(nodes))
 	nodeids := make(map[uuid.UUID][]*EnrichmentJob)
 	for i := range nodes {
-		fk := nodes[i].ExperienceID
+		fk := nodes[i].FeedbackRecordID
 		if _, ok := nodeids[fk]; !ok {
 			ids = append(ids, fk)
 		}
@@ -415,7 +415,7 @@ func (_q *EnrichmentJobQuery) loadExperience(ctx context.Context, query *Experie
 	if len(ids) == 0 {
 		return nil
 	}
-	query.Where(experiencedata.IDIn(ids...))
+	query.Where(feedbackrecord.IDIn(ids...))
 	neighbors, err := query.All(ctx)
 	if err != nil {
 		return err
@@ -423,7 +423,7 @@ func (_q *EnrichmentJobQuery) loadExperience(ctx context.Context, query *Experie
 	for _, n := range neighbors {
 		nodes, ok := nodeids[n.ID]
 		if !ok {
-			return fmt.Errorf(`unexpected foreign-key "experience_id" returned %v`, n.ID)
+			return fmt.Errorf(`unexpected foreign-key "feedback_record_id" returned %v`, n.ID)
 		}
 		for i := range nodes {
 			assign(nodes[i], n)
@@ -457,8 +457,8 @@ func (_q *EnrichmentJobQuery) querySpec() *sqlgraph.QuerySpec {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
 		}
-		if _q.withExperience != nil {
-			_spec.Node.AddColumnOnce(enrichmentjob.FieldExperienceID)
+		if _q.withFeedbackRecord != nil {
+			_spec.Node.AddColumnOnce(enrichmentjob.FieldFeedbackRecordID)
 		}
 	}
 	if ps := _q.predicates; len(ps) > 0 {

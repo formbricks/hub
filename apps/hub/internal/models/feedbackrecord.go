@@ -11,10 +11,10 @@ import (
 	"github.com/formbricks/hub/apps/hub/internal/ent"
 )
 
-// Experience represents an experience data record in the domain.
-// This is the canonical representation of experience data, independent
+// FeedbackRecord represents a feedback record in the domain.
+// This is the canonical representation of feedback data, independent
 // of API versions or database representations.
-type Experience struct {
+type FeedbackRecord struct {
 	ID             uuid.UUID              `json:"id"`
 	CollectedAt    time.Time              `json:"collected_at"`
 	CreatedAt      time.Time              `json:"created_at"`
@@ -43,8 +43,8 @@ type Experience struct {
 }
 
 // FromEnt converts an Ent entity to a domain model.
-func FromEnt(e *ent.ExperienceData) *Experience {
-	return &Experience{
+func FromEnt(e *ent.FeedbackRecord) *FeedbackRecord {
+	return &FeedbackRecord{
 		ID:             e.ID,
 		CollectedAt:    e.CollectedAt,
 		CreatedAt:      e.CreatedAt,
@@ -75,7 +75,7 @@ func FromEnt(e *ent.ExperienceData) *Experience {
 
 // ToEnt converts the domain model to an Ent entity for persistence.
 // Note: This is used for updates. For creates, use the Ent builder directly.
-func (e *Experience) ToEnt(entity *ent.ExperienceData) {
+func (e *FeedbackRecord) ToEnt(entity *ent.FeedbackRecord) {
 	entity.ID = e.ID
 	entity.CollectedAt = e.CollectedAt
 	entity.CreatedAt = e.CreatedAt

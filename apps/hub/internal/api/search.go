@@ -11,7 +11,7 @@ import (
 	"github.com/formbricks/hub/apps/hub/internal/config"
 	"github.com/formbricks/hub/apps/hub/internal/embedding"
 	"github.com/formbricks/hub/apps/hub/internal/ent"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 	entvec "github.com/pgvector/pgvector-go/ent"
 )
 
@@ -28,7 +28,7 @@ type SearchInput struct {
 
 // SearchResultItem represents a single search result with similarity score
 type SearchResultItem struct {
-	ExperienceData
+	FeedbackRecordData
 	SimilarityScore float64 `json:"similarity_score" doc:"Cosine similarity score (0-1, higher is more similar)"`
 }
 
@@ -44,12 +44,12 @@ type SearchOutput struct {
 // RegisterSearchRoutes registers semantic search routes
 func RegisterSearchRoutes(api huma.API, cfg *config.Config, client *ent.Client, logger *slog.Logger) {
 	huma.Register(api, huma.Operation{
-		OperationID: "search-experiences",
+		OperationID: "search-feedback-records",
 		Method:      "GET",
-		Path:        "/v1/experiences/search",
-		Summary:     "Search experiences using semantic search",
-		Description: "Performs vector similarity search on experience data using OpenAI embeddings. Only returns text experiences that have been embedded.",
-		Tags:        []string{"Experiences"},
+		Path:        "/v1/feedback-records/search",
+		Summary:     "Search feedback records using semantic search",
+		Description: "Performs vector similarity search on feedback record data using OpenAI embeddings. Only returns text records that have been embedded.",
+		Tags:        []string{"Feedback Records"},
 	}, func(ctx context.Context, input *SearchInput) (*SearchOutput, error) {
 		// Check if embeddings are enabled
 		if !cfg.IsEmbeddingEnabled() {
@@ -72,32 +72,31 @@ func RegisterSearchRoutes(api huma.API, cfg *config.Config, client *ent.Client, 
 		}
 
 		// Build query with filters and ordering by cosine distance
-		query := client.ExperienceData.Query().
-			Where(experiencedata.EmbeddingNotNil()) // Only return experiences with embeddings
+		query := client.FeedbackRecord.Query()
 
 		// Apply optional filters
 		if input.SourceType != "" {
-			query = query.Where(experiencedata.SourceTypeEQ(input.SourceType))
+			query = query.Where(feedbackrecord.SourceTypeEQ(input.SourceType))
 		}
 		if input.Since != "" {
 			sinceTime, err := time.Parse(time.RFC3339, input.Since)
 			if err != nil {
 				return nil, huma.Error400BadRequest("Invalid 'since' timestamp format. Expected ISO 8601 (RFC3339) format, e.g., 2024-01-01T00:00:00Z")
 			}
-			query = query.Where(experiencedata.CollectedAtGTE(sinceTime))
+			query = query.Where(feedbackrecord.CollectedAtGTE(sinceTime))
 		}
 		if input.Until != "" {
 			untilTime, err := time.Parse(time.RFC3339, input.Until)
 			if err != nil {
 				return nil, huma.Error400BadRequest("Invalid 'until' timestamp format. Expected ISO 8601 (RFC3339) format, e.g., 2024-12-31T23:59:59Z")
 			}
-			query = query.Where(experiencedata.CollectedAtLTE(untilTime))
+			query = query.Where(feedbackrecord.CollectedAtLTE(untilTime))
 		}
 
 		// Execute the query
-		experiences, err := query.
+		records, err := query.
 			Order(func(s *sql.Selector) {
-				s.OrderExpr(entvec.CosineDistance(experiencedata.FieldEmbedding, queryVector))
+				s.OrderExpr(entvec.CosineDistance(feedbackrecord.FieldEmbedding, queryVector))
 			}).
 			Limit(input.Limit).
 			All(ctx)
@@ -106,14 +105,14 @@ func RegisterSearchRoutes(api huma.API, cfg *config.Config, client *ent.Client, 
 			return nil, handleDatabaseError(logger, err, "semantic search", "query")
 		}
 
-		// For each experience, compute the actual similarity
+		// For each record, compute the actual similarity
 		// Since we can't easily extract distance from Ent query, we recalculate it
 		var results []SearchResultItem
-		for _, exp := range experiences {
-			// Calculate cosine distance between query vector and experience embedding
+		for _, fr := range records {
+			// Calculate cosine distance between query vector and feedback record embedding
 			var distance float64
-			if exp.Embedding != nil && queryVector.Slice() != nil {
-				distance = cosineDist(queryVector.Slice(), exp.Embedding.Slice())
+			if fr.Embedding != nil && queryVector.Slice() != nil {
+				distance = cosineDist(queryVector.Slice(), fr.Embedding.Slice())
 			} else {
 				distance = 1.0 // Maximum distance if no embedding
 			}
@@ -130,8 +129,8 @@ func RegisterSearchRoutes(api huma.API, cfg *config.Config, client *ent.Client, 
 			}
 
 			results = append(results, SearchResultItem{
-				ExperienceData:  entityToOutput(exp),
-				SimilarityScore: similarity,
+				FeedbackRecordData: entityToOutput(fr),
+				SimilarityScore:    similarity,
 			})
 		}
 

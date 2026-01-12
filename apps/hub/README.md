@@ -1,10 +1,10 @@
 # Formbricks Hub
 
-> Experience data storage service for surveys, feedback, reviews, and more. Optimized for analytics and BI tools.
+> Feedback record storage service for surveys, feedback, reviews, and more. Optimized for analytics and BI tools.
 
 ## Overview
 
-Formbricks Hub is a Go-based microservice designed to collect, hub, and serve experience data from various sources (surveys, NPS campaigns, reviews, support feedback, etc.). It provides a flexible, analytics-optimized schema that works seamlessly with BI tools like Apache Superset, Power BI, Tableau, and Looker.
+Formbricks Hub is a Go-based microservice designed to collect, hub, and serve feedback records from various sources (surveys, NPS campaigns, reviews, support feedback, etc.). It provides a flexible, analytics-optimized schema that works seamlessly with BI tools like Apache Superset, Power BI, Tableau, and Looker.
 
 ### Key Features
 
@@ -127,7 +127,7 @@ The Hub uses a **normalized schema** where each record represents a single quest
 
 ### Field Types Explained
 
-The Hub uses **8 standardized field types** that map directly to analytics use cases:
+The Hub uses **9 standardized field types** that map directly to analytics use cases:
 
 #### `text` - Open-Ended Feedback
 - **Use For:** Free-form comments, explanations, suggestions
@@ -158,6 +158,13 @@ The Hub uses **8 standardized field types** that map directly to analytics use c
 - **AI Enrichment:** ❌ No
 - **Analytics:** Average satisfaction, benchmarking, trends
 - **Example:** `4` (on 1-5 scale)
+
+#### `ces` - Customer Effort Score
+- **Use For:** "How easy was it to...?" (typically 1-7 scale)
+- **Value Column:** `value_number`
+- **AI Enrichment:** ❌ No
+- **Analytics:** Effort analysis, ease-of-use tracking
+- **Example:** `6` (on 1-7 scale)
 
 #### `rating` - Generic Rating Scale
 - **Use For:** Star ratings, Likert scales, any ordinal scale
@@ -312,11 +319,11 @@ Once running, access:
 
 ## API Endpoints
 
-### Experiences
+### Feedback Records
 
-#### Create Experience
+#### Create Feedback Record
 ```bash
-POST /v1/experiences
+POST /v1/feedback-records
 Content-Type: application/json
 
 {
@@ -336,14 +343,14 @@ Content-Type: application/json
 }
 ```
 
-#### Get Experience
+#### Get Feedback Record
 ```bash
-GET /v1/experiences/{id}
+GET /v1/feedback-records/{id}
 ```
 
-#### List Experiences
+#### List Feedback Records
 ```bash
-GET /v1/experiences?source_type=survey&limit=50&offset=0
+GET /v1/feedback-records?source_type=survey&limit=50&offset=0
 ```
 
 **Query Parameters**:
@@ -356,9 +363,9 @@ GET /v1/experiences?source_type=survey&limit=50&offset=0
 - `limit`: Results per page (default: 100, max: 1000)
 - `offset`: Number of results to skip
 
-#### Update Experience
+#### Update Feedback Record
 ```bash
-PATCH /v1/experiences/{id}
+PATCH /v1/feedback-records/{id}
 Content-Type: application/json
 
 {
@@ -369,9 +376,9 @@ Content-Type: application/json
 }
 ```
 
-#### Delete Experience
+#### Delete Feedback Record
 ```bash
-DELETE /v1/experiences/{id}
+DELETE /v1/feedback-records/{id}
 ```
 
 ## Environment Variables
@@ -422,7 +429,7 @@ SERVICE_API_KEY=your-secret-key-here
 When enabled, all API requests (except `/health` and `/docs`) must include the `X-API-Key` header:
 
 ```bash
-curl -H "X-API-Key: your-secret-key-here" http://localhost:8080/v1/experiences
+curl -H "X-API-Key: your-secret-key-here" http://localhost:8080/v1/feedback-records
 ```
 
 ### Public Endpoints
@@ -487,7 +494,7 @@ grep "rate limit exceeded" logs.json
   "level": "warn",
   "msg": "per-IP rate limit exceeded",
   "ip": "10.0.1.42",
-  "path": "/v1/experiences",
+  "path": "/v1/feedback-records",
   "method": "POST"
 }
 ```
@@ -530,16 +537,16 @@ Hub can send webhook events when data changes. Configure via `SERVICE_WEBHOOK_UR
 
 ### Event Types
 
-- `experience.created`: Fired immediately when a new experience is created
-- `experience.updated`: Fired when an experience is updated
-- `experience.deleted`: Fired when an experience is deleted
-- `experience.enriched`: Fired when AI enrichment completes successfully (includes full record with enrichment fields)
+- `feedback_record.created`: Fired immediately when a new record is created
+- `feedback_record.updated`: Fired when a record is updated
+- `feedback_record.deleted`: Fired when a record is deleted
+- `feedback_record.enriched`: Fired when AI enrichment completes successfully (includes full record with enrichment fields)
 
 ### Event Payload
 
 ```json
 {
-  "event": "experience.created",
+  "event": "feedback_record.created",
   "timestamp": "2025-10-14T12:34:56Z",
   "data": {
     "id": "01932c8a-8b9e-7000-8000-000000000001",
@@ -566,7 +573,7 @@ The schema is optimized for direct SQL queries with any BI tool:
 SELECT 
   DATE_TRUNC('day', collected_at) as date,
   AVG(value_number) as avg_score
-FROM experience_data
+FROM feedback_records
 WHERE field_type = 'nps'
 GROUP BY date
 ORDER BY date;
@@ -575,13 +582,13 @@ ORDER BY date;
 SELECT 
   source_name,
   COUNT(*) as response_count
-FROM experience_data
+FROM feedback_records
 GROUP BY source_name;
 ```
 
 ### Connecting Your BI Tool
 
-Connect directly to PostgreSQL using the `experience_data` table:
+Connect directly to PostgreSQL using the `feedback_records` table:
 
 - **Apache Superset**: Use the PostgreSQL connector, create datasets and dashboards
 - **Power BI**: Use the PostgreSQL connector, import the table directly
@@ -669,7 +676,7 @@ make test          # Run all tests with race detector
 make test-coverage # Run tests and generate coverage report
 make docker-up     # Start PostgreSQL
 make docker-down   # Stop Docker services
-make clean         # Clean build artifacts and coverage files
+make clean         # Clean build artifacts and test coverage files
 ```
 
 ### Running Tests
@@ -691,7 +698,7 @@ go test ./internal/api/
 go test ./internal/webhook/
 
 # Run specific test
-go test -v -run TestCreateExperience ./internal/api/
+go test -v -run TestCreateFeedbackRecord ./internal/api/
 ```
 
 **Test Architecture:**
@@ -779,7 +786,7 @@ go build -mod=vendor
 
 Ent follows a "schema-first" approach with code generation:
 
-1. **Edit schema**: `internal/ent/schema/experiencedata.go` (hand-written)
+1. **Edit schema**: `internal/ent/schema/feedbackrecord.go` (hand-written)
 2. **Generate code**: `make ent-gen` (creates client, queries, mutations)
 3. **Restart service**: `make dev` (runs migrations automatically)
 
@@ -787,13 +794,13 @@ Ent follows a "schema-first" approach with code generation:
 ```
 internal/ent/
 ├── schema/                    # Hand-written schemas
-│   └── experiencedata.go     # Your data model
+│   └── feedbackrecord.go     # Your data model
 ├── generate.go               # Trigger for code generation
 ├── client.go                 # Generated - type-safe client
-├── experiencedata.go         # Generated - entity operations
-├── experiencedata_create.go  # Generated - create operations
-├── experiencedata_query.go   # Generated - query operations
-├── experiencedata_update.go  # Generated - update operations
+├── feedbackrecord.go         # Generated - entity operations
+├── feedbackrecord_create.go  # Generated - create operations
+├── feedbackrecord_query.go   # Generated - query operations
+├── feedbackrecord_update.go  # Generated - update operations
 └── migrate/                  # Generated - migrations
 ```
 
@@ -801,8 +808,8 @@ internal/ent/
 
 ### Adding New Endpoints
 
-1. Add handler function in `internal/api/experiences.go`
-2. Register with Huma in `RegisterExperienceRoutes()`
+1. Add handler function in `internal/api/feedbackrecords.go`
+2. Register with Huma in `RegisterFeedbackRecordRoutes()`
 3. Huma automatically updates OpenAPI docs
 
 ## Docker
@@ -905,7 +912,7 @@ Tests use real Postgres containers which take 1-2 seconds to start per test file
 
 To speed up development, run specific tests:
 ```bash
-go test ./internal/api/ -run TestCreateExperience
+go test ./internal/api/ -run TestCreateFeedbackRecord
 ```
 
 ### Go Command Not Found
@@ -937,7 +944,7 @@ make dev
 make dev          # Start service (Ctrl+C to stop)
 
 # Schema changes
-vim internal/ent/schema/experiencedata.go   # Edit hand-written schema
+vim internal/ent/schema/feedbackrecord.go   # Edit hand-written schema
 make ent-gen                                 # Regenerate Ent code
 make dev                                     # Restart (migrations auto-run)
 
@@ -967,4 +974,3 @@ See [CONTRIBUTING.md](../../CONTRIBUTING.md) for contribution guidelines.
 ## License
 
 See [LICENSE.md](../../LICENSE.md) for license information.
-

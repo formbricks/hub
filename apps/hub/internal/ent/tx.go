@@ -14,8 +14,8 @@ type Tx struct {
 	config
 	// EnrichmentJob is the client for interacting with the EnrichmentJob builders.
 	EnrichmentJob *EnrichmentJobClient
-	// ExperienceData is the client for interacting with the ExperienceData builders.
-	ExperienceData *ExperienceDataClient
+	// FeedbackRecord is the client for interacting with the FeedbackRecord builders.
+	FeedbackRecord *FeedbackRecordClient
 
 	// lazily loaded.
 	client     *Client
@@ -148,7 +148,7 @@ func (tx *Tx) Client() *Client {
 
 func (tx *Tx) init() {
 	tx.EnrichmentJob = NewEnrichmentJobClient(tx.config)
-	tx.ExperienceData = NewExperienceDataClient(tx.config)
+	tx.FeedbackRecord = NewFeedbackRecordClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.

@@ -165,8 +165,8 @@ func (_u *EnrichmentJobUpdate) ExecX(ctx context.Context) {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *EnrichmentJobUpdate) check() error {
-	if _u.mutation.ExperienceCleared() && len(_u.mutation.ExperienceIDs()) > 0 {
-		return errors.New(`ent: clearing a required unique edge "EnrichmentJob.experience"`)
+	if _u.mutation.FeedbackRecordCleared() && len(_u.mutation.FeedbackRecordIDs()) > 0 {
+		return errors.New(`ent: clearing a required unique edge "EnrichmentJob.feedback_record"`)
 	}
 	return nil
 }
@@ -380,8 +380,8 @@ func (_u *EnrichmentJobUpdateOne) ExecX(ctx context.Context) {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *EnrichmentJobUpdateOne) check() error {
-	if _u.mutation.ExperienceCleared() && len(_u.mutation.ExperienceIDs()) > 0 {
-		return errors.New(`ent: clearing a required unique edge "EnrichmentJob.experience"`)
+	if _u.mutation.FeedbackRecordCleared() && len(_u.mutation.FeedbackRecordIDs()) > 0 {
+		return errors.New(`ent: clearing a required unique edge "EnrichmentJob.feedback_record"`)
 	}
 	return nil
 }

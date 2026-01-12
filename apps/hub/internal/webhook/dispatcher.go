@@ -31,10 +31,10 @@ const (
 type EventType string
 
 const (
-	EventExperienceCreated  EventType = "experience.created"
-	EventExperienceUpdated  EventType = "experience.updated"
-	EventExperienceDeleted  EventType = "experience.deleted"
-	EventExperienceEnriched EventType = "experience.enriched"
+	EventFeedbackRecordCreated  EventType = "feedback_record.created"
+	EventFeedbackRecordUpdated  EventType = "feedback_record.updated"
+	EventFeedbackRecordDeleted  EventType = "feedback_record.deleted"
+	EventFeedbackRecordEnriched EventType = "feedback_record.enriched"
 )
 
 // Event represents a webhook event payload
@@ -276,7 +276,7 @@ func (e EventType) String() string {
 // Validate checks if the event type is valid
 func (e EventType) Validate() error {
 	switch e {
-	case EventExperienceCreated, EventExperienceUpdated, EventExperienceDeleted, EventExperienceEnriched:
+	case EventFeedbackRecordCreated, EventFeedbackRecordUpdated, EventFeedbackRecordDeleted, EventFeedbackRecordEnriched:
 		return nil
 	default:
 		return fmt.Errorf("invalid event type: %s", e)

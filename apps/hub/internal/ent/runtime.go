@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/formbricks/hub/apps/hub/internal/ent/enrichmentjob"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 	"github.com/formbricks/hub/apps/hub/internal/ent/schema"
 	"github.com/google/uuid"
 )
@@ -37,43 +37,43 @@ func init() {
 	enrichmentjobDescID := enrichmentjobFields[0].Descriptor()
 	// enrichmentjob.DefaultID holds the default value on creation for the id field.
 	enrichmentjob.DefaultID = enrichmentjobDescID.Default.(func() uuid.UUID)
-	experiencedataFields := schema.ExperienceData{}.Fields()
-	_ = experiencedataFields
-	// experiencedataDescCollectedAt is the schema descriptor for collected_at field.
-	experiencedataDescCollectedAt := experiencedataFields[1].Descriptor()
-	// experiencedata.DefaultCollectedAt holds the default value on creation for the collected_at field.
-	experiencedata.DefaultCollectedAt = experiencedataDescCollectedAt.Default.(func() time.Time)
-	// experiencedataDescCreatedAt is the schema descriptor for created_at field.
-	experiencedataDescCreatedAt := experiencedataFields[2].Descriptor()
-	// experiencedata.DefaultCreatedAt holds the default value on creation for the created_at field.
-	experiencedata.DefaultCreatedAt = experiencedataDescCreatedAt.Default.(func() time.Time)
-	// experiencedataDescUpdatedAt is the schema descriptor for updated_at field.
-	experiencedataDescUpdatedAt := experiencedataFields[3].Descriptor()
-	// experiencedata.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	experiencedata.DefaultUpdatedAt = experiencedataDescUpdatedAt.Default.(func() time.Time)
-	// experiencedata.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	experiencedata.UpdateDefaultUpdatedAt = experiencedataDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// experiencedataDescTenantID is the schema descriptor for tenant_id field.
-	experiencedataDescTenantID := experiencedataFields[4].Descriptor()
-	// experiencedata.TenantIDValidator is a validator for the "tenant_id" field. It is called by the builders before save.
-	experiencedata.TenantIDValidator = experiencedataDescTenantID.Validators[0].(func(string) error)
-	// experiencedataDescResponseID is the schema descriptor for response_id field.
-	experiencedataDescResponseID := experiencedataFields[5].Descriptor()
-	// experiencedata.ResponseIDValidator is a validator for the "response_id" field. It is called by the builders before save.
-	experiencedata.ResponseIDValidator = experiencedataDescResponseID.Validators[0].(func(string) error)
-	// experiencedataDescSourceType is the schema descriptor for source_type field.
-	experiencedataDescSourceType := experiencedataFields[6].Descriptor()
-	// experiencedata.SourceTypeValidator is a validator for the "source_type" field. It is called by the builders before save.
-	experiencedata.SourceTypeValidator = experiencedataDescSourceType.Validators[0].(func(string) error)
-	// experiencedataDescFieldID is the schema descriptor for field_id field.
-	experiencedataDescFieldID := experiencedataFields[9].Descriptor()
-	// experiencedata.FieldIDValidator is a validator for the "field_id" field. It is called by the builders before save.
-	experiencedata.FieldIDValidator = experiencedataDescFieldID.Validators[0].(func(string) error)
-	// experiencedataDescFieldType is the schema descriptor for field_type field.
-	experiencedataDescFieldType := experiencedataFields[11].Descriptor()
-	// experiencedata.FieldTypeValidator is a validator for the "field_type" field. It is called by the builders before save.
-	experiencedata.FieldTypeValidator = func() func(string) error {
-		validators := experiencedataDescFieldType.Validators
+	feedbackrecordFields := schema.FeedbackRecord{}.Fields()
+	_ = feedbackrecordFields
+	// feedbackrecordDescCollectedAt is the schema descriptor for collected_at field.
+	feedbackrecordDescCollectedAt := feedbackrecordFields[1].Descriptor()
+	// feedbackrecord.DefaultCollectedAt holds the default value on creation for the collected_at field.
+	feedbackrecord.DefaultCollectedAt = feedbackrecordDescCollectedAt.Default.(func() time.Time)
+	// feedbackrecordDescCreatedAt is the schema descriptor for created_at field.
+	feedbackrecordDescCreatedAt := feedbackrecordFields[2].Descriptor()
+	// feedbackrecord.DefaultCreatedAt holds the default value on creation for the created_at field.
+	feedbackrecord.DefaultCreatedAt = feedbackrecordDescCreatedAt.Default.(func() time.Time)
+	// feedbackrecordDescUpdatedAt is the schema descriptor for updated_at field.
+	feedbackrecordDescUpdatedAt := feedbackrecordFields[3].Descriptor()
+	// feedbackrecord.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	feedbackrecord.DefaultUpdatedAt = feedbackrecordDescUpdatedAt.Default.(func() time.Time)
+	// feedbackrecord.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	feedbackrecord.UpdateDefaultUpdatedAt = feedbackrecordDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// feedbackrecordDescTenantID is the schema descriptor for tenant_id field.
+	feedbackrecordDescTenantID := feedbackrecordFields[4].Descriptor()
+	// feedbackrecord.TenantIDValidator is a validator for the "tenant_id" field. It is called by the builders before save.
+	feedbackrecord.TenantIDValidator = feedbackrecordDescTenantID.Validators[0].(func(string) error)
+	// feedbackrecordDescResponseID is the schema descriptor for response_id field.
+	feedbackrecordDescResponseID := feedbackrecordFields[5].Descriptor()
+	// feedbackrecord.ResponseIDValidator is a validator for the "response_id" field. It is called by the builders before save.
+	feedbackrecord.ResponseIDValidator = feedbackrecordDescResponseID.Validators[0].(func(string) error)
+	// feedbackrecordDescSourceType is the schema descriptor for source_type field.
+	feedbackrecordDescSourceType := feedbackrecordFields[6].Descriptor()
+	// feedbackrecord.SourceTypeValidator is a validator for the "source_type" field. It is called by the builders before save.
+	feedbackrecord.SourceTypeValidator = feedbackrecordDescSourceType.Validators[0].(func(string) error)
+	// feedbackrecordDescFieldID is the schema descriptor for field_id field.
+	feedbackrecordDescFieldID := feedbackrecordFields[9].Descriptor()
+	// feedbackrecord.FieldIDValidator is a validator for the "field_id" field. It is called by the builders before save.
+	feedbackrecord.FieldIDValidator = feedbackrecordDescFieldID.Validators[0].(func(string) error)
+	// feedbackrecordDescFieldType is the schema descriptor for field_type field.
+	feedbackrecordDescFieldType := feedbackrecordFields[11].Descriptor()
+	// feedbackrecord.FieldTypeValidator is a validator for the "field_type" field. It is called by the builders before save.
+	feedbackrecord.FieldTypeValidator = func() func(string) error {
+		validators := feedbackrecordDescFieldType.Validators
 		fns := [...]func(string) error{
 			validators[0].(func(string) error),
 			validators[1].(func(string) error),
@@ -87,12 +87,12 @@ func init() {
 			return nil
 		}
 	}()
-	// experiencedataDescLanguage is the schema descriptor for language field.
-	experiencedataDescLanguage := experiencedataFields[18].Descriptor()
-	// experiencedata.LanguageValidator is a validator for the "language" field. It is called by the builders before save.
-	experiencedata.LanguageValidator = experiencedataDescLanguage.Validators[0].(func(string) error)
-	// experiencedataDescID is the schema descriptor for id field.
-	experiencedataDescID := experiencedataFields[0].Descriptor()
-	// experiencedata.DefaultID holds the default value on creation for the id field.
-	experiencedata.DefaultID = experiencedataDescID.Default.(func() uuid.UUID)
+	// feedbackrecordDescLanguage is the schema descriptor for language field.
+	feedbackrecordDescLanguage := feedbackrecordFields[18].Descriptor()
+	// feedbackrecord.LanguageValidator is a validator for the "language" field. It is called by the builders before save.
+	feedbackrecord.LanguageValidator = feedbackrecordDescLanguage.Validators[0].(func(string) error)
+	// feedbackrecordDescID is the schema descriptor for id field.
+	feedbackrecordDescID := feedbackrecordFields[0].Descriptor()
+	// feedbackrecord.DefaultID holds the default value on creation for the id field.
+	feedbackrecord.DefaultID = feedbackrecordDescID.Default.(func() uuid.UUID)
 }

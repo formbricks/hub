@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Data Model
 
-Hub uses a simple, powerful data model optimized for analytics. Each record represents **one answer to one question**, making it incredibly easy to query, aggregate, and visualize your experience data.
+Hub uses a simple, powerful data model optimized for analytics. Each record represents **one answer to one question**, making it incredibly easy to query, aggregate, and visualize your feedback data.
 
 ## How It Works
 
@@ -43,9 +43,9 @@ When a user completes a survey with an NPS score and a comment, Hub creates two 
 
 This structure makes it trivial to calculate your NPS score or find all negative sentiment across any source.
 
-## Core Entity: ExperienceData
+## Core Entity: FeedbackRecord
 
-The `ExperienceData` entity stores individual experience data points with optional AI enrichment for
+The `FeedbackRecord` entity stores individual feedback data points with optional AI enrichment for
 qualitative feedback.
 
 ### Complete Field Reference
@@ -138,7 +138,7 @@ Only `text` field types are automatically enriched with AI-powered sentiment, em
 :::
 
 :::info Why These 9 Types?
-These types cover 95% of experience management use cases while keeping the model simple. They map directly to common analytics patterns:
+These types cover 95% of feedback management use cases while keeping the model simple. They map directly to common analytics patterns:
 
 - **Qualitative**: `text` → AI analysis for themes and sentiment
 - **Quantitative**: `nps`, `csat`, `ces`, `rating`, `number` → Statistical aggregations
@@ -148,7 +148,7 @@ These types cover 95% of experience management use cases while keeping the model
 
 ### Source Types
 
-The `source_type` field identifies where the experience data originated:
+The `source_type` field identifies where the feedback data originated:
 
 | Type             | Description             | Typical Use                        |
 | ---------------- | ----------------------- | ---------------------------------- |
@@ -305,7 +305,7 @@ This "one row per selection" approach makes it trivial to count how many users s
 
 ```sql
 SELECT value_text, COUNT(*) as user_count
-FROM experience_data
+FROM feedback_records
 WHERE field_id = 'features_used'
 GROUP BY value_text;
 ```
@@ -350,7 +350,7 @@ The timestamp prefix means newer records naturally have larger IDs, improving bo
 ## JSONB Metadata
 
 Hub uses PostgreSQL's `JSONB` type for flexible contextual data storage in the `metadata` field.
-This allows you to attach any custom attributes to your experience data without schema changes.
+This allows you to attach any custom attributes to your feedback records without schema changes.
 
 ### Common Metadata Patterns
 
@@ -395,23 +395,23 @@ PostgreSQL provides powerful operators for querying JSONB fields:
 ```sql
 -- Extract a specific key
 SELECT metadata->>'country' as country
-FROM experience_data
+FROM feedback_records
 WHERE source_type = 'survey';
 
 -- Filter by nested value
-SELECT * FROM experience_data
+SELECT * FROM feedback_records
 WHERE metadata->'device' @> '"mobile"';
 
 -- Check if key exists
-SELECT * FROM experience_data
+SELECT * FROM feedback_records
 WHERE metadata ? 'campaign_id';
 
 -- Filter by numeric value
-SELECT * FROM experience_data
+SELECT * FROM feedback_records
 WHERE (metadata->>'session_duration')::int > 300;
 
 -- Array containment
-SELECT * FROM experience_data
+SELECT * FROM feedback_records
 WHERE metadata->'feature_flags' @> '["ai_features"]';
 ```
 
@@ -453,7 +453,7 @@ SELECT
   metadata->>'journey_stage' as stage,
   ROUND(AVG(value_number), 1) as avg_nps,
   COUNT(*) as responses
-FROM experience_data
+FROM feedback_records
 WHERE field_type = 'nps' AND metadata->>'journey_stage' IS NOT NULL
 GROUP BY stage
 ORDER BY avg_nps DESC;

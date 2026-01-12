@@ -15,8 +15,8 @@ const (
 	Label = "enrichment_job"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
-	// FieldExperienceID holds the string denoting the experience_id field in the database.
-	FieldExperienceID = "experience_id"
+	// FieldFeedbackRecordID holds the string denoting the feedback_record_id field in the database.
+	FieldFeedbackRecordID = "feedback_record_id"
 	// FieldJobType holds the string denoting the job_type field in the database.
 	FieldJobType = "job_type"
 	// FieldStatus holds the string denoting the status field in the database.
@@ -31,23 +31,23 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldProcessedAt holds the string denoting the processed_at field in the database.
 	FieldProcessedAt = "processed_at"
-	// EdgeExperience holds the string denoting the experience edge name in mutations.
-	EdgeExperience = "experience"
+	// EdgeFeedbackRecord holds the string denoting the feedback_record edge name in mutations.
+	EdgeFeedbackRecord = "feedback_record"
 	// Table holds the table name of the enrichmentjob in the database.
 	Table = "enrichment_jobs"
-	// ExperienceTable is the table that holds the experience relation/edge.
-	ExperienceTable = "enrichment_jobs"
-	// ExperienceInverseTable is the table name for the ExperienceData entity.
-	// It exists in this package in order to avoid circular dependency with the "experiencedata" package.
-	ExperienceInverseTable = "experience_data"
-	// ExperienceColumn is the table column denoting the experience relation/edge.
-	ExperienceColumn = "experience_id"
+	// FeedbackRecordTable is the table that holds the feedback_record relation/edge.
+	FeedbackRecordTable = "enrichment_jobs"
+	// FeedbackRecordInverseTable is the table name for the FeedbackRecord entity.
+	// It exists in this package in order to avoid circular dependency with the "feedbackrecord" package.
+	FeedbackRecordInverseTable = "feedback_records"
+	// FeedbackRecordColumn is the table column denoting the feedback_record relation/edge.
+	FeedbackRecordColumn = "feedback_record_id"
 )
 
 // Columns holds all SQL columns for enrichmentjob fields.
 var Columns = []string{
 	FieldID,
-	FieldExperienceID,
+	FieldFeedbackRecordID,
 	FieldJobType,
 	FieldStatus,
 	FieldText,
@@ -88,9 +88,9 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
 }
 
-// ByExperienceID orders the results by the experience_id field.
-func ByExperienceID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldExperienceID, opts...).ToFunc()
+// ByFeedbackRecordID orders the results by the feedback_record_id field.
+func ByFeedbackRecordID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFeedbackRecordID, opts...).ToFunc()
 }
 
 // ByJobType orders the results by the job_type field.
@@ -128,16 +128,16 @@ func ByProcessedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProcessedAt, opts...).ToFunc()
 }
 
-// ByExperienceField orders the results by experience field.
-func ByExperienceField(field string, opts ...sql.OrderTermOption) OrderOption {
+// ByFeedbackRecordField orders the results by feedback_record field.
+func ByFeedbackRecordField(field string, opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborTerms(s, newExperienceStep(), sql.OrderByField(field, opts...))
+		sqlgraph.OrderByNeighborTerms(s, newFeedbackRecordStep(), sql.OrderByField(field, opts...))
 	}
 }
-func newExperienceStep() *sqlgraph.Step {
+func newFeedbackRecordStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
-		sqlgraph.To(ExperienceInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.M2O, false, ExperienceTable, ExperienceColumn),
+		sqlgraph.To(FeedbackRecordInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, false, FeedbackRecordTable, FeedbackRecordColumn),
 	)
 }

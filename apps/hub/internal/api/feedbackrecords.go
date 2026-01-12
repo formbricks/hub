@@ -9,14 +9,14 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/formbricks/hub/apps/hub/internal/ent"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 	"github.com/formbricks/hub/apps/hub/internal/models"
 	"github.com/formbricks/hub/apps/hub/internal/queue"
 	"github.com/formbricks/hub/apps/hub/internal/webhook"
 )
 
 // enqueueAIJobs enqueues enrichment and embedding jobs for text responses.
-func enqueueAIJobs(ctx context.Context, logger *slog.Logger, queue queue.Queue, exp *ent.ExperienceData, fieldLabel, valueText string) {
+func enqueueAIJobs(ctx context.Context, logger *slog.Logger, queue queue.Queue, fr *ent.FeedbackRecord, fieldLabel, valueText string) {
 	// Build text with question context if available (used for both enrichment and embeddings)
 	enrichmentText := valueText
 	if fieldLabel != "" {
@@ -24,39 +24,39 @@ func enqueueAIJobs(ctx context.Context, logger *slog.Logger, queue queue.Queue, 
 	}
 
 	// Enqueue enrichment job (sentiment/topics/emotion) with question context
-	if err := queue.Enqueue(ctx, exp.ID.String(), enrichmentText); err != nil {
-		logger.Warn("failed to enqueue enrichment job", "experience_id", exp.ID, "error", err)
+	if err := queue.Enqueue(ctx, fr.ID.String(), enrichmentText); err != nil {
+		logger.Warn("failed to enqueue enrichment job", "feedback_record_id", fr.ID, "error", err)
 	} else {
-		logger.Debug("enrichment job enqueued", "experience_id", exp.ID)
+		logger.Debug("enrichment job enqueued", "feedback_record_id", fr.ID)
 	}
 
 	// Enqueue embedding job (vector generation for semantic search)
-	if err := queue.EnqueueEmbedding(ctx, exp.ID.String(), enrichmentText); err != nil {
-		logger.Warn("failed to enqueue embedding job", "experience_id", exp.ID, "error", err)
+	if err := queue.EnqueueEmbedding(ctx, fr.ID.String(), enrichmentText); err != nil {
+		logger.Warn("failed to enqueue embedding job", "feedback_record_id", fr.ID, "error", err)
 	} else {
-		logger.Debug("embedding job enqueued", "experience_id", exp.ID)
+		logger.Debug("embedding job enqueued", "feedback_record_id", fr.ID)
 	}
 }
 
-// RegisterExperienceRoutes registers all experience-related routes
-func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webhook.Dispatcher, logger *slog.Logger, enrichmentQueue queue.Queue) {
-	// POST /v1/experiences - Create experience
+// RegisterFeedbackRecordRoutes registers all feedback record-related routes
+func RegisterFeedbackRecordRoutes(api huma.API, client *ent.Client, dispatcher *webhook.Dispatcher, logger *slog.Logger, enrichmentQueue queue.Queue) {
+	// POST /v1/feedback-records - Create feedback record
 	huma.Register(api, huma.Operation{
-		OperationID: "create-experience",
+		OperationID: "create-feedback-record",
 		Method:      "POST",
-		Path:        "/v1/experiences",
-		Summary:     "Create a new experience data record",
-		Description: "Creates a new experience data record",
-		Tags:        []string{"Experiences"},
-	}, func(ctx context.Context, input *CreateExperienceInput) (*ExperienceOutput, error) {
+		Path:        "/v1/feedback-records",
+		Summary:     "Create a new feedback record",
+		Description: "Creates a new feedback record data point",
+		Tags:        []string{"Feedback Records"},
+	}, func(ctx context.Context, input *CreateFeedbackRecordInput) (*FeedbackRecordOutput, error) {
 		// Set default collected_at if not provided
 		collectedAt := time.Now()
 		if input.Body.CollectedAt != nil {
 			collectedAt = *input.Body.CollectedAt
 		}
 
-		// Create the experience
-		builder := client.ExperienceData.Create().
+		// Create the feedback record
+		builder := client.FeedbackRecord.Create().
 			SetSourceType(input.Body.SourceType).
 			SetFieldID(input.Body.FieldID).
 			SetFieldType(input.Body.FieldType).
@@ -105,7 +105,7 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 			builder.SetUserIdentifier(*input.Body.UserIdentifier)
 		}
 
-		exp, err := builder.Save(ctx)
+		fr, err := builder.Save(ctx)
 		if err != nil {
 			return nil, handleDatabaseError(logger, err, "create", "new")
 		}
@@ -121,76 +121,76 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 			if input.Body.FieldLabel != nil {
 				fieldLabel = *input.Body.FieldLabel
 			}
-			enqueueAIJobs(ctx, logger, enrichmentQueue, exp, fieldLabel, *input.Body.ValueText)
+			enqueueAIJobs(ctx, logger, enrichmentQueue, fr, fieldLabel, *input.Body.ValueText)
 		}
 
-		logger.Info("experience created", "id", exp.ID, "queued_for_ai_processing", shouldProcess && enrichmentQueue != nil)
+		logger.Info("feedback record created", "id", fr.ID, "queued_for_ai_processing", shouldProcess && enrichmentQueue != nil)
 
 		// Dispatch webhook asynchronously
-		dispatcher.DispatchAsync(webhook.EventExperienceCreated, entityToOutput(exp))
+		dispatcher.DispatchAsync(webhook.EventFeedbackRecordCreated, entityToOutput(fr))
 
-		return &ExperienceOutput{Body: entityToOutput(exp)}, nil
+		return &FeedbackRecordOutput{Body: entityToOutput(fr)}, nil
 	})
 
-	// GET /v1/experiences/{id} - Get single experience
+	// GET /v1/feedback-records/{id} - Get single feedback record
 	huma.Register(api, huma.Operation{
-		OperationID: "get-experience",
+		OperationID: "get-feedback-record",
 		Method:      "GET",
-		Path:        "/v1/experiences/{id}",
-		Summary:     "Get an experience by ID",
-		Description: "Retrieves a single experience data record by its UUID",
-		Tags:        []string{"Experiences"},
-	}, func(ctx context.Context, input *GetExperienceInput) (*ExperienceOutput, error) {
+		Path:        "/v1/feedback-records/{id}",
+		Summary:     "Get a feedback record by ID",
+		Description: "Retrieves a single feedback record data point by its UUID",
+		Tags:        []string{"Feedback Records"},
+	}, func(ctx context.Context, input *GetFeedbackRecordInput) (*FeedbackRecordOutput, error) {
 		id, err := parseUUID(input.ID)
 		if err != nil {
 			return nil, err
 		}
 
-		exp, err := client.ExperienceData.Get(ctx, id)
+		fr, err := client.FeedbackRecord.Get(ctx, id)
 		if err != nil {
 			// Use sanitized error handling
 			return nil, handleDatabaseError(logger, err, "get", id.String())
 		}
 
-		return &ExperienceOutput{Body: entityToOutput(exp)}, nil
+		return &FeedbackRecordOutput{Body: entityToOutput(fr)}, nil
 	})
 
-	// GET /v1/experiences - List experiences with filters
+	// GET /v1/feedback-records - List feedback records with filters
 	huma.Register(api, huma.Operation{
-		OperationID: "list-experiences",
+		OperationID: "list-feedback-records",
 		Method:      "GET",
-		Path:        "/v1/experiences",
-		Summary:     "List experiences with filters",
-		Description: "Lists experiences with optional filters and pagination",
-		Tags:        []string{"Experiences"},
-	}, func(ctx context.Context, input *ListExperiencesInput) (*ListExperiencesOutput, error) {
+		Path:        "/v1/feedback-records",
+		Summary:     "List feedback records with filters",
+		Description: "Lists feedback records with optional filters and pagination",
+		Tags:        []string{"Feedback Records"},
+	}, func(ctx context.Context, input *ListFeedbackRecordsInput) (*ListFeedbackRecordsOutput, error) {
 		// Set defaults (already set by Huma's default tags)
 		limit := input.Limit
 		offset := input.Offset
 
 		// Build query
-		query := client.ExperienceData.Query()
+		query := client.FeedbackRecord.Query()
 
 		// Apply multi-tenancy and response grouping filters
 		if input.TenantID != "" {
-			query = query.Where(experiencedata.TenantIDEQ(input.TenantID))
+			query = query.Where(feedbackrecord.TenantIDEQ(input.TenantID))
 		}
 		if input.ResponseID != "" {
-			query = query.Where(experiencedata.ResponseIDEQ(input.ResponseID))
+			query = query.Where(feedbackrecord.ResponseIDEQ(input.ResponseID))
 		}
 
 		// Apply filters (check for non-empty strings)
 		if input.SourceType != "" {
-			query = query.Where(experiencedata.SourceTypeEQ(input.SourceType))
+			query = query.Where(feedbackrecord.SourceTypeEQ(input.SourceType))
 		}
 		if input.SourceID != "" {
-			query = query.Where(experiencedata.SourceIDEQ(input.SourceID))
+			query = query.Where(feedbackrecord.SourceIDEQ(input.SourceID))
 		}
 		if input.FieldType != "" {
-			query = query.Where(experiencedata.FieldTypeEQ(input.FieldType))
+			query = query.Where(feedbackrecord.FieldTypeEQ(input.FieldType))
 		}
 		if input.UserIdentifier != "" {
-			query = query.Where(experiencedata.UserIdentifierEQ(input.UserIdentifier))
+			query = query.Where(feedbackrecord.UserIdentifierEQ(input.UserIdentifier))
 		}
 		if input.Since != "" {
 			// Parse ISO 8601 time string
@@ -198,7 +198,7 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 			if err != nil {
 				return nil, huma.Error400BadRequest("Invalid 'since' timestamp format. Expected ISO 8601 (RFC3339) format, e.g., 2024-01-01T00:00:00Z")
 			}
-			query = query.Where(experiencedata.CollectedAtGTE(sinceTime))
+			query = query.Where(feedbackrecord.CollectedAtGTE(sinceTime))
 		}
 		if input.Until != "" {
 			// Parse ISO 8601 time string
@@ -206,39 +206,39 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 			if err != nil {
 				return nil, huma.Error400BadRequest("Invalid 'until' timestamp format. Expected ISO 8601 (RFC3339) format, e.g., 2024-12-31T23:59:59Z")
 			}
-			query = query.Where(experiencedata.CollectedAtLTE(untilTime))
+			query = query.Where(feedbackrecord.CollectedAtLTE(untilTime))
 		}
 
 		// Get total count
 		total, err := query.Count(ctx)
 		if err != nil {
 			// Use sanitized error handling
-			return nil, handleDatabaseError(logger, err, "count", "experiences")
+			return nil, handleDatabaseError(logger, err, "count", "feedback records")
 		}
 
 		// Apply pagination and ordering
-		experiences, err := query.
+		records, err := query.
 			Limit(limit).
 			Offset(offset).
-			Order(ent.Desc(experiencedata.FieldCollectedAt)).
+			Order(ent.Desc(feedbackrecord.FieldCollectedAt)).
 			All(ctx)
 		if err != nil {
 			// Use sanitized error handling
-			return nil, handleDatabaseError(logger, err, "list", "experiences")
+			return nil, handleDatabaseError(logger, err, "list", "feedback records")
 		}
 
 		// Convert to output
-		data := make([]ExperienceData, len(experiences))
-		for i, exp := range experiences {
-			data[i] = entityToOutput(exp)
+		data := make([]FeedbackRecordData, len(records))
+		for i, r := range records {
+			data[i] = entityToOutput(r)
 		}
 
-		return &ListExperiencesOutput{
+		return &ListFeedbackRecordsOutput{
 			Body: struct {
-				Data   []ExperienceData `json:"data" doc:"List of experiences"`
-				Total  int              `json:"total" doc:"Total count of experiences matching filters"`
-				Limit  int              `json:"limit" doc:"Limit used in query"`
-				Offset int              `json:"offset" doc:"Offset used in query"`
+				Data   []FeedbackRecordData `json:"data" doc:"List of feedback records"`
+				Total  int                  `json:"total" doc:"Total count of feedback records matching filters"`
+				Limit  int                  `json:"limit" doc:"Limit used in query"`
+				Offset int                  `json:"offset" doc:"Offset used in query"`
 			}{
 				Data:   data,
 				Total:  total,
@@ -248,15 +248,15 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 		}, nil
 	})
 
-	// PATCH /v1/experiences/{id} - Update experience
+	// PATCH /v1/feedback-records/{id} - Update feedback record
 	huma.Register(api, huma.Operation{
-		OperationID: "update-experience",
+		OperationID: "update-feedback-record",
 		Method:      "PATCH",
-		Path:        "/v1/experiences/{id}",
-		Summary:     "Update an experience",
-		Description: "Updates specific fields of an experience data record",
-		Tags:        []string{"Experiences"},
-	}, func(ctx context.Context, input *UpdateExperienceInput) (*ExperienceOutput, error) {
+		Path:        "/v1/feedback-records/{id}",
+		Summary:     "Update a feedback record",
+		Description: "Updates specific fields of a feedback record data point",
+		Tags:        []string{"Feedback Records"},
+	}, func(ctx context.Context, input *UpdateFeedbackRecordInput) (*FeedbackRecordOutput, error) {
 		id, err := parseUUID(input.ID)
 		if err != nil {
 			return nil, err
@@ -266,7 +266,7 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 		valueTextChanged := input.Body.ValueText != nil
 
 		// Build update query
-		update := client.ExperienceData.UpdateOneID(id)
+		update := client.FeedbackRecord.UpdateOneID(id)
 
 		// Apply updates for provided fields
 		if input.Body.ValueText != nil {
@@ -294,7 +294,7 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 			update.SetUserIdentifier(*input.Body.UserIdentifier)
 		}
 
-		exp, err := update.Save(ctx)
+		fr, err := update.Save(ctx)
 		if err != nil {
 			// Use sanitized error handling
 			return nil, handleDatabaseError(logger, err, "update", id.String())
@@ -302,89 +302,89 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 
 		// If value_text changed, re-enqueue AI processing jobs to update enrichment/embeddings
 		if valueTextChanged && enrichmentQueue != nil && *input.Body.ValueText != "" {
-			fieldType := models.FieldType(exp.FieldType)
+			fieldType := models.FieldType(fr.FieldType)
 			if fieldType.ShouldEnrich() {
-				fieldLabel := exp.FieldLabel
-				enqueueAIJobs(ctx, logger, enrichmentQueue, exp, fieldLabel, *input.Body.ValueText)
-				logger.Info("experience updated with AI reprocessing", "id", exp.ID)
+				fieldLabel := fr.FieldLabel
+				enqueueAIJobs(ctx, logger, enrichmentQueue, fr, fieldLabel, *input.Body.ValueText)
+				logger.Info("feedback record updated with AI reprocessing", "id", fr.ID)
 			}
 		} else {
-			logger.Info("experience updated", "id", exp.ID)
+			logger.Info("feedback record updated", "id", fr.ID)
 		}
 
 		// Dispatch webhook asynchronously
-		dispatcher.DispatchAsync(webhook.EventExperienceUpdated, entityToOutput(exp))
+		dispatcher.DispatchAsync(webhook.EventFeedbackRecordUpdated, entityToOutput(fr))
 
-		return &ExperienceOutput{Body: entityToOutput(exp)}, nil
+		return &FeedbackRecordOutput{Body: entityToOutput(fr)}, nil
 	})
 
-	// DELETE /v1/experiences/{id} - Delete experience
+	// DELETE /v1/feedback-records/{id} - Delete feedback record
 	huma.Register(api, huma.Operation{
-		OperationID: "delete-experience",
+		OperationID: "delete-feedback-record",
 		Method:      "DELETE",
-		Path:        "/v1/experiences/{id}",
-		Summary:     "Delete an experience",
-		Description: "Permanently deletes an experience data record",
-		Tags:        []string{"Experiences"},
-	}, func(ctx context.Context, input *DeleteExperienceInput) (*struct{}, error) {
+		Path:        "/v1/feedback-records/{id}",
+		Summary:     "Delete a feedback record",
+		Description: "Permanently deletes a feedback record data point",
+		Tags:        []string{"Feedback Records"},
+	}, func(ctx context.Context, input *DeleteFeedbackRecordInput) (*struct{}, error) {
 		id, err := parseUUID(input.ID)
 		if err != nil {
 			return nil, err
 		}
 
-		// Get the experience before deleting (for webhook)
-		exp, err := client.ExperienceData.Get(ctx, id)
+		// Get the feedback record before deleting (for webhook)
+		fr, err := client.FeedbackRecord.Get(ctx, id)
 		if err != nil {
 			// Use sanitized error handling
 			return nil, handleDatabaseError(logger, err, "get for deletion", id.String())
 		}
 
-		// Delete the experience
-		err = client.ExperienceData.DeleteOneID(id).Exec(ctx)
+		// Delete the feedback record
+		err = client.FeedbackRecord.DeleteOneID(id).Exec(ctx)
 		if err != nil {
 			// Use sanitized error handling
 			return nil, handleDatabaseError(logger, err, "delete", id.String())
 		}
 
-		logger.Info("experience deleted", "id", id)
+		logger.Info("feedback record deleted", "id", id)
 
 		// Dispatch webhook asynchronously
-		dispatcher.DispatchAsync(webhook.EventExperienceDeleted, entityToOutput(exp))
+		dispatcher.DispatchAsync(webhook.EventFeedbackRecordDeleted, entityToOutput(fr))
 
 		return &struct{}{}, nil
 	})
 
-	// DELETE /v1/experiences - Bulk delete experiences (GDPR compliance)
+	// DELETE /v1/feedback-records - Bulk delete feedback records (GDPR compliance)
 	huma.Register(api, huma.Operation{
-		OperationID:   "bulk-delete-experiences",
+		OperationID:   "bulk-delete-feedback-records",
 		Method:        "DELETE",
-		Path:          "/v1/experiences",
-		Summary:       "Bulk delete experiences by user identifier",
-		Description:   "Permanently deletes all experience data records matching the specified user_identifier. This endpoint supports GDPR Article 17 (Right to Erasure) requests.",
-		Tags:          []string{"Experiences"},
+		Path:          "/v1/feedback-records",
+		Summary:       "Bulk delete feedback records by user identifier",
+		Description:   "Permanently deletes all feedback record data points matching the specified user_identifier. This endpoint supports GDPR Article 17 (Right to Erasure) requests.",
+		Tags:          []string{"Feedback Records"},
 		DefaultStatus: 200,
-	}, func(ctx context.Context, input *BulkDeleteExperiencesInput) (*BulkDeleteExperiencesOutput, error) {
+	}, func(ctx context.Context, input *BulkDeleteFeedbackRecordsInput) (*BulkDeleteFeedbackRecordsOutput, error) {
 		if input.UserIdentifier == "" {
 			return nil, huma.Error400BadRequest("user_identifier query parameter is required for bulk deletion")
 		}
 
 		// Build query to find matching records
-		query := client.ExperienceData.Query().
-			Where(experiencedata.UserIdentifierEQ(input.UserIdentifier))
+		query := client.FeedbackRecord.Query().
+			Where(feedbackrecord.UserIdentifierEQ(input.UserIdentifier))
 
 		// Apply optional tenant filter for multi-tenant deployments
 		if input.TenantID != "" {
-			query = query.Where(experiencedata.TenantIDEQ(input.TenantID))
+			query = query.Where(feedbackrecord.TenantIDEQ(input.TenantID))
 		}
 
-		// Get experiences before deleting (for webhooks)
-		experiences, err := query.All(ctx)
+		// Get feedback records before deleting (for webhooks)
+		records, err := query.All(ctx)
 		if err != nil {
 			return nil, handleDatabaseError(logger, err, "query for bulk deletion", input.UserIdentifier)
 		}
 
-		if len(experiences) == 0 {
-			return &BulkDeleteExperiencesOutput{
+		if len(records) == 0 {
+			return &BulkDeleteFeedbackRecordsOutput{
 				Body: struct {
 					DeletedCount int    `json:"deleted_count" doc:"Number of records deleted"`
 					Message      string `json:"message" doc:"Human-readable status message"`
@@ -396,11 +396,11 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 		}
 
 		// Build delete query
-		deleteQuery := client.ExperienceData.Delete().
-			Where(experiencedata.UserIdentifierEQ(input.UserIdentifier))
+		deleteQuery := client.FeedbackRecord.Delete().
+			Where(feedbackrecord.UserIdentifierEQ(input.UserIdentifier))
 
 		if input.TenantID != "" {
-			deleteQuery = deleteQuery.Where(experiencedata.TenantIDEQ(input.TenantID))
+			deleteQuery = deleteQuery.Where(feedbackrecord.TenantIDEQ(input.TenantID))
 		}
 
 		// Execute bulk deletion
@@ -415,18 +415,18 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 			"deleted_count", deletedCount,
 		)
 
-		// Dispatch webhooks for each deleted experience
-		for _, exp := range experiences {
-			dispatcher.DispatchAsync(webhook.EventExperienceDeleted, entityToOutput(exp))
+		// Dispatch webhooks for each deleted feedback record
+		for _, r := range records {
+			dispatcher.DispatchAsync(webhook.EventFeedbackRecordDeleted, entityToOutput(r))
 		}
 
-		return &BulkDeleteExperiencesOutput{
+		return &BulkDeleteFeedbackRecordsOutput{
 			Body: struct {
 				DeletedCount int    `json:"deleted_count" doc:"Number of records deleted"`
 				Message      string `json:"message" doc:"Human-readable status message"`
 			}{
 				DeletedCount: deletedCount,
-				Message:      fmt.Sprintf("Successfully deleted %d experience record(s) for user_identifier: %s", deletedCount, input.UserIdentifier),
+				Message:      fmt.Sprintf("Successfully deleted %d feedback record(s) for user_identifier: %s", deletedCount, input.UserIdentifier),
 			},
 		}, nil
 	})
@@ -434,11 +434,11 @@ func RegisterExperienceRoutes(api huma.API, client *ent.Client, dispatcher *webh
 
 // entityToOutput converts an Ent entity to the output format via the domain model.
 // This allows for business logic transformation in the future.
-func entityToOutput(exp *ent.ExperienceData) ExperienceData {
+func entityToOutput(fr *ent.FeedbackRecord) FeedbackRecordData {
 	// Convert: Ent entity → Domain model → API response
-	domainModel := models.FromEnt(exp)
+	domainModel := models.FromEnt(fr)
 
-	var apiData ExperienceData
+	var apiData FeedbackRecordData
 	apiData.FromModel(domainModel)
 
 	return apiData

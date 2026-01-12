@@ -17,7 +17,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/formbricks/hub/apps/hub/internal/ent/enrichmentjob"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 )
 
 // Client is the client that holds all ent builders.
@@ -27,8 +27,8 @@ type Client struct {
 	Schema *migrate.Schema
 	// EnrichmentJob is the client for interacting with the EnrichmentJob builders.
 	EnrichmentJob *EnrichmentJobClient
-	// ExperienceData is the client for interacting with the ExperienceData builders.
-	ExperienceData *ExperienceDataClient
+	// FeedbackRecord is the client for interacting with the FeedbackRecord builders.
+	FeedbackRecord *FeedbackRecordClient
 }
 
 // NewClient creates a new client configured with the given options.
@@ -41,7 +41,7 @@ func NewClient(opts ...Option) *Client {
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.EnrichmentJob = NewEnrichmentJobClient(c.config)
-	c.ExperienceData = NewExperienceDataClient(c.config)
+	c.FeedbackRecord = NewFeedbackRecordClient(c.config)
 }
 
 type (
@@ -135,7 +135,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		ctx:            ctx,
 		config:         cfg,
 		EnrichmentJob:  NewEnrichmentJobClient(cfg),
-		ExperienceData: NewExperienceDataClient(cfg),
+		FeedbackRecord: NewFeedbackRecordClient(cfg),
 	}, nil
 }
 
@@ -156,7 +156,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		ctx:            ctx,
 		config:         cfg,
 		EnrichmentJob:  NewEnrichmentJobClient(cfg),
-		ExperienceData: NewExperienceDataClient(cfg),
+		FeedbackRecord: NewFeedbackRecordClient(cfg),
 	}, nil
 }
 
@@ -186,14 +186,14 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	c.EnrichmentJob.Use(hooks...)
-	c.ExperienceData.Use(hooks...)
+	c.FeedbackRecord.Use(hooks...)
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	c.EnrichmentJob.Intercept(interceptors...)
-	c.ExperienceData.Intercept(interceptors...)
+	c.FeedbackRecord.Intercept(interceptors...)
 }
 
 // Mutate implements the ent.Mutator interface.
@@ -201,8 +201,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
 	case *EnrichmentJobMutation:
 		return c.EnrichmentJob.mutate(ctx, m)
-	case *ExperienceDataMutation:
-		return c.ExperienceData.mutate(ctx, m)
+	case *FeedbackRecordMutation:
+		return c.FeedbackRecord.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
 	}
@@ -316,15 +316,15 @@ func (c *EnrichmentJobClient) GetX(ctx context.Context, id uuid.UUID) *Enrichmen
 	return obj
 }
 
-// QueryExperience queries the experience edge of a EnrichmentJob.
-func (c *EnrichmentJobClient) QueryExperience(_m *EnrichmentJob) *ExperienceDataQuery {
-	query := (&ExperienceDataClient{config: c.config}).Query()
+// QueryFeedbackRecord queries the feedback_record edge of a EnrichmentJob.
+func (c *EnrichmentJobClient) QueryFeedbackRecord(_m *EnrichmentJob) *FeedbackRecordQuery {
+	query := (&FeedbackRecordClient{config: c.config}).Query()
 	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
 		id := _m.ID
 		step := sqlgraph.NewStep(
 			sqlgraph.From(enrichmentjob.Table, enrichmentjob.FieldID, id),
-			sqlgraph.To(experiencedata.Table, experiencedata.FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, false, enrichmentjob.ExperienceTable, enrichmentjob.ExperienceColumn),
+			sqlgraph.To(feedbackrecord.Table, feedbackrecord.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, false, enrichmentjob.FeedbackRecordTable, enrichmentjob.FeedbackRecordColumn),
 		)
 		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
 		return fromV, nil
@@ -357,107 +357,107 @@ func (c *EnrichmentJobClient) mutate(ctx context.Context, m *EnrichmentJobMutati
 	}
 }
 
-// ExperienceDataClient is a client for the ExperienceData schema.
-type ExperienceDataClient struct {
+// FeedbackRecordClient is a client for the FeedbackRecord schema.
+type FeedbackRecordClient struct {
 	config
 }
 
-// NewExperienceDataClient returns a client for the ExperienceData from the given config.
-func NewExperienceDataClient(c config) *ExperienceDataClient {
-	return &ExperienceDataClient{config: c}
+// NewFeedbackRecordClient returns a client for the FeedbackRecord from the given config.
+func NewFeedbackRecordClient(c config) *FeedbackRecordClient {
+	return &FeedbackRecordClient{config: c}
 }
 
 // Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `experiencedata.Hooks(f(g(h())))`.
-func (c *ExperienceDataClient) Use(hooks ...Hook) {
-	c.hooks.ExperienceData = append(c.hooks.ExperienceData, hooks...)
+// A call to `Use(f, g, h)` equals to `feedbackrecord.Hooks(f(g(h())))`.
+func (c *FeedbackRecordClient) Use(hooks ...Hook) {
+	c.hooks.FeedbackRecord = append(c.hooks.FeedbackRecord, hooks...)
 }
 
 // Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `experiencedata.Intercept(f(g(h())))`.
-func (c *ExperienceDataClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ExperienceData = append(c.inters.ExperienceData, interceptors...)
+// A call to `Intercept(f, g, h)` equals to `feedbackrecord.Intercept(f(g(h())))`.
+func (c *FeedbackRecordClient) Intercept(interceptors ...Interceptor) {
+	c.inters.FeedbackRecord = append(c.inters.FeedbackRecord, interceptors...)
 }
 
-// Create returns a builder for creating a ExperienceData entity.
-func (c *ExperienceDataClient) Create() *ExperienceDataCreate {
-	mutation := newExperienceDataMutation(c.config, OpCreate)
-	return &ExperienceDataCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+// Create returns a builder for creating a FeedbackRecord entity.
+func (c *FeedbackRecordClient) Create() *FeedbackRecordCreate {
+	mutation := newFeedbackRecordMutation(c.config, OpCreate)
+	return &FeedbackRecordCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
-// CreateBulk returns a builder for creating a bulk of ExperienceData entities.
-func (c *ExperienceDataClient) CreateBulk(builders ...*ExperienceDataCreate) *ExperienceDataCreateBulk {
-	return &ExperienceDataCreateBulk{config: c.config, builders: builders}
+// CreateBulk returns a builder for creating a bulk of FeedbackRecord entities.
+func (c *FeedbackRecordClient) CreateBulk(builders ...*FeedbackRecordCreate) *FeedbackRecordCreateBulk {
+	return &FeedbackRecordCreateBulk{config: c.config, builders: builders}
 }
 
 // MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
 // a builder and applies setFunc on it.
-func (c *ExperienceDataClient) MapCreateBulk(slice any, setFunc func(*ExperienceDataCreate, int)) *ExperienceDataCreateBulk {
+func (c *FeedbackRecordClient) MapCreateBulk(slice any, setFunc func(*FeedbackRecordCreate, int)) *FeedbackRecordCreateBulk {
 	rv := reflect.ValueOf(slice)
 	if rv.Kind() != reflect.Slice {
-		return &ExperienceDataCreateBulk{err: fmt.Errorf("calling to ExperienceDataClient.MapCreateBulk with wrong type %T, need slice", slice)}
+		return &FeedbackRecordCreateBulk{err: fmt.Errorf("calling to FeedbackRecordClient.MapCreateBulk with wrong type %T, need slice", slice)}
 	}
-	builders := make([]*ExperienceDataCreate, rv.Len())
+	builders := make([]*FeedbackRecordCreate, rv.Len())
 	for i := 0; i < rv.Len(); i++ {
 		builders[i] = c.Create()
 		setFunc(builders[i], i)
 	}
-	return &ExperienceDataCreateBulk{config: c.config, builders: builders}
+	return &FeedbackRecordCreateBulk{config: c.config, builders: builders}
 }
 
-// Update returns an update builder for ExperienceData.
-func (c *ExperienceDataClient) Update() *ExperienceDataUpdate {
-	mutation := newExperienceDataMutation(c.config, OpUpdate)
-	return &ExperienceDataUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+// Update returns an update builder for FeedbackRecord.
+func (c *FeedbackRecordClient) Update() *FeedbackRecordUpdate {
+	mutation := newFeedbackRecordMutation(c.config, OpUpdate)
+	return &FeedbackRecordUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // UpdateOne returns an update builder for the given entity.
-func (c *ExperienceDataClient) UpdateOne(_m *ExperienceData) *ExperienceDataUpdateOne {
-	mutation := newExperienceDataMutation(c.config, OpUpdateOne, withExperienceData(_m))
-	return &ExperienceDataUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (c *FeedbackRecordClient) UpdateOne(_m *FeedbackRecord) *FeedbackRecordUpdateOne {
+	mutation := newFeedbackRecordMutation(c.config, OpUpdateOne, withFeedbackRecord(_m))
+	return &FeedbackRecordUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // UpdateOneID returns an update builder for the given id.
-func (c *ExperienceDataClient) UpdateOneID(id uuid.UUID) *ExperienceDataUpdateOne {
-	mutation := newExperienceDataMutation(c.config, OpUpdateOne, withExperienceDataID(id))
-	return &ExperienceDataUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+func (c *FeedbackRecordClient) UpdateOneID(id uuid.UUID) *FeedbackRecordUpdateOne {
+	mutation := newFeedbackRecordMutation(c.config, OpUpdateOne, withFeedbackRecordID(id))
+	return &FeedbackRecordUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
-// Delete returns a delete builder for ExperienceData.
-func (c *ExperienceDataClient) Delete() *ExperienceDataDelete {
-	mutation := newExperienceDataMutation(c.config, OpDelete)
-	return &ExperienceDataDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+// Delete returns a delete builder for FeedbackRecord.
+func (c *FeedbackRecordClient) Delete() *FeedbackRecordDelete {
+	mutation := newFeedbackRecordMutation(c.config, OpDelete)
+	return &FeedbackRecordDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
 }
 
 // DeleteOne returns a builder for deleting the given entity.
-func (c *ExperienceDataClient) DeleteOne(_m *ExperienceData) *ExperienceDataDeleteOne {
+func (c *FeedbackRecordClient) DeleteOne(_m *FeedbackRecord) *FeedbackRecordDeleteOne {
 	return c.DeleteOneID(_m.ID)
 }
 
 // DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ExperienceDataClient) DeleteOneID(id uuid.UUID) *ExperienceDataDeleteOne {
-	builder := c.Delete().Where(experiencedata.ID(id))
+func (c *FeedbackRecordClient) DeleteOneID(id uuid.UUID) *FeedbackRecordDeleteOne {
+	builder := c.Delete().Where(feedbackrecord.ID(id))
 	builder.mutation.id = &id
 	builder.mutation.op = OpDeleteOne
-	return &ExperienceDataDeleteOne{builder}
+	return &FeedbackRecordDeleteOne{builder}
 }
 
-// Query returns a query builder for ExperienceData.
-func (c *ExperienceDataClient) Query() *ExperienceDataQuery {
-	return &ExperienceDataQuery{
+// Query returns a query builder for FeedbackRecord.
+func (c *FeedbackRecordClient) Query() *FeedbackRecordQuery {
+	return &FeedbackRecordQuery{
 		config: c.config,
-		ctx:    &QueryContext{Type: TypeExperienceData},
+		ctx:    &QueryContext{Type: TypeFeedbackRecord},
 		inters: c.Interceptors(),
 	}
 }
 
-// Get returns a ExperienceData entity by its id.
-func (c *ExperienceDataClient) Get(ctx context.Context, id uuid.UUID) (*ExperienceData, error) {
-	return c.Query().Where(experiencedata.ID(id)).Only(ctx)
+// Get returns a FeedbackRecord entity by its id.
+func (c *FeedbackRecordClient) Get(ctx context.Context, id uuid.UUID) (*FeedbackRecord, error) {
+	return c.Query().Where(feedbackrecord.ID(id)).Only(ctx)
 }
 
 // GetX is like Get, but panics if an error occurs.
-func (c *ExperienceDataClient) GetX(ctx context.Context, id uuid.UUID) *ExperienceData {
+func (c *FeedbackRecordClient) GetX(ctx context.Context, id uuid.UUID) *FeedbackRecord {
 	obj, err := c.Get(ctx, id)
 	if err != nil {
 		panic(err)
@@ -466,36 +466,36 @@ func (c *ExperienceDataClient) GetX(ctx context.Context, id uuid.UUID) *Experien
 }
 
 // Hooks returns the client hooks.
-func (c *ExperienceDataClient) Hooks() []Hook {
-	return c.hooks.ExperienceData
+func (c *FeedbackRecordClient) Hooks() []Hook {
+	return c.hooks.FeedbackRecord
 }
 
 // Interceptors returns the client interceptors.
-func (c *ExperienceDataClient) Interceptors() []Interceptor {
-	return c.inters.ExperienceData
+func (c *FeedbackRecordClient) Interceptors() []Interceptor {
+	return c.inters.FeedbackRecord
 }
 
-func (c *ExperienceDataClient) mutate(ctx context.Context, m *ExperienceDataMutation) (Value, error) {
+func (c *FeedbackRecordClient) mutate(ctx context.Context, m *FeedbackRecordMutation) (Value, error) {
 	switch m.Op() {
 	case OpCreate:
-		return (&ExperienceDataCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&FeedbackRecordCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpUpdate:
-		return (&ExperienceDataUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&FeedbackRecordUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpUpdateOne:
-		return (&ExperienceDataUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+		return (&FeedbackRecordUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
 	case OpDelete, OpDeleteOne:
-		return (&ExperienceDataDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+		return (&FeedbackRecordDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
-		return nil, fmt.Errorf("ent: unknown ExperienceData mutation op: %q", m.Op())
+		return nil, fmt.Errorf("ent: unknown FeedbackRecord mutation op: %q", m.Op())
 	}
 }
 
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		EnrichmentJob, ExperienceData []ent.Hook
+		EnrichmentJob, FeedbackRecord []ent.Hook
 	}
 	inters struct {
-		EnrichmentJob, ExperienceData []ent.Interceptor
+		EnrichmentJob, FeedbackRecord []ent.Interceptor
 	}
 )

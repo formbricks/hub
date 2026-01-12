@@ -56,9 +56,9 @@ func IDLTE(id uuid.UUID) predicate.EnrichmentJob {
 	return predicate.EnrichmentJob(sql.FieldLTE(FieldID, id))
 }
 
-// ExperienceID applies equality check predicate on the "experience_id" field. It's identical to ExperienceIDEQ.
-func ExperienceID(v uuid.UUID) predicate.EnrichmentJob {
-	return predicate.EnrichmentJob(sql.FieldEQ(FieldExperienceID, v))
+// FeedbackRecordID applies equality check predicate on the "feedback_record_id" field. It's identical to FeedbackRecordIDEQ.
+func FeedbackRecordID(v uuid.UUID) predicate.EnrichmentJob {
+	return predicate.EnrichmentJob(sql.FieldEQ(FieldFeedbackRecordID, v))
 }
 
 // JobType applies equality check predicate on the "job_type" field. It's identical to JobTypeEQ.
@@ -96,24 +96,24 @@ func ProcessedAt(v time.Time) predicate.EnrichmentJob {
 	return predicate.EnrichmentJob(sql.FieldEQ(FieldProcessedAt, v))
 }
 
-// ExperienceIDEQ applies the EQ predicate on the "experience_id" field.
-func ExperienceIDEQ(v uuid.UUID) predicate.EnrichmentJob {
-	return predicate.EnrichmentJob(sql.FieldEQ(FieldExperienceID, v))
+// FeedbackRecordIDEQ applies the EQ predicate on the "feedback_record_id" field.
+func FeedbackRecordIDEQ(v uuid.UUID) predicate.EnrichmentJob {
+	return predicate.EnrichmentJob(sql.FieldEQ(FieldFeedbackRecordID, v))
 }
 
-// ExperienceIDNEQ applies the NEQ predicate on the "experience_id" field.
-func ExperienceIDNEQ(v uuid.UUID) predicate.EnrichmentJob {
-	return predicate.EnrichmentJob(sql.FieldNEQ(FieldExperienceID, v))
+// FeedbackRecordIDNEQ applies the NEQ predicate on the "feedback_record_id" field.
+func FeedbackRecordIDNEQ(v uuid.UUID) predicate.EnrichmentJob {
+	return predicate.EnrichmentJob(sql.FieldNEQ(FieldFeedbackRecordID, v))
 }
 
-// ExperienceIDIn applies the In predicate on the "experience_id" field.
-func ExperienceIDIn(vs ...uuid.UUID) predicate.EnrichmentJob {
-	return predicate.EnrichmentJob(sql.FieldIn(FieldExperienceID, vs...))
+// FeedbackRecordIDIn applies the In predicate on the "feedback_record_id" field.
+func FeedbackRecordIDIn(vs ...uuid.UUID) predicate.EnrichmentJob {
+	return predicate.EnrichmentJob(sql.FieldIn(FieldFeedbackRecordID, vs...))
 }
 
-// ExperienceIDNotIn applies the NotIn predicate on the "experience_id" field.
-func ExperienceIDNotIn(vs ...uuid.UUID) predicate.EnrichmentJob {
-	return predicate.EnrichmentJob(sql.FieldNotIn(FieldExperienceID, vs...))
+// FeedbackRecordIDNotIn applies the NotIn predicate on the "feedback_record_id" field.
+func FeedbackRecordIDNotIn(vs ...uuid.UUID) predicate.EnrichmentJob {
+	return predicate.EnrichmentJob(sql.FieldNotIn(FieldFeedbackRecordID, vs...))
 }
 
 // JobTypeEQ applies the EQ predicate on the "job_type" field.
@@ -516,21 +516,21 @@ func ProcessedAtNotNil() predicate.EnrichmentJob {
 	return predicate.EnrichmentJob(sql.FieldNotNull(FieldProcessedAt))
 }
 
-// HasExperience applies the HasEdge predicate on the "experience" edge.
-func HasExperience() predicate.EnrichmentJob {
+// HasFeedbackRecord applies the HasEdge predicate on the "feedback_record" edge.
+func HasFeedbackRecord() predicate.EnrichmentJob {
 	return predicate.EnrichmentJob(func(s *sql.Selector) {
 		step := sqlgraph.NewStep(
 			sqlgraph.From(Table, FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, false, ExperienceTable, ExperienceColumn),
+			sqlgraph.Edge(sqlgraph.M2O, false, FeedbackRecordTable, FeedbackRecordColumn),
 		)
 		sqlgraph.HasNeighbors(s, step)
 	})
 }
 
-// HasExperienceWith applies the HasEdge predicate on the "experience" edge with a given conditions (other predicates).
-func HasExperienceWith(preds ...predicate.ExperienceData) predicate.EnrichmentJob {
+// HasFeedbackRecordWith applies the HasEdge predicate on the "feedback_record" edge with a given conditions (other predicates).
+func HasFeedbackRecordWith(preds ...predicate.FeedbackRecord) predicate.EnrichmentJob {
 	return predicate.EnrichmentJob(func(s *sql.Selector) {
-		step := newExperienceStep()
+		step := newFeedbackRecordStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

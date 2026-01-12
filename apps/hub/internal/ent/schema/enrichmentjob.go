@@ -21,7 +21,7 @@ func (EnrichmentJob) Fields() []ent.Field {
 		field.UUID("id", uuid.UUID{}).
 			Default(uuid.New).
 			Immutable(),
-		field.UUID("experience_id", uuid.UUID{}).
+		field.UUID("feedback_record_id", uuid.UUID{}).
 			Immutable(),
 		field.String("job_type").
 			Default("enrichment").
@@ -50,11 +50,11 @@ func (EnrichmentJob) Fields() []ent.Field {
 // Edges of the EnrichmentJob.
 func (EnrichmentJob) Edges() []ent.Edge {
 	return []ent.Edge{
-		edge.To("experience", ExperienceData.Type).
+		edge.To("feedback_record", FeedbackRecord.Type).
 			Unique().
 			Required().
 			Immutable().
-			Field("experience_id"),
+			Field("feedback_record_id"),
 	}
 }
 
@@ -63,7 +63,7 @@ func (EnrichmentJob) Indexes() []ent.Index {
 	return []ent.Index{
 		// Index for efficient queue polling: find pending jobs by type, ordered by creation time
 		index.Fields("job_type", "status", "created_at"),
-		// Index for looking up jobs by experience
-		index.Fields("experience_id"),
+		// Index for looking up jobs by feedback record
+		index.Fields("feedback_record_id"),
 	}
 }

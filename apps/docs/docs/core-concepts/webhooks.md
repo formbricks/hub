@@ -43,18 +43,18 @@ make dev
 
 Hub sends webhooks for four types of events:
 
-### `experience.created`
+### `feedback_record.created`
 
-Triggered when new feedback is created via `POST /v1/experiences`.
+Triggered when new feedback is created via `POST /v1/feedback-records`.
 
 **Common use cases:**
 - 📢 Send Slack notifications for low NPS scores
 - 📊 Update real-time dashboards
 - 🔄 Start data processing pipelines
 
-**Note:** For text responses, this event fires immediately when data is saved, **before** AI enrichment. Use `experience.enriched` to get the AI-enriched data.
+**Note:** For text responses, this event fires immediately when data is saved, **before** AI enrichment. Use `feedback_record.enriched` to get the AI-enriched data.
 
-### `experience.enriched`
+### `feedback_record.enriched`
 
 Triggered when AI enrichment completes for text responses (sentiment, emotion, topics, embeddings).
 
@@ -66,18 +66,18 @@ Triggered when AI enrichment completes for text responses (sentiment, emotion, t
 
 **Note:** This event only fires if you've configured `SERVICE_OPENAI_API_KEY` and the response has `field_type: "text"`. The payload includes the complete enriched data with `sentiment`, `sentiment_score`, `emotion`, and `topics`.
 
-### `experience.updated`
+### `feedback_record.updated`
 
-Triggered when feedback is manually updated via `PATCH /v1/experiences/{id}`.
+Triggered when feedback is manually updated via `PATCH /v1/feedback-records/{id}`.
 
 **Common use cases:**
 - 📝 Audit trail logging
 - 🔄 Sync manual changes to external systems
 - 📊 Update cached analytics
 
-### `experience.deleted`
+### `feedback_record.deleted`
 
-Triggered when feedback is deleted via `DELETE /v1/experiences/{id}`.
+Triggered when feedback is deleted via `DELETE /v1/feedback-records/{id}`.
 
 **Common use cases:**
 - 🧹 Maintain data consistency across systems
@@ -90,7 +90,7 @@ All webhooks follow a consistent format:
 
 ```json
 {
-  "event": "experience.created",
+  "event": "feedback_record.created",
   "timestamp": "2025-10-15T12:34:56Z",
   "data": {
     "id": "01932c8a-8b9e-7000-8000-000000000001",
@@ -112,9 +112,9 @@ All webhooks follow a consistent format:
 ```
 
 **Fields:**
-- `event` (string): Event type - `experience.created`, `experience.enriched`, `experience.updated`, or `experience.deleted`
+- `event` (string): Event type - `feedback_record.created`, `feedback_record.enriched`, `feedback_record.updated`, or `feedback_record.deleted`
 - `timestamp` (ISO 8601): When the event occurred
-- `data` (object): Complete experience record. For `experience.enriched`, includes `sentiment`, `sentiment_score`, `emotion`, and `topics`
+- `data` (object): Complete feedback record. For `feedback_record.enriched`, includes `sentiment`, `sentiment_score`, `emotion`, and `topics`
 
 ## Webhook Delivery
 
@@ -129,7 +129,7 @@ Content-Type: application/json
 User-Agent: Formbricks-Hub/1.0
 
 {
-  "event": "experience.created",
+  "event": "feedback_record.created",
   "timestamp": "2025-10-15T12:34:56Z",
   "data": { ... }
 }
@@ -172,7 +172,6 @@ Your webhook must respond within **5 seconds**. For heavy processing, return 200
 ## Next Steps
 
 - [AI Enrichment →](./ai-enrichment) - Understand when AI enrichment webhooks fire
-- [Data Model →](./data-model) - Complete experience data schema
+- [Data Model →](./data-model) - Complete feedback record schema
 - [Authentication →](./authentication) - Secure your webhooks
 - [API Reference →](../api-reference) - Explore all endpoints
-
