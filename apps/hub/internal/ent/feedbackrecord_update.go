@@ -12,32 +12,32 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 	"github.com/formbricks/hub/apps/hub/internal/ent/predicate"
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
-// ExperienceDataUpdate is the builder for updating ExperienceData entities.
-type ExperienceDataUpdate struct {
+// FeedbackRecordUpdate is the builder for updating FeedbackRecord entities.
+type FeedbackRecordUpdate struct {
 	config
 	hooks    []Hook
-	mutation *ExperienceDataMutation
+	mutation *FeedbackRecordMutation
 }
 
-// Where appends a list predicates to the ExperienceDataUpdate builder.
-func (_u *ExperienceDataUpdate) Where(ps ...predicate.ExperienceData) *ExperienceDataUpdate {
+// Where appends a list predicates to the FeedbackRecordUpdate builder.
+func (_u *FeedbackRecordUpdate) Where(ps ...predicate.FeedbackRecord) *FeedbackRecordUpdate {
 	_u.mutation.Where(ps...)
 	return _u
 }
 
 // SetCollectedAt sets the "collected_at" field.
-func (_u *ExperienceDataUpdate) SetCollectedAt(v time.Time) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetCollectedAt(v time.Time) *FeedbackRecordUpdate {
 	_u.mutation.SetCollectedAt(v)
 	return _u
 }
 
 // SetNillableCollectedAt sets the "collected_at" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableCollectedAt(v *time.Time) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableCollectedAt(v *time.Time) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetCollectedAt(*v)
 	}
@@ -45,19 +45,19 @@ func (_u *ExperienceDataUpdate) SetNillableCollectedAt(v *time.Time) *Experience
 }
 
 // SetUpdatedAt sets the "updated_at" field.
-func (_u *ExperienceDataUpdate) SetUpdatedAt(v time.Time) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetUpdatedAt(v time.Time) *FeedbackRecordUpdate {
 	_u.mutation.SetUpdatedAt(v)
 	return _u
 }
 
 // SetTenantID sets the "tenant_id" field.
-func (_u *ExperienceDataUpdate) SetTenantID(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetTenantID(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetTenantID(v)
 	return _u
 }
 
 // SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableTenantID(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableTenantID(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetTenantID(*v)
 	}
@@ -65,19 +65,19 @@ func (_u *ExperienceDataUpdate) SetNillableTenantID(v *string) *ExperienceDataUp
 }
 
 // ClearTenantID clears the value of the "tenant_id" field.
-func (_u *ExperienceDataUpdate) ClearTenantID() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearTenantID() *FeedbackRecordUpdate {
 	_u.mutation.ClearTenantID()
 	return _u
 }
 
 // SetResponseID sets the "response_id" field.
-func (_u *ExperienceDataUpdate) SetResponseID(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetResponseID(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetResponseID(v)
 	return _u
 }
 
 // SetNillableResponseID sets the "response_id" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableResponseID(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableResponseID(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetResponseID(*v)
 	}
@@ -85,19 +85,19 @@ func (_u *ExperienceDataUpdate) SetNillableResponseID(v *string) *ExperienceData
 }
 
 // ClearResponseID clears the value of the "response_id" field.
-func (_u *ExperienceDataUpdate) ClearResponseID() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearResponseID() *FeedbackRecordUpdate {
 	_u.mutation.ClearResponseID()
 	return _u
 }
 
 // SetSourceType sets the "source_type" field.
-func (_u *ExperienceDataUpdate) SetSourceType(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetSourceType(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetSourceType(v)
 	return _u
 }
 
 // SetNillableSourceType sets the "source_type" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableSourceType(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableSourceType(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetSourceType(*v)
 	}
@@ -105,13 +105,13 @@ func (_u *ExperienceDataUpdate) SetNillableSourceType(v *string) *ExperienceData
 }
 
 // SetSourceID sets the "source_id" field.
-func (_u *ExperienceDataUpdate) SetSourceID(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetSourceID(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetSourceID(v)
 	return _u
 }
 
 // SetNillableSourceID sets the "source_id" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableSourceID(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableSourceID(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetSourceID(*v)
 	}
@@ -119,19 +119,19 @@ func (_u *ExperienceDataUpdate) SetNillableSourceID(v *string) *ExperienceDataUp
 }
 
 // ClearSourceID clears the value of the "source_id" field.
-func (_u *ExperienceDataUpdate) ClearSourceID() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearSourceID() *FeedbackRecordUpdate {
 	_u.mutation.ClearSourceID()
 	return _u
 }
 
 // SetSourceName sets the "source_name" field.
-func (_u *ExperienceDataUpdate) SetSourceName(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetSourceName(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetSourceName(v)
 	return _u
 }
 
 // SetNillableSourceName sets the "source_name" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableSourceName(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableSourceName(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetSourceName(*v)
 	}
@@ -139,19 +139,19 @@ func (_u *ExperienceDataUpdate) SetNillableSourceName(v *string) *ExperienceData
 }
 
 // ClearSourceName clears the value of the "source_name" field.
-func (_u *ExperienceDataUpdate) ClearSourceName() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearSourceName() *FeedbackRecordUpdate {
 	_u.mutation.ClearSourceName()
 	return _u
 }
 
 // SetFieldID sets the "field_id" field.
-func (_u *ExperienceDataUpdate) SetFieldID(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetFieldID(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetFieldID(v)
 	return _u
 }
 
 // SetNillableFieldID sets the "field_id" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableFieldID(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableFieldID(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetFieldID(*v)
 	}
@@ -159,13 +159,13 @@ func (_u *ExperienceDataUpdate) SetNillableFieldID(v *string) *ExperienceDataUpd
 }
 
 // SetFieldLabel sets the "field_label" field.
-func (_u *ExperienceDataUpdate) SetFieldLabel(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetFieldLabel(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetFieldLabel(v)
 	return _u
 }
 
 // SetNillableFieldLabel sets the "field_label" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableFieldLabel(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableFieldLabel(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetFieldLabel(*v)
 	}
@@ -173,19 +173,19 @@ func (_u *ExperienceDataUpdate) SetNillableFieldLabel(v *string) *ExperienceData
 }
 
 // ClearFieldLabel clears the value of the "field_label" field.
-func (_u *ExperienceDataUpdate) ClearFieldLabel() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearFieldLabel() *FeedbackRecordUpdate {
 	_u.mutation.ClearFieldLabel()
 	return _u
 }
 
 // SetFieldType sets the "field_type" field.
-func (_u *ExperienceDataUpdate) SetFieldType(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetFieldType(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetFieldType(v)
 	return _u
 }
 
 // SetNillableFieldType sets the "field_type" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableFieldType(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableFieldType(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetFieldType(*v)
 	}
@@ -193,13 +193,13 @@ func (_u *ExperienceDataUpdate) SetNillableFieldType(v *string) *ExperienceDataU
 }
 
 // SetValueText sets the "value_text" field.
-func (_u *ExperienceDataUpdate) SetValueText(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetValueText(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetValueText(v)
 	return _u
 }
 
 // SetNillableValueText sets the "value_text" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableValueText(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableValueText(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetValueText(*v)
 	}
@@ -207,20 +207,20 @@ func (_u *ExperienceDataUpdate) SetNillableValueText(v *string) *ExperienceDataU
 }
 
 // ClearValueText clears the value of the "value_text" field.
-func (_u *ExperienceDataUpdate) ClearValueText() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearValueText() *FeedbackRecordUpdate {
 	_u.mutation.ClearValueText()
 	return _u
 }
 
 // SetValueNumber sets the "value_number" field.
-func (_u *ExperienceDataUpdate) SetValueNumber(v float64) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetValueNumber(v float64) *FeedbackRecordUpdate {
 	_u.mutation.ResetValueNumber()
 	_u.mutation.SetValueNumber(v)
 	return _u
 }
 
 // SetNillableValueNumber sets the "value_number" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableValueNumber(v *float64) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableValueNumber(v *float64) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetValueNumber(*v)
 	}
@@ -228,25 +228,25 @@ func (_u *ExperienceDataUpdate) SetNillableValueNumber(v *float64) *ExperienceDa
 }
 
 // AddValueNumber adds value to the "value_number" field.
-func (_u *ExperienceDataUpdate) AddValueNumber(v float64) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) AddValueNumber(v float64) *FeedbackRecordUpdate {
 	_u.mutation.AddValueNumber(v)
 	return _u
 }
 
 // ClearValueNumber clears the value of the "value_number" field.
-func (_u *ExperienceDataUpdate) ClearValueNumber() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearValueNumber() *FeedbackRecordUpdate {
 	_u.mutation.ClearValueNumber()
 	return _u
 }
 
 // SetValueBoolean sets the "value_boolean" field.
-func (_u *ExperienceDataUpdate) SetValueBoolean(v bool) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetValueBoolean(v bool) *FeedbackRecordUpdate {
 	_u.mutation.SetValueBoolean(v)
 	return _u
 }
 
 // SetNillableValueBoolean sets the "value_boolean" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableValueBoolean(v *bool) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableValueBoolean(v *bool) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetValueBoolean(*v)
 	}
@@ -254,19 +254,19 @@ func (_u *ExperienceDataUpdate) SetNillableValueBoolean(v *bool) *ExperienceData
 }
 
 // ClearValueBoolean clears the value of the "value_boolean" field.
-func (_u *ExperienceDataUpdate) ClearValueBoolean() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearValueBoolean() *FeedbackRecordUpdate {
 	_u.mutation.ClearValueBoolean()
 	return _u
 }
 
 // SetValueDate sets the "value_date" field.
-func (_u *ExperienceDataUpdate) SetValueDate(v time.Time) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetValueDate(v time.Time) *FeedbackRecordUpdate {
 	_u.mutation.SetValueDate(v)
 	return _u
 }
 
 // SetNillableValueDate sets the "value_date" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableValueDate(v *time.Time) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableValueDate(v *time.Time) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetValueDate(*v)
 	}
@@ -274,43 +274,43 @@ func (_u *ExperienceDataUpdate) SetNillableValueDate(v *time.Time) *ExperienceDa
 }
 
 // ClearValueDate clears the value of the "value_date" field.
-func (_u *ExperienceDataUpdate) ClearValueDate() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearValueDate() *FeedbackRecordUpdate {
 	_u.mutation.ClearValueDate()
 	return _u
 }
 
 // SetValueJSON sets the "value_json" field.
-func (_u *ExperienceDataUpdate) SetValueJSON(v map[string]interface{}) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetValueJSON(v map[string]interface{}) *FeedbackRecordUpdate {
 	_u.mutation.SetValueJSON(v)
 	return _u
 }
 
 // ClearValueJSON clears the value of the "value_json" field.
-func (_u *ExperienceDataUpdate) ClearValueJSON() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearValueJSON() *FeedbackRecordUpdate {
 	_u.mutation.ClearValueJSON()
 	return _u
 }
 
 // SetMetadata sets the "metadata" field.
-func (_u *ExperienceDataUpdate) SetMetadata(v map[string]interface{}) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetMetadata(v map[string]interface{}) *FeedbackRecordUpdate {
 	_u.mutation.SetMetadata(v)
 	return _u
 }
 
 // ClearMetadata clears the value of the "metadata" field.
-func (_u *ExperienceDataUpdate) ClearMetadata() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearMetadata() *FeedbackRecordUpdate {
 	_u.mutation.ClearMetadata()
 	return _u
 }
 
 // SetLanguage sets the "language" field.
-func (_u *ExperienceDataUpdate) SetLanguage(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetLanguage(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetLanguage(v)
 	return _u
 }
 
 // SetNillableLanguage sets the "language" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableLanguage(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableLanguage(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetLanguage(*v)
 	}
@@ -318,19 +318,19 @@ func (_u *ExperienceDataUpdate) SetNillableLanguage(v *string) *ExperienceDataUp
 }
 
 // ClearLanguage clears the value of the "language" field.
-func (_u *ExperienceDataUpdate) ClearLanguage() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearLanguage() *FeedbackRecordUpdate {
 	_u.mutation.ClearLanguage()
 	return _u
 }
 
 // SetSentiment sets the "sentiment" field.
-func (_u *ExperienceDataUpdate) SetSentiment(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetSentiment(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetSentiment(v)
 	return _u
 }
 
 // SetNillableSentiment sets the "sentiment" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableSentiment(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableSentiment(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetSentiment(*v)
 	}
@@ -338,20 +338,20 @@ func (_u *ExperienceDataUpdate) SetNillableSentiment(v *string) *ExperienceDataU
 }
 
 // ClearSentiment clears the value of the "sentiment" field.
-func (_u *ExperienceDataUpdate) ClearSentiment() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearSentiment() *FeedbackRecordUpdate {
 	_u.mutation.ClearSentiment()
 	return _u
 }
 
 // SetSentimentScore sets the "sentiment_score" field.
-func (_u *ExperienceDataUpdate) SetSentimentScore(v float64) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetSentimentScore(v float64) *FeedbackRecordUpdate {
 	_u.mutation.ResetSentimentScore()
 	_u.mutation.SetSentimentScore(v)
 	return _u
 }
 
 // SetNillableSentimentScore sets the "sentiment_score" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableSentimentScore(v *float64) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableSentimentScore(v *float64) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetSentimentScore(*v)
 	}
@@ -359,25 +359,25 @@ func (_u *ExperienceDataUpdate) SetNillableSentimentScore(v *float64) *Experienc
 }
 
 // AddSentimentScore adds value to the "sentiment_score" field.
-func (_u *ExperienceDataUpdate) AddSentimentScore(v float64) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) AddSentimentScore(v float64) *FeedbackRecordUpdate {
 	_u.mutation.AddSentimentScore(v)
 	return _u
 }
 
 // ClearSentimentScore clears the value of the "sentiment_score" field.
-func (_u *ExperienceDataUpdate) ClearSentimentScore() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearSentimentScore() *FeedbackRecordUpdate {
 	_u.mutation.ClearSentimentScore()
 	return _u
 }
 
 // SetEmotion sets the "emotion" field.
-func (_u *ExperienceDataUpdate) SetEmotion(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetEmotion(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetEmotion(v)
 	return _u
 }
 
 // SetNillableEmotion sets the "emotion" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableEmotion(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableEmotion(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetEmotion(*v)
 	}
@@ -385,37 +385,37 @@ func (_u *ExperienceDataUpdate) SetNillableEmotion(v *string) *ExperienceDataUpd
 }
 
 // ClearEmotion clears the value of the "emotion" field.
-func (_u *ExperienceDataUpdate) ClearEmotion() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearEmotion() *FeedbackRecordUpdate {
 	_u.mutation.ClearEmotion()
 	return _u
 }
 
 // SetTopics sets the "topics" field.
-func (_u *ExperienceDataUpdate) SetTopics(v []string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetTopics(v []string) *FeedbackRecordUpdate {
 	_u.mutation.SetTopics(v)
 	return _u
 }
 
 // AppendTopics appends value to the "topics" field.
-func (_u *ExperienceDataUpdate) AppendTopics(v []string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) AppendTopics(v []string) *FeedbackRecordUpdate {
 	_u.mutation.AppendTopics(v)
 	return _u
 }
 
 // ClearTopics clears the value of the "topics" field.
-func (_u *ExperienceDataUpdate) ClearTopics() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearTopics() *FeedbackRecordUpdate {
 	_u.mutation.ClearTopics()
 	return _u
 }
 
 // SetUserIdentifier sets the "user_identifier" field.
-func (_u *ExperienceDataUpdate) SetUserIdentifier(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetUserIdentifier(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetUserIdentifier(v)
 	return _u
 }
 
 // SetNillableUserIdentifier sets the "user_identifier" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableUserIdentifier(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableUserIdentifier(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetUserIdentifier(*v)
 	}
@@ -423,19 +423,19 @@ func (_u *ExperienceDataUpdate) SetNillableUserIdentifier(v *string) *Experience
 }
 
 // ClearUserIdentifier clears the value of the "user_identifier" field.
-func (_u *ExperienceDataUpdate) ClearUserIdentifier() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearUserIdentifier() *FeedbackRecordUpdate {
 	_u.mutation.ClearUserIdentifier()
 	return _u
 }
 
 // SetEmbedding sets the "embedding" field.
-func (_u *ExperienceDataUpdate) SetEmbedding(v pgvector.Vector) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetEmbedding(v pgvector.Vector) *FeedbackRecordUpdate {
 	_u.mutation.SetEmbedding(v)
 	return _u
 }
 
 // SetNillableEmbedding sets the "embedding" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableEmbedding(v *pgvector.Vector) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableEmbedding(v *pgvector.Vector) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetEmbedding(*v)
 	}
@@ -443,19 +443,19 @@ func (_u *ExperienceDataUpdate) SetNillableEmbedding(v *pgvector.Vector) *Experi
 }
 
 // ClearEmbedding clears the value of the "embedding" field.
-func (_u *ExperienceDataUpdate) ClearEmbedding() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearEmbedding() *FeedbackRecordUpdate {
 	_u.mutation.ClearEmbedding()
 	return _u
 }
 
 // SetEmbeddingModel sets the "embedding_model" field.
-func (_u *ExperienceDataUpdate) SetEmbeddingModel(v string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetEmbeddingModel(v string) *FeedbackRecordUpdate {
 	_u.mutation.SetEmbeddingModel(v)
 	return _u
 }
 
 // SetNillableEmbeddingModel sets the "embedding_model" field if the given value is not nil.
-func (_u *ExperienceDataUpdate) SetNillableEmbeddingModel(v *string) *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) SetNillableEmbeddingModel(v *string) *FeedbackRecordUpdate {
 	if v != nil {
 		_u.SetEmbeddingModel(*v)
 	}
@@ -463,24 +463,24 @@ func (_u *ExperienceDataUpdate) SetNillableEmbeddingModel(v *string) *Experience
 }
 
 // ClearEmbeddingModel clears the value of the "embedding_model" field.
-func (_u *ExperienceDataUpdate) ClearEmbeddingModel() *ExperienceDataUpdate {
+func (_u *FeedbackRecordUpdate) ClearEmbeddingModel() *FeedbackRecordUpdate {
 	_u.mutation.ClearEmbeddingModel()
 	return _u
 }
 
-// Mutation returns the ExperienceDataMutation object of the builder.
-func (_u *ExperienceDataUpdate) Mutation() *ExperienceDataMutation {
+// Mutation returns the FeedbackRecordMutation object of the builder.
+func (_u *FeedbackRecordUpdate) Mutation() *FeedbackRecordMutation {
 	return _u.mutation
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
-func (_u *ExperienceDataUpdate) Save(ctx context.Context) (int, error) {
+func (_u *FeedbackRecordUpdate) Save(ctx context.Context) (int, error) {
 	_u.defaults()
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (_u *ExperienceDataUpdate) SaveX(ctx context.Context) int {
+func (_u *FeedbackRecordUpdate) SaveX(ctx context.Context) int {
 	affected, err := _u.Save(ctx)
 	if err != nil {
 		panic(err)
@@ -489,66 +489,66 @@ func (_u *ExperienceDataUpdate) SaveX(ctx context.Context) int {
 }
 
 // Exec executes the query.
-func (_u *ExperienceDataUpdate) Exec(ctx context.Context) error {
+func (_u *FeedbackRecordUpdate) Exec(ctx context.Context) error {
 	_, err := _u.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_u *ExperienceDataUpdate) ExecX(ctx context.Context) {
+func (_u *FeedbackRecordUpdate) ExecX(ctx context.Context) {
 	if err := _u.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *ExperienceDataUpdate) defaults() {
+func (_u *FeedbackRecordUpdate) defaults() {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
-		v := experiencedata.UpdateDefaultUpdatedAt()
+		v := feedbackrecord.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
 }
 
 // check runs all checks and user-defined validators on the builder.
-func (_u *ExperienceDataUpdate) check() error {
+func (_u *FeedbackRecordUpdate) check() error {
 	if v, ok := _u.mutation.TenantID(); ok {
-		if err := experiencedata.TenantIDValidator(v); err != nil {
-			return &ValidationError{Name: "tenant_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.tenant_id": %w`, err)}
+		if err := feedbackrecord.TenantIDValidator(v); err != nil {
+			return &ValidationError{Name: "tenant_id", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.tenant_id": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.ResponseID(); ok {
-		if err := experiencedata.ResponseIDValidator(v); err != nil {
-			return &ValidationError{Name: "response_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.response_id": %w`, err)}
+		if err := feedbackrecord.ResponseIDValidator(v); err != nil {
+			return &ValidationError{Name: "response_id", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.response_id": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.SourceType(); ok {
-		if err := experiencedata.SourceTypeValidator(v); err != nil {
-			return &ValidationError{Name: "source_type", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.source_type": %w`, err)}
+		if err := feedbackrecord.SourceTypeValidator(v); err != nil {
+			return &ValidationError{Name: "source_type", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.source_type": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.FieldID(); ok {
-		if err := experiencedata.FieldIDValidator(v); err != nil {
-			return &ValidationError{Name: "field_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.field_id": %w`, err)}
+		if err := feedbackrecord.FieldIDValidator(v); err != nil {
+			return &ValidationError{Name: "field_id", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.field_id": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.FieldType(); ok {
-		if err := experiencedata.FieldTypeValidator(v); err != nil {
-			return &ValidationError{Name: "field_type", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.field_type": %w`, err)}
+		if err := feedbackrecord.FieldTypeValidator(v); err != nil {
+			return &ValidationError{Name: "field_type", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.field_type": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.Language(); ok {
-		if err := experiencedata.LanguageValidator(v); err != nil {
-			return &ValidationError{Name: "language", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.language": %w`, err)}
+		if err := feedbackrecord.LanguageValidator(v); err != nil {
+			return &ValidationError{Name: "language", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.language": %w`, err)}
 		}
 	}
 	return nil
 }
 
-func (_u *ExperienceDataUpdate) sqlSave(ctx context.Context) (_node int, err error) {
+func (_u *FeedbackRecordUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if err := _u.check(); err != nil {
 		return _node, err
 	}
-	_spec := sqlgraph.NewUpdateSpec(experiencedata.Table, experiencedata.Columns, sqlgraph.NewFieldSpec(experiencedata.FieldID, field.TypeUUID))
+	_spec := sqlgraph.NewUpdateSpec(feedbackrecord.Table, feedbackrecord.Columns, sqlgraph.NewFieldSpec(feedbackrecord.FieldID, field.TypeUUID))
 	if ps := _u.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
 			for i := range ps {
@@ -557,148 +557,148 @@ func (_u *ExperienceDataUpdate) sqlSave(ctx context.Context) (_node int, err err
 		}
 	}
 	if value, ok := _u.mutation.CollectedAt(); ok {
-		_spec.SetField(experiencedata.FieldCollectedAt, field.TypeTime, value)
+		_spec.SetField(feedbackrecord.FieldCollectedAt, field.TypeTime, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
-		_spec.SetField(experiencedata.FieldUpdatedAt, field.TypeTime, value)
+		_spec.SetField(feedbackrecord.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if value, ok := _u.mutation.TenantID(); ok {
-		_spec.SetField(experiencedata.FieldTenantID, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldTenantID, field.TypeString, value)
 	}
 	if _u.mutation.TenantIDCleared() {
-		_spec.ClearField(experiencedata.FieldTenantID, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldTenantID, field.TypeString)
 	}
 	if value, ok := _u.mutation.ResponseID(); ok {
-		_spec.SetField(experiencedata.FieldResponseID, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldResponseID, field.TypeString, value)
 	}
 	if _u.mutation.ResponseIDCleared() {
-		_spec.ClearField(experiencedata.FieldResponseID, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldResponseID, field.TypeString)
 	}
 	if value, ok := _u.mutation.SourceType(); ok {
-		_spec.SetField(experiencedata.FieldSourceType, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldSourceType, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.SourceID(); ok {
-		_spec.SetField(experiencedata.FieldSourceID, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldSourceID, field.TypeString, value)
 	}
 	if _u.mutation.SourceIDCleared() {
-		_spec.ClearField(experiencedata.FieldSourceID, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldSourceID, field.TypeString)
 	}
 	if value, ok := _u.mutation.SourceName(); ok {
-		_spec.SetField(experiencedata.FieldSourceName, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldSourceName, field.TypeString, value)
 	}
 	if _u.mutation.SourceNameCleared() {
-		_spec.ClearField(experiencedata.FieldSourceName, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldSourceName, field.TypeString)
 	}
 	if value, ok := _u.mutation.FieldID(); ok {
-		_spec.SetField(experiencedata.FieldFieldID, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldFieldID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.FieldLabel(); ok {
-		_spec.SetField(experiencedata.FieldFieldLabel, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldFieldLabel, field.TypeString, value)
 	}
 	if _u.mutation.FieldLabelCleared() {
-		_spec.ClearField(experiencedata.FieldFieldLabel, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldFieldLabel, field.TypeString)
 	}
 	if value, ok := _u.mutation.FieldType(); ok {
-		_spec.SetField(experiencedata.FieldFieldType, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldFieldType, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ValueText(); ok {
-		_spec.SetField(experiencedata.FieldValueText, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldValueText, field.TypeString, value)
 	}
 	if _u.mutation.ValueTextCleared() {
-		_spec.ClearField(experiencedata.FieldValueText, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldValueText, field.TypeString)
 	}
 	if value, ok := _u.mutation.ValueNumber(); ok {
-		_spec.SetField(experiencedata.FieldValueNumber, field.TypeFloat64, value)
+		_spec.SetField(feedbackrecord.FieldValueNumber, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.AddedValueNumber(); ok {
-		_spec.AddField(experiencedata.FieldValueNumber, field.TypeFloat64, value)
+		_spec.AddField(feedbackrecord.FieldValueNumber, field.TypeFloat64, value)
 	}
 	if _u.mutation.ValueNumberCleared() {
-		_spec.ClearField(experiencedata.FieldValueNumber, field.TypeFloat64)
+		_spec.ClearField(feedbackrecord.FieldValueNumber, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.ValueBoolean(); ok {
-		_spec.SetField(experiencedata.FieldValueBoolean, field.TypeBool, value)
+		_spec.SetField(feedbackrecord.FieldValueBoolean, field.TypeBool, value)
 	}
 	if _u.mutation.ValueBooleanCleared() {
-		_spec.ClearField(experiencedata.FieldValueBoolean, field.TypeBool)
+		_spec.ClearField(feedbackrecord.FieldValueBoolean, field.TypeBool)
 	}
 	if value, ok := _u.mutation.ValueDate(); ok {
-		_spec.SetField(experiencedata.FieldValueDate, field.TypeTime, value)
+		_spec.SetField(feedbackrecord.FieldValueDate, field.TypeTime, value)
 	}
 	if _u.mutation.ValueDateCleared() {
-		_spec.ClearField(experiencedata.FieldValueDate, field.TypeTime)
+		_spec.ClearField(feedbackrecord.FieldValueDate, field.TypeTime)
 	}
 	if value, ok := _u.mutation.ValueJSON(); ok {
-		_spec.SetField(experiencedata.FieldValueJSON, field.TypeJSON, value)
+		_spec.SetField(feedbackrecord.FieldValueJSON, field.TypeJSON, value)
 	}
 	if _u.mutation.ValueJSONCleared() {
-		_spec.ClearField(experiencedata.FieldValueJSON, field.TypeJSON)
+		_spec.ClearField(feedbackrecord.FieldValueJSON, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.Metadata(); ok {
-		_spec.SetField(experiencedata.FieldMetadata, field.TypeJSON, value)
+		_spec.SetField(feedbackrecord.FieldMetadata, field.TypeJSON, value)
 	}
 	if _u.mutation.MetadataCleared() {
-		_spec.ClearField(experiencedata.FieldMetadata, field.TypeJSON)
+		_spec.ClearField(feedbackrecord.FieldMetadata, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.Language(); ok {
-		_spec.SetField(experiencedata.FieldLanguage, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldLanguage, field.TypeString, value)
 	}
 	if _u.mutation.LanguageCleared() {
-		_spec.ClearField(experiencedata.FieldLanguage, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldLanguage, field.TypeString)
 	}
 	if value, ok := _u.mutation.Sentiment(); ok {
-		_spec.SetField(experiencedata.FieldSentiment, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldSentiment, field.TypeString, value)
 	}
 	if _u.mutation.SentimentCleared() {
-		_spec.ClearField(experiencedata.FieldSentiment, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldSentiment, field.TypeString)
 	}
 	if value, ok := _u.mutation.SentimentScore(); ok {
-		_spec.SetField(experiencedata.FieldSentimentScore, field.TypeFloat64, value)
+		_spec.SetField(feedbackrecord.FieldSentimentScore, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.AddedSentimentScore(); ok {
-		_spec.AddField(experiencedata.FieldSentimentScore, field.TypeFloat64, value)
+		_spec.AddField(feedbackrecord.FieldSentimentScore, field.TypeFloat64, value)
 	}
 	if _u.mutation.SentimentScoreCleared() {
-		_spec.ClearField(experiencedata.FieldSentimentScore, field.TypeFloat64)
+		_spec.ClearField(feedbackrecord.FieldSentimentScore, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.Emotion(); ok {
-		_spec.SetField(experiencedata.FieldEmotion, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldEmotion, field.TypeString, value)
 	}
 	if _u.mutation.EmotionCleared() {
-		_spec.ClearField(experiencedata.FieldEmotion, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldEmotion, field.TypeString)
 	}
 	if value, ok := _u.mutation.Topics(); ok {
-		_spec.SetField(experiencedata.FieldTopics, field.TypeJSON, value)
+		_spec.SetField(feedbackrecord.FieldTopics, field.TypeJSON, value)
 	}
 	if value, ok := _u.mutation.AppendedTopics(); ok {
 		_spec.AddModifier(func(u *sql.UpdateBuilder) {
-			sqljson.Append(u, experiencedata.FieldTopics, value)
+			sqljson.Append(u, feedbackrecord.FieldTopics, value)
 		})
 	}
 	if _u.mutation.TopicsCleared() {
-		_spec.ClearField(experiencedata.FieldTopics, field.TypeJSON)
+		_spec.ClearField(feedbackrecord.FieldTopics, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UserIdentifier(); ok {
-		_spec.SetField(experiencedata.FieldUserIdentifier, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldUserIdentifier, field.TypeString, value)
 	}
 	if _u.mutation.UserIdentifierCleared() {
-		_spec.ClearField(experiencedata.FieldUserIdentifier, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldUserIdentifier, field.TypeString)
 	}
 	if value, ok := _u.mutation.Embedding(); ok {
-		_spec.SetField(experiencedata.FieldEmbedding, field.TypeOther, value)
+		_spec.SetField(feedbackrecord.FieldEmbedding, field.TypeOther, value)
 	}
 	if _u.mutation.EmbeddingCleared() {
-		_spec.ClearField(experiencedata.FieldEmbedding, field.TypeOther)
+		_spec.ClearField(feedbackrecord.FieldEmbedding, field.TypeOther)
 	}
 	if value, ok := _u.mutation.EmbeddingModel(); ok {
-		_spec.SetField(experiencedata.FieldEmbeddingModel, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldEmbeddingModel, field.TypeString, value)
 	}
 	if _u.mutation.EmbeddingModelCleared() {
-		_spec.ClearField(experiencedata.FieldEmbeddingModel, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldEmbeddingModel, field.TypeString)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
-			err = &NotFoundError{experiencedata.Label}
+			err = &NotFoundError{feedbackrecord.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
 		}
@@ -708,22 +708,22 @@ func (_u *ExperienceDataUpdate) sqlSave(ctx context.Context) (_node int, err err
 	return _node, nil
 }
 
-// ExperienceDataUpdateOne is the builder for updating a single ExperienceData entity.
-type ExperienceDataUpdateOne struct {
+// FeedbackRecordUpdateOne is the builder for updating a single FeedbackRecord entity.
+type FeedbackRecordUpdateOne struct {
 	config
 	fields   []string
 	hooks    []Hook
-	mutation *ExperienceDataMutation
+	mutation *FeedbackRecordMutation
 }
 
 // SetCollectedAt sets the "collected_at" field.
-func (_u *ExperienceDataUpdateOne) SetCollectedAt(v time.Time) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetCollectedAt(v time.Time) *FeedbackRecordUpdateOne {
 	_u.mutation.SetCollectedAt(v)
 	return _u
 }
 
 // SetNillableCollectedAt sets the "collected_at" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableCollectedAt(v *time.Time) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableCollectedAt(v *time.Time) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetCollectedAt(*v)
 	}
@@ -731,19 +731,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableCollectedAt(v *time.Time) *Experie
 }
 
 // SetUpdatedAt sets the "updated_at" field.
-func (_u *ExperienceDataUpdateOne) SetUpdatedAt(v time.Time) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetUpdatedAt(v time.Time) *FeedbackRecordUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
 	return _u
 }
 
 // SetTenantID sets the "tenant_id" field.
-func (_u *ExperienceDataUpdateOne) SetTenantID(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetTenantID(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetTenantID(v)
 	return _u
 }
 
 // SetNillableTenantID sets the "tenant_id" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableTenantID(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableTenantID(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetTenantID(*v)
 	}
@@ -751,19 +751,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableTenantID(v *string) *ExperienceDat
 }
 
 // ClearTenantID clears the value of the "tenant_id" field.
-func (_u *ExperienceDataUpdateOne) ClearTenantID() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearTenantID() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearTenantID()
 	return _u
 }
 
 // SetResponseID sets the "response_id" field.
-func (_u *ExperienceDataUpdateOne) SetResponseID(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetResponseID(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetResponseID(v)
 	return _u
 }
 
 // SetNillableResponseID sets the "response_id" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableResponseID(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableResponseID(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetResponseID(*v)
 	}
@@ -771,19 +771,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableResponseID(v *string) *ExperienceD
 }
 
 // ClearResponseID clears the value of the "response_id" field.
-func (_u *ExperienceDataUpdateOne) ClearResponseID() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearResponseID() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearResponseID()
 	return _u
 }
 
 // SetSourceType sets the "source_type" field.
-func (_u *ExperienceDataUpdateOne) SetSourceType(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetSourceType(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetSourceType(v)
 	return _u
 }
 
 // SetNillableSourceType sets the "source_type" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableSourceType(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableSourceType(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetSourceType(*v)
 	}
@@ -791,13 +791,13 @@ func (_u *ExperienceDataUpdateOne) SetNillableSourceType(v *string) *ExperienceD
 }
 
 // SetSourceID sets the "source_id" field.
-func (_u *ExperienceDataUpdateOne) SetSourceID(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetSourceID(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetSourceID(v)
 	return _u
 }
 
 // SetNillableSourceID sets the "source_id" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableSourceID(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableSourceID(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetSourceID(*v)
 	}
@@ -805,19 +805,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableSourceID(v *string) *ExperienceDat
 }
 
 // ClearSourceID clears the value of the "source_id" field.
-func (_u *ExperienceDataUpdateOne) ClearSourceID() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearSourceID() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearSourceID()
 	return _u
 }
 
 // SetSourceName sets the "source_name" field.
-func (_u *ExperienceDataUpdateOne) SetSourceName(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetSourceName(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetSourceName(v)
 	return _u
 }
 
 // SetNillableSourceName sets the "source_name" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableSourceName(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableSourceName(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetSourceName(*v)
 	}
@@ -825,19 +825,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableSourceName(v *string) *ExperienceD
 }
 
 // ClearSourceName clears the value of the "source_name" field.
-func (_u *ExperienceDataUpdateOne) ClearSourceName() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearSourceName() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearSourceName()
 	return _u
 }
 
 // SetFieldID sets the "field_id" field.
-func (_u *ExperienceDataUpdateOne) SetFieldID(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetFieldID(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetFieldID(v)
 	return _u
 }
 
 // SetNillableFieldID sets the "field_id" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableFieldID(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableFieldID(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetFieldID(*v)
 	}
@@ -845,13 +845,13 @@ func (_u *ExperienceDataUpdateOne) SetNillableFieldID(v *string) *ExperienceData
 }
 
 // SetFieldLabel sets the "field_label" field.
-func (_u *ExperienceDataUpdateOne) SetFieldLabel(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetFieldLabel(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetFieldLabel(v)
 	return _u
 }
 
 // SetNillableFieldLabel sets the "field_label" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableFieldLabel(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableFieldLabel(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetFieldLabel(*v)
 	}
@@ -859,19 +859,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableFieldLabel(v *string) *ExperienceD
 }
 
 // ClearFieldLabel clears the value of the "field_label" field.
-func (_u *ExperienceDataUpdateOne) ClearFieldLabel() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearFieldLabel() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearFieldLabel()
 	return _u
 }
 
 // SetFieldType sets the "field_type" field.
-func (_u *ExperienceDataUpdateOne) SetFieldType(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetFieldType(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetFieldType(v)
 	return _u
 }
 
 // SetNillableFieldType sets the "field_type" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableFieldType(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableFieldType(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetFieldType(*v)
 	}
@@ -879,13 +879,13 @@ func (_u *ExperienceDataUpdateOne) SetNillableFieldType(v *string) *ExperienceDa
 }
 
 // SetValueText sets the "value_text" field.
-func (_u *ExperienceDataUpdateOne) SetValueText(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetValueText(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetValueText(v)
 	return _u
 }
 
 // SetNillableValueText sets the "value_text" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableValueText(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableValueText(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetValueText(*v)
 	}
@@ -893,20 +893,20 @@ func (_u *ExperienceDataUpdateOne) SetNillableValueText(v *string) *ExperienceDa
 }
 
 // ClearValueText clears the value of the "value_text" field.
-func (_u *ExperienceDataUpdateOne) ClearValueText() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearValueText() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearValueText()
 	return _u
 }
 
 // SetValueNumber sets the "value_number" field.
-func (_u *ExperienceDataUpdateOne) SetValueNumber(v float64) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetValueNumber(v float64) *FeedbackRecordUpdateOne {
 	_u.mutation.ResetValueNumber()
 	_u.mutation.SetValueNumber(v)
 	return _u
 }
 
 // SetNillableValueNumber sets the "value_number" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableValueNumber(v *float64) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableValueNumber(v *float64) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetValueNumber(*v)
 	}
@@ -914,25 +914,25 @@ func (_u *ExperienceDataUpdateOne) SetNillableValueNumber(v *float64) *Experienc
 }
 
 // AddValueNumber adds value to the "value_number" field.
-func (_u *ExperienceDataUpdateOne) AddValueNumber(v float64) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) AddValueNumber(v float64) *FeedbackRecordUpdateOne {
 	_u.mutation.AddValueNumber(v)
 	return _u
 }
 
 // ClearValueNumber clears the value of the "value_number" field.
-func (_u *ExperienceDataUpdateOne) ClearValueNumber() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearValueNumber() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearValueNumber()
 	return _u
 }
 
 // SetValueBoolean sets the "value_boolean" field.
-func (_u *ExperienceDataUpdateOne) SetValueBoolean(v bool) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetValueBoolean(v bool) *FeedbackRecordUpdateOne {
 	_u.mutation.SetValueBoolean(v)
 	return _u
 }
 
 // SetNillableValueBoolean sets the "value_boolean" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableValueBoolean(v *bool) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableValueBoolean(v *bool) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetValueBoolean(*v)
 	}
@@ -940,19 +940,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableValueBoolean(v *bool) *ExperienceD
 }
 
 // ClearValueBoolean clears the value of the "value_boolean" field.
-func (_u *ExperienceDataUpdateOne) ClearValueBoolean() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearValueBoolean() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearValueBoolean()
 	return _u
 }
 
 // SetValueDate sets the "value_date" field.
-func (_u *ExperienceDataUpdateOne) SetValueDate(v time.Time) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetValueDate(v time.Time) *FeedbackRecordUpdateOne {
 	_u.mutation.SetValueDate(v)
 	return _u
 }
 
 // SetNillableValueDate sets the "value_date" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableValueDate(v *time.Time) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableValueDate(v *time.Time) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetValueDate(*v)
 	}
@@ -960,43 +960,43 @@ func (_u *ExperienceDataUpdateOne) SetNillableValueDate(v *time.Time) *Experienc
 }
 
 // ClearValueDate clears the value of the "value_date" field.
-func (_u *ExperienceDataUpdateOne) ClearValueDate() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearValueDate() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearValueDate()
 	return _u
 }
 
 // SetValueJSON sets the "value_json" field.
-func (_u *ExperienceDataUpdateOne) SetValueJSON(v map[string]interface{}) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetValueJSON(v map[string]interface{}) *FeedbackRecordUpdateOne {
 	_u.mutation.SetValueJSON(v)
 	return _u
 }
 
 // ClearValueJSON clears the value of the "value_json" field.
-func (_u *ExperienceDataUpdateOne) ClearValueJSON() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearValueJSON() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearValueJSON()
 	return _u
 }
 
 // SetMetadata sets the "metadata" field.
-func (_u *ExperienceDataUpdateOne) SetMetadata(v map[string]interface{}) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetMetadata(v map[string]interface{}) *FeedbackRecordUpdateOne {
 	_u.mutation.SetMetadata(v)
 	return _u
 }
 
 // ClearMetadata clears the value of the "metadata" field.
-func (_u *ExperienceDataUpdateOne) ClearMetadata() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearMetadata() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearMetadata()
 	return _u
 }
 
 // SetLanguage sets the "language" field.
-func (_u *ExperienceDataUpdateOne) SetLanguage(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetLanguage(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetLanguage(v)
 	return _u
 }
 
 // SetNillableLanguage sets the "language" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableLanguage(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableLanguage(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetLanguage(*v)
 	}
@@ -1004,19 +1004,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableLanguage(v *string) *ExperienceDat
 }
 
 // ClearLanguage clears the value of the "language" field.
-func (_u *ExperienceDataUpdateOne) ClearLanguage() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearLanguage() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearLanguage()
 	return _u
 }
 
 // SetSentiment sets the "sentiment" field.
-func (_u *ExperienceDataUpdateOne) SetSentiment(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetSentiment(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetSentiment(v)
 	return _u
 }
 
 // SetNillableSentiment sets the "sentiment" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableSentiment(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableSentiment(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetSentiment(*v)
 	}
@@ -1024,20 +1024,20 @@ func (_u *ExperienceDataUpdateOne) SetNillableSentiment(v *string) *ExperienceDa
 }
 
 // ClearSentiment clears the value of the "sentiment" field.
-func (_u *ExperienceDataUpdateOne) ClearSentiment() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearSentiment() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearSentiment()
 	return _u
 }
 
 // SetSentimentScore sets the "sentiment_score" field.
-func (_u *ExperienceDataUpdateOne) SetSentimentScore(v float64) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetSentimentScore(v float64) *FeedbackRecordUpdateOne {
 	_u.mutation.ResetSentimentScore()
 	_u.mutation.SetSentimentScore(v)
 	return _u
 }
 
 // SetNillableSentimentScore sets the "sentiment_score" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableSentimentScore(v *float64) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableSentimentScore(v *float64) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetSentimentScore(*v)
 	}
@@ -1045,25 +1045,25 @@ func (_u *ExperienceDataUpdateOne) SetNillableSentimentScore(v *float64) *Experi
 }
 
 // AddSentimentScore adds value to the "sentiment_score" field.
-func (_u *ExperienceDataUpdateOne) AddSentimentScore(v float64) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) AddSentimentScore(v float64) *FeedbackRecordUpdateOne {
 	_u.mutation.AddSentimentScore(v)
 	return _u
 }
 
 // ClearSentimentScore clears the value of the "sentiment_score" field.
-func (_u *ExperienceDataUpdateOne) ClearSentimentScore() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearSentimentScore() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearSentimentScore()
 	return _u
 }
 
 // SetEmotion sets the "emotion" field.
-func (_u *ExperienceDataUpdateOne) SetEmotion(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetEmotion(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetEmotion(v)
 	return _u
 }
 
 // SetNillableEmotion sets the "emotion" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableEmotion(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableEmotion(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetEmotion(*v)
 	}
@@ -1071,37 +1071,37 @@ func (_u *ExperienceDataUpdateOne) SetNillableEmotion(v *string) *ExperienceData
 }
 
 // ClearEmotion clears the value of the "emotion" field.
-func (_u *ExperienceDataUpdateOne) ClearEmotion() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearEmotion() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearEmotion()
 	return _u
 }
 
 // SetTopics sets the "topics" field.
-func (_u *ExperienceDataUpdateOne) SetTopics(v []string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetTopics(v []string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetTopics(v)
 	return _u
 }
 
 // AppendTopics appends value to the "topics" field.
-func (_u *ExperienceDataUpdateOne) AppendTopics(v []string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) AppendTopics(v []string) *FeedbackRecordUpdateOne {
 	_u.mutation.AppendTopics(v)
 	return _u
 }
 
 // ClearTopics clears the value of the "topics" field.
-func (_u *ExperienceDataUpdateOne) ClearTopics() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearTopics() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearTopics()
 	return _u
 }
 
 // SetUserIdentifier sets the "user_identifier" field.
-func (_u *ExperienceDataUpdateOne) SetUserIdentifier(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetUserIdentifier(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetUserIdentifier(v)
 	return _u
 }
 
 // SetNillableUserIdentifier sets the "user_identifier" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableUserIdentifier(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableUserIdentifier(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetUserIdentifier(*v)
 	}
@@ -1109,19 +1109,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableUserIdentifier(v *string) *Experie
 }
 
 // ClearUserIdentifier clears the value of the "user_identifier" field.
-func (_u *ExperienceDataUpdateOne) ClearUserIdentifier() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearUserIdentifier() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearUserIdentifier()
 	return _u
 }
 
 // SetEmbedding sets the "embedding" field.
-func (_u *ExperienceDataUpdateOne) SetEmbedding(v pgvector.Vector) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetEmbedding(v pgvector.Vector) *FeedbackRecordUpdateOne {
 	_u.mutation.SetEmbedding(v)
 	return _u
 }
 
 // SetNillableEmbedding sets the "embedding" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableEmbedding(v *pgvector.Vector) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableEmbedding(v *pgvector.Vector) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetEmbedding(*v)
 	}
@@ -1129,19 +1129,19 @@ func (_u *ExperienceDataUpdateOne) SetNillableEmbedding(v *pgvector.Vector) *Exp
 }
 
 // ClearEmbedding clears the value of the "embedding" field.
-func (_u *ExperienceDataUpdateOne) ClearEmbedding() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearEmbedding() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearEmbedding()
 	return _u
 }
 
 // SetEmbeddingModel sets the "embedding_model" field.
-func (_u *ExperienceDataUpdateOne) SetEmbeddingModel(v string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetEmbeddingModel(v string) *FeedbackRecordUpdateOne {
 	_u.mutation.SetEmbeddingModel(v)
 	return _u
 }
 
 // SetNillableEmbeddingModel sets the "embedding_model" field if the given value is not nil.
-func (_u *ExperienceDataUpdateOne) SetNillableEmbeddingModel(v *string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) SetNillableEmbeddingModel(v *string) *FeedbackRecordUpdateOne {
 	if v != nil {
 		_u.SetEmbeddingModel(*v)
 	}
@@ -1149,37 +1149,37 @@ func (_u *ExperienceDataUpdateOne) SetNillableEmbeddingModel(v *string) *Experie
 }
 
 // ClearEmbeddingModel clears the value of the "embedding_model" field.
-func (_u *ExperienceDataUpdateOne) ClearEmbeddingModel() *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) ClearEmbeddingModel() *FeedbackRecordUpdateOne {
 	_u.mutation.ClearEmbeddingModel()
 	return _u
 }
 
-// Mutation returns the ExperienceDataMutation object of the builder.
-func (_u *ExperienceDataUpdateOne) Mutation() *ExperienceDataMutation {
+// Mutation returns the FeedbackRecordMutation object of the builder.
+func (_u *FeedbackRecordUpdateOne) Mutation() *FeedbackRecordMutation {
 	return _u.mutation
 }
 
-// Where appends a list predicates to the ExperienceDataUpdate builder.
-func (_u *ExperienceDataUpdateOne) Where(ps ...predicate.ExperienceData) *ExperienceDataUpdateOne {
+// Where appends a list predicates to the FeedbackRecordUpdate builder.
+func (_u *FeedbackRecordUpdateOne) Where(ps ...predicate.FeedbackRecord) *FeedbackRecordUpdateOne {
 	_u.mutation.Where(ps...)
 	return _u
 }
 
 // Select allows selecting one or more fields (columns) of the returned entity.
 // The default is selecting all fields defined in the entity schema.
-func (_u *ExperienceDataUpdateOne) Select(field string, fields ...string) *ExperienceDataUpdateOne {
+func (_u *FeedbackRecordUpdateOne) Select(field string, fields ...string) *FeedbackRecordUpdateOne {
 	_u.fields = append([]string{field}, fields...)
 	return _u
 }
 
-// Save executes the query and returns the updated ExperienceData entity.
-func (_u *ExperienceDataUpdateOne) Save(ctx context.Context) (*ExperienceData, error) {
+// Save executes the query and returns the updated FeedbackRecord entity.
+func (_u *FeedbackRecordUpdateOne) Save(ctx context.Context) (*FeedbackRecord, error) {
 	_u.defaults()
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (_u *ExperienceDataUpdateOne) SaveX(ctx context.Context) *ExperienceData {
+func (_u *FeedbackRecordUpdateOne) SaveX(ctx context.Context) *FeedbackRecord {
 	node, err := _u.Save(ctx)
 	if err != nil {
 		panic(err)
@@ -1188,79 +1188,79 @@ func (_u *ExperienceDataUpdateOne) SaveX(ctx context.Context) *ExperienceData {
 }
 
 // Exec executes the query on the entity.
-func (_u *ExperienceDataUpdateOne) Exec(ctx context.Context) error {
+func (_u *FeedbackRecordUpdateOne) Exec(ctx context.Context) error {
 	_, err := _u.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_u *ExperienceDataUpdateOne) ExecX(ctx context.Context) {
+func (_u *FeedbackRecordUpdateOne) ExecX(ctx context.Context) {
 	if err := _u.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *ExperienceDataUpdateOne) defaults() {
+func (_u *FeedbackRecordUpdateOne) defaults() {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
-		v := experiencedata.UpdateDefaultUpdatedAt()
+		v := feedbackrecord.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
 }
 
 // check runs all checks and user-defined validators on the builder.
-func (_u *ExperienceDataUpdateOne) check() error {
+func (_u *FeedbackRecordUpdateOne) check() error {
 	if v, ok := _u.mutation.TenantID(); ok {
-		if err := experiencedata.TenantIDValidator(v); err != nil {
-			return &ValidationError{Name: "tenant_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.tenant_id": %w`, err)}
+		if err := feedbackrecord.TenantIDValidator(v); err != nil {
+			return &ValidationError{Name: "tenant_id", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.tenant_id": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.ResponseID(); ok {
-		if err := experiencedata.ResponseIDValidator(v); err != nil {
-			return &ValidationError{Name: "response_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.response_id": %w`, err)}
+		if err := feedbackrecord.ResponseIDValidator(v); err != nil {
+			return &ValidationError{Name: "response_id", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.response_id": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.SourceType(); ok {
-		if err := experiencedata.SourceTypeValidator(v); err != nil {
-			return &ValidationError{Name: "source_type", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.source_type": %w`, err)}
+		if err := feedbackrecord.SourceTypeValidator(v); err != nil {
+			return &ValidationError{Name: "source_type", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.source_type": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.FieldID(); ok {
-		if err := experiencedata.FieldIDValidator(v); err != nil {
-			return &ValidationError{Name: "field_id", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.field_id": %w`, err)}
+		if err := feedbackrecord.FieldIDValidator(v); err != nil {
+			return &ValidationError{Name: "field_id", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.field_id": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.FieldType(); ok {
-		if err := experiencedata.FieldTypeValidator(v); err != nil {
-			return &ValidationError{Name: "field_type", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.field_type": %w`, err)}
+		if err := feedbackrecord.FieldTypeValidator(v); err != nil {
+			return &ValidationError{Name: "field_type", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.field_type": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.Language(); ok {
-		if err := experiencedata.LanguageValidator(v); err != nil {
-			return &ValidationError{Name: "language", err: fmt.Errorf(`ent: validator failed for field "ExperienceData.language": %w`, err)}
+		if err := feedbackrecord.LanguageValidator(v); err != nil {
+			return &ValidationError{Name: "language", err: fmt.Errorf(`ent: validator failed for field "FeedbackRecord.language": %w`, err)}
 		}
 	}
 	return nil
 }
 
-func (_u *ExperienceDataUpdateOne) sqlSave(ctx context.Context) (_node *ExperienceData, err error) {
+func (_u *FeedbackRecordUpdateOne) sqlSave(ctx context.Context) (_node *FeedbackRecord, err error) {
 	if err := _u.check(); err != nil {
 		return _node, err
 	}
-	_spec := sqlgraph.NewUpdateSpec(experiencedata.Table, experiencedata.Columns, sqlgraph.NewFieldSpec(experiencedata.FieldID, field.TypeUUID))
+	_spec := sqlgraph.NewUpdateSpec(feedbackrecord.Table, feedbackrecord.Columns, sqlgraph.NewFieldSpec(feedbackrecord.FieldID, field.TypeUUID))
 	id, ok := _u.mutation.ID()
 	if !ok {
-		return nil, &ValidationError{Name: "id", err: errors.New(`ent: missing "ExperienceData.id" for update`)}
+		return nil, &ValidationError{Name: "id", err: errors.New(`ent: missing "FeedbackRecord.id" for update`)}
 	}
 	_spec.Node.ID.Value = id
 	if fields := _u.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
-		_spec.Node.Columns = append(_spec.Node.Columns, experiencedata.FieldID)
+		_spec.Node.Columns = append(_spec.Node.Columns, feedbackrecord.FieldID)
 		for _, f := range fields {
-			if !experiencedata.ValidColumn(f) {
+			if !feedbackrecord.ValidColumn(f) {
 				return nil, &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
 			}
-			if f != experiencedata.FieldID {
+			if f != feedbackrecord.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, f)
 			}
 		}
@@ -1273,151 +1273,151 @@ func (_u *ExperienceDataUpdateOne) sqlSave(ctx context.Context) (_node *Experien
 		}
 	}
 	if value, ok := _u.mutation.CollectedAt(); ok {
-		_spec.SetField(experiencedata.FieldCollectedAt, field.TypeTime, value)
+		_spec.SetField(feedbackrecord.FieldCollectedAt, field.TypeTime, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
-		_spec.SetField(experiencedata.FieldUpdatedAt, field.TypeTime, value)
+		_spec.SetField(feedbackrecord.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if value, ok := _u.mutation.TenantID(); ok {
-		_spec.SetField(experiencedata.FieldTenantID, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldTenantID, field.TypeString, value)
 	}
 	if _u.mutation.TenantIDCleared() {
-		_spec.ClearField(experiencedata.FieldTenantID, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldTenantID, field.TypeString)
 	}
 	if value, ok := _u.mutation.ResponseID(); ok {
-		_spec.SetField(experiencedata.FieldResponseID, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldResponseID, field.TypeString, value)
 	}
 	if _u.mutation.ResponseIDCleared() {
-		_spec.ClearField(experiencedata.FieldResponseID, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldResponseID, field.TypeString)
 	}
 	if value, ok := _u.mutation.SourceType(); ok {
-		_spec.SetField(experiencedata.FieldSourceType, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldSourceType, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.SourceID(); ok {
-		_spec.SetField(experiencedata.FieldSourceID, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldSourceID, field.TypeString, value)
 	}
 	if _u.mutation.SourceIDCleared() {
-		_spec.ClearField(experiencedata.FieldSourceID, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldSourceID, field.TypeString)
 	}
 	if value, ok := _u.mutation.SourceName(); ok {
-		_spec.SetField(experiencedata.FieldSourceName, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldSourceName, field.TypeString, value)
 	}
 	if _u.mutation.SourceNameCleared() {
-		_spec.ClearField(experiencedata.FieldSourceName, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldSourceName, field.TypeString)
 	}
 	if value, ok := _u.mutation.FieldID(); ok {
-		_spec.SetField(experiencedata.FieldFieldID, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldFieldID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.FieldLabel(); ok {
-		_spec.SetField(experiencedata.FieldFieldLabel, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldFieldLabel, field.TypeString, value)
 	}
 	if _u.mutation.FieldLabelCleared() {
-		_spec.ClearField(experiencedata.FieldFieldLabel, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldFieldLabel, field.TypeString)
 	}
 	if value, ok := _u.mutation.FieldType(); ok {
-		_spec.SetField(experiencedata.FieldFieldType, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldFieldType, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ValueText(); ok {
-		_spec.SetField(experiencedata.FieldValueText, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldValueText, field.TypeString, value)
 	}
 	if _u.mutation.ValueTextCleared() {
-		_spec.ClearField(experiencedata.FieldValueText, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldValueText, field.TypeString)
 	}
 	if value, ok := _u.mutation.ValueNumber(); ok {
-		_spec.SetField(experiencedata.FieldValueNumber, field.TypeFloat64, value)
+		_spec.SetField(feedbackrecord.FieldValueNumber, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.AddedValueNumber(); ok {
-		_spec.AddField(experiencedata.FieldValueNumber, field.TypeFloat64, value)
+		_spec.AddField(feedbackrecord.FieldValueNumber, field.TypeFloat64, value)
 	}
 	if _u.mutation.ValueNumberCleared() {
-		_spec.ClearField(experiencedata.FieldValueNumber, field.TypeFloat64)
+		_spec.ClearField(feedbackrecord.FieldValueNumber, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.ValueBoolean(); ok {
-		_spec.SetField(experiencedata.FieldValueBoolean, field.TypeBool, value)
+		_spec.SetField(feedbackrecord.FieldValueBoolean, field.TypeBool, value)
 	}
 	if _u.mutation.ValueBooleanCleared() {
-		_spec.ClearField(experiencedata.FieldValueBoolean, field.TypeBool)
+		_spec.ClearField(feedbackrecord.FieldValueBoolean, field.TypeBool)
 	}
 	if value, ok := _u.mutation.ValueDate(); ok {
-		_spec.SetField(experiencedata.FieldValueDate, field.TypeTime, value)
+		_spec.SetField(feedbackrecord.FieldValueDate, field.TypeTime, value)
 	}
 	if _u.mutation.ValueDateCleared() {
-		_spec.ClearField(experiencedata.FieldValueDate, field.TypeTime)
+		_spec.ClearField(feedbackrecord.FieldValueDate, field.TypeTime)
 	}
 	if value, ok := _u.mutation.ValueJSON(); ok {
-		_spec.SetField(experiencedata.FieldValueJSON, field.TypeJSON, value)
+		_spec.SetField(feedbackrecord.FieldValueJSON, field.TypeJSON, value)
 	}
 	if _u.mutation.ValueJSONCleared() {
-		_spec.ClearField(experiencedata.FieldValueJSON, field.TypeJSON)
+		_spec.ClearField(feedbackrecord.FieldValueJSON, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.Metadata(); ok {
-		_spec.SetField(experiencedata.FieldMetadata, field.TypeJSON, value)
+		_spec.SetField(feedbackrecord.FieldMetadata, field.TypeJSON, value)
 	}
 	if _u.mutation.MetadataCleared() {
-		_spec.ClearField(experiencedata.FieldMetadata, field.TypeJSON)
+		_spec.ClearField(feedbackrecord.FieldMetadata, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.Language(); ok {
-		_spec.SetField(experiencedata.FieldLanguage, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldLanguage, field.TypeString, value)
 	}
 	if _u.mutation.LanguageCleared() {
-		_spec.ClearField(experiencedata.FieldLanguage, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldLanguage, field.TypeString)
 	}
 	if value, ok := _u.mutation.Sentiment(); ok {
-		_spec.SetField(experiencedata.FieldSentiment, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldSentiment, field.TypeString, value)
 	}
 	if _u.mutation.SentimentCleared() {
-		_spec.ClearField(experiencedata.FieldSentiment, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldSentiment, field.TypeString)
 	}
 	if value, ok := _u.mutation.SentimentScore(); ok {
-		_spec.SetField(experiencedata.FieldSentimentScore, field.TypeFloat64, value)
+		_spec.SetField(feedbackrecord.FieldSentimentScore, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.AddedSentimentScore(); ok {
-		_spec.AddField(experiencedata.FieldSentimentScore, field.TypeFloat64, value)
+		_spec.AddField(feedbackrecord.FieldSentimentScore, field.TypeFloat64, value)
 	}
 	if _u.mutation.SentimentScoreCleared() {
-		_spec.ClearField(experiencedata.FieldSentimentScore, field.TypeFloat64)
+		_spec.ClearField(feedbackrecord.FieldSentimentScore, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.Emotion(); ok {
-		_spec.SetField(experiencedata.FieldEmotion, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldEmotion, field.TypeString, value)
 	}
 	if _u.mutation.EmotionCleared() {
-		_spec.ClearField(experiencedata.FieldEmotion, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldEmotion, field.TypeString)
 	}
 	if value, ok := _u.mutation.Topics(); ok {
-		_spec.SetField(experiencedata.FieldTopics, field.TypeJSON, value)
+		_spec.SetField(feedbackrecord.FieldTopics, field.TypeJSON, value)
 	}
 	if value, ok := _u.mutation.AppendedTopics(); ok {
 		_spec.AddModifier(func(u *sql.UpdateBuilder) {
-			sqljson.Append(u, experiencedata.FieldTopics, value)
+			sqljson.Append(u, feedbackrecord.FieldTopics, value)
 		})
 	}
 	if _u.mutation.TopicsCleared() {
-		_spec.ClearField(experiencedata.FieldTopics, field.TypeJSON)
+		_spec.ClearField(feedbackrecord.FieldTopics, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UserIdentifier(); ok {
-		_spec.SetField(experiencedata.FieldUserIdentifier, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldUserIdentifier, field.TypeString, value)
 	}
 	if _u.mutation.UserIdentifierCleared() {
-		_spec.ClearField(experiencedata.FieldUserIdentifier, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldUserIdentifier, field.TypeString)
 	}
 	if value, ok := _u.mutation.Embedding(); ok {
-		_spec.SetField(experiencedata.FieldEmbedding, field.TypeOther, value)
+		_spec.SetField(feedbackrecord.FieldEmbedding, field.TypeOther, value)
 	}
 	if _u.mutation.EmbeddingCleared() {
-		_spec.ClearField(experiencedata.FieldEmbedding, field.TypeOther)
+		_spec.ClearField(feedbackrecord.FieldEmbedding, field.TypeOther)
 	}
 	if value, ok := _u.mutation.EmbeddingModel(); ok {
-		_spec.SetField(experiencedata.FieldEmbeddingModel, field.TypeString, value)
+		_spec.SetField(feedbackrecord.FieldEmbeddingModel, field.TypeString, value)
 	}
 	if _u.mutation.EmbeddingModelCleared() {
-		_spec.ClearField(experiencedata.FieldEmbeddingModel, field.TypeString)
+		_spec.ClearField(feedbackrecord.FieldEmbeddingModel, field.TypeString)
 	}
-	_node = &ExperienceData{config: _u.config}
+	_node = &FeedbackRecord{config: _u.config}
 	_spec.Assign = _node.assignValues
 	_spec.ScanValues = _node.scanValues
 	if err = sqlgraph.UpdateNode(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
-			err = &NotFoundError{experiencedata.Label}
+			err = &NotFoundError{feedbackrecord.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
 		}

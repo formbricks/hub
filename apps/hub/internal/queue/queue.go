@@ -17,10 +17,10 @@ const (
 
 // EnrichmentJob represents a job to process text (enrichment or embedding)
 type EnrichmentJob struct {
-	ID           string
-	ExperienceID string
-	JobType      JobType
-	Text         string
+	ID               string
+	FeedbackRecordID string
+	JobType          JobType
+	Text             string
 }
 
 // Queue defines the interface for job queue operations.
@@ -28,10 +28,10 @@ type EnrichmentJob struct {
 // without changing the worker or API code.
 type Queue interface {
 	// Enqueue adds a new enrichment job to the queue
-	Enqueue(ctx context.Context, experienceID, text string) error
+	Enqueue(ctx context.Context, feedbackRecordID, text string) error
 
 	// EnqueueEmbedding adds a new embedding job to the queue
-	EnqueueEmbedding(ctx context.Context, experienceID, text string) error
+	EnqueueEmbedding(ctx context.Context, feedbackRecordID, text string) error
 
 	// Dequeue retrieves and locks the next pending job for processing.
 	// Returns nil if no jobs are available.

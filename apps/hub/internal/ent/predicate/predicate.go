@@ -9,5 +9,5 @@ import (
 // EnrichmentJob is the predicate function for enrichmentjob builders.
 type EnrichmentJob func(*sql.Selector)
 
-// ExperienceData is the predicate function for experiencedata builders.
-type ExperienceData func(*sql.Selector)
+// FeedbackRecord is the predicate function for feedbackrecord builders.
+type FeedbackRecord func(*sql.Selector)

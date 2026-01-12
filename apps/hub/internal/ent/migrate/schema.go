@@ -19,7 +19,7 @@ var (
 		{Name: "attempts", Type: field.TypeInt, Default: 0},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "processed_at", Type: field.TypeTime, Nullable: true},
-		{Name: "experience_id", Type: field.TypeUUID},
+		{Name: "feedback_record_id", Type: field.TypeUUID},
 	}
 	// EnrichmentJobsTable holds the schema information for the "enrichment_jobs" table.
 	EnrichmentJobsTable = &schema.Table{
@@ -28,9 +28,9 @@ var (
 		PrimaryKey: []*schema.Column{EnrichmentJobsColumns[0]},
 		ForeignKeys: []*schema.ForeignKey{
 			{
-				Symbol:     "enrichment_jobs_experience_data_experience",
+				Symbol:     "enrichment_jobs_feedback_records_feedback_record",
 				Columns:    []*schema.Column{EnrichmentJobsColumns[8]},
-				RefColumns: []*schema.Column{ExperienceDataColumns[0]},
+				RefColumns: []*schema.Column{FeedbackRecordsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 		},
@@ -41,14 +41,14 @@ var (
 				Columns: []*schema.Column{EnrichmentJobsColumns[1], EnrichmentJobsColumns[2], EnrichmentJobsColumns[6]},
 			},
 			{
-				Name:    "enrichmentjob_experience_id",
+				Name:    "enrichmentjob_feedback_record_id",
 				Unique:  false,
 				Columns: []*schema.Column{EnrichmentJobsColumns[8]},
 			},
 		},
 	}
-	// ExperienceDataColumns holds the columns for the "experience_data" table.
-	ExperienceDataColumns = []*schema.Column{
+	// FeedbackRecordsColumns holds the columns for the "feedback_records" table.
+	FeedbackRecordsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID},
 		{Name: "collected_at", Type: field.TypeTime},
 		{Name: "created_at", Type: field.TypeTime},
@@ -76,36 +76,36 @@ var (
 		{Name: "embedding", Type: field.TypeOther, Nullable: true, SchemaType: map[string]string{"postgres": "vector(1536)"}},
 		{Name: "embedding_model", Type: field.TypeString, Nullable: true},
 	}
-	// ExperienceDataTable holds the schema information for the "experience_data" table.
-	ExperienceDataTable = &schema.Table{
-		Name:       "experience_data",
-		Columns:    ExperienceDataColumns,
-		PrimaryKey: []*schema.Column{ExperienceDataColumns[0]},
+	// FeedbackRecordsTable holds the schema information for the "feedback_records" table.
+	FeedbackRecordsTable = &schema.Table{
+		Name:       "feedback_records",
+		Columns:    FeedbackRecordsColumns,
+		PrimaryKey: []*schema.Column{FeedbackRecordsColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "experiencedata_tenant_id_collected_at",
+				Name:    "feedbackrecord_tenant_id_collected_at",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[4], ExperienceDataColumns[1]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[4], FeedbackRecordsColumns[1]},
 			},
 			{
-				Name:    "experiencedata_tenant_id_source_type_source_id_collected_at",
+				Name:    "feedbackrecord_tenant_id_source_type_source_id_collected_at",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[4], ExperienceDataColumns[6], ExperienceDataColumns[7], ExperienceDataColumns[1]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[4], FeedbackRecordsColumns[6], FeedbackRecordsColumns[7], FeedbackRecordsColumns[1]},
 			},
 			{
-				Name:    "experiencedata_response_id",
+				Name:    "feedbackrecord_response_id",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[5]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[5]},
 			},
 			{
-				Name:    "experiencedata_tenant_id_response_id",
+				Name:    "feedbackrecord_tenant_id_response_id",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[4], ExperienceDataColumns[5]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[4], FeedbackRecordsColumns[5]},
 			},
 			{
-				Name:    "experiencedata_source_type_source_id_collected_at",
+				Name:    "feedbackrecord_source_type_source_id_collected_at",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[6], ExperienceDataColumns[7], ExperienceDataColumns[1]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[6], FeedbackRecordsColumns[7], FeedbackRecordsColumns[1]},
 				Annotation: &entsql.IndexAnnotation{
 					Types: map[string]string{
 						"metadata": "GIN",
@@ -113,44 +113,44 @@ var (
 				},
 			},
 			{
-				Name:    "experiencedata_field_type_collected_at",
+				Name:    "feedbackrecord_field_type_collected_at",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[11], ExperienceDataColumns[1]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[11], FeedbackRecordsColumns[1]},
 			},
 			{
-				Name:    "experiencedata_field_id",
+				Name:    "feedbackrecord_field_id",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[9]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[9]},
 			},
 			{
-				Name:    "experiencedata_value_number",
+				Name:    "feedbackrecord_value_number",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[13]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[13]},
 			},
 			{
-				Name:    "experiencedata_user_identifier",
+				Name:    "feedbackrecord_user_identifier",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[23]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[23]},
 			},
 			{
-				Name:    "experiencedata_collected_at",
+				Name:    "feedbackrecord_collected_at",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[1]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[1]},
 			},
 			{
-				Name:    "experiencedata_sentiment",
+				Name:    "feedbackrecord_sentiment",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[19]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[19]},
 			},
 			{
-				Name:    "experiencedata_emotion",
+				Name:    "feedbackrecord_emotion",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[21]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[21]},
 			},
 			{
-				Name:    "experiencedata_embedding",
+				Name:    "feedbackrecord_embedding",
 				Unique:  false,
-				Columns: []*schema.Column{ExperienceDataColumns[24]},
+				Columns: []*schema.Column{FeedbackRecordsColumns[24]},
 				Annotation: &entsql.IndexAnnotation{
 					OpClass: "vector_cosine_ops",
 					Type:    "hnsw",
@@ -161,10 +161,10 @@ var (
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		EnrichmentJobsTable,
-		ExperienceDataTable,
+		FeedbackRecordsTable,
 	}
 )
 
 func init() {
-	EnrichmentJobsTable.ForeignKeys[0].RefTable = ExperienceDataTable
+	EnrichmentJobsTable.ForeignKeys[0].RefTable = FeedbackRecordsTable
 }

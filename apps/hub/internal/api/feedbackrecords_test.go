@@ -122,12 +122,12 @@ func setupTestAPI(t *testing.T) (humatest.TestAPI, *ent.Client, func()) {
 	return testAPI, client, cleanup
 }
 
-func TestCreateExperience(t *testing.T) {
+func TestCreateFeedbackRecord(t *testing.T) {
 	api, _, cleanup := setupTestAPI(t)
 	defer cleanup()
 
 	t.Run("create with required fields only", func(t *testing.T) {
-		resp := api.Post("/v1/experiences", map[string]interface{}{
+		resp := api.Post("/v1/feedback-records", map[string]interface{}{
 			"source_type": "survey",
 			"field_id":    "q1",
 			"field_type":  "rating",
@@ -149,7 +149,7 @@ func TestCreateExperience(t *testing.T) {
 	})
 
 	t.Run("create with all fields", func(t *testing.T) {
-		resp := api.Post("/v1/experiences", map[string]interface{}{
+		resp := api.Post("/v1/feedback-records", map[string]interface{}{
 			"source_type":     "nps",
 			"source_id":       "survey-123",
 			"source_name":     "Q1 NPS Survey",
@@ -173,7 +173,7 @@ func TestCreateExperience(t *testing.T) {
 	})
 
 	t.Run("validation error - missing required field", func(t *testing.T) {
-		resp := api.Post("/v1/experiences", map[string]interface{}{
+		resp := api.Post("/v1/feedback-records", map[string]interface{}{
 			"source_type": "survey",
 			// Missing field_id and field_type
 		})
@@ -184,7 +184,7 @@ func TestCreateExperience(t *testing.T) {
 	})
 
 	t.Run("validation error - source_type too short", func(t *testing.T) {
-		resp := api.Post("/v1/experiences", map[string]interface{}{
+		resp := api.Post("/v1/feedback-records", map[string]interface{}{
 			"source_type": "", // Too short
 			"field_id":    "q1",
 			"field_type":  "text",
@@ -196,36 +196,36 @@ func TestCreateExperience(t *testing.T) {
 	})
 }
 
-func TestGetExperience(t *testing.T) {
+func TestGetFeedbackRecord(t *testing.T) {
 	api, client, cleanup := setupTestAPI(t)
 	defer cleanup()
 
-	// Create a test experience
+	// Create a test feedback record
 	ctx := context.Background()
-	exp, err := client.ExperienceData.Create().
+	fr, err := client.FeedbackRecord.Create().
 		SetSourceType("survey").
 		SetFieldID("q1").
 		SetFieldType("text").
 		Save(ctx)
 	if err != nil {
-		t.Fatalf("failed to create test experience: %v", err)
+		t.Fatalf("failed to create test feedback record: %v", err)
 	}
 
-	t.Run("get existing experience", func(t *testing.T) {
-		resp := api.Get("/v1/experiences/" + exp.ID.String())
+	t.Run("get existing feedback record", func(t *testing.T) {
+		resp := api.Get("/v1/feedback-records/" + fr.ID.String())
 
 		if resp.Code != http.StatusOK {
 			t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
 		}
 
 		// Verify response has expected fields
-		if !strings.Contains(resp.Body.String(), exp.ID.String()) {
-			t.Fatal("expected response to contain the experience ID")
+		if !strings.Contains(resp.Body.String(), fr.ID.String()) {
+			t.Fatal("expected response to contain the feedback record ID")
 		}
 	})
 
-	t.Run("get non-existing experience", func(t *testing.T) {
-		resp := api.Get("/v1/experiences/01932c8a-8b9e-7000-8000-000000000000")
+	t.Run("get non-existing feedback record", func(t *testing.T) {
+		resp := api.Get("/v1/feedback-records/01932c8a-8b9e-7000-8000-000000000000")
 
 		if resp.Code != http.StatusNotFound {
 			t.Fatalf("expected status 404, got %d", resp.Code)
@@ -233,7 +233,7 @@ func TestGetExperience(t *testing.T) {
 	})
 
 	t.Run("invalid UUID format", func(t *testing.T) {
-		resp := api.Get("/v1/experiences/invalid-uuid")
+		resp := api.Get("/v1/feedback-records/invalid-uuid")
 
 		// Huma returns 422 for format validation errors
 		if resp.Code != http.StatusUnprocessableEntity {
@@ -242,25 +242,25 @@ func TestGetExperience(t *testing.T) {
 	})
 }
 
-func TestListExperiences(t *testing.T) {
+func TestListFeedbackRecords(t *testing.T) {
 	api, client, cleanup := setupTestAPI(t)
 	defer cleanup()
 
-	// Create test experiences
+	// Create test feedback records
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		_, err := client.ExperienceData.Create().
+		_, err := client.FeedbackRecord.Create().
 			SetSourceType("survey").
 			SetFieldID("q1").
 			SetFieldType("rating").
 			Save(ctx)
 		if err != nil {
-			t.Fatalf("failed to create test experience: %v", err)
+			t.Fatalf("failed to create test feedback record: %v", err)
 		}
 	}
 
-	t.Run("list all experiences", func(t *testing.T) {
-		resp := api.Get("/v1/experiences")
+	t.Run("list all feedback records", func(t *testing.T) {
+		resp := api.Get("/v1/feedback-records")
 
 		if resp.Code != http.StatusOK {
 			t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
@@ -274,7 +274,7 @@ func TestListExperiences(t *testing.T) {
 	})
 
 	t.Run("list with pagination", func(t *testing.T) {
-		resp := api.Get("/v1/experiences?limit=2&offset=1")
+		resp := api.Get("/v1/feedback-records?limit=2&offset=1")
 
 		if resp.Code != http.StatusOK {
 			t.Fatalf("expected status 200, got %d", resp.Code)
@@ -287,8 +287,8 @@ func TestListExperiences(t *testing.T) {
 	})
 
 	t.Run("filter by source_type", func(t *testing.T) {
-		// Create experience with different source_type
-		_, err := client.ExperienceData.Create().
+		// Create feedback record with different source_type
+		_, err := client.FeedbackRecord.Create().
 			SetSourceType("nps").
 			SetFieldID("q1").
 			SetFieldType("number").
@@ -297,7 +297,7 @@ func TestListExperiences(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		resp := api.Get("/v1/experiences?source_type=nps")
+		resp := api.Get("/v1/feedback-records?source_type=nps")
 
 		if resp.Code != http.StatusOK {
 			t.Fatalf("expected status 200, got %d", resp.Code)
@@ -310,13 +310,13 @@ func TestListExperiences(t *testing.T) {
 	})
 }
 
-func TestUpdateExperience(t *testing.T) {
+func TestUpdateFeedbackRecord(t *testing.T) {
 	api, client, cleanup := setupTestAPI(t)
 	defer cleanup()
 
-	// Create a test experience
+	// Create a test feedback record
 	ctx := context.Background()
-	exp, err := client.ExperienceData.Create().
+	fr, err := client.FeedbackRecord.Create().
 		SetSourceType("survey").
 		SetFieldID("q1").
 		SetFieldType("text").
@@ -325,8 +325,8 @@ func TestUpdateExperience(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("update experience", func(t *testing.T) {
-		resp := api.Patch("/v1/experiences/"+exp.ID.String(), map[string]interface{}{
+	t.Run("update feedback record", func(t *testing.T) {
+		resp := api.Patch("/v1/feedback-records/"+fr.ID.String(), map[string]interface{}{
 			"value_number": 8.5,
 		})
 
@@ -340,8 +340,8 @@ func TestUpdateExperience(t *testing.T) {
 		}
 	})
 
-	t.Run("update non-existing experience", func(t *testing.T) {
-		resp := api.Patch("/v1/experiences/01932c8a-8b9e-7000-8000-000000000000", map[string]interface{}{
+	t.Run("update non-existing feedback record", func(t *testing.T) {
+		resp := api.Patch("/v1/feedback-records/01932c8a-8b9e-7000-8000-000000000000", map[string]interface{}{
 			"value_number": 5.0,
 		})
 
@@ -351,13 +351,13 @@ func TestUpdateExperience(t *testing.T) {
 	})
 }
 
-func TestDeleteExperience(t *testing.T) {
+func TestDeleteFeedbackRecord(t *testing.T) {
 	api, client, cleanup := setupTestAPI(t)
 	defer cleanup()
 
-	// Create a test experience
+	// Create a test feedback record
 	ctx := context.Background()
-	exp, err := client.ExperienceData.Create().
+	fr, err := client.FeedbackRecord.Create().
 		SetSourceType("survey").
 		SetFieldID("q1").
 		SetFieldType("text").
@@ -366,30 +366,30 @@ func TestDeleteExperience(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("delete existing experience", func(t *testing.T) {
-		resp := api.Delete("/v1/experiences/" + exp.ID.String())
+	t.Run("delete existing feedback record", func(t *testing.T) {
+		resp := api.Delete("/v1/feedback-records/" + fr.ID.String())
 
 		if resp.Code != http.StatusNoContent {
 			t.Fatalf("expected status 204, got %d: %s", resp.Code, resp.Body.String())
 		}
 
 		// Verify it's deleted
-		_, err := client.ExperienceData.Get(ctx, exp.ID)
+		_, err := client.FeedbackRecord.Get(ctx, fr.ID)
 		if !ent.IsNotFound(err) {
-			t.Fatal("expected experience to be deleted")
+			t.Fatal("expected feedback record to be deleted")
 		}
 	})
 
-	t.Run("delete non-existing experience", func(t *testing.T) {
-		resp := api.Delete("/v1/experiences/01932c8a-8b9e-7000-8000-000000000000")
+	t.Run("delete non-existing feedback record", func(t *testing.T) {
+		resp := api.Delete("/v1/feedback-records/01932c8a-8b9e-7000-8000-000000000000")
 
 		if resp.Code != http.StatusNotFound {
 			t.Fatalf("expected status 404, got %d", resp.Code)
 		}
 	})
 
-	t.Run("create experience with invalid field type", func(t *testing.T) {
-		resp := api.Post("/v1/experiences", map[string]any{
+	t.Run("create feedback record with invalid field type", func(t *testing.T) {
+		resp := api.Post("/v1/feedback-records", map[string]any{
 			"source_type": "test",
 			"field_id":    "invalid_type_test",
 			"field_type":  "invalid_type_name",

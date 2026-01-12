@@ -1,6 +1,6 @@
 package models
 
-// FieldType represents the standardized data types for experience data fields.
+// FieldType represents the standardized data types for feedback record fields.
 // These types are optimized for analytics and map to specific use cases.
 type FieldType string
 

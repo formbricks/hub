@@ -12,7 +12,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"github.com/formbricks/hub/apps/hub/internal/ent/enrichmentjob"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 	"github.com/formbricks/hub/apps/hub/internal/ent/predicate"
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -28,29 +28,29 @@ const (
 
 	// Node types.
 	TypeEnrichmentJob  = "EnrichmentJob"
-	TypeExperienceData = "ExperienceData"
+	TypeFeedbackRecord = "FeedbackRecord"
 )
 
 // EnrichmentJobMutation represents an operation that mutates the EnrichmentJob nodes in the graph.
 type EnrichmentJobMutation struct {
 	config
-	op                Op
-	typ               string
-	id                *uuid.UUID
-	job_type          *string
-	status            *string
-	text              *string
-	error             *string
-	attempts          *int
-	addattempts       *int
-	created_at        *time.Time
-	processed_at      *time.Time
-	clearedFields     map[string]struct{}
-	experience        *uuid.UUID
-	clearedexperience bool
-	done              bool
-	oldValue          func(context.Context) (*EnrichmentJob, error)
-	predicates        []predicate.EnrichmentJob
+	op                     Op
+	typ                    string
+	id                     *uuid.UUID
+	job_type               *string
+	status                 *string
+	text                   *string
+	error                  *string
+	attempts               *int
+	addattempts            *int
+	created_at             *time.Time
+	processed_at           *time.Time
+	clearedFields          map[string]struct{}
+	feedback_record        *uuid.UUID
+	clearedfeedback_record bool
+	done                   bool
+	oldValue               func(context.Context) (*EnrichmentJob, error)
+	predicates             []predicate.EnrichmentJob
 }
 
 var _ ent.Mutation = (*EnrichmentJobMutation)(nil)
@@ -157,40 +157,40 @@ func (m *EnrichmentJobMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
 	}
 }
 
-// SetExperienceID sets the "experience_id" field.
-func (m *EnrichmentJobMutation) SetExperienceID(u uuid.UUID) {
-	m.experience = &u
+// SetFeedbackRecordID sets the "feedback_record_id" field.
+func (m *EnrichmentJobMutation) SetFeedbackRecordID(u uuid.UUID) {
+	m.feedback_record = &u
 }
 
-// ExperienceID returns the value of the "experience_id" field in the mutation.
-func (m *EnrichmentJobMutation) ExperienceID() (r uuid.UUID, exists bool) {
-	v := m.experience
+// FeedbackRecordID returns the value of the "feedback_record_id" field in the mutation.
+func (m *EnrichmentJobMutation) FeedbackRecordID() (r uuid.UUID, exists bool) {
+	v := m.feedback_record
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldExperienceID returns the old "experience_id" field's value of the EnrichmentJob entity.
+// OldFeedbackRecordID returns the old "feedback_record_id" field's value of the EnrichmentJob entity.
 // If the EnrichmentJob object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EnrichmentJobMutation) OldExperienceID(ctx context.Context) (v uuid.UUID, err error) {
+func (m *EnrichmentJobMutation) OldFeedbackRecordID(ctx context.Context) (v uuid.UUID, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldExperienceID is only allowed on UpdateOne operations")
+		return v, errors.New("OldFeedbackRecordID is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldExperienceID requires an ID field in the mutation")
+		return v, errors.New("OldFeedbackRecordID requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldExperienceID: %w", err)
+		return v, fmt.Errorf("querying old value for OldFeedbackRecordID: %w", err)
 	}
-	return oldValue.ExperienceID, nil
+	return oldValue.FeedbackRecordID, nil
 }
 
-// ResetExperienceID resets all changes to the "experience_id" field.
-func (m *EnrichmentJobMutation) ResetExperienceID() {
-	m.experience = nil
+// ResetFeedbackRecordID resets all changes to the "feedback_record_id" field.
+func (m *EnrichmentJobMutation) ResetFeedbackRecordID() {
+	m.feedback_record = nil
 }
 
 // SetJobType sets the "job_type" field.
@@ -491,31 +491,31 @@ func (m *EnrichmentJobMutation) ResetProcessedAt() {
 	delete(m.clearedFields, enrichmentjob.FieldProcessedAt)
 }
 
-// ClearExperience clears the "experience" edge to the ExperienceData entity.
-func (m *EnrichmentJobMutation) ClearExperience() {
-	m.clearedexperience = true
-	m.clearedFields[enrichmentjob.FieldExperienceID] = struct{}{}
+// ClearFeedbackRecord clears the "feedback_record" edge to the FeedbackRecord entity.
+func (m *EnrichmentJobMutation) ClearFeedbackRecord() {
+	m.clearedfeedback_record = true
+	m.clearedFields[enrichmentjob.FieldFeedbackRecordID] = struct{}{}
 }
 
-// ExperienceCleared reports if the "experience" edge to the ExperienceData entity was cleared.
-func (m *EnrichmentJobMutation) ExperienceCleared() bool {
-	return m.clearedexperience
+// FeedbackRecordCleared reports if the "feedback_record" edge to the FeedbackRecord entity was cleared.
+func (m *EnrichmentJobMutation) FeedbackRecordCleared() bool {
+	return m.clearedfeedback_record
 }
 
-// ExperienceIDs returns the "experience" edge IDs in the mutation.
+// FeedbackRecordIDs returns the "feedback_record" edge IDs in the mutation.
 // Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
-// ExperienceID instead. It exists only for internal usage by the builders.
-func (m *EnrichmentJobMutation) ExperienceIDs() (ids []uuid.UUID) {
-	if id := m.experience; id != nil {
+// FeedbackRecordID instead. It exists only for internal usage by the builders.
+func (m *EnrichmentJobMutation) FeedbackRecordIDs() (ids []uuid.UUID) {
+	if id := m.feedback_record; id != nil {
 		ids = append(ids, *id)
 	}
 	return
 }
 
-// ResetExperience resets all changes to the "experience" edge.
-func (m *EnrichmentJobMutation) ResetExperience() {
-	m.experience = nil
-	m.clearedexperience = false
+// ResetFeedbackRecord resets all changes to the "feedback_record" edge.
+func (m *EnrichmentJobMutation) ResetFeedbackRecord() {
+	m.feedback_record = nil
+	m.clearedfeedback_record = false
 }
 
 // Where appends a list predicates to the EnrichmentJobMutation builder.
@@ -553,8 +553,8 @@ func (m *EnrichmentJobMutation) Type() string {
 // AddedFields().
 func (m *EnrichmentJobMutation) Fields() []string {
 	fields := make([]string, 0, 8)
-	if m.experience != nil {
-		fields = append(fields, enrichmentjob.FieldExperienceID)
+	if m.feedback_record != nil {
+		fields = append(fields, enrichmentjob.FieldFeedbackRecordID)
 	}
 	if m.job_type != nil {
 		fields = append(fields, enrichmentjob.FieldJobType)
@@ -585,8 +585,8 @@ func (m *EnrichmentJobMutation) Fields() []string {
 // schema.
 func (m *EnrichmentJobMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case enrichmentjob.FieldExperienceID:
-		return m.ExperienceID()
+	case enrichmentjob.FieldFeedbackRecordID:
+		return m.FeedbackRecordID()
 	case enrichmentjob.FieldJobType:
 		return m.JobType()
 	case enrichmentjob.FieldStatus:
@@ -610,8 +610,8 @@ func (m *EnrichmentJobMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *EnrichmentJobMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case enrichmentjob.FieldExperienceID:
-		return m.OldExperienceID(ctx)
+	case enrichmentjob.FieldFeedbackRecordID:
+		return m.OldFeedbackRecordID(ctx)
 	case enrichmentjob.FieldJobType:
 		return m.OldJobType(ctx)
 	case enrichmentjob.FieldStatus:
@@ -635,12 +635,12 @@ func (m *EnrichmentJobMutation) OldField(ctx context.Context, name string) (ent.
 // type.
 func (m *EnrichmentJobMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case enrichmentjob.FieldExperienceID:
+	case enrichmentjob.FieldFeedbackRecordID:
 		v, ok := value.(uuid.UUID)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetExperienceID(v)
+		m.SetFeedbackRecordID(v)
 		return nil
 	case enrichmentjob.FieldJobType:
 		v, ok := value.(string)
@@ -770,8 +770,8 @@ func (m *EnrichmentJobMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *EnrichmentJobMutation) ResetField(name string) error {
 	switch name {
-	case enrichmentjob.FieldExperienceID:
-		m.ResetExperienceID()
+	case enrichmentjob.FieldFeedbackRecordID:
+		m.ResetFeedbackRecordID()
 		return nil
 	case enrichmentjob.FieldJobType:
 		m.ResetJobType()
@@ -801,8 +801,8 @@ func (m *EnrichmentJobMutation) ResetField(name string) error {
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *EnrichmentJobMutation) AddedEdges() []string {
 	edges := make([]string, 0, 1)
-	if m.experience != nil {
-		edges = append(edges, enrichmentjob.EdgeExperience)
+	if m.feedback_record != nil {
+		edges = append(edges, enrichmentjob.EdgeFeedbackRecord)
 	}
 	return edges
 }
@@ -811,8 +811,8 @@ func (m *EnrichmentJobMutation) AddedEdges() []string {
 // name in this mutation.
 func (m *EnrichmentJobMutation) AddedIDs(name string) []ent.Value {
 	switch name {
-	case enrichmentjob.EdgeExperience:
-		if id := m.experience; id != nil {
+	case enrichmentjob.EdgeFeedbackRecord:
+		if id := m.feedback_record; id != nil {
 			return []ent.Value{*id}
 		}
 	}
@@ -834,8 +834,8 @@ func (m *EnrichmentJobMutation) RemovedIDs(name string) []ent.Value {
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *EnrichmentJobMutation) ClearedEdges() []string {
 	edges := make([]string, 0, 1)
-	if m.clearedexperience {
-		edges = append(edges, enrichmentjob.EdgeExperience)
+	if m.clearedfeedback_record {
+		edges = append(edges, enrichmentjob.EdgeFeedbackRecord)
 	}
 	return edges
 }
@@ -844,8 +844,8 @@ func (m *EnrichmentJobMutation) ClearedEdges() []string {
 // was cleared in this mutation.
 func (m *EnrichmentJobMutation) EdgeCleared(name string) bool {
 	switch name {
-	case enrichmentjob.EdgeExperience:
-		return m.clearedexperience
+	case enrichmentjob.EdgeFeedbackRecord:
+		return m.clearedfeedback_record
 	}
 	return false
 }
@@ -854,8 +854,8 @@ func (m *EnrichmentJobMutation) EdgeCleared(name string) bool {
 // if that edge is not defined in the schema.
 func (m *EnrichmentJobMutation) ClearEdge(name string) error {
 	switch name {
-	case enrichmentjob.EdgeExperience:
-		m.ClearExperience()
+	case enrichmentjob.EdgeFeedbackRecord:
+		m.ClearFeedbackRecord()
 		return nil
 	}
 	return fmt.Errorf("unknown EnrichmentJob unique edge %s", name)
@@ -865,15 +865,15 @@ func (m *EnrichmentJobMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *EnrichmentJobMutation) ResetEdge(name string) error {
 	switch name {
-	case enrichmentjob.EdgeExperience:
-		m.ResetExperience()
+	case enrichmentjob.EdgeFeedbackRecord:
+		m.ResetFeedbackRecord()
 		return nil
 	}
 	return fmt.Errorf("unknown EnrichmentJob edge %s", name)
 }
 
-// ExperienceDataMutation represents an operation that mutates the ExperienceData nodes in the graph.
-type ExperienceDataMutation struct {
+// FeedbackRecordMutation represents an operation that mutates the FeedbackRecord nodes in the graph.
+type FeedbackRecordMutation struct {
 	config
 	op                 Op
 	typ                string
@@ -908,21 +908,21 @@ type ExperienceDataMutation struct {
 	embedding_model    *string
 	clearedFields      map[string]struct{}
 	done               bool
-	oldValue           func(context.Context) (*ExperienceData, error)
-	predicates         []predicate.ExperienceData
+	oldValue           func(context.Context) (*FeedbackRecord, error)
+	predicates         []predicate.FeedbackRecord
 }
 
-var _ ent.Mutation = (*ExperienceDataMutation)(nil)
+var _ ent.Mutation = (*FeedbackRecordMutation)(nil)
 
-// experiencedataOption allows management of the mutation configuration using functional options.
-type experiencedataOption func(*ExperienceDataMutation)
+// feedbackrecordOption allows management of the mutation configuration using functional options.
+type feedbackrecordOption func(*FeedbackRecordMutation)
 
-// newExperienceDataMutation creates new mutation for the ExperienceData entity.
-func newExperienceDataMutation(c config, op Op, opts ...experiencedataOption) *ExperienceDataMutation {
-	m := &ExperienceDataMutation{
+// newFeedbackRecordMutation creates new mutation for the FeedbackRecord entity.
+func newFeedbackRecordMutation(c config, op Op, opts ...feedbackrecordOption) *FeedbackRecordMutation {
+	m := &FeedbackRecordMutation{
 		config:        c,
 		op:            op,
-		typ:           TypeExperienceData,
+		typ:           TypeFeedbackRecord,
 		clearedFields: make(map[string]struct{}),
 	}
 	for _, opt := range opts {
@@ -931,20 +931,20 @@ func newExperienceDataMutation(c config, op Op, opts ...experiencedataOption) *E
 	return m
 }
 
-// withExperienceDataID sets the ID field of the mutation.
-func withExperienceDataID(id uuid.UUID) experiencedataOption {
-	return func(m *ExperienceDataMutation) {
+// withFeedbackRecordID sets the ID field of the mutation.
+func withFeedbackRecordID(id uuid.UUID) feedbackrecordOption {
+	return func(m *FeedbackRecordMutation) {
 		var (
 			err   error
 			once  sync.Once
-			value *ExperienceData
+			value *FeedbackRecord
 		)
-		m.oldValue = func(ctx context.Context) (*ExperienceData, error) {
+		m.oldValue = func(ctx context.Context) (*FeedbackRecord, error) {
 			once.Do(func() {
 				if m.done {
 					err = errors.New("querying old values post mutation is not allowed")
 				} else {
-					value, err = m.Client().ExperienceData.Get(ctx, id)
+					value, err = m.Client().FeedbackRecord.Get(ctx, id)
 				}
 			})
 			return value, err
@@ -953,10 +953,10 @@ func withExperienceDataID(id uuid.UUID) experiencedataOption {
 	}
 }
 
-// withExperienceData sets the old ExperienceData of the mutation.
-func withExperienceData(node *ExperienceData) experiencedataOption {
-	return func(m *ExperienceDataMutation) {
-		m.oldValue = func(context.Context) (*ExperienceData, error) {
+// withFeedbackRecord sets the old FeedbackRecord of the mutation.
+func withFeedbackRecord(node *FeedbackRecord) feedbackrecordOption {
+	return func(m *FeedbackRecordMutation) {
+		m.oldValue = func(context.Context) (*FeedbackRecord, error) {
 			return node, nil
 		}
 		m.id = &node.ID
@@ -965,7 +965,7 @@ func withExperienceData(node *ExperienceData) experiencedataOption {
 
 // Client returns a new `ent.Client` from the mutation. If the mutation was
 // executed in a transaction (ent.Tx), a transactional client is returned.
-func (m ExperienceDataMutation) Client() *Client {
+func (m FeedbackRecordMutation) Client() *Client {
 	client := &Client{config: m.config}
 	client.init()
 	return client
@@ -973,7 +973,7 @@ func (m ExperienceDataMutation) Client() *Client {
 
 // Tx returns an `ent.Tx` for mutations that were executed in transactions;
 // it returns an error otherwise.
-func (m ExperienceDataMutation) Tx() (*Tx, error) {
+func (m FeedbackRecordMutation) Tx() (*Tx, error) {
 	if _, ok := m.driver.(*txDriver); !ok {
 		return nil, errors.New("ent: mutation is not running in a transaction")
 	}
@@ -983,14 +983,14 @@ func (m ExperienceDataMutation) Tx() (*Tx, error) {
 }
 
 // SetID sets the value of the id field. Note that this
-// operation is only accepted on creation of ExperienceData entities.
-func (m *ExperienceDataMutation) SetID(id uuid.UUID) {
+// operation is only accepted on creation of FeedbackRecord entities.
+func (m *FeedbackRecordMutation) SetID(id uuid.UUID) {
 	m.id = &id
 }
 
 // ID returns the ID value in the mutation. Note that the ID is only available
 // if it was provided to the builder or after it was returned from the database.
-func (m *ExperienceDataMutation) ID() (id uuid.UUID, exists bool) {
+func (m *FeedbackRecordMutation) ID() (id uuid.UUID, exists bool) {
 	if m.id == nil {
 		return
 	}
@@ -1001,7 +1001,7 @@ func (m *ExperienceDataMutation) ID() (id uuid.UUID, exists bool) {
 // That means, if the mutation is applied within a transaction with an isolation level such
 // as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
 // or updated by the mutation.
-func (m *ExperienceDataMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+func (m *FeedbackRecordMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
 	switch {
 	case m.op.Is(OpUpdateOne | OpDeleteOne):
 		id, exists := m.ID()
@@ -1010,19 +1010,19 @@ func (m *ExperienceDataMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
 		}
 		fallthrough
 	case m.op.Is(OpUpdate | OpDelete):
-		return m.Client().ExperienceData.Query().Where(m.predicates...).IDs(ctx)
+		return m.Client().FeedbackRecord.Query().Where(m.predicates...).IDs(ctx)
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
 }
 
 // SetCollectedAt sets the "collected_at" field.
-func (m *ExperienceDataMutation) SetCollectedAt(t time.Time) {
+func (m *FeedbackRecordMutation) SetCollectedAt(t time.Time) {
 	m.collected_at = &t
 }
 
 // CollectedAt returns the value of the "collected_at" field in the mutation.
-func (m *ExperienceDataMutation) CollectedAt() (r time.Time, exists bool) {
+func (m *FeedbackRecordMutation) CollectedAt() (r time.Time, exists bool) {
 	v := m.collected_at
 	if v == nil {
 		return
@@ -1030,10 +1030,10 @@ func (m *ExperienceDataMutation) CollectedAt() (r time.Time, exists bool) {
 	return *v, true
 }
 
-// OldCollectedAt returns the old "collected_at" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldCollectedAt returns the old "collected_at" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldCollectedAt(ctx context.Context) (v time.Time, err error) {
+func (m *FeedbackRecordMutation) OldCollectedAt(ctx context.Context) (v time.Time, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldCollectedAt is only allowed on UpdateOne operations")
 	}
@@ -1048,17 +1048,17 @@ func (m *ExperienceDataMutation) OldCollectedAt(ctx context.Context) (v time.Tim
 }
 
 // ResetCollectedAt resets all changes to the "collected_at" field.
-func (m *ExperienceDataMutation) ResetCollectedAt() {
+func (m *FeedbackRecordMutation) ResetCollectedAt() {
 	m.collected_at = nil
 }
 
 // SetCreatedAt sets the "created_at" field.
-func (m *ExperienceDataMutation) SetCreatedAt(t time.Time) {
+func (m *FeedbackRecordMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
 }
 
 // CreatedAt returns the value of the "created_at" field in the mutation.
-func (m *ExperienceDataMutation) CreatedAt() (r time.Time, exists bool) {
+func (m *FeedbackRecordMutation) CreatedAt() (r time.Time, exists bool) {
 	v := m.created_at
 	if v == nil {
 		return
@@ -1066,10 +1066,10 @@ func (m *ExperienceDataMutation) CreatedAt() (r time.Time, exists bool) {
 	return *v, true
 }
 
-// OldCreatedAt returns the old "created_at" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldCreatedAt returns the old "created_at" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+func (m *FeedbackRecordMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
 	}
@@ -1084,17 +1084,17 @@ func (m *ExperienceDataMutation) OldCreatedAt(ctx context.Context) (v time.Time,
 }
 
 // ResetCreatedAt resets all changes to the "created_at" field.
-func (m *ExperienceDataMutation) ResetCreatedAt() {
+func (m *FeedbackRecordMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
 // SetUpdatedAt sets the "updated_at" field.
-func (m *ExperienceDataMutation) SetUpdatedAt(t time.Time) {
+func (m *FeedbackRecordMutation) SetUpdatedAt(t time.Time) {
 	m.updated_at = &t
 }
 
 // UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *ExperienceDataMutation) UpdatedAt() (r time.Time, exists bool) {
+func (m *FeedbackRecordMutation) UpdatedAt() (r time.Time, exists bool) {
 	v := m.updated_at
 	if v == nil {
 		return
@@ -1102,10 +1102,10 @@ func (m *ExperienceDataMutation) UpdatedAt() (r time.Time, exists bool) {
 	return *v, true
 }
 
-// OldUpdatedAt returns the old "updated_at" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldUpdatedAt returns the old "updated_at" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+func (m *FeedbackRecordMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
 	}
@@ -1120,17 +1120,17 @@ func (m *ExperienceDataMutation) OldUpdatedAt(ctx context.Context) (v time.Time,
 }
 
 // ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *ExperienceDataMutation) ResetUpdatedAt() {
+func (m *FeedbackRecordMutation) ResetUpdatedAt() {
 	m.updated_at = nil
 }
 
 // SetTenantID sets the "tenant_id" field.
-func (m *ExperienceDataMutation) SetTenantID(s string) {
+func (m *FeedbackRecordMutation) SetTenantID(s string) {
 	m.tenant_id = &s
 }
 
 // TenantID returns the value of the "tenant_id" field in the mutation.
-func (m *ExperienceDataMutation) TenantID() (r string, exists bool) {
+func (m *FeedbackRecordMutation) TenantID() (r string, exists bool) {
 	v := m.tenant_id
 	if v == nil {
 		return
@@ -1138,10 +1138,10 @@ func (m *ExperienceDataMutation) TenantID() (r string, exists bool) {
 	return *v, true
 }
 
-// OldTenantID returns the old "tenant_id" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldTenantID returns the old "tenant_id" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldTenantID(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldTenantID(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldTenantID is only allowed on UpdateOne operations")
 	}
@@ -1156,30 +1156,30 @@ func (m *ExperienceDataMutation) OldTenantID(ctx context.Context) (v string, err
 }
 
 // ClearTenantID clears the value of the "tenant_id" field.
-func (m *ExperienceDataMutation) ClearTenantID() {
+func (m *FeedbackRecordMutation) ClearTenantID() {
 	m.tenant_id = nil
-	m.clearedFields[experiencedata.FieldTenantID] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldTenantID] = struct{}{}
 }
 
 // TenantIDCleared returns if the "tenant_id" field was cleared in this mutation.
-func (m *ExperienceDataMutation) TenantIDCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldTenantID]
+func (m *FeedbackRecordMutation) TenantIDCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldTenantID]
 	return ok
 }
 
 // ResetTenantID resets all changes to the "tenant_id" field.
-func (m *ExperienceDataMutation) ResetTenantID() {
+func (m *FeedbackRecordMutation) ResetTenantID() {
 	m.tenant_id = nil
-	delete(m.clearedFields, experiencedata.FieldTenantID)
+	delete(m.clearedFields, feedbackrecord.FieldTenantID)
 }
 
 // SetResponseID sets the "response_id" field.
-func (m *ExperienceDataMutation) SetResponseID(s string) {
+func (m *FeedbackRecordMutation) SetResponseID(s string) {
 	m.response_id = &s
 }
 
 // ResponseID returns the value of the "response_id" field in the mutation.
-func (m *ExperienceDataMutation) ResponseID() (r string, exists bool) {
+func (m *FeedbackRecordMutation) ResponseID() (r string, exists bool) {
 	v := m.response_id
 	if v == nil {
 		return
@@ -1187,10 +1187,10 @@ func (m *ExperienceDataMutation) ResponseID() (r string, exists bool) {
 	return *v, true
 }
 
-// OldResponseID returns the old "response_id" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldResponseID returns the old "response_id" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldResponseID(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldResponseID(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldResponseID is only allowed on UpdateOne operations")
 	}
@@ -1205,30 +1205,30 @@ func (m *ExperienceDataMutation) OldResponseID(ctx context.Context) (v string, e
 }
 
 // ClearResponseID clears the value of the "response_id" field.
-func (m *ExperienceDataMutation) ClearResponseID() {
+func (m *FeedbackRecordMutation) ClearResponseID() {
 	m.response_id = nil
-	m.clearedFields[experiencedata.FieldResponseID] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldResponseID] = struct{}{}
 }
 
 // ResponseIDCleared returns if the "response_id" field was cleared in this mutation.
-func (m *ExperienceDataMutation) ResponseIDCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldResponseID]
+func (m *FeedbackRecordMutation) ResponseIDCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldResponseID]
 	return ok
 }
 
 // ResetResponseID resets all changes to the "response_id" field.
-func (m *ExperienceDataMutation) ResetResponseID() {
+func (m *FeedbackRecordMutation) ResetResponseID() {
 	m.response_id = nil
-	delete(m.clearedFields, experiencedata.FieldResponseID)
+	delete(m.clearedFields, feedbackrecord.FieldResponseID)
 }
 
 // SetSourceType sets the "source_type" field.
-func (m *ExperienceDataMutation) SetSourceType(s string) {
+func (m *FeedbackRecordMutation) SetSourceType(s string) {
 	m.source_type = &s
 }
 
 // SourceType returns the value of the "source_type" field in the mutation.
-func (m *ExperienceDataMutation) SourceType() (r string, exists bool) {
+func (m *FeedbackRecordMutation) SourceType() (r string, exists bool) {
 	v := m.source_type
 	if v == nil {
 		return
@@ -1236,10 +1236,10 @@ func (m *ExperienceDataMutation) SourceType() (r string, exists bool) {
 	return *v, true
 }
 
-// OldSourceType returns the old "source_type" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldSourceType returns the old "source_type" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldSourceType(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldSourceType(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldSourceType is only allowed on UpdateOne operations")
 	}
@@ -1254,17 +1254,17 @@ func (m *ExperienceDataMutation) OldSourceType(ctx context.Context) (v string, e
 }
 
 // ResetSourceType resets all changes to the "source_type" field.
-func (m *ExperienceDataMutation) ResetSourceType() {
+func (m *FeedbackRecordMutation) ResetSourceType() {
 	m.source_type = nil
 }
 
 // SetSourceID sets the "source_id" field.
-func (m *ExperienceDataMutation) SetSourceID(s string) {
+func (m *FeedbackRecordMutation) SetSourceID(s string) {
 	m.source_id = &s
 }
 
 // SourceID returns the value of the "source_id" field in the mutation.
-func (m *ExperienceDataMutation) SourceID() (r string, exists bool) {
+func (m *FeedbackRecordMutation) SourceID() (r string, exists bool) {
 	v := m.source_id
 	if v == nil {
 		return
@@ -1272,10 +1272,10 @@ func (m *ExperienceDataMutation) SourceID() (r string, exists bool) {
 	return *v, true
 }
 
-// OldSourceID returns the old "source_id" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldSourceID returns the old "source_id" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldSourceID(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldSourceID(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
 	}
@@ -1290,30 +1290,30 @@ func (m *ExperienceDataMutation) OldSourceID(ctx context.Context) (v string, err
 }
 
 // ClearSourceID clears the value of the "source_id" field.
-func (m *ExperienceDataMutation) ClearSourceID() {
+func (m *FeedbackRecordMutation) ClearSourceID() {
 	m.source_id = nil
-	m.clearedFields[experiencedata.FieldSourceID] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldSourceID] = struct{}{}
 }
 
 // SourceIDCleared returns if the "source_id" field was cleared in this mutation.
-func (m *ExperienceDataMutation) SourceIDCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldSourceID]
+func (m *FeedbackRecordMutation) SourceIDCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldSourceID]
 	return ok
 }
 
 // ResetSourceID resets all changes to the "source_id" field.
-func (m *ExperienceDataMutation) ResetSourceID() {
+func (m *FeedbackRecordMutation) ResetSourceID() {
 	m.source_id = nil
-	delete(m.clearedFields, experiencedata.FieldSourceID)
+	delete(m.clearedFields, feedbackrecord.FieldSourceID)
 }
 
 // SetSourceName sets the "source_name" field.
-func (m *ExperienceDataMutation) SetSourceName(s string) {
+func (m *FeedbackRecordMutation) SetSourceName(s string) {
 	m.source_name = &s
 }
 
 // SourceName returns the value of the "source_name" field in the mutation.
-func (m *ExperienceDataMutation) SourceName() (r string, exists bool) {
+func (m *FeedbackRecordMutation) SourceName() (r string, exists bool) {
 	v := m.source_name
 	if v == nil {
 		return
@@ -1321,10 +1321,10 @@ func (m *ExperienceDataMutation) SourceName() (r string, exists bool) {
 	return *v, true
 }
 
-// OldSourceName returns the old "source_name" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldSourceName returns the old "source_name" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldSourceName(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldSourceName(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldSourceName is only allowed on UpdateOne operations")
 	}
@@ -1339,30 +1339,30 @@ func (m *ExperienceDataMutation) OldSourceName(ctx context.Context) (v string, e
 }
 
 // ClearSourceName clears the value of the "source_name" field.
-func (m *ExperienceDataMutation) ClearSourceName() {
+func (m *FeedbackRecordMutation) ClearSourceName() {
 	m.source_name = nil
-	m.clearedFields[experiencedata.FieldSourceName] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldSourceName] = struct{}{}
 }
 
 // SourceNameCleared returns if the "source_name" field was cleared in this mutation.
-func (m *ExperienceDataMutation) SourceNameCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldSourceName]
+func (m *FeedbackRecordMutation) SourceNameCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldSourceName]
 	return ok
 }
 
 // ResetSourceName resets all changes to the "source_name" field.
-func (m *ExperienceDataMutation) ResetSourceName() {
+func (m *FeedbackRecordMutation) ResetSourceName() {
 	m.source_name = nil
-	delete(m.clearedFields, experiencedata.FieldSourceName)
+	delete(m.clearedFields, feedbackrecord.FieldSourceName)
 }
 
 // SetFieldID sets the "field_id" field.
-func (m *ExperienceDataMutation) SetFieldID(s string) {
+func (m *FeedbackRecordMutation) SetFieldID(s string) {
 	m.field_id = &s
 }
 
 // FieldID returns the value of the "field_id" field in the mutation.
-func (m *ExperienceDataMutation) FieldID() (r string, exists bool) {
+func (m *FeedbackRecordMutation) FieldID() (r string, exists bool) {
 	v := m.field_id
 	if v == nil {
 		return
@@ -1370,10 +1370,10 @@ func (m *ExperienceDataMutation) FieldID() (r string, exists bool) {
 	return *v, true
 }
 
-// OldFieldID returns the old "field_id" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldFieldID returns the old "field_id" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldFieldID(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldFieldID(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldFieldID is only allowed on UpdateOne operations")
 	}
@@ -1388,17 +1388,17 @@ func (m *ExperienceDataMutation) OldFieldID(ctx context.Context) (v string, err 
 }
 
 // ResetFieldID resets all changes to the "field_id" field.
-func (m *ExperienceDataMutation) ResetFieldID() {
+func (m *FeedbackRecordMutation) ResetFieldID() {
 	m.field_id = nil
 }
 
 // SetFieldLabel sets the "field_label" field.
-func (m *ExperienceDataMutation) SetFieldLabel(s string) {
+func (m *FeedbackRecordMutation) SetFieldLabel(s string) {
 	m.field_label = &s
 }
 
 // FieldLabel returns the value of the "field_label" field in the mutation.
-func (m *ExperienceDataMutation) FieldLabel() (r string, exists bool) {
+func (m *FeedbackRecordMutation) FieldLabel() (r string, exists bool) {
 	v := m.field_label
 	if v == nil {
 		return
@@ -1406,10 +1406,10 @@ func (m *ExperienceDataMutation) FieldLabel() (r string, exists bool) {
 	return *v, true
 }
 
-// OldFieldLabel returns the old "field_label" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldFieldLabel returns the old "field_label" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldFieldLabel(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldFieldLabel(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldFieldLabel is only allowed on UpdateOne operations")
 	}
@@ -1424,30 +1424,30 @@ func (m *ExperienceDataMutation) OldFieldLabel(ctx context.Context) (v string, e
 }
 
 // ClearFieldLabel clears the value of the "field_label" field.
-func (m *ExperienceDataMutation) ClearFieldLabel() {
+func (m *FeedbackRecordMutation) ClearFieldLabel() {
 	m.field_label = nil
-	m.clearedFields[experiencedata.FieldFieldLabel] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldFieldLabel] = struct{}{}
 }
 
 // FieldLabelCleared returns if the "field_label" field was cleared in this mutation.
-func (m *ExperienceDataMutation) FieldLabelCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldFieldLabel]
+func (m *FeedbackRecordMutation) FieldLabelCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldFieldLabel]
 	return ok
 }
 
 // ResetFieldLabel resets all changes to the "field_label" field.
-func (m *ExperienceDataMutation) ResetFieldLabel() {
+func (m *FeedbackRecordMutation) ResetFieldLabel() {
 	m.field_label = nil
-	delete(m.clearedFields, experiencedata.FieldFieldLabel)
+	delete(m.clearedFields, feedbackrecord.FieldFieldLabel)
 }
 
 // SetFieldType sets the "field_type" field.
-func (m *ExperienceDataMutation) SetFieldType(s string) {
+func (m *FeedbackRecordMutation) SetFieldType(s string) {
 	m.field_type = &s
 }
 
 // FieldType returns the value of the "field_type" field in the mutation.
-func (m *ExperienceDataMutation) FieldType() (r string, exists bool) {
+func (m *FeedbackRecordMutation) FieldType() (r string, exists bool) {
 	v := m.field_type
 	if v == nil {
 		return
@@ -1455,10 +1455,10 @@ func (m *ExperienceDataMutation) FieldType() (r string, exists bool) {
 	return *v, true
 }
 
-// OldFieldType returns the old "field_type" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldFieldType returns the old "field_type" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldFieldType(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldFieldType(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldFieldType is only allowed on UpdateOne operations")
 	}
@@ -1473,17 +1473,17 @@ func (m *ExperienceDataMutation) OldFieldType(ctx context.Context) (v string, er
 }
 
 // ResetFieldType resets all changes to the "field_type" field.
-func (m *ExperienceDataMutation) ResetFieldType() {
+func (m *FeedbackRecordMutation) ResetFieldType() {
 	m.field_type = nil
 }
 
 // SetValueText sets the "value_text" field.
-func (m *ExperienceDataMutation) SetValueText(s string) {
+func (m *FeedbackRecordMutation) SetValueText(s string) {
 	m.value_text = &s
 }
 
 // ValueText returns the value of the "value_text" field in the mutation.
-func (m *ExperienceDataMutation) ValueText() (r string, exists bool) {
+func (m *FeedbackRecordMutation) ValueText() (r string, exists bool) {
 	v := m.value_text
 	if v == nil {
 		return
@@ -1491,10 +1491,10 @@ func (m *ExperienceDataMutation) ValueText() (r string, exists bool) {
 	return *v, true
 }
 
-// OldValueText returns the old "value_text" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldValueText returns the old "value_text" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldValueText(ctx context.Context) (v *string, err error) {
+func (m *FeedbackRecordMutation) OldValueText(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldValueText is only allowed on UpdateOne operations")
 	}
@@ -1509,31 +1509,31 @@ func (m *ExperienceDataMutation) OldValueText(ctx context.Context) (v *string, e
 }
 
 // ClearValueText clears the value of the "value_text" field.
-func (m *ExperienceDataMutation) ClearValueText() {
+func (m *FeedbackRecordMutation) ClearValueText() {
 	m.value_text = nil
-	m.clearedFields[experiencedata.FieldValueText] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldValueText] = struct{}{}
 }
 
 // ValueTextCleared returns if the "value_text" field was cleared in this mutation.
-func (m *ExperienceDataMutation) ValueTextCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldValueText]
+func (m *FeedbackRecordMutation) ValueTextCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldValueText]
 	return ok
 }
 
 // ResetValueText resets all changes to the "value_text" field.
-func (m *ExperienceDataMutation) ResetValueText() {
+func (m *FeedbackRecordMutation) ResetValueText() {
 	m.value_text = nil
-	delete(m.clearedFields, experiencedata.FieldValueText)
+	delete(m.clearedFields, feedbackrecord.FieldValueText)
 }
 
 // SetValueNumber sets the "value_number" field.
-func (m *ExperienceDataMutation) SetValueNumber(f float64) {
+func (m *FeedbackRecordMutation) SetValueNumber(f float64) {
 	m.value_number = &f
 	m.addvalue_number = nil
 }
 
 // ValueNumber returns the value of the "value_number" field in the mutation.
-func (m *ExperienceDataMutation) ValueNumber() (r float64, exists bool) {
+func (m *FeedbackRecordMutation) ValueNumber() (r float64, exists bool) {
 	v := m.value_number
 	if v == nil {
 		return
@@ -1541,10 +1541,10 @@ func (m *ExperienceDataMutation) ValueNumber() (r float64, exists bool) {
 	return *v, true
 }
 
-// OldValueNumber returns the old "value_number" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldValueNumber returns the old "value_number" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldValueNumber(ctx context.Context) (v *float64, err error) {
+func (m *FeedbackRecordMutation) OldValueNumber(ctx context.Context) (v *float64, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldValueNumber is only allowed on UpdateOne operations")
 	}
@@ -1559,7 +1559,7 @@ func (m *ExperienceDataMutation) OldValueNumber(ctx context.Context) (v *float64
 }
 
 // AddValueNumber adds f to the "value_number" field.
-func (m *ExperienceDataMutation) AddValueNumber(f float64) {
+func (m *FeedbackRecordMutation) AddValueNumber(f float64) {
 	if m.addvalue_number != nil {
 		*m.addvalue_number += f
 	} else {
@@ -1568,7 +1568,7 @@ func (m *ExperienceDataMutation) AddValueNumber(f float64) {
 }
 
 // AddedValueNumber returns the value that was added to the "value_number" field in this mutation.
-func (m *ExperienceDataMutation) AddedValueNumber() (r float64, exists bool) {
+func (m *FeedbackRecordMutation) AddedValueNumber() (r float64, exists bool) {
 	v := m.addvalue_number
 	if v == nil {
 		return
@@ -1577,32 +1577,32 @@ func (m *ExperienceDataMutation) AddedValueNumber() (r float64, exists bool) {
 }
 
 // ClearValueNumber clears the value of the "value_number" field.
-func (m *ExperienceDataMutation) ClearValueNumber() {
+func (m *FeedbackRecordMutation) ClearValueNumber() {
 	m.value_number = nil
 	m.addvalue_number = nil
-	m.clearedFields[experiencedata.FieldValueNumber] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldValueNumber] = struct{}{}
 }
 
 // ValueNumberCleared returns if the "value_number" field was cleared in this mutation.
-func (m *ExperienceDataMutation) ValueNumberCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldValueNumber]
+func (m *FeedbackRecordMutation) ValueNumberCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldValueNumber]
 	return ok
 }
 
 // ResetValueNumber resets all changes to the "value_number" field.
-func (m *ExperienceDataMutation) ResetValueNumber() {
+func (m *FeedbackRecordMutation) ResetValueNumber() {
 	m.value_number = nil
 	m.addvalue_number = nil
-	delete(m.clearedFields, experiencedata.FieldValueNumber)
+	delete(m.clearedFields, feedbackrecord.FieldValueNumber)
 }
 
 // SetValueBoolean sets the "value_boolean" field.
-func (m *ExperienceDataMutation) SetValueBoolean(b bool) {
+func (m *FeedbackRecordMutation) SetValueBoolean(b bool) {
 	m.value_boolean = &b
 }
 
 // ValueBoolean returns the value of the "value_boolean" field in the mutation.
-func (m *ExperienceDataMutation) ValueBoolean() (r bool, exists bool) {
+func (m *FeedbackRecordMutation) ValueBoolean() (r bool, exists bool) {
 	v := m.value_boolean
 	if v == nil {
 		return
@@ -1610,10 +1610,10 @@ func (m *ExperienceDataMutation) ValueBoolean() (r bool, exists bool) {
 	return *v, true
 }
 
-// OldValueBoolean returns the old "value_boolean" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldValueBoolean returns the old "value_boolean" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldValueBoolean(ctx context.Context) (v *bool, err error) {
+func (m *FeedbackRecordMutation) OldValueBoolean(ctx context.Context) (v *bool, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldValueBoolean is only allowed on UpdateOne operations")
 	}
@@ -1628,30 +1628,30 @@ func (m *ExperienceDataMutation) OldValueBoolean(ctx context.Context) (v *bool, 
 }
 
 // ClearValueBoolean clears the value of the "value_boolean" field.
-func (m *ExperienceDataMutation) ClearValueBoolean() {
+func (m *FeedbackRecordMutation) ClearValueBoolean() {
 	m.value_boolean = nil
-	m.clearedFields[experiencedata.FieldValueBoolean] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldValueBoolean] = struct{}{}
 }
 
 // ValueBooleanCleared returns if the "value_boolean" field was cleared in this mutation.
-func (m *ExperienceDataMutation) ValueBooleanCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldValueBoolean]
+func (m *FeedbackRecordMutation) ValueBooleanCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldValueBoolean]
 	return ok
 }
 
 // ResetValueBoolean resets all changes to the "value_boolean" field.
-func (m *ExperienceDataMutation) ResetValueBoolean() {
+func (m *FeedbackRecordMutation) ResetValueBoolean() {
 	m.value_boolean = nil
-	delete(m.clearedFields, experiencedata.FieldValueBoolean)
+	delete(m.clearedFields, feedbackrecord.FieldValueBoolean)
 }
 
 // SetValueDate sets the "value_date" field.
-func (m *ExperienceDataMutation) SetValueDate(t time.Time) {
+func (m *FeedbackRecordMutation) SetValueDate(t time.Time) {
 	m.value_date = &t
 }
 
 // ValueDate returns the value of the "value_date" field in the mutation.
-func (m *ExperienceDataMutation) ValueDate() (r time.Time, exists bool) {
+func (m *FeedbackRecordMutation) ValueDate() (r time.Time, exists bool) {
 	v := m.value_date
 	if v == nil {
 		return
@@ -1659,10 +1659,10 @@ func (m *ExperienceDataMutation) ValueDate() (r time.Time, exists bool) {
 	return *v, true
 }
 
-// OldValueDate returns the old "value_date" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldValueDate returns the old "value_date" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldValueDate(ctx context.Context) (v *time.Time, err error) {
+func (m *FeedbackRecordMutation) OldValueDate(ctx context.Context) (v *time.Time, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldValueDate is only allowed on UpdateOne operations")
 	}
@@ -1677,30 +1677,30 @@ func (m *ExperienceDataMutation) OldValueDate(ctx context.Context) (v *time.Time
 }
 
 // ClearValueDate clears the value of the "value_date" field.
-func (m *ExperienceDataMutation) ClearValueDate() {
+func (m *FeedbackRecordMutation) ClearValueDate() {
 	m.value_date = nil
-	m.clearedFields[experiencedata.FieldValueDate] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldValueDate] = struct{}{}
 }
 
 // ValueDateCleared returns if the "value_date" field was cleared in this mutation.
-func (m *ExperienceDataMutation) ValueDateCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldValueDate]
+func (m *FeedbackRecordMutation) ValueDateCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldValueDate]
 	return ok
 }
 
 // ResetValueDate resets all changes to the "value_date" field.
-func (m *ExperienceDataMutation) ResetValueDate() {
+func (m *FeedbackRecordMutation) ResetValueDate() {
 	m.value_date = nil
-	delete(m.clearedFields, experiencedata.FieldValueDate)
+	delete(m.clearedFields, feedbackrecord.FieldValueDate)
 }
 
 // SetValueJSON sets the "value_json" field.
-func (m *ExperienceDataMutation) SetValueJSON(value map[string]interface{}) {
+func (m *FeedbackRecordMutation) SetValueJSON(value map[string]interface{}) {
 	m.value_json = &value
 }
 
 // ValueJSON returns the value of the "value_json" field in the mutation.
-func (m *ExperienceDataMutation) ValueJSON() (r map[string]interface{}, exists bool) {
+func (m *FeedbackRecordMutation) ValueJSON() (r map[string]interface{}, exists bool) {
 	v := m.value_json
 	if v == nil {
 		return
@@ -1708,10 +1708,10 @@ func (m *ExperienceDataMutation) ValueJSON() (r map[string]interface{}, exists b
 	return *v, true
 }
 
-// OldValueJSON returns the old "value_json" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldValueJSON returns the old "value_json" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldValueJSON(ctx context.Context) (v map[string]interface{}, err error) {
+func (m *FeedbackRecordMutation) OldValueJSON(ctx context.Context) (v map[string]interface{}, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldValueJSON is only allowed on UpdateOne operations")
 	}
@@ -1726,30 +1726,30 @@ func (m *ExperienceDataMutation) OldValueJSON(ctx context.Context) (v map[string
 }
 
 // ClearValueJSON clears the value of the "value_json" field.
-func (m *ExperienceDataMutation) ClearValueJSON() {
+func (m *FeedbackRecordMutation) ClearValueJSON() {
 	m.value_json = nil
-	m.clearedFields[experiencedata.FieldValueJSON] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldValueJSON] = struct{}{}
 }
 
 // ValueJSONCleared returns if the "value_json" field was cleared in this mutation.
-func (m *ExperienceDataMutation) ValueJSONCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldValueJSON]
+func (m *FeedbackRecordMutation) ValueJSONCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldValueJSON]
 	return ok
 }
 
 // ResetValueJSON resets all changes to the "value_json" field.
-func (m *ExperienceDataMutation) ResetValueJSON() {
+func (m *FeedbackRecordMutation) ResetValueJSON() {
 	m.value_json = nil
-	delete(m.clearedFields, experiencedata.FieldValueJSON)
+	delete(m.clearedFields, feedbackrecord.FieldValueJSON)
 }
 
 // SetMetadata sets the "metadata" field.
-func (m *ExperienceDataMutation) SetMetadata(value map[string]interface{}) {
+func (m *FeedbackRecordMutation) SetMetadata(value map[string]interface{}) {
 	m.metadata = &value
 }
 
 // Metadata returns the value of the "metadata" field in the mutation.
-func (m *ExperienceDataMutation) Metadata() (r map[string]interface{}, exists bool) {
+func (m *FeedbackRecordMutation) Metadata() (r map[string]interface{}, exists bool) {
 	v := m.metadata
 	if v == nil {
 		return
@@ -1757,10 +1757,10 @@ func (m *ExperienceDataMutation) Metadata() (r map[string]interface{}, exists bo
 	return *v, true
 }
 
-// OldMetadata returns the old "metadata" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldMetadata returns the old "metadata" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldMetadata(ctx context.Context) (v map[string]interface{}, err error) {
+func (m *FeedbackRecordMutation) OldMetadata(ctx context.Context) (v map[string]interface{}, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldMetadata is only allowed on UpdateOne operations")
 	}
@@ -1775,30 +1775,30 @@ func (m *ExperienceDataMutation) OldMetadata(ctx context.Context) (v map[string]
 }
 
 // ClearMetadata clears the value of the "metadata" field.
-func (m *ExperienceDataMutation) ClearMetadata() {
+func (m *FeedbackRecordMutation) ClearMetadata() {
 	m.metadata = nil
-	m.clearedFields[experiencedata.FieldMetadata] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldMetadata] = struct{}{}
 }
 
 // MetadataCleared returns if the "metadata" field was cleared in this mutation.
-func (m *ExperienceDataMutation) MetadataCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldMetadata]
+func (m *FeedbackRecordMutation) MetadataCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldMetadata]
 	return ok
 }
 
 // ResetMetadata resets all changes to the "metadata" field.
-func (m *ExperienceDataMutation) ResetMetadata() {
+func (m *FeedbackRecordMutation) ResetMetadata() {
 	m.metadata = nil
-	delete(m.clearedFields, experiencedata.FieldMetadata)
+	delete(m.clearedFields, feedbackrecord.FieldMetadata)
 }
 
 // SetLanguage sets the "language" field.
-func (m *ExperienceDataMutation) SetLanguage(s string) {
+func (m *FeedbackRecordMutation) SetLanguage(s string) {
 	m.language = &s
 }
 
 // Language returns the value of the "language" field in the mutation.
-func (m *ExperienceDataMutation) Language() (r string, exists bool) {
+func (m *FeedbackRecordMutation) Language() (r string, exists bool) {
 	v := m.language
 	if v == nil {
 		return
@@ -1806,10 +1806,10 @@ func (m *ExperienceDataMutation) Language() (r string, exists bool) {
 	return *v, true
 }
 
-// OldLanguage returns the old "language" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldLanguage returns the old "language" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldLanguage(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldLanguage(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldLanguage is only allowed on UpdateOne operations")
 	}
@@ -1824,30 +1824,30 @@ func (m *ExperienceDataMutation) OldLanguage(ctx context.Context) (v string, err
 }
 
 // ClearLanguage clears the value of the "language" field.
-func (m *ExperienceDataMutation) ClearLanguage() {
+func (m *FeedbackRecordMutation) ClearLanguage() {
 	m.language = nil
-	m.clearedFields[experiencedata.FieldLanguage] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldLanguage] = struct{}{}
 }
 
 // LanguageCleared returns if the "language" field was cleared in this mutation.
-func (m *ExperienceDataMutation) LanguageCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldLanguage]
+func (m *FeedbackRecordMutation) LanguageCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldLanguage]
 	return ok
 }
 
 // ResetLanguage resets all changes to the "language" field.
-func (m *ExperienceDataMutation) ResetLanguage() {
+func (m *FeedbackRecordMutation) ResetLanguage() {
 	m.language = nil
-	delete(m.clearedFields, experiencedata.FieldLanguage)
+	delete(m.clearedFields, feedbackrecord.FieldLanguage)
 }
 
 // SetSentiment sets the "sentiment" field.
-func (m *ExperienceDataMutation) SetSentiment(s string) {
+func (m *FeedbackRecordMutation) SetSentiment(s string) {
 	m.sentiment = &s
 }
 
 // Sentiment returns the value of the "sentiment" field in the mutation.
-func (m *ExperienceDataMutation) Sentiment() (r string, exists bool) {
+func (m *FeedbackRecordMutation) Sentiment() (r string, exists bool) {
 	v := m.sentiment
 	if v == nil {
 		return
@@ -1855,10 +1855,10 @@ func (m *ExperienceDataMutation) Sentiment() (r string, exists bool) {
 	return *v, true
 }
 
-// OldSentiment returns the old "sentiment" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldSentiment returns the old "sentiment" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldSentiment(ctx context.Context) (v *string, err error) {
+func (m *FeedbackRecordMutation) OldSentiment(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldSentiment is only allowed on UpdateOne operations")
 	}
@@ -1873,31 +1873,31 @@ func (m *ExperienceDataMutation) OldSentiment(ctx context.Context) (v *string, e
 }
 
 // ClearSentiment clears the value of the "sentiment" field.
-func (m *ExperienceDataMutation) ClearSentiment() {
+func (m *FeedbackRecordMutation) ClearSentiment() {
 	m.sentiment = nil
-	m.clearedFields[experiencedata.FieldSentiment] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldSentiment] = struct{}{}
 }
 
 // SentimentCleared returns if the "sentiment" field was cleared in this mutation.
-func (m *ExperienceDataMutation) SentimentCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldSentiment]
+func (m *FeedbackRecordMutation) SentimentCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldSentiment]
 	return ok
 }
 
 // ResetSentiment resets all changes to the "sentiment" field.
-func (m *ExperienceDataMutation) ResetSentiment() {
+func (m *FeedbackRecordMutation) ResetSentiment() {
 	m.sentiment = nil
-	delete(m.clearedFields, experiencedata.FieldSentiment)
+	delete(m.clearedFields, feedbackrecord.FieldSentiment)
 }
 
 // SetSentimentScore sets the "sentiment_score" field.
-func (m *ExperienceDataMutation) SetSentimentScore(f float64) {
+func (m *FeedbackRecordMutation) SetSentimentScore(f float64) {
 	m.sentiment_score = &f
 	m.addsentiment_score = nil
 }
 
 // SentimentScore returns the value of the "sentiment_score" field in the mutation.
-func (m *ExperienceDataMutation) SentimentScore() (r float64, exists bool) {
+func (m *FeedbackRecordMutation) SentimentScore() (r float64, exists bool) {
 	v := m.sentiment_score
 	if v == nil {
 		return
@@ -1905,10 +1905,10 @@ func (m *ExperienceDataMutation) SentimentScore() (r float64, exists bool) {
 	return *v, true
 }
 
-// OldSentimentScore returns the old "sentiment_score" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldSentimentScore returns the old "sentiment_score" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldSentimentScore(ctx context.Context) (v *float64, err error) {
+func (m *FeedbackRecordMutation) OldSentimentScore(ctx context.Context) (v *float64, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldSentimentScore is only allowed on UpdateOne operations")
 	}
@@ -1923,7 +1923,7 @@ func (m *ExperienceDataMutation) OldSentimentScore(ctx context.Context) (v *floa
 }
 
 // AddSentimentScore adds f to the "sentiment_score" field.
-func (m *ExperienceDataMutation) AddSentimentScore(f float64) {
+func (m *FeedbackRecordMutation) AddSentimentScore(f float64) {
 	if m.addsentiment_score != nil {
 		*m.addsentiment_score += f
 	} else {
@@ -1932,7 +1932,7 @@ func (m *ExperienceDataMutation) AddSentimentScore(f float64) {
 }
 
 // AddedSentimentScore returns the value that was added to the "sentiment_score" field in this mutation.
-func (m *ExperienceDataMutation) AddedSentimentScore() (r float64, exists bool) {
+func (m *FeedbackRecordMutation) AddedSentimentScore() (r float64, exists bool) {
 	v := m.addsentiment_score
 	if v == nil {
 		return
@@ -1941,32 +1941,32 @@ func (m *ExperienceDataMutation) AddedSentimentScore() (r float64, exists bool) 
 }
 
 // ClearSentimentScore clears the value of the "sentiment_score" field.
-func (m *ExperienceDataMutation) ClearSentimentScore() {
+func (m *FeedbackRecordMutation) ClearSentimentScore() {
 	m.sentiment_score = nil
 	m.addsentiment_score = nil
-	m.clearedFields[experiencedata.FieldSentimentScore] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldSentimentScore] = struct{}{}
 }
 
 // SentimentScoreCleared returns if the "sentiment_score" field was cleared in this mutation.
-func (m *ExperienceDataMutation) SentimentScoreCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldSentimentScore]
+func (m *FeedbackRecordMutation) SentimentScoreCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldSentimentScore]
 	return ok
 }
 
 // ResetSentimentScore resets all changes to the "sentiment_score" field.
-func (m *ExperienceDataMutation) ResetSentimentScore() {
+func (m *FeedbackRecordMutation) ResetSentimentScore() {
 	m.sentiment_score = nil
 	m.addsentiment_score = nil
-	delete(m.clearedFields, experiencedata.FieldSentimentScore)
+	delete(m.clearedFields, feedbackrecord.FieldSentimentScore)
 }
 
 // SetEmotion sets the "emotion" field.
-func (m *ExperienceDataMutation) SetEmotion(s string) {
+func (m *FeedbackRecordMutation) SetEmotion(s string) {
 	m.emotion = &s
 }
 
 // Emotion returns the value of the "emotion" field in the mutation.
-func (m *ExperienceDataMutation) Emotion() (r string, exists bool) {
+func (m *FeedbackRecordMutation) Emotion() (r string, exists bool) {
 	v := m.emotion
 	if v == nil {
 		return
@@ -1974,10 +1974,10 @@ func (m *ExperienceDataMutation) Emotion() (r string, exists bool) {
 	return *v, true
 }
 
-// OldEmotion returns the old "emotion" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldEmotion returns the old "emotion" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldEmotion(ctx context.Context) (v *string, err error) {
+func (m *FeedbackRecordMutation) OldEmotion(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldEmotion is only allowed on UpdateOne operations")
 	}
@@ -1992,31 +1992,31 @@ func (m *ExperienceDataMutation) OldEmotion(ctx context.Context) (v *string, err
 }
 
 // ClearEmotion clears the value of the "emotion" field.
-func (m *ExperienceDataMutation) ClearEmotion() {
+func (m *FeedbackRecordMutation) ClearEmotion() {
 	m.emotion = nil
-	m.clearedFields[experiencedata.FieldEmotion] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldEmotion] = struct{}{}
 }
 
 // EmotionCleared returns if the "emotion" field was cleared in this mutation.
-func (m *ExperienceDataMutation) EmotionCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldEmotion]
+func (m *FeedbackRecordMutation) EmotionCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldEmotion]
 	return ok
 }
 
 // ResetEmotion resets all changes to the "emotion" field.
-func (m *ExperienceDataMutation) ResetEmotion() {
+func (m *FeedbackRecordMutation) ResetEmotion() {
 	m.emotion = nil
-	delete(m.clearedFields, experiencedata.FieldEmotion)
+	delete(m.clearedFields, feedbackrecord.FieldEmotion)
 }
 
 // SetTopics sets the "topics" field.
-func (m *ExperienceDataMutation) SetTopics(s []string) {
+func (m *FeedbackRecordMutation) SetTopics(s []string) {
 	m.topics = &s
 	m.appendtopics = nil
 }
 
 // Topics returns the value of the "topics" field in the mutation.
-func (m *ExperienceDataMutation) Topics() (r []string, exists bool) {
+func (m *FeedbackRecordMutation) Topics() (r []string, exists bool) {
 	v := m.topics
 	if v == nil {
 		return
@@ -2024,10 +2024,10 @@ func (m *ExperienceDataMutation) Topics() (r []string, exists bool) {
 	return *v, true
 }
 
-// OldTopics returns the old "topics" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldTopics returns the old "topics" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldTopics(ctx context.Context) (v []string, err error) {
+func (m *FeedbackRecordMutation) OldTopics(ctx context.Context) (v []string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldTopics is only allowed on UpdateOne operations")
 	}
@@ -2042,12 +2042,12 @@ func (m *ExperienceDataMutation) OldTopics(ctx context.Context) (v []string, err
 }
 
 // AppendTopics adds s to the "topics" field.
-func (m *ExperienceDataMutation) AppendTopics(s []string) {
+func (m *FeedbackRecordMutation) AppendTopics(s []string) {
 	m.appendtopics = append(m.appendtopics, s...)
 }
 
 // AppendedTopics returns the list of values that were appended to the "topics" field in this mutation.
-func (m *ExperienceDataMutation) AppendedTopics() ([]string, bool) {
+func (m *FeedbackRecordMutation) AppendedTopics() ([]string, bool) {
 	if len(m.appendtopics) == 0 {
 		return nil, false
 	}
@@ -2055,32 +2055,32 @@ func (m *ExperienceDataMutation) AppendedTopics() ([]string, bool) {
 }
 
 // ClearTopics clears the value of the "topics" field.
-func (m *ExperienceDataMutation) ClearTopics() {
+func (m *FeedbackRecordMutation) ClearTopics() {
 	m.topics = nil
 	m.appendtopics = nil
-	m.clearedFields[experiencedata.FieldTopics] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldTopics] = struct{}{}
 }
 
 // TopicsCleared returns if the "topics" field was cleared in this mutation.
-func (m *ExperienceDataMutation) TopicsCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldTopics]
+func (m *FeedbackRecordMutation) TopicsCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldTopics]
 	return ok
 }
 
 // ResetTopics resets all changes to the "topics" field.
-func (m *ExperienceDataMutation) ResetTopics() {
+func (m *FeedbackRecordMutation) ResetTopics() {
 	m.topics = nil
 	m.appendtopics = nil
-	delete(m.clearedFields, experiencedata.FieldTopics)
+	delete(m.clearedFields, feedbackrecord.FieldTopics)
 }
 
 // SetUserIdentifier sets the "user_identifier" field.
-func (m *ExperienceDataMutation) SetUserIdentifier(s string) {
+func (m *FeedbackRecordMutation) SetUserIdentifier(s string) {
 	m.user_identifier = &s
 }
 
 // UserIdentifier returns the value of the "user_identifier" field in the mutation.
-func (m *ExperienceDataMutation) UserIdentifier() (r string, exists bool) {
+func (m *FeedbackRecordMutation) UserIdentifier() (r string, exists bool) {
 	v := m.user_identifier
 	if v == nil {
 		return
@@ -2088,10 +2088,10 @@ func (m *ExperienceDataMutation) UserIdentifier() (r string, exists bool) {
 	return *v, true
 }
 
-// OldUserIdentifier returns the old "user_identifier" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldUserIdentifier returns the old "user_identifier" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldUserIdentifier(ctx context.Context) (v string, err error) {
+func (m *FeedbackRecordMutation) OldUserIdentifier(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldUserIdentifier is only allowed on UpdateOne operations")
 	}
@@ -2106,30 +2106,30 @@ func (m *ExperienceDataMutation) OldUserIdentifier(ctx context.Context) (v strin
 }
 
 // ClearUserIdentifier clears the value of the "user_identifier" field.
-func (m *ExperienceDataMutation) ClearUserIdentifier() {
+func (m *FeedbackRecordMutation) ClearUserIdentifier() {
 	m.user_identifier = nil
-	m.clearedFields[experiencedata.FieldUserIdentifier] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldUserIdentifier] = struct{}{}
 }
 
 // UserIdentifierCleared returns if the "user_identifier" field was cleared in this mutation.
-func (m *ExperienceDataMutation) UserIdentifierCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldUserIdentifier]
+func (m *FeedbackRecordMutation) UserIdentifierCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldUserIdentifier]
 	return ok
 }
 
 // ResetUserIdentifier resets all changes to the "user_identifier" field.
-func (m *ExperienceDataMutation) ResetUserIdentifier() {
+func (m *FeedbackRecordMutation) ResetUserIdentifier() {
 	m.user_identifier = nil
-	delete(m.clearedFields, experiencedata.FieldUserIdentifier)
+	delete(m.clearedFields, feedbackrecord.FieldUserIdentifier)
 }
 
 // SetEmbedding sets the "embedding" field.
-func (m *ExperienceDataMutation) SetEmbedding(pg pgvector.Vector) {
+func (m *FeedbackRecordMutation) SetEmbedding(pg pgvector.Vector) {
 	m.embedding = &pg
 }
 
 // Embedding returns the value of the "embedding" field in the mutation.
-func (m *ExperienceDataMutation) Embedding() (r pgvector.Vector, exists bool) {
+func (m *FeedbackRecordMutation) Embedding() (r pgvector.Vector, exists bool) {
 	v := m.embedding
 	if v == nil {
 		return
@@ -2137,10 +2137,10 @@ func (m *ExperienceDataMutation) Embedding() (r pgvector.Vector, exists bool) {
 	return *v, true
 }
 
-// OldEmbedding returns the old "embedding" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldEmbedding returns the old "embedding" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldEmbedding(ctx context.Context) (v *pgvector.Vector, err error) {
+func (m *FeedbackRecordMutation) OldEmbedding(ctx context.Context) (v *pgvector.Vector, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldEmbedding is only allowed on UpdateOne operations")
 	}
@@ -2155,30 +2155,30 @@ func (m *ExperienceDataMutation) OldEmbedding(ctx context.Context) (v *pgvector.
 }
 
 // ClearEmbedding clears the value of the "embedding" field.
-func (m *ExperienceDataMutation) ClearEmbedding() {
+func (m *FeedbackRecordMutation) ClearEmbedding() {
 	m.embedding = nil
-	m.clearedFields[experiencedata.FieldEmbedding] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldEmbedding] = struct{}{}
 }
 
 // EmbeddingCleared returns if the "embedding" field was cleared in this mutation.
-func (m *ExperienceDataMutation) EmbeddingCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldEmbedding]
+func (m *FeedbackRecordMutation) EmbeddingCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldEmbedding]
 	return ok
 }
 
 // ResetEmbedding resets all changes to the "embedding" field.
-func (m *ExperienceDataMutation) ResetEmbedding() {
+func (m *FeedbackRecordMutation) ResetEmbedding() {
 	m.embedding = nil
-	delete(m.clearedFields, experiencedata.FieldEmbedding)
+	delete(m.clearedFields, feedbackrecord.FieldEmbedding)
 }
 
 // SetEmbeddingModel sets the "embedding_model" field.
-func (m *ExperienceDataMutation) SetEmbeddingModel(s string) {
+func (m *FeedbackRecordMutation) SetEmbeddingModel(s string) {
 	m.embedding_model = &s
 }
 
 // EmbeddingModel returns the value of the "embedding_model" field in the mutation.
-func (m *ExperienceDataMutation) EmbeddingModel() (r string, exists bool) {
+func (m *FeedbackRecordMutation) EmbeddingModel() (r string, exists bool) {
 	v := m.embedding_model
 	if v == nil {
 		return
@@ -2186,10 +2186,10 @@ func (m *ExperienceDataMutation) EmbeddingModel() (r string, exists bool) {
 	return *v, true
 }
 
-// OldEmbeddingModel returns the old "embedding_model" field's value of the ExperienceData entity.
-// If the ExperienceData object wasn't provided to the builder, the object is fetched from the database.
+// OldEmbeddingModel returns the old "embedding_model" field's value of the FeedbackRecord entity.
+// If the FeedbackRecord object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ExperienceDataMutation) OldEmbeddingModel(ctx context.Context) (v *string, err error) {
+func (m *FeedbackRecordMutation) OldEmbeddingModel(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldEmbeddingModel is only allowed on UpdateOne operations")
 	}
@@ -2204,32 +2204,32 @@ func (m *ExperienceDataMutation) OldEmbeddingModel(ctx context.Context) (v *stri
 }
 
 // ClearEmbeddingModel clears the value of the "embedding_model" field.
-func (m *ExperienceDataMutation) ClearEmbeddingModel() {
+func (m *FeedbackRecordMutation) ClearEmbeddingModel() {
 	m.embedding_model = nil
-	m.clearedFields[experiencedata.FieldEmbeddingModel] = struct{}{}
+	m.clearedFields[feedbackrecord.FieldEmbeddingModel] = struct{}{}
 }
 
 // EmbeddingModelCleared returns if the "embedding_model" field was cleared in this mutation.
-func (m *ExperienceDataMutation) EmbeddingModelCleared() bool {
-	_, ok := m.clearedFields[experiencedata.FieldEmbeddingModel]
+func (m *FeedbackRecordMutation) EmbeddingModelCleared() bool {
+	_, ok := m.clearedFields[feedbackrecord.FieldEmbeddingModel]
 	return ok
 }
 
 // ResetEmbeddingModel resets all changes to the "embedding_model" field.
-func (m *ExperienceDataMutation) ResetEmbeddingModel() {
+func (m *FeedbackRecordMutation) ResetEmbeddingModel() {
 	m.embedding_model = nil
-	delete(m.clearedFields, experiencedata.FieldEmbeddingModel)
+	delete(m.clearedFields, feedbackrecord.FieldEmbeddingModel)
 }
 
-// Where appends a list predicates to the ExperienceDataMutation builder.
-func (m *ExperienceDataMutation) Where(ps ...predicate.ExperienceData) {
+// Where appends a list predicates to the FeedbackRecordMutation builder.
+func (m *FeedbackRecordMutation) Where(ps ...predicate.FeedbackRecord) {
 	m.predicates = append(m.predicates, ps...)
 }
 
-// WhereP appends storage-level predicates to the ExperienceDataMutation builder. Using this method,
+// WhereP appends storage-level predicates to the FeedbackRecordMutation builder. Using this method,
 // users can use type-assertion to append predicates that do not depend on any generated package.
-func (m *ExperienceDataMutation) WhereP(ps ...func(*sql.Selector)) {
-	p := make([]predicate.ExperienceData, len(ps))
+func (m *FeedbackRecordMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.FeedbackRecord, len(ps))
 	for i := range ps {
 		p[i] = ps[i]
 	}
@@ -2237,99 +2237,99 @@ func (m *ExperienceDataMutation) WhereP(ps ...func(*sql.Selector)) {
 }
 
 // Op returns the operation name.
-func (m *ExperienceDataMutation) Op() Op {
+func (m *FeedbackRecordMutation) Op() Op {
 	return m.op
 }
 
 // SetOp allows setting the mutation operation.
-func (m *ExperienceDataMutation) SetOp(op Op) {
+func (m *FeedbackRecordMutation) SetOp(op Op) {
 	m.op = op
 }
 
-// Type returns the node type of this mutation (ExperienceData).
-func (m *ExperienceDataMutation) Type() string {
+// Type returns the node type of this mutation (FeedbackRecord).
+func (m *FeedbackRecordMutation) Type() string {
 	return m.typ
 }
 
 // Fields returns all fields that were changed during this mutation. Note that in
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
-func (m *ExperienceDataMutation) Fields() []string {
+func (m *FeedbackRecordMutation) Fields() []string {
 	fields := make([]string, 0, 25)
 	if m.collected_at != nil {
-		fields = append(fields, experiencedata.FieldCollectedAt)
+		fields = append(fields, feedbackrecord.FieldCollectedAt)
 	}
 	if m.created_at != nil {
-		fields = append(fields, experiencedata.FieldCreatedAt)
+		fields = append(fields, feedbackrecord.FieldCreatedAt)
 	}
 	if m.updated_at != nil {
-		fields = append(fields, experiencedata.FieldUpdatedAt)
+		fields = append(fields, feedbackrecord.FieldUpdatedAt)
 	}
 	if m.tenant_id != nil {
-		fields = append(fields, experiencedata.FieldTenantID)
+		fields = append(fields, feedbackrecord.FieldTenantID)
 	}
 	if m.response_id != nil {
-		fields = append(fields, experiencedata.FieldResponseID)
+		fields = append(fields, feedbackrecord.FieldResponseID)
 	}
 	if m.source_type != nil {
-		fields = append(fields, experiencedata.FieldSourceType)
+		fields = append(fields, feedbackrecord.FieldSourceType)
 	}
 	if m.source_id != nil {
-		fields = append(fields, experiencedata.FieldSourceID)
+		fields = append(fields, feedbackrecord.FieldSourceID)
 	}
 	if m.source_name != nil {
-		fields = append(fields, experiencedata.FieldSourceName)
+		fields = append(fields, feedbackrecord.FieldSourceName)
 	}
 	if m.field_id != nil {
-		fields = append(fields, experiencedata.FieldFieldID)
+		fields = append(fields, feedbackrecord.FieldFieldID)
 	}
 	if m.field_label != nil {
-		fields = append(fields, experiencedata.FieldFieldLabel)
+		fields = append(fields, feedbackrecord.FieldFieldLabel)
 	}
 	if m.field_type != nil {
-		fields = append(fields, experiencedata.FieldFieldType)
+		fields = append(fields, feedbackrecord.FieldFieldType)
 	}
 	if m.value_text != nil {
-		fields = append(fields, experiencedata.FieldValueText)
+		fields = append(fields, feedbackrecord.FieldValueText)
 	}
 	if m.value_number != nil {
-		fields = append(fields, experiencedata.FieldValueNumber)
+		fields = append(fields, feedbackrecord.FieldValueNumber)
 	}
 	if m.value_boolean != nil {
-		fields = append(fields, experiencedata.FieldValueBoolean)
+		fields = append(fields, feedbackrecord.FieldValueBoolean)
 	}
 	if m.value_date != nil {
-		fields = append(fields, experiencedata.FieldValueDate)
+		fields = append(fields, feedbackrecord.FieldValueDate)
 	}
 	if m.value_json != nil {
-		fields = append(fields, experiencedata.FieldValueJSON)
+		fields = append(fields, feedbackrecord.FieldValueJSON)
 	}
 	if m.metadata != nil {
-		fields = append(fields, experiencedata.FieldMetadata)
+		fields = append(fields, feedbackrecord.FieldMetadata)
 	}
 	if m.language != nil {
-		fields = append(fields, experiencedata.FieldLanguage)
+		fields = append(fields, feedbackrecord.FieldLanguage)
 	}
 	if m.sentiment != nil {
-		fields = append(fields, experiencedata.FieldSentiment)
+		fields = append(fields, feedbackrecord.FieldSentiment)
 	}
 	if m.sentiment_score != nil {
-		fields = append(fields, experiencedata.FieldSentimentScore)
+		fields = append(fields, feedbackrecord.FieldSentimentScore)
 	}
 	if m.emotion != nil {
-		fields = append(fields, experiencedata.FieldEmotion)
+		fields = append(fields, feedbackrecord.FieldEmotion)
 	}
 	if m.topics != nil {
-		fields = append(fields, experiencedata.FieldTopics)
+		fields = append(fields, feedbackrecord.FieldTopics)
 	}
 	if m.user_identifier != nil {
-		fields = append(fields, experiencedata.FieldUserIdentifier)
+		fields = append(fields, feedbackrecord.FieldUserIdentifier)
 	}
 	if m.embedding != nil {
-		fields = append(fields, experiencedata.FieldEmbedding)
+		fields = append(fields, feedbackrecord.FieldEmbedding)
 	}
 	if m.embedding_model != nil {
-		fields = append(fields, experiencedata.FieldEmbeddingModel)
+		fields = append(fields, feedbackrecord.FieldEmbeddingModel)
 	}
 	return fields
 }
@@ -2337,57 +2337,57 @@ func (m *ExperienceDataMutation) Fields() []string {
 // Field returns the value of a field with the given name. The second boolean
 // return value indicates that this field was not set, or was not defined in the
 // schema.
-func (m *ExperienceDataMutation) Field(name string) (ent.Value, bool) {
+func (m *FeedbackRecordMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case experiencedata.FieldCollectedAt:
+	case feedbackrecord.FieldCollectedAt:
 		return m.CollectedAt()
-	case experiencedata.FieldCreatedAt:
+	case feedbackrecord.FieldCreatedAt:
 		return m.CreatedAt()
-	case experiencedata.FieldUpdatedAt:
+	case feedbackrecord.FieldUpdatedAt:
 		return m.UpdatedAt()
-	case experiencedata.FieldTenantID:
+	case feedbackrecord.FieldTenantID:
 		return m.TenantID()
-	case experiencedata.FieldResponseID:
+	case feedbackrecord.FieldResponseID:
 		return m.ResponseID()
-	case experiencedata.FieldSourceType:
+	case feedbackrecord.FieldSourceType:
 		return m.SourceType()
-	case experiencedata.FieldSourceID:
+	case feedbackrecord.FieldSourceID:
 		return m.SourceID()
-	case experiencedata.FieldSourceName:
+	case feedbackrecord.FieldSourceName:
 		return m.SourceName()
-	case experiencedata.FieldFieldID:
+	case feedbackrecord.FieldFieldID:
 		return m.FieldID()
-	case experiencedata.FieldFieldLabel:
+	case feedbackrecord.FieldFieldLabel:
 		return m.FieldLabel()
-	case experiencedata.FieldFieldType:
+	case feedbackrecord.FieldFieldType:
 		return m.FieldType()
-	case experiencedata.FieldValueText:
+	case feedbackrecord.FieldValueText:
 		return m.ValueText()
-	case experiencedata.FieldValueNumber:
+	case feedbackrecord.FieldValueNumber:
 		return m.ValueNumber()
-	case experiencedata.FieldValueBoolean:
+	case feedbackrecord.FieldValueBoolean:
 		return m.ValueBoolean()
-	case experiencedata.FieldValueDate:
+	case feedbackrecord.FieldValueDate:
 		return m.ValueDate()
-	case experiencedata.FieldValueJSON:
+	case feedbackrecord.FieldValueJSON:
 		return m.ValueJSON()
-	case experiencedata.FieldMetadata:
+	case feedbackrecord.FieldMetadata:
 		return m.Metadata()
-	case experiencedata.FieldLanguage:
+	case feedbackrecord.FieldLanguage:
 		return m.Language()
-	case experiencedata.FieldSentiment:
+	case feedbackrecord.FieldSentiment:
 		return m.Sentiment()
-	case experiencedata.FieldSentimentScore:
+	case feedbackrecord.FieldSentimentScore:
 		return m.SentimentScore()
-	case experiencedata.FieldEmotion:
+	case feedbackrecord.FieldEmotion:
 		return m.Emotion()
-	case experiencedata.FieldTopics:
+	case feedbackrecord.FieldTopics:
 		return m.Topics()
-	case experiencedata.FieldUserIdentifier:
+	case feedbackrecord.FieldUserIdentifier:
 		return m.UserIdentifier()
-	case experiencedata.FieldEmbedding:
+	case feedbackrecord.FieldEmbedding:
 		return m.Embedding()
-	case experiencedata.FieldEmbeddingModel:
+	case feedbackrecord.FieldEmbeddingModel:
 		return m.EmbeddingModel()
 	}
 	return nil, false
@@ -2396,236 +2396,236 @@ func (m *ExperienceDataMutation) Field(name string) (ent.Value, bool) {
 // OldField returns the old value of the field from the database. An error is
 // returned if the mutation operation is not UpdateOne, or the query to the
 // database failed.
-func (m *ExperienceDataMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+func (m *FeedbackRecordMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case experiencedata.FieldCollectedAt:
+	case feedbackrecord.FieldCollectedAt:
 		return m.OldCollectedAt(ctx)
-	case experiencedata.FieldCreatedAt:
+	case feedbackrecord.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case experiencedata.FieldUpdatedAt:
+	case feedbackrecord.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
-	case experiencedata.FieldTenantID:
+	case feedbackrecord.FieldTenantID:
 		return m.OldTenantID(ctx)
-	case experiencedata.FieldResponseID:
+	case feedbackrecord.FieldResponseID:
 		return m.OldResponseID(ctx)
-	case experiencedata.FieldSourceType:
+	case feedbackrecord.FieldSourceType:
 		return m.OldSourceType(ctx)
-	case experiencedata.FieldSourceID:
+	case feedbackrecord.FieldSourceID:
 		return m.OldSourceID(ctx)
-	case experiencedata.FieldSourceName:
+	case feedbackrecord.FieldSourceName:
 		return m.OldSourceName(ctx)
-	case experiencedata.FieldFieldID:
+	case feedbackrecord.FieldFieldID:
 		return m.OldFieldID(ctx)
-	case experiencedata.FieldFieldLabel:
+	case feedbackrecord.FieldFieldLabel:
 		return m.OldFieldLabel(ctx)
-	case experiencedata.FieldFieldType:
+	case feedbackrecord.FieldFieldType:
 		return m.OldFieldType(ctx)
-	case experiencedata.FieldValueText:
+	case feedbackrecord.FieldValueText:
 		return m.OldValueText(ctx)
-	case experiencedata.FieldValueNumber:
+	case feedbackrecord.FieldValueNumber:
 		return m.OldValueNumber(ctx)
-	case experiencedata.FieldValueBoolean:
+	case feedbackrecord.FieldValueBoolean:
 		return m.OldValueBoolean(ctx)
-	case experiencedata.FieldValueDate:
+	case feedbackrecord.FieldValueDate:
 		return m.OldValueDate(ctx)
-	case experiencedata.FieldValueJSON:
+	case feedbackrecord.FieldValueJSON:
 		return m.OldValueJSON(ctx)
-	case experiencedata.FieldMetadata:
+	case feedbackrecord.FieldMetadata:
 		return m.OldMetadata(ctx)
-	case experiencedata.FieldLanguage:
+	case feedbackrecord.FieldLanguage:
 		return m.OldLanguage(ctx)
-	case experiencedata.FieldSentiment:
+	case feedbackrecord.FieldSentiment:
 		return m.OldSentiment(ctx)
-	case experiencedata.FieldSentimentScore:
+	case feedbackrecord.FieldSentimentScore:
 		return m.OldSentimentScore(ctx)
-	case experiencedata.FieldEmotion:
+	case feedbackrecord.FieldEmotion:
 		return m.OldEmotion(ctx)
-	case experiencedata.FieldTopics:
+	case feedbackrecord.FieldTopics:
 		return m.OldTopics(ctx)
-	case experiencedata.FieldUserIdentifier:
+	case feedbackrecord.FieldUserIdentifier:
 		return m.OldUserIdentifier(ctx)
-	case experiencedata.FieldEmbedding:
+	case feedbackrecord.FieldEmbedding:
 		return m.OldEmbedding(ctx)
-	case experiencedata.FieldEmbeddingModel:
+	case feedbackrecord.FieldEmbeddingModel:
 		return m.OldEmbeddingModel(ctx)
 	}
-	return nil, fmt.Errorf("unknown ExperienceData field %s", name)
+	return nil, fmt.Errorf("unknown FeedbackRecord field %s", name)
 }
 
 // SetField sets the value of a field with the given name. It returns an error if
 // the field is not defined in the schema, or if the type mismatched the field
 // type.
-func (m *ExperienceDataMutation) SetField(name string, value ent.Value) error {
+func (m *FeedbackRecordMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case experiencedata.FieldCollectedAt:
+	case feedbackrecord.FieldCollectedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCollectedAt(v)
 		return nil
-	case experiencedata.FieldCreatedAt:
+	case feedbackrecord.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
 		return nil
-	case experiencedata.FieldUpdatedAt:
+	case feedbackrecord.FieldUpdatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpdatedAt(v)
 		return nil
-	case experiencedata.FieldTenantID:
+	case feedbackrecord.FieldTenantID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetTenantID(v)
 		return nil
-	case experiencedata.FieldResponseID:
+	case feedbackrecord.FieldResponseID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetResponseID(v)
 		return nil
-	case experiencedata.FieldSourceType:
+	case feedbackrecord.FieldSourceType:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSourceType(v)
 		return nil
-	case experiencedata.FieldSourceID:
+	case feedbackrecord.FieldSourceID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSourceID(v)
 		return nil
-	case experiencedata.FieldSourceName:
+	case feedbackrecord.FieldSourceName:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSourceName(v)
 		return nil
-	case experiencedata.FieldFieldID:
+	case feedbackrecord.FieldFieldID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetFieldID(v)
 		return nil
-	case experiencedata.FieldFieldLabel:
+	case feedbackrecord.FieldFieldLabel:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetFieldLabel(v)
 		return nil
-	case experiencedata.FieldFieldType:
+	case feedbackrecord.FieldFieldType:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetFieldType(v)
 		return nil
-	case experiencedata.FieldValueText:
+	case feedbackrecord.FieldValueText:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetValueText(v)
 		return nil
-	case experiencedata.FieldValueNumber:
+	case feedbackrecord.FieldValueNumber:
 		v, ok := value.(float64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetValueNumber(v)
 		return nil
-	case experiencedata.FieldValueBoolean:
+	case feedbackrecord.FieldValueBoolean:
 		v, ok := value.(bool)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetValueBoolean(v)
 		return nil
-	case experiencedata.FieldValueDate:
+	case feedbackrecord.FieldValueDate:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetValueDate(v)
 		return nil
-	case experiencedata.FieldValueJSON:
+	case feedbackrecord.FieldValueJSON:
 		v, ok := value.(map[string]interface{})
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetValueJSON(v)
 		return nil
-	case experiencedata.FieldMetadata:
+	case feedbackrecord.FieldMetadata:
 		v, ok := value.(map[string]interface{})
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetMetadata(v)
 		return nil
-	case experiencedata.FieldLanguage:
+	case feedbackrecord.FieldLanguage:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetLanguage(v)
 		return nil
-	case experiencedata.FieldSentiment:
+	case feedbackrecord.FieldSentiment:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSentiment(v)
 		return nil
-	case experiencedata.FieldSentimentScore:
+	case feedbackrecord.FieldSentimentScore:
 		v, ok := value.(float64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSentimentScore(v)
 		return nil
-	case experiencedata.FieldEmotion:
+	case feedbackrecord.FieldEmotion:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetEmotion(v)
 		return nil
-	case experiencedata.FieldTopics:
+	case feedbackrecord.FieldTopics:
 		v, ok := value.([]string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetTopics(v)
 		return nil
-	case experiencedata.FieldUserIdentifier:
+	case feedbackrecord.FieldUserIdentifier:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUserIdentifier(v)
 		return nil
-	case experiencedata.FieldEmbedding:
+	case feedbackrecord.FieldEmbedding:
 		v, ok := value.(pgvector.Vector)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetEmbedding(v)
 		return nil
-	case experiencedata.FieldEmbeddingModel:
+	case feedbackrecord.FieldEmbeddingModel:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
@@ -2633,18 +2633,18 @@ func (m *ExperienceDataMutation) SetField(name string, value ent.Value) error {
 		m.SetEmbeddingModel(v)
 		return nil
 	}
-	return fmt.Errorf("unknown ExperienceData field %s", name)
+	return fmt.Errorf("unknown FeedbackRecord field %s", name)
 }
 
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
-func (m *ExperienceDataMutation) AddedFields() []string {
+func (m *FeedbackRecordMutation) AddedFields() []string {
 	var fields []string
 	if m.addvalue_number != nil {
-		fields = append(fields, experiencedata.FieldValueNumber)
+		fields = append(fields, feedbackrecord.FieldValueNumber)
 	}
 	if m.addsentiment_score != nil {
-		fields = append(fields, experiencedata.FieldSentimentScore)
+		fields = append(fields, feedbackrecord.FieldSentimentScore)
 	}
 	return fields
 }
@@ -2652,11 +2652,11 @@ func (m *ExperienceDataMutation) AddedFields() []string {
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
-func (m *ExperienceDataMutation) AddedField(name string) (ent.Value, bool) {
+func (m *FeedbackRecordMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
-	case experiencedata.FieldValueNumber:
+	case feedbackrecord.FieldValueNumber:
 		return m.AddedValueNumber()
-	case experiencedata.FieldSentimentScore:
+	case feedbackrecord.FieldSentimentScore:
 		return m.AddedSentimentScore()
 	}
 	return nil, false
@@ -2665,16 +2665,16 @@ func (m *ExperienceDataMutation) AddedField(name string) (ent.Value, bool) {
 // AddField adds the value to the field with the given name. It returns an error if
 // the field is not defined in the schema, or if the type mismatched the field
 // type.
-func (m *ExperienceDataMutation) AddField(name string, value ent.Value) error {
+func (m *FeedbackRecordMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case experiencedata.FieldValueNumber:
+	case feedbackrecord.FieldValueNumber:
 		v, ok := value.(float64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddValueNumber(v)
 		return nil
-	case experiencedata.FieldSentimentScore:
+	case feedbackrecord.FieldSentimentScore:
 		v, ok := value.(float64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
@@ -2682,272 +2682,272 @@ func (m *ExperienceDataMutation) AddField(name string, value ent.Value) error {
 		m.AddSentimentScore(v)
 		return nil
 	}
-	return fmt.Errorf("unknown ExperienceData numeric field %s", name)
+	return fmt.Errorf("unknown FeedbackRecord numeric field %s", name)
 }
 
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
-func (m *ExperienceDataMutation) ClearedFields() []string {
+func (m *FeedbackRecordMutation) ClearedFields() []string {
 	var fields []string
-	if m.FieldCleared(experiencedata.FieldTenantID) {
-		fields = append(fields, experiencedata.FieldTenantID)
+	if m.FieldCleared(feedbackrecord.FieldTenantID) {
+		fields = append(fields, feedbackrecord.FieldTenantID)
 	}
-	if m.FieldCleared(experiencedata.FieldResponseID) {
-		fields = append(fields, experiencedata.FieldResponseID)
+	if m.FieldCleared(feedbackrecord.FieldResponseID) {
+		fields = append(fields, feedbackrecord.FieldResponseID)
 	}
-	if m.FieldCleared(experiencedata.FieldSourceID) {
-		fields = append(fields, experiencedata.FieldSourceID)
+	if m.FieldCleared(feedbackrecord.FieldSourceID) {
+		fields = append(fields, feedbackrecord.FieldSourceID)
 	}
-	if m.FieldCleared(experiencedata.FieldSourceName) {
-		fields = append(fields, experiencedata.FieldSourceName)
+	if m.FieldCleared(feedbackrecord.FieldSourceName) {
+		fields = append(fields, feedbackrecord.FieldSourceName)
 	}
-	if m.FieldCleared(experiencedata.FieldFieldLabel) {
-		fields = append(fields, experiencedata.FieldFieldLabel)
+	if m.FieldCleared(feedbackrecord.FieldFieldLabel) {
+		fields = append(fields, feedbackrecord.FieldFieldLabel)
 	}
-	if m.FieldCleared(experiencedata.FieldValueText) {
-		fields = append(fields, experiencedata.FieldValueText)
+	if m.FieldCleared(feedbackrecord.FieldValueText) {
+		fields = append(fields, feedbackrecord.FieldValueText)
 	}
-	if m.FieldCleared(experiencedata.FieldValueNumber) {
-		fields = append(fields, experiencedata.FieldValueNumber)
+	if m.FieldCleared(feedbackrecord.FieldValueNumber) {
+		fields = append(fields, feedbackrecord.FieldValueNumber)
 	}
-	if m.FieldCleared(experiencedata.FieldValueBoolean) {
-		fields = append(fields, experiencedata.FieldValueBoolean)
+	if m.FieldCleared(feedbackrecord.FieldValueBoolean) {
+		fields = append(fields, feedbackrecord.FieldValueBoolean)
 	}
-	if m.FieldCleared(experiencedata.FieldValueDate) {
-		fields = append(fields, experiencedata.FieldValueDate)
+	if m.FieldCleared(feedbackrecord.FieldValueDate) {
+		fields = append(fields, feedbackrecord.FieldValueDate)
 	}
-	if m.FieldCleared(experiencedata.FieldValueJSON) {
-		fields = append(fields, experiencedata.FieldValueJSON)
+	if m.FieldCleared(feedbackrecord.FieldValueJSON) {
+		fields = append(fields, feedbackrecord.FieldValueJSON)
 	}
-	if m.FieldCleared(experiencedata.FieldMetadata) {
-		fields = append(fields, experiencedata.FieldMetadata)
+	if m.FieldCleared(feedbackrecord.FieldMetadata) {
+		fields = append(fields, feedbackrecord.FieldMetadata)
 	}
-	if m.FieldCleared(experiencedata.FieldLanguage) {
-		fields = append(fields, experiencedata.FieldLanguage)
+	if m.FieldCleared(feedbackrecord.FieldLanguage) {
+		fields = append(fields, feedbackrecord.FieldLanguage)
 	}
-	if m.FieldCleared(experiencedata.FieldSentiment) {
-		fields = append(fields, experiencedata.FieldSentiment)
+	if m.FieldCleared(feedbackrecord.FieldSentiment) {
+		fields = append(fields, feedbackrecord.FieldSentiment)
 	}
-	if m.FieldCleared(experiencedata.FieldSentimentScore) {
-		fields = append(fields, experiencedata.FieldSentimentScore)
+	if m.FieldCleared(feedbackrecord.FieldSentimentScore) {
+		fields = append(fields, feedbackrecord.FieldSentimentScore)
 	}
-	if m.FieldCleared(experiencedata.FieldEmotion) {
-		fields = append(fields, experiencedata.FieldEmotion)
+	if m.FieldCleared(feedbackrecord.FieldEmotion) {
+		fields = append(fields, feedbackrecord.FieldEmotion)
 	}
-	if m.FieldCleared(experiencedata.FieldTopics) {
-		fields = append(fields, experiencedata.FieldTopics)
+	if m.FieldCleared(feedbackrecord.FieldTopics) {
+		fields = append(fields, feedbackrecord.FieldTopics)
 	}
-	if m.FieldCleared(experiencedata.FieldUserIdentifier) {
-		fields = append(fields, experiencedata.FieldUserIdentifier)
+	if m.FieldCleared(feedbackrecord.FieldUserIdentifier) {
+		fields = append(fields, feedbackrecord.FieldUserIdentifier)
 	}
-	if m.FieldCleared(experiencedata.FieldEmbedding) {
-		fields = append(fields, experiencedata.FieldEmbedding)
+	if m.FieldCleared(feedbackrecord.FieldEmbedding) {
+		fields = append(fields, feedbackrecord.FieldEmbedding)
 	}
-	if m.FieldCleared(experiencedata.FieldEmbeddingModel) {
-		fields = append(fields, experiencedata.FieldEmbeddingModel)
+	if m.FieldCleared(feedbackrecord.FieldEmbeddingModel) {
+		fields = append(fields, feedbackrecord.FieldEmbeddingModel)
 	}
 	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
 // cleared in this mutation.
-func (m *ExperienceDataMutation) FieldCleared(name string) bool {
+func (m *FeedbackRecordMutation) FieldCleared(name string) bool {
 	_, ok := m.clearedFields[name]
 	return ok
 }
 
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
-func (m *ExperienceDataMutation) ClearField(name string) error {
+func (m *FeedbackRecordMutation) ClearField(name string) error {
 	switch name {
-	case experiencedata.FieldTenantID:
+	case feedbackrecord.FieldTenantID:
 		m.ClearTenantID()
 		return nil
-	case experiencedata.FieldResponseID:
+	case feedbackrecord.FieldResponseID:
 		m.ClearResponseID()
 		return nil
-	case experiencedata.FieldSourceID:
+	case feedbackrecord.FieldSourceID:
 		m.ClearSourceID()
 		return nil
-	case experiencedata.FieldSourceName:
+	case feedbackrecord.FieldSourceName:
 		m.ClearSourceName()
 		return nil
-	case experiencedata.FieldFieldLabel:
+	case feedbackrecord.FieldFieldLabel:
 		m.ClearFieldLabel()
 		return nil
-	case experiencedata.FieldValueText:
+	case feedbackrecord.FieldValueText:
 		m.ClearValueText()
 		return nil
-	case experiencedata.FieldValueNumber:
+	case feedbackrecord.FieldValueNumber:
 		m.ClearValueNumber()
 		return nil
-	case experiencedata.FieldValueBoolean:
+	case feedbackrecord.FieldValueBoolean:
 		m.ClearValueBoolean()
 		return nil
-	case experiencedata.FieldValueDate:
+	case feedbackrecord.FieldValueDate:
 		m.ClearValueDate()
 		return nil
-	case experiencedata.FieldValueJSON:
+	case feedbackrecord.FieldValueJSON:
 		m.ClearValueJSON()
 		return nil
-	case experiencedata.FieldMetadata:
+	case feedbackrecord.FieldMetadata:
 		m.ClearMetadata()
 		return nil
-	case experiencedata.FieldLanguage:
+	case feedbackrecord.FieldLanguage:
 		m.ClearLanguage()
 		return nil
-	case experiencedata.FieldSentiment:
+	case feedbackrecord.FieldSentiment:
 		m.ClearSentiment()
 		return nil
-	case experiencedata.FieldSentimentScore:
+	case feedbackrecord.FieldSentimentScore:
 		m.ClearSentimentScore()
 		return nil
-	case experiencedata.FieldEmotion:
+	case feedbackrecord.FieldEmotion:
 		m.ClearEmotion()
 		return nil
-	case experiencedata.FieldTopics:
+	case feedbackrecord.FieldTopics:
 		m.ClearTopics()
 		return nil
-	case experiencedata.FieldUserIdentifier:
+	case feedbackrecord.FieldUserIdentifier:
 		m.ClearUserIdentifier()
 		return nil
-	case experiencedata.FieldEmbedding:
+	case feedbackrecord.FieldEmbedding:
 		m.ClearEmbedding()
 		return nil
-	case experiencedata.FieldEmbeddingModel:
+	case feedbackrecord.FieldEmbeddingModel:
 		m.ClearEmbeddingModel()
 		return nil
 	}
-	return fmt.Errorf("unknown ExperienceData nullable field %s", name)
+	return fmt.Errorf("unknown FeedbackRecord nullable field %s", name)
 }
 
 // ResetField resets all changes in the mutation for the field with the given name.
 // It returns an error if the field is not defined in the schema.
-func (m *ExperienceDataMutation) ResetField(name string) error {
+func (m *FeedbackRecordMutation) ResetField(name string) error {
 	switch name {
-	case experiencedata.FieldCollectedAt:
+	case feedbackrecord.FieldCollectedAt:
 		m.ResetCollectedAt()
 		return nil
-	case experiencedata.FieldCreatedAt:
+	case feedbackrecord.FieldCreatedAt:
 		m.ResetCreatedAt()
 		return nil
-	case experiencedata.FieldUpdatedAt:
+	case feedbackrecord.FieldUpdatedAt:
 		m.ResetUpdatedAt()
 		return nil
-	case experiencedata.FieldTenantID:
+	case feedbackrecord.FieldTenantID:
 		m.ResetTenantID()
 		return nil
-	case experiencedata.FieldResponseID:
+	case feedbackrecord.FieldResponseID:
 		m.ResetResponseID()
 		return nil
-	case experiencedata.FieldSourceType:
+	case feedbackrecord.FieldSourceType:
 		m.ResetSourceType()
 		return nil
-	case experiencedata.FieldSourceID:
+	case feedbackrecord.FieldSourceID:
 		m.ResetSourceID()
 		return nil
-	case experiencedata.FieldSourceName:
+	case feedbackrecord.FieldSourceName:
 		m.ResetSourceName()
 		return nil
-	case experiencedata.FieldFieldID:
+	case feedbackrecord.FieldFieldID:
 		m.ResetFieldID()
 		return nil
-	case experiencedata.FieldFieldLabel:
+	case feedbackrecord.FieldFieldLabel:
 		m.ResetFieldLabel()
 		return nil
-	case experiencedata.FieldFieldType:
+	case feedbackrecord.FieldFieldType:
 		m.ResetFieldType()
 		return nil
-	case experiencedata.FieldValueText:
+	case feedbackrecord.FieldValueText:
 		m.ResetValueText()
 		return nil
-	case experiencedata.FieldValueNumber:
+	case feedbackrecord.FieldValueNumber:
 		m.ResetValueNumber()
 		return nil
-	case experiencedata.FieldValueBoolean:
+	case feedbackrecord.FieldValueBoolean:
 		m.ResetValueBoolean()
 		return nil
-	case experiencedata.FieldValueDate:
+	case feedbackrecord.FieldValueDate:
 		m.ResetValueDate()
 		return nil
-	case experiencedata.FieldValueJSON:
+	case feedbackrecord.FieldValueJSON:
 		m.ResetValueJSON()
 		return nil
-	case experiencedata.FieldMetadata:
+	case feedbackrecord.FieldMetadata:
 		m.ResetMetadata()
 		return nil
-	case experiencedata.FieldLanguage:
+	case feedbackrecord.FieldLanguage:
 		m.ResetLanguage()
 		return nil
-	case experiencedata.FieldSentiment:
+	case feedbackrecord.FieldSentiment:
 		m.ResetSentiment()
 		return nil
-	case experiencedata.FieldSentimentScore:
+	case feedbackrecord.FieldSentimentScore:
 		m.ResetSentimentScore()
 		return nil
-	case experiencedata.FieldEmotion:
+	case feedbackrecord.FieldEmotion:
 		m.ResetEmotion()
 		return nil
-	case experiencedata.FieldTopics:
+	case feedbackrecord.FieldTopics:
 		m.ResetTopics()
 		return nil
-	case experiencedata.FieldUserIdentifier:
+	case feedbackrecord.FieldUserIdentifier:
 		m.ResetUserIdentifier()
 		return nil
-	case experiencedata.FieldEmbedding:
+	case feedbackrecord.FieldEmbedding:
 		m.ResetEmbedding()
 		return nil
-	case experiencedata.FieldEmbeddingModel:
+	case feedbackrecord.FieldEmbeddingModel:
 		m.ResetEmbeddingModel()
 		return nil
 	}
-	return fmt.Errorf("unknown ExperienceData field %s", name)
+	return fmt.Errorf("unknown FeedbackRecord field %s", name)
 }
 
 // AddedEdges returns all edge names that were set/added in this mutation.
-func (m *ExperienceDataMutation) AddedEdges() []string {
+func (m *FeedbackRecordMutation) AddedEdges() []string {
 	edges := make([]string, 0, 0)
 	return edges
 }
 
 // AddedIDs returns all IDs (to other nodes) that were added for the given edge
 // name in this mutation.
-func (m *ExperienceDataMutation) AddedIDs(name string) []ent.Value {
+func (m *FeedbackRecordMutation) AddedIDs(name string) []ent.Value {
 	return nil
 }
 
 // RemovedEdges returns all edge names that were removed in this mutation.
-func (m *ExperienceDataMutation) RemovedEdges() []string {
+func (m *FeedbackRecordMutation) RemovedEdges() []string {
 	edges := make([]string, 0, 0)
 	return edges
 }
 
 // RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
 // the given name in this mutation.
-func (m *ExperienceDataMutation) RemovedIDs(name string) []ent.Value {
+func (m *FeedbackRecordMutation) RemovedIDs(name string) []ent.Value {
 	return nil
 }
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
-func (m *ExperienceDataMutation) ClearedEdges() []string {
+func (m *FeedbackRecordMutation) ClearedEdges() []string {
 	edges := make([]string, 0, 0)
 	return edges
 }
 
 // EdgeCleared returns a boolean which indicates if the edge with the given name
 // was cleared in this mutation.
-func (m *ExperienceDataMutation) EdgeCleared(name string) bool {
+func (m *FeedbackRecordMutation) EdgeCleared(name string) bool {
 	return false
 }
 
 // ClearEdge clears the value of the edge with the given name. It returns an error
 // if that edge is not defined in the schema.
-func (m *ExperienceDataMutation) ClearEdge(name string) error {
-	return fmt.Errorf("unknown ExperienceData unique edge %s", name)
+func (m *FeedbackRecordMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown FeedbackRecord unique edge %s", name)
 }
 
 // ResetEdge resets all changes to the edge with the given name in this mutation.
 // It returns an error if the edge is not defined in the schema.
-func (m *ExperienceDataMutation) ResetEdge(name string) error {
-	return fmt.Errorf("unknown ExperienceData edge %s", name)
+func (m *FeedbackRecordMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown FeedbackRecord edge %s", name)
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
-// Valid field types for experience data
+// Valid field types for feedback record data
 var validFieldTypes = map[string]bool{
 	"text":        true,
 	"categorical": true,
@@ -26,15 +26,15 @@ var validFieldTypes = map[string]bool{
 	"date":        true,
 }
 
-// ExperienceData holds the schema definition for the ExperienceData entity.
+// FeedbackRecord holds the schema definition for the FeedbackRecord entity.
 // This schema is optimized for analytics and BI tools (Superset, Power BI).
 // Each row represents a single question/response pair for easy SQL aggregations.
-type ExperienceData struct {
+type FeedbackRecord struct {
 	ent.Schema
 }
 
-// Fields of the ExperienceData.
-func (ExperienceData) Fields() []ent.Field {
+// Fields of the FeedbackRecord.
+func (FeedbackRecord) Fields() []ent.Field {
 	return []ent.Field{
 		// Core identification
 		field.UUID("id", uuid.UUID{}).
@@ -177,13 +177,13 @@ func (ExperienceData) Fields() []ent.Field {
 	}
 }
 
-// Edges of the ExperienceData.
-func (ExperienceData) Edges() []ent.Edge {
+// Edges of the FeedbackRecord.
+func (FeedbackRecord) Edges() []ent.Edge {
 	return nil
 }
 
-// Indexes of the ExperienceData.
-func (ExperienceData) Indexes() []ent.Index {
+// Indexes of the FeedbackRecord.
+func (FeedbackRecord) Indexes() []ent.Index {
 	return []ent.Index{
 		// Multi-tenancy indexes
 		index.Fields("tenant_id", "collected_at"),

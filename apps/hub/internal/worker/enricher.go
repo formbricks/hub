@@ -142,7 +142,7 @@ func (e *Enricher) processEnrichmentJob(ctx context.Context, workerID int, job *
 	e.logger.Info("processing enrichment job",
 		"worker_id", workerID,
 		"job_id", job.ID,
-		"experience_id", job.ExperienceID)
+		"feedback_record_id", job.FeedbackRecordID)
 
 	// Skip if enrichment service is not available
 	if e.enrichmentSvc == nil {
@@ -171,18 +171,18 @@ func (e *Enricher) processEnrichmentJob(ctx context.Context, workerID int, job *
 		return
 	}
 
-	// Update experience with enrichment results
-	expID, err := uuid.Parse(job.ExperienceID)
+	// Update feedback record with enrichment results
+	frID, err := uuid.Parse(job.FeedbackRecordID)
 	if err != nil {
-		e.logger.Error("invalid experience ID",
-			"experience_id", job.ExperienceID,
+		e.logger.Error("invalid feedback record ID",
+			"feedback_record_id", job.FeedbackRecordID,
 			"error", err)
 		_ = e.queue.MarkFailed(ctx, job.ID, err)
 		return
 	}
 
-	err = e.db.ExperienceData.
-		UpdateOneID(expID).
+	err = e.db.FeedbackRecord.
+		UpdateOneID(frID).
 		SetSentiment(result.Sentiment).
 		SetSentimentScore(result.SentimentScore).
 		SetEmotion(result.Emotion).
@@ -190,9 +190,9 @@ func (e *Enricher) processEnrichmentJob(ctx context.Context, workerID int, job *
 		Exec(ctx)
 
 	if err != nil {
-		e.logger.Error("failed to update experience with enrichment",
+		e.logger.Error("failed to update feedback record with enrichment",
 			"worker_id", workerID,
-			"experience_id", job.ExperienceID,
+			"feedback_record_id", job.FeedbackRecordID,
 			"error", err)
 
 		if markErr := e.queue.MarkFailed(ctx, job.ID, err); markErr != nil {
@@ -203,12 +203,12 @@ func (e *Enricher) processEnrichmentJob(ctx context.Context, workerID int, job *
 		return
 	}
 
-	// Fetch the complete enriched experience record
-	enrichedExp, err := e.db.ExperienceData.Get(ctx, expID)
+	// Fetch the complete enriched feedback record record
+	enrichedFR, err := e.db.FeedbackRecord.Get(ctx, frID)
 	if err != nil {
-		e.logger.Error("failed to fetch enriched experience",
+		e.logger.Error("failed to fetch enriched feedback record",
 			"worker_id", workerID,
-			"experience_id", job.ExperienceID,
+			"feedback_record_id", job.FeedbackRecordID,
 			"error", err)
 		// Still mark job as complete since enrichment was saved
 		_ = e.queue.MarkComplete(ctx, job.ID)
@@ -216,10 +216,10 @@ func (e *Enricher) processEnrichmentJob(ctx context.Context, workerID int, job *
 	}
 
 	// Convert to domain model for webhook
-	enrichedModel := models.FromEnt(enrichedExp)
+	enrichedModel := models.FromEnt(enrichedFR)
 
-	// Dispatch experience.enriched webhook
-	e.dispatcher.DispatchAsync(webhook.EventExperienceEnriched, enrichedModel)
+	// Dispatch feedback_record.enriched webhook
+	e.dispatcher.DispatchAsync(webhook.EventFeedbackRecordEnriched, enrichedModel)
 
 	// Mark job as complete
 	if err := e.queue.MarkComplete(ctx, job.ID); err != nil {
@@ -232,7 +232,7 @@ func (e *Enricher) processEnrichmentJob(ctx context.Context, workerID int, job *
 	e.logger.Info("enrichment completed successfully",
 		"worker_id", workerID,
 		"job_id", job.ID,
-		"experience_id", job.ExperienceID,
+		"feedback_record_id", job.FeedbackRecordID,
 		"sentiment", result.Sentiment)
 }
 
@@ -241,7 +241,7 @@ func (e *Enricher) processEmbeddingJob(ctx context.Context, workerID int, job *q
 	e.logger.Info("processing embedding job",
 		"worker_id", workerID,
 		"job_id", job.ID,
-		"experience_id", job.ExperienceID)
+		"feedback_record_id", job.FeedbackRecordID)
 
 	// Skip if embedding service is not available
 	if e.embeddingSvc == nil {
@@ -269,26 +269,26 @@ func (e *Enricher) processEmbeddingJob(ctx context.Context, workerID int, job *q
 		return
 	}
 
-	// Update experience with embedding vector
-	expID, err := uuid.Parse(job.ExperienceID)
+	// Update feedback record with embedding vector
+	frID, err := uuid.Parse(job.FeedbackRecordID)
 	if err != nil {
-		e.logger.Error("invalid experience ID",
-			"experience_id", job.ExperienceID,
+		e.logger.Error("invalid feedback record ID",
+			"feedback_record_id", job.FeedbackRecordID,
 			"error", err)
 		_ = e.queue.MarkFailed(ctx, job.ID, err)
 		return
 	}
 
-	err = e.db.ExperienceData.
-		UpdateOneID(expID).
+	err = e.db.FeedbackRecord.
+		UpdateOneID(frID).
 		SetEmbedding(vector).
 		SetEmbeddingModel(e.embeddingSvc.Model()).
 		Exec(ctx)
 
 	if err != nil {
-		e.logger.Error("failed to update experience with embedding",
+		e.logger.Error("failed to update feedback record with embedding",
 			"worker_id", workerID,
-			"experience_id", job.ExperienceID,
+			"feedback_record_id", job.FeedbackRecordID,
 			"error", err)
 
 		if markErr := e.queue.MarkFailed(ctx, job.ID, err); markErr != nil {
@@ -310,6 +310,6 @@ func (e *Enricher) processEmbeddingJob(ctx context.Context, workerID int, job *q
 	e.logger.Info("embedding completed successfully",
 		"worker_id", workerID,
 		"job_id", job.ID,
-		"experience_id", job.ExperienceID,
+		"feedback_record_id", job.FeedbackRecordID,
 		"model", e.embeddingSvc.Model())
 }

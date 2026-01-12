@@ -66,7 +66,7 @@ func NewServer(cfg *config.Config, client *ent.Client, dispatcher *webhook.Dispa
 
 	// Create Huma API with Scalar docs
 	humaConfig := huma.DefaultConfig("Formbricks Hub API", "1.0.0")
-	humaConfig.Info.Description = `Experience data storage service for the Formbricks ecosystem.
+	humaConfig.Info.Description = `Feedback record storage service for the Formbricks ecosystem.
 
 📚 Full Documentation: https://hub.formbricks.com
 🚀 Quick Start: https://hub.formbricks.com/quickstart
@@ -149,8 +149,8 @@ func NewServer(cfg *config.Config, client *ent.Client, dispatcher *webhook.Dispa
 
 // registerRoutes registers all API routes
 func (s *Server) registerRoutes() {
-	// Experience endpoints
-	RegisterExperienceRoutes(s.api, s.client, s.dispatcher, s.logger, s.enrichmentQueue)
+	// Feedback record endpoints
+	RegisterFeedbackRecordRoutes(s.api, s.client, s.dispatcher, s.logger, s.enrichmentQueue)
 
 	// Search endpoints
 	RegisterSearchRoutes(s.api, s.config, s.client, s.logger)

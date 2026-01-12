@@ -43,8 +43,8 @@ func TestDispatcher_Dispatch_Success(t *testing.T) {
 			t.Fatalf("failed to decode payload: %v", err)
 		}
 
-		if event.Event != EventExperienceCreated {
-			t.Errorf("expected event %q, got %q", EventExperienceCreated, event.Event)
+		if event.Event != EventFeedbackRecordCreated {
+			t.Errorf("expected event %q, got %q", EventFeedbackRecordCreated, event.Event)
 		}
 		if event.Timestamp.IsZero() {
 			t.Error("expected timestamp to be set")
@@ -66,7 +66,7 @@ func TestDispatcher_Dispatch_Success(t *testing.T) {
 	dispatcher := NewDispatcher([]string{server.URL}, newTestLogger())
 	dispatcher.client = server.Client()
 
-	dispatcher.Dispatch(context.Background(), EventExperienceCreated, map[string]interface{}{
+	dispatcher.Dispatch(context.Background(), EventFeedbackRecordCreated, map[string]interface{}{
 		"id":          uuid.NewString(),
 		"source_type": "survey",
 	})
@@ -105,7 +105,7 @@ func TestDispatcher_Dispatch_Retry(t *testing.T) {
 		}),
 	}
 
-	dispatcher.Dispatch(context.Background(), EventExperienceCreated, map[string]any{
+	dispatcher.Dispatch(context.Background(), EventFeedbackRecordCreated, map[string]any{
 		"id": uuid.NewString(),
 	})
 
@@ -125,7 +125,7 @@ func TestDispatcher_Dispatch_NoWebhooks(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		dispatcher.Dispatch(context.Background(), EventExperienceCreated, map[string]any{
+		dispatcher.Dispatch(context.Background(), EventFeedbackRecordCreated, map[string]any{
 			"id": uuid.NewString(),
 		})
 		close(done)

@@ -13,7 +13,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/formbricks/hub/apps/hub/internal/ent/enrichmentjob"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 )
 
 // ent aliases to avoid import conflicts in user's code.
@@ -75,7 +75,7 @@ func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			enrichmentjob.Table:  enrichmentjob.ValidColumn,
-			experiencedata.Table: experiencedata.ValidColumn,
+			feedbackrecord.Table: feedbackrecord.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

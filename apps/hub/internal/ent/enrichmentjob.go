@@ -10,7 +10,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"github.com/formbricks/hub/apps/hub/internal/ent/enrichmentjob"
-	"github.com/formbricks/hub/apps/hub/internal/ent/experiencedata"
+	"github.com/formbricks/hub/apps/hub/internal/ent/feedbackrecord"
 	"github.com/google/uuid"
 )
 
@@ -19,8 +19,8 @@ type EnrichmentJob struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID uuid.UUID `json:"id,omitempty"`
-	// ExperienceID holds the value of the "experience_id" field.
-	ExperienceID uuid.UUID `json:"experience_id,omitempty"`
+	// FeedbackRecordID holds the value of the "feedback_record_id" field.
+	FeedbackRecordID uuid.UUID `json:"feedback_record_id,omitempty"`
 	// Job type: enrichment (sentiment/topics) or embedding (vector generation)
 	JobType string `json:"job_type,omitempty"`
 	// Job status: pending, processing, completed, failed
@@ -43,22 +43,22 @@ type EnrichmentJob struct {
 
 // EnrichmentJobEdges holds the relations/edges for other nodes in the graph.
 type EnrichmentJobEdges struct {
-	// Experience holds the value of the experience edge.
-	Experience *ExperienceData `json:"experience,omitempty"`
+	// FeedbackRecord holds the value of the feedback_record edge.
+	FeedbackRecord *FeedbackRecord `json:"feedback_record,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
 	loadedTypes [1]bool
 }
 
-// ExperienceOrErr returns the Experience value or an error if the edge
+// FeedbackRecordOrErr returns the FeedbackRecord value or an error if the edge
 // was not loaded in eager-loading, or loaded but was not found.
-func (e EnrichmentJobEdges) ExperienceOrErr() (*ExperienceData, error) {
-	if e.Experience != nil {
-		return e.Experience, nil
+func (e EnrichmentJobEdges) FeedbackRecordOrErr() (*FeedbackRecord, error) {
+	if e.FeedbackRecord != nil {
+		return e.FeedbackRecord, nil
 	} else if e.loadedTypes[0] {
-		return nil, &NotFoundError{label: experiencedata.Label}
+		return nil, &NotFoundError{label: feedbackrecord.Label}
 	}
-	return nil, &NotLoadedError{edge: "experience"}
+	return nil, &NotLoadedError{edge: "feedback_record"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -72,7 +72,7 @@ func (*EnrichmentJob) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullString)
 		case enrichmentjob.FieldCreatedAt, enrichmentjob.FieldProcessedAt:
 			values[i] = new(sql.NullTime)
-		case enrichmentjob.FieldID, enrichmentjob.FieldExperienceID:
+		case enrichmentjob.FieldID, enrichmentjob.FieldFeedbackRecordID:
 			values[i] = new(uuid.UUID)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -95,11 +95,11 @@ func (_m *EnrichmentJob) assignValues(columns []string, values []any) error {
 			} else if value != nil {
 				_m.ID = *value
 			}
-		case enrichmentjob.FieldExperienceID:
+		case enrichmentjob.FieldFeedbackRecordID:
 			if value, ok := values[i].(*uuid.UUID); !ok {
-				return fmt.Errorf("unexpected type %T for field experience_id", values[i])
+				return fmt.Errorf("unexpected type %T for field feedback_record_id", values[i])
 			} else if value != nil {
-				_m.ExperienceID = *value
+				_m.FeedbackRecordID = *value
 			}
 		case enrichmentjob.FieldJobType:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -158,9 +158,9 @@ func (_m *EnrichmentJob) Value(name string) (ent.Value, error) {
 	return _m.selectValues.Get(name)
 }
 
-// QueryExperience queries the "experience" edge of the EnrichmentJob entity.
-func (_m *EnrichmentJob) QueryExperience() *ExperienceDataQuery {
-	return NewEnrichmentJobClient(_m.config).QueryExperience(_m)
+// QueryFeedbackRecord queries the "feedback_record" edge of the EnrichmentJob entity.
+func (_m *EnrichmentJob) QueryFeedbackRecord() *FeedbackRecordQuery {
+	return NewEnrichmentJobClient(_m.config).QueryFeedbackRecord(_m)
 }
 
 // Update returns a builder for updating this EnrichmentJob.
@@ -186,8 +186,8 @@ func (_m *EnrichmentJob) String() string {
 	var builder strings.Builder
 	builder.WriteString("EnrichmentJob(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
-	builder.WriteString("experience_id=")
-	builder.WriteString(fmt.Sprintf("%v", _m.ExperienceID))
+	builder.WriteString("feedback_record_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.FeedbackRecordID))
 	builder.WriteString(", ")
 	builder.WriteString("job_type=")
 	builder.WriteString(_m.JobType)

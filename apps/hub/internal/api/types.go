@@ -8,8 +8,8 @@ import (
 	"github.com/formbricks/hub/apps/hub/internal/models"
 )
 
-// CreateExperienceInput represents the input for creating an experience
-type CreateExperienceInput struct {
+// CreateFeedbackRecordInput represents the input for creating a feedback record
+type CreateFeedbackRecordInput struct {
 	Body struct {
 		// Multi-tenancy and response grouping
 		TenantID   *string `json:"tenant_id,omitempty" example:"org-123" doc:"Tenant/organization identifier for multi-tenancy" maxLength:"255"`
@@ -40,9 +40,9 @@ type CreateExperienceInput struct {
 	}
 }
 
-// UpdateExperienceInput represents the input for updating an experience
-type UpdateExperienceInput struct {
-	ID   string `path:"id" doc:"Experience ID (UUID)" format:"uuid"`
+// UpdateFeedbackRecordInput represents the input for updating a feedback record
+type UpdateFeedbackRecordInput struct {
+	ID   string `path:"id" doc:"Feedback Record ID (UUID)" format:"uuid"`
 	Body struct {
 		ValueText      *string                `json:"value_text,omitempty" doc:"Update text response"`
 		ValueNumber    *float64               `json:"value_number,omitempty" doc:"Update numeric response"`
@@ -55,32 +55,32 @@ type UpdateExperienceInput struct {
 	}
 }
 
-// GetExperienceInput represents the input for getting a single experience
-type GetExperienceInput struct {
-	ID string `path:"id" doc:"Experience ID (UUID)" format:"uuid"`
+// GetFeedbackRecordInput represents the input for getting a single feedback record
+type GetFeedbackRecordInput struct {
+	ID string `path:"id" doc:"Feedback Record ID (UUID)" format:"uuid"`
 }
 
-// DeleteExperienceInput represents the input for deleting an experience
-type DeleteExperienceInput struct {
-	ID string `path:"id" doc:"Experience ID (UUID)" format:"uuid"`
+// DeleteFeedbackRecordInput represents the input for deleting a feedback record
+type DeleteFeedbackRecordInput struct {
+	ID string `path:"id" doc:"Feedback Record ID (UUID)" format:"uuid"`
 }
 
-// BulkDeleteExperiencesInput represents the input for bulk deleting experiences (GDPR compliance)
-type BulkDeleteExperiencesInput struct {
+// BulkDeleteFeedbackRecordsInput represents the input for bulk deleting feedback records (GDPR compliance)
+type BulkDeleteFeedbackRecordsInput struct {
 	UserIdentifier string `query:"user_identifier" doc:"Delete all records matching this user identifier (required)" minLength:"1"`
 	TenantID       string `query:"tenant_id" doc:"Filter by tenant ID (optional, for multi-tenant deployments)"`
 }
 
-// BulkDeleteExperiencesOutput represents the output for bulk deletion
-type BulkDeleteExperiencesOutput struct {
+// BulkDeleteFeedbackRecordsOutput represents the output for bulk deletion
+type BulkDeleteFeedbackRecordsOutput struct {
 	Body struct {
 		DeletedCount int    `json:"deleted_count" doc:"Number of records deleted"`
 		Message      string `json:"message" doc:"Human-readable status message"`
 	}
 }
 
-// ListExperiencesInput represents the input for listing experiences
-type ListExperiencesInput struct {
+// ListFeedbackRecordsInput represents the input for listing feedback records
+type ListFeedbackRecordsInput struct {
 	TenantID       string `query:"tenant_id" doc:"Filter by tenant ID (for multi-tenant deployments)"`
 	ResponseID     string `query:"response_id" doc:"Filter by response ID (get all answers from one submission)"`
 	SourceType     string `query:"source_type" doc:"Filter by source type"`
@@ -93,8 +93,8 @@ type ListExperiencesInput struct {
 	Offset         int    `query:"offset" default:"0" doc:"Number of results to skip" minimum:"0"`
 }
 
-// ExperienceData represents an experience data record for API responses
-type ExperienceData struct {
+// FeedbackRecordData represents a feedback record for API responses
+type FeedbackRecordData struct {
 	ID             uuid.UUID              `json:"id" doc:"UUIDv7 primary key"`
 	CollectedAt    time.Time              `json:"collected_at" doc:"When the feedback was collected"`
 	CreatedAt      time.Time              `json:"created_at" doc:"When this record was created"`
@@ -122,23 +122,23 @@ type ExperienceData struct {
 	Topics         []string `json:"topics,omitempty" doc:"Key topics extracted by AI"`
 }
 
-// ExperienceOutput represents the output for a single experience
-type ExperienceOutput struct {
-	Body ExperienceData
+// FeedbackRecordOutput represents the output for a single feedback record
+type FeedbackRecordOutput struct {
+	Body FeedbackRecordData
 }
 
-// ListExperiencesOutput represents the output for listing experiences
-type ListExperiencesOutput struct {
+// ListFeedbackRecordsOutput represents the output for listing feedback records
+type ListFeedbackRecordsOutput struct {
 	Body struct {
-		Data   []ExperienceData `json:"data" doc:"List of experiences"`
-		Total  int              `json:"total" doc:"Total count of experiences matching filters"`
-		Limit  int              `json:"limit" doc:"Limit used in query"`
-		Offset int              `json:"offset" doc:"Offset used in query"`
+		Data   []FeedbackRecordData `json:"data" doc:"List of feedback records"`
+		Total  int                  `json:"total" doc:"Total count of feedback records matching filters"`
+		Limit  int                  `json:"limit" doc:"Limit used in query"`
+		Offset int                  `json:"offset" doc:"Offset used in query"`
 	}
 }
 
 // FromModel converts a domain model to API response type
-func (e *ExperienceData) FromModel(m *models.Experience) {
+func (e *FeedbackRecordData) FromModel(m *models.FeedbackRecord) {
 	e.ID = m.ID
 	e.CollectedAt = m.CollectedAt
 	e.CreatedAt = m.CreatedAt
