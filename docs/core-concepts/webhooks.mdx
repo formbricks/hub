@@ -1,0 +1,147 @@
+---
+title: "Webhooks"
+description: "Get notified instantly when new feedback arrives, gets updated, or is deleted. Hub sends HTTP POST requests to your endpoints, enabling real-time integrations and custom workflows."
+---
+
+## What You Can Build[​](#what-you-can-build "Direct link to What You Can Build")
+
+Webhooks unlock powerful automation:
+
+* 📢 Send Slack notifications for low NPS scores or negative sentiment
+* 📊 Trigger real-time dashboard updates
+* 🔄 Sync data to your data warehouse or CRM
+* 🎯 Route urgent feedback to support teams automatically
+* 🤖 Chain AI enrichment results into your own workflows
+
+## Configuration[​](#configuration "Direct link to Configuration")
+
+Configure webhook URLs via the `SERVICE_WEBHOOK_URLS` environment variable:
+
+```
+# Single webhookSERVICE_WEBHOOK_URLS=https://api.example.com/webhooks/hub# Multiple webhooks (comma-separated)SERVICE_WEBHOOK_URLS=https://api.example.com/webhooks,https://analytics.example.com/events
+```
+
+Add to your `.env` file:
+
+```
+SERVICE_WEBHOOK_URLS=https://your-domain.com/webhooks/hub
+```
+
+Then restart the service:
+
+```
+make dev
+```
+
+## Event Types[​](#event-types "Direct link to Event Types")
+
+Hub sends webhooks for four types of events:
+
+### `feedback_record.created`[​](#feedback_recordcreated "Direct link to feedback_recordcreated")
+
+Triggered when new feedback is created via `POST /v1/feedback-records`.
+
+**Common use cases:**
+
+* 📢 Send Slack notifications for low NPS scores
+* 📊 Update real-time dashboards
+* 🔄 Start data processing pipelines
+
+**Note:** For text responses, this event fires immediately when data is saved, **before** AI enrichment. Use `feedback_record.enriched` to get the AI-enriched data.
+
+### `feedback_record.enriched`[​](#feedback_recordenriched "Direct link to feedback_recordenriched")
+
+Triggered when AI enrichment completes for text responses (sentiment, emotion, topics, embeddings).
+
+**Common use cases:**
+
+* 🤖 React to sentiment analysis results (e.g., alert on negative sentiment)
+* 🏷️ Trigger workflows based on extracted topics
+* 😊 Route feedback by emotion to appropriate teams
+* 🔍 Update semantic search indexes
+
+**Note:** This event only fires if you've configured `SERVICE_OPENAI_API_KEY` and the response has `field_type: "text"`. The payload includes the complete enriched data with `sentiment`, `sentiment_score`, `emotion`, and `topics`.
+
+### `feedback_record.updated`[​](#feedback_recordupdated "Direct link to feedback_recordupdated")
+
+Triggered when feedback is manually updated via `PATCH /v1/feedback-records/{id}`.
+
+**Common use cases:**
+
+* 📝 Audit trail logging
+* 🔄 Sync manual changes to external systems
+* 📊 Update cached analytics
+
+### `feedback_record.deleted`[​](#feedback_recorddeleted "Direct link to feedback_recorddeleted")
+
+Triggered when feedback is deleted via `DELETE /v1/feedback-records/{id}`.
+
+**Common use cases:**
+
+* 🧹 Maintain data consistency across systems
+* 📉 Update aggregated metrics
+* 📋 Compliance logging (GDPR deletion tracking)
+
+## Event Payload[​](#event-payload "Direct link to Event Payload")
+
+All webhooks follow a consistent format:
+
+```
+{  "event": "feedback_record.created",  "timestamp": "2025-10-15T12:34:56Z",  "data": {    "id": "01932c8a-8b9e-7000-8000-000000000001",    "collected_at": "2025-10-15T12:34:56Z",    "created_at": "2025-10-15T12:34:56Z",    "updated_at": "2025-10-15T12:34:56Z",    "source_type": "survey",    "source_id": "survey-123",    "field_id": "q1",    "field_type": "rating",    "value_number": 9,    "metadata": {      "country": "US"    },    "language": "en",    "user_identifier": "user-123"  }}
+```
+
+**Fields:**
+
+* `event` (string): Event type - `feedback_record.created`, `feedback_record.enriched`, `feedback_record.updated`, or `feedback_record.deleted`
+* `timestamp` (ISO 8601): When the event occurred
+* `data` (object): Complete feedback record. For `feedback_record.enriched`, includes `sentiment`, `sentiment_score`, `emotion`, and `topics`
+
+## Webhook Delivery[​](#webhook-delivery "Direct link to Webhook Delivery")
+
+### Request Format[​](#request-format "Direct link to Request Format")
+
+Hub makes an HTTP POST request to each configured webhook URL:
+
+```
+POST /your-endpoint HTTP/1.1Host: api.example.comContent-Type: application/jsonUser-Agent: Formbricks-Hub/1.0{  "event": "feedback_record.created",  "timestamp": "2025-10-15T12:34:56Z",  "data": { ... }}
+```
+
+### Retry Logic & Reliability[​](#retry-logic--reliability "Direct link to Retry Logic & Reliability")
+
+Hub uses a **worker pool architecture** to ensure reliable webhook delivery:
+
+* **Worker pool**: 10 concurrent workers process webhooks in parallel
+* **Attempts**: Up to 3 retries per webhook
+* **Timeout**: 5 seconds per request
+* **Backoff**: Exponential delays between retries (1s, 2s, 4s)
+* **Success**: Any 2xx HTTP status code
+* **Queue**: Buffered queue with backpressure handling
+
+<Info>
+  Webhook delivery is **fully asynchronous** and never blocks API responses. If your webhook is slow or fails, it won't impact the user experience. Failed webhooks are logged for debugging.
+</Info>
+
+<Check>
+  The worker pool ensures Hub can handle high-volume webhook traffic without memory leaks, even if your endpoints are slow or temporarily unavailable.
+</Check>
+
+### Expected Response[​](#expected-response "Direct link to Expected Response")
+
+Your webhook endpoint should respond with a 2xx status code:
+
+```
+HTTP/1.1 200 OKContent-Type: application/json{"received": true}
+```
+
+<Check>
+  Your webhook must respond within **5 seconds**. For heavy processing, return 200 immediately and process the event asynchronously.
+</Check>
+
+## Next Steps[​](#next-steps "Direct link to Next Steps")
+
+* [AI Enrichment →](/core-concepts/ai-enrichment) - Understand when AI enrichment webhooks fire
+* [Data Model →](/core-concepts/data-model) - Complete feedback record schema
+* [Authentication →](/core-concepts/authentication) - Secure your webhooks
+* [API Reference →](/api-reference) - Explore all endpoints
+
+[Edit this page](https://github.com/formbricks/hub/tree/main/apps/docs/docs/core-concepts/webhooks.md)
