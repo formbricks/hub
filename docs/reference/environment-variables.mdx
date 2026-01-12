@@ -1,0 +1,364 @@
+---
+title: "Environment Variables"
+description: "Complete reference for configuring Formbricks Hub via environment variables."
+---
+
+<Check>
+  Hub uses the `SERVICE_` prefix for all environment variables, following [Huma v2](https://huma.rocks/) conventions.
+</Check>
+
+## Required Variables[​](#required-variables "Direct link to Required Variables")
+
+### `SERVICE_DATABASE_URL`[​](#service_database_url "Direct link to service_database_url")
+
+PostgreSQL connection string.
+
+**Format:**
+
+```
+postgres://[user]:[password]@[host]:[port]/[database]?[params]
+```
+
+**Examples:**
+
+```
+# Local developmentSERVICE_DATABASE_URL=postgres://formbricks:formbricks_dev@localhost:5432/hub_dev?sslmode=disable# Production with SSLSERVICE_DATABASE_URL=postgres://user:pass@db.example.com:5432/hub_prod?sslmode=require# With connection poolingSERVICE_DATABASE_URL=postgres://user:pass@pooler.example.com:5432/hub_prod?pool_max_conns=20
+```
+
+**Default:** None (required)
+
+***
+
+## Server Configuration[​](#server-configuration "Direct link to Server Configuration")
+
+### `SERVICE_PORT`[​](#service_port "Direct link to service_port")
+
+Port for the HTTP server.
+
+**Examples:**
+
+```
+SERVICE_PORT=8080  # DefaultSERVICE_PORT=3000  # Custom port
+```
+
+**Default:** `8080`
+
+***
+
+### `SERVICE_HOST`[​](#service_host "Direct link to service_host")
+
+Host address to bind to.
+
+**Examples:**
+
+```
+SERVICE_HOST=0.0.0.0  # Listen on all interfaces (default)SERVICE_HOST=127.0.0.1  # Localhost onlySERVICE_HOST=10.0.1.5  # Specific IP
+```
+
+**Default:** `0.0.0.0`
+
+<Warning>
+  For production, use `0.0.0.0` to allow external connections. For local development, either works.
+</Warning>
+
+***
+
+## Security[​](#security "Direct link to Security")
+
+### `SERVICE_API_KEY`[​](#service_api_key "Direct link to service_api_key")
+
+Optional API key for authentication. If set, all API requests (except `/health` and `/docs`) require the `X-API-Key` header.
+
+**Examples:**
+
+```
+# No authentication (development)# SERVICE_API_KEY=  # Commented out or empty# With authentication (production)SERVICE_API_KEY=your-secret-key-here
+```
+
+**Default:** Empty (authentication disabled)
+
+**Usage:**
+
+```
+curl -H "X-API-Key: your-secret-key-here" \  http://localhost:8080/v1/experiences
+```
+
+[Learn more about authentication →](/core-concepts/authentication)
+
+***
+
+## Webhooks[​](#webhooks "Direct link to Webhooks")
+
+### `SERVICE_WEBHOOK_URLS`[​](#service_webhook_urls "Direct link to service_webhook_urls")
+
+Comma-separated list of webhook URLs to receive experience data events.
+
+**Examples:**
+
+```
+# Single webhookSERVICE_WEBHOOK_URLS=https://api.example.com/webhooks/hub# Multiple webhooksSERVICE_WEBHOOK_URLS=https://api.example.com/webhooks,https://analytics.example.com/events# No webhooksSERVICE_WEBHOOK_URLS=  # Empty
+```
+
+**Default:** Empty (no webhooks)
+
+**Events sent:**
+
+* `experience.created`
+* `experience.updated`
+* `experience.deleted`
+
+[Learn more about webhooks →](/core-concepts/webhooks)
+
+***
+
+## AI Features[​](#ai-features "Direct link to AI Features")
+
+### `SERVICE_OPEN_AI_KEY`[​](#service_open_ai_key "Direct link to service_open_ai_key")
+
+OpenAI API key for AI-powered features (enrichment and embeddings). Required for both enrichment and semantic search.
+
+**Examples:**
+
+```
+# With OpenAI featuresSERVICE_OPEN_AI_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxx# Without AI featuresSERVICE_OPEN_AI_KEY=  # Empty
+```
+
+**Default:** Empty (AI features disabled)
+
+<Info>
+  Get your OpenAI API key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+</Info>
+
+***
+
+### `SERVICE_OPENAI_ENRICHMENT_MODEL`[​](#service_openai_enrichment_model "Direct link to service_openai_enrichment_model")
+
+OpenAI chat model for sentiment, emotion, and topic analysis.
+
+**Recommended Models:**
+
+* `gpt-4o-mini` - Fast and cost-effective (default)
+* `gpt-4o` - Higher accuracy, more expensive
+* `gpt-5-mini` - Latest model (when available)
+
+**Examples:**
+
+```
+SERVICE_OPENAI_ENRICHMENT_MODEL=gpt-4o-mini  # Default, recommendedSERVICE_OPENAI_ENRICHMENT_MODEL=gpt-4o       # Higher quality
+```
+
+**Default:** `gpt-4o-mini`
+
+**Enabled when:** `SERVICE_OPEN_AI_KEY` is set and this value is non-empty.
+
+[Learn more about AI enrichment →](/core-concepts/ai-enrichment)
+
+***
+
+### `SERVICE_OPENAI_EMBEDDING_MODEL`[​](#service_openai_embedding_model "Direct link to service_openai_embedding_model")
+
+OpenAI embeddings model for semantic search (vector generation).
+
+**Recommended Models:**
+
+* `text-embedding-3-small` - Cost-effective, 1536 dimensions (recommended)
+* `text-embedding-3-large` - Higher accuracy, 3072 dimensions, 6.5x cost
+
+**Cost Comparison (per 1M tokens):**
+
+| Model                    | Cost  | Dimensions | Use Case                       |
+| ------------------------ | ----- | ---------- | ------------------------------ |
+| `text-embedding-3-small` | $0.02 | 1536       | General feedback (recommended) |
+| `text-embedding-3-large` | $0.13 | 3072       | Technical/complex content      |
+
+**Examples:**
+
+```
+SERVICE_OPENAI_EMBEDDING_MODEL=text-embedding-3-small  # RecommendedSERVICE_OPENAI_EMBEDDING_MODEL=text-embedding-3-large  # Higher accuracy
+```
+
+**Default:** `text-embedding-3-small`
+
+**Enabled when:** `SERVICE_OPEN_AI_KEY` is set and this value is non-empty.
+
+<Check>
+  For customer feedback and survey responses, `text-embedding-3-small` provides excellent results at 1/6th the cost of the large model.
+</Check>
+
+[Learn more about semantic search →](/core-concepts/ai-enrichment#embeddings-and-semantic-search)
+
+***
+
+### `SERVICE_ENRICHMENT_TIMEOUT`[​](#service_enrichment_timeout "Direct link to service_enrichment_timeout")
+
+Timeout in seconds for AI API calls (both enrichment and embeddings).
+
+**Examples:**
+
+```
+SERVICE_ENRICHMENT_TIMEOUT=10  # DefaultSERVICE_ENRICHMENT_TIMEOUT=30  # For slower connections
+```
+
+**Default:** `10`
+
+***
+
+### `SERVICE_ENRICHMENT_WORKERS`[​](#service_enrichment_workers "Direct link to service_enrichment_workers")
+
+Number of concurrent background workers processing AI jobs.
+
+**Examples:**
+
+```
+SERVICE_ENRICHMENT_WORKERS=3   # DefaultSERVICE_ENRICHMENT_WORKERS=10  # High volumeSERVICE_ENRICHMENT_WORKERS=1   # Low volume / rate limiting
+```
+
+**Default:** `3`
+
+<Warning>
+  OpenAI has rate limits. Adjust workers based on your tier:
+
+  * Free tier: 3 requests/minute → use 1 worker
+  * Tier 1: 500 requests/minute → use 3-5 workers
+  * Tier 2+: Higher limits → use 10+ workers
+</Warning>
+
+***
+
+### `SERVICE_ENRICHMENT_POLL_INTERVAL`[​](#service_enrichment_poll_interval "Direct link to service_enrichment_poll_interval")
+
+Seconds between worker queue polls.
+
+**Examples:**
+
+```
+SERVICE_ENRICHMENT_POLL_INTERVAL=1  # Default, responsiveSERVICE_ENRICHMENT_POLL_INTERVAL=5  # Lower polling frequency
+```
+
+**Default:** `1`
+
+***
+
+## Logging[​](#logging "Direct link to Logging")
+
+### `SERVICE_LOG_LEVEL`[​](#service_log_level "Direct link to service_log_level")
+
+Logging verbosity level.
+
+**Options:**
+
+* `debug` - Detailed debugging information
+* `info` - General informational messages (recommended)
+* `warn` - Warning messages only
+* `error` - Error messages only
+
+**Examples:**
+
+```
+SERVICE_LOG_LEVEL=debug  # DevelopmentSERVICE_LOG_LEVEL=info   # Production (recommended)SERVICE_LOG_LEVEL=warn   # Quiet production
+```
+
+**Default:** `info`
+
+***
+
+### `SERVICE_ENVIRONMENT`[​](#service_environment "Direct link to service_environment")
+
+Environment identifier (used for logging and monitoring).
+
+**Examples:**
+
+```
+SERVICE_ENVIRONMENT=developmentSERVICE_ENVIRONMENT=stagingSERVICE_ENVIRONMENT=production
+```
+
+**Default:** `development`
+
+***
+
+## Complete Example: Development[​](#complete-example-development "Direct link to Complete Example: Development")
+
+```
+# apps/hub/.env# Database (required)SERVICE_DATABASE_URL=postgres://formbricks:formbricks_dev@localhost:5432/hub_dev?sslmode=disable# ServerSERVICE_PORT=8080SERVICE_HOST=0.0.0.0# Security (optional for dev)SERVICE_API_KEY=# AI Features (optional)SERVICE_OPEN_AI_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxSERVICE_OPENAI_ENRICHMENT_MODEL=gpt-4o-miniSERVICE_OPENAI_EMBEDDING_MODEL=text-embedding-3-smallSERVICE_ENRICHMENT_TIMEOUT=10SERVICE_ENRICHMENT_WORKERS=3SERVICE_ENRICHMENT_POLL_INTERVAL=1# LoggingSERVICE_LOG_LEVEL=debugSERVICE_ENVIRONMENT=development# Webhooks (optional)SERVICE_WEBHOOK_URLS=
+```
+
+## Complete Example: Production[​](#complete-example-production "Direct link to Complete Example: Production")
+
+```
+# Production environment variables# Database (required)SERVICE_DATABASE_URL=postgres://prod_user:secure_password@db.production.com:5432/hub_prod?sslmode=require# ServerSERVICE_PORT=8080SERVICE_HOST=0.0.0.0# Security (REQUIRED for production)SERVICE_API_KEY=your-cryptographically-secure-key-here# AI Features (recommended for production)SERVICE_OPEN_AI_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxSERVICE_OPENAI_ENRICHMENT_MODEL=gpt-4o-miniSERVICE_OPENAI_EMBEDDING_MODEL=text-embedding-3-smallSERVICE_ENRICHMENT_TIMEOUT=10SERVICE_ENRICHMENT_WORKERS=5SERVICE_ENRICHMENT_POLL_INTERVAL=1# LoggingSERVICE_LOG_LEVEL=infoSERVICE_ENVIRONMENT=production# WebhooksSERVICE_WEBHOOK_URLS=https://api.yourdomain.com/webhooks/hub,https://analytics.yourdomain.com/events/hub
+```
+
+## Command-Line Arguments[​](#command-line-arguments "Direct link to Command-Line Arguments")
+
+All environment variables can also be passed as command-line arguments:
+
+```
+./hub \  --database-url "postgres://..." \  --port 8080 \  --api-key "your-key" \  --log-level info
+```
+
+<Check>
+  Command-line arguments override environment variables.
+</Check>
+
+## Loading Environment Variables[​](#loading-environment-variables "Direct link to Loading Environment Variables")
+
+### Using `.env` File[​](#using-env-file "Direct link to using-env-file")
+
+```
+# Copy examplecp env.example .env# Edit with your valuesvim .env# Variables are automatically loaded by make devmake dev
+```
+
+### Using Docker[​](#using-docker "Direct link to Using Docker")
+
+```
+docker run -d \  -e SERVICE_DATABASE_URL="postgres://..." \  -e SERVICE_API_KEY="your-key" \  formbricks/hub:latest
+```
+
+### Using Docker Compose[​](#using-docker-compose "Direct link to Using Docker Compose")
+
+```
+services:  hub:    image: formbricks/hub:latest    environment:      SERVICE_DATABASE_URL: ${SERVICE_DATABASE_URL}      SERVICE_API_KEY: ${SERVICE_API_KEY}      SERVICE_LOG_LEVEL: info    env_file:      - .env.production
+```
+
+## Troubleshooting[​](#troubleshooting "Direct link to Troubleshooting")
+
+### "DATABASE\_URL is required" Error[​](#database_url-is-required-error "Direct link to \"DATABASE_URL is required\" Error")
+
+**Problem:** Missing `SERVICE_DATABASE_URL` environment variable.
+
+**Solution:** Set the variable in your `.env` file:
+
+```
+SERVICE_DATABASE_URL=postgres://formbricks:formbricks_dev@localhost:5432/hub_dev?sslmode=disable
+```
+
+### "Cannot connect to database" Error[​](#cannot-connect-to-database-error "Direct link to \"Cannot connect to database\" Error")
+
+**Problem:** Database connection details are incorrect or database is not running.
+
+**Solutions:**
+
+1. Check PostgreSQL is running: `docker-compose ps`
+2. Verify connection string format
+3. Test connection manually:
+   ```
+   psql "postgres://formbricks:formbricks_dev@localhost:5432/hub_dev?sslmode=disable"
+   ```
+
+### API Key Not Working[​](#api-key-not-working "Direct link to API Key Not Working")
+
+**Problem:** Getting 401 errors despite setting `X-API-Key` header.
+
+**Solutions:**
+
+1. Verify `SERVICE_API_KEY` is set: `grep SERVICE_API_KEY .env`
+2. Check header name is exact: `X-API-Key` (case-sensitive)
+3. Ensure key matches exactly (no extra spaces)
+
+## Next Steps[​](#next-steps "Direct link to Next Steps")
+
+* [Authentication Guide](/core-concepts/authentication) - Secure your API
+* [API Reference](/api-reference) - Explore endpoints
+* [Architecture](/reference/architecture) - System design and components
+
+[Edit this page](https://github.com/formbricks/hub/tree/main/apps/docs/docs/reference/environment-variables.md)

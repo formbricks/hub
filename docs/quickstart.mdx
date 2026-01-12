@@ -1,0 +1,323 @@
+---
+title: "Quick Start Guide"
+description: "Get the Formbricks Hub running with Docker in under 5 minutes."
+---
+
+## Prerequisites[​](#prerequisites "Direct link to Prerequisites")
+
+* **Docker** and **Docker Compose**: [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
+* **Text Editor**: For editing the `.env` file
+
+## Installation[​](#installation "Direct link to Installation")
+
+### Option 1: Docker Compose (Recommended)[​](#option-1-docker-compose-recommended "Direct link to Option 1: Docker Compose (Recommended)")
+
+The easiest way to run Formbricks Hub with all dependencies.
+
+#### 1. Download the Configuration[​](#1-download-the-configuration "Direct link to 1. Download the Configuration")
+
+Create a new directory and download the production Docker Compose file:
+
+```
+mkdir formbricks-hub && cd formbricks-hubcurl -o docker-compose.yml https://raw.githubusercontent.com/formbricks/hub/main/docker-compose.prod.yml
+```
+
+Or create it manually:
+
+docker-compose.yml
+
+```
+services:  postgres:    image: postgres:18-alpine    container_name: formbricks_hub_postgres    restart: unless-stopped    environment:      POSTGRES_USER: formbricks      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-formbricks_secure_password}      POSTGRES_DB: hub    ports:      - '5432:5432'    volumes:      - postgres_data:/var/lib/postgresql/data    healthcheck:      test: ['CMD-SHELL', 'pg_isready -U formbricks -d hub']      interval: 10s      timeout: 5s      retries: 5    networks:      - formbricks_hub  hub:    image: ghcr.io/formbricks/hub:latest    container_name: formbricks_hub_api    restart: unless-stopped    depends_on:      postgres:        condition: service_healthy    environment:      SERVICE_DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_secure_password}@postgres:5432/hub?sslmode=disable      SERVICE_API_KEY: ${SERVICE_API_KEY}      SERVICE_PORT: ${SERVICE_PORT:-8080}      SERVICE_HOST: 0.0.0.0      SERVICE_ENVIRONMENT: ${SERVICE_ENVIRONMENT:-production}      SERVICE_LOG_LEVEL: ${SERVICE_LOG_LEVEL:-info}      SERVICE_OPENAI_API_KEY: ${SERVICE_OPENAI_API_KEY:-}      SERVICE_OPENAI_ENRICHMENT_MODEL: ${SERVICE_OPENAI_ENRICHMENT_MODEL:-gpt-4o-mini}      SERVICE_OPENAI_EMBEDDING_MODEL: ${SERVICE_OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}      SERVICE_WEBHOOK_URLS: ${SERVICE_WEBHOOK_URLS:-}    ports:      - '8080:8080'    healthcheck:      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:8080/health']      interval: 30s      timeout: 5s      retries: 3      start_period: 10s    networks:      - formbricks_hubvolumes:  postgres_data:    driver: localnetworks:  formbricks_hub:    driver: bridge
+```
+
+#### 2. Configure Environment Variables[​](#2-configure-environment-variables "Direct link to 2. Configure Environment Variables")
+
+Create a `.env` file in the same directory:
+
+.env
+
+```
+# Required: Secure your PostgreSQL databasePOSTGRES_PASSWORD=your_secure_postgres_password_here# Required: API authentication keySERVICE_API_KEY=your_secure_api_key_here# Optional: OpenAI API for AI enrichment and semantic search# If not provided, text responses will be stored without AI analysisSERVICE_OPENAI_API_KEY=sk-your-openai-api-key-hereSERVICE_OPENAI_ENRICHMENT_MODEL=gpt-4o-miniSERVICE_OPENAI_EMBEDDING_MODEL=text-embedding-3-small# Optional: Server configurationSERVICE_PORT=8080SERVICE_ENVIRONMENT=productionSERVICE_LOG_LEVEL=info
+```
+
+<Check>
+  Generate secure passwords and API keys:
+
+  ```
+  # For POSTGRES_PASSWORDopenssl rand -base64 32# For SERVICE_API_KEYopenssl rand -base64 32
+  ```
+</Check>
+
+#### 3. Start the Services[​](#3-start-the-services "Direct link to 3. Start the Services")
+
+```
+docker-compose up -d
+```
+
+This will:
+
+* Pull the latest Formbricks Hub image from GitHub Container Registry
+* Start PostgreSQL with persistent storage
+* Run database migrations automatically
+* Start the Hub API on port 8080
+
+#### 4. Verify Installation[​](#4-verify-installation "Direct link to 4. Verify Installation")
+
+Check that both services are healthy:
+
+```
+docker-compose ps
+```
+
+Expected output:
+
+```
+NAME                        STATUS              PORTSformbricks_hub_api        Up (healthy)        0.0.0.0:8080->8080/tcpformbricks_hub_postgres   Up (healthy)        0.0.0.0:5432->5432/tcp
+```
+
+Test the health endpoint:
+
+```
+curl http://localhost:8080/health
+```
+
+Expected response:
+
+```
+{"status":"ok"}
+```
+
+### Option 2: Docker Run (Minimal)[​](#option-2-docker-run-minimal "Direct link to Option 2: Docker Run (Minimal)")
+
+If you have an existing PostgreSQL instance, run just the Hub API:
+
+```
+docker run -d \  --name formbricks-hub \  -p 8080:8080 \  -e SERVICE_DATABASE_URL="postgresql://user:password@host:5432/hub?sslmode=disable" \  -e SERVICE_API_KEY="your-secret-key" \  -e SERVICE_OPENAI_API_KEY="sk-your-openai-key" \  -e SERVICE_LOG_LEVEL="info" \  ghcr.io/formbricks/hub:latest
+```
+
+<Check>
+  Omit `SERVICE_OPENAI_API_KEY` if you don't need AI enrichment features.
+</Check>
+
+## Making Your First API Call[​](#making-your-first-api-call "Direct link to Making Your First API Call")
+
+### 1. Create a Feedback Record[​](#1-create-a-feedback-record "Direct link to 1. Create a Feedback Record")
+
+```
+curl -X POST http://localhost:8080/v1/feedback-records \  -H "Content-Type: application/json" \  -H "X-API-Key: your_secure_api_key_here" \  -d '{    "source_type": "survey",    "source_id": "my-first-survey",    "field_id": "q1",    "field_label": "How satisfied are you?",    "field_type": "rating",    "value_number": 5,    "metadata": {      "country": "US",      "device": "desktop"    }  }'
+```
+
+<Info>
+  All API requests require the `X-API-Key` header with your configured `SERVICE_API_KEY`.
+</Info>
+
+Expected response:
+
+```
+{  "id": "01932c8a-8b9e-7000-8000-000000000001",  "collected_at": "2025-10-20T12:34:56Z",  "created_at": "2025-10-20T12:34:56Z",  "source_type": "survey",  "source_id": "my-first-survey",  "field_id": "q1",  "field_type": "rating",  "value_number": 5,  "metadata": {    "country": "US",    "device": "desktop"  }}
+```
+
+### 2. Create a Text Feedback Record (with AI Enrichment)[​](#2-create-a-text-feedback-record-with-ai-enrichment "Direct link to 2. Create a Text Feedback Record (with AI Enrichment)")
+
+If you've configured OpenAI keys, text responses will be automatically enriched:
+
+```
+curl -X POST http://localhost:8080/v1/feedback-records \  -H "Content-Type: application/json" \  -H "X-API-Key: your_secure_api_key_here" \  -d '{    "source_type": "survey",    "source_id": "my-first-survey",    "field_id": "q2",    "field_label": "What can we improve?",    "field_type": "text",    "value_text": "The checkout process was confusing and took too long. Please simplify it!"  }'
+```
+
+Hub will automatically:
+
+* Extract sentiment (e.g., "negative")
+* Detect emotion (e.g., "frustration")
+* Identify topics (e.g., \["checkout", "user experience"])
+* Generate embeddings for semantic search
+
+### 3. Query Feedback Records[​](#3-query-feedback-records "Direct link to 3. Query Feedback Records")
+
+```
+curl "http://localhost:8080/v1/feedback-records?limit=10" \  -H "X-API-Key: your_secure_api_key_here"
+```
+
+Response:
+
+```
+{  "data": [...],  "total": 2,  "limit": 10,  "offset": 0}
+```
+
+## Configuration[​](#configuration "Direct link to Configuration")
+
+### Environment Variables[​](#environment-variables "Direct link to Environment Variables")
+
+| Variable                          | Required | Default                  | Description                                  |
+| --------------------------------- | -------- | ------------------------ | -------------------------------------------- |
+| `SERVICE_DATABASE_URL`            | ✅ Yes    | -                        | PostgreSQL connection string                 |
+| `SERVICE_API_KEY`                 | ✅ Yes    | -                        | API authentication key                       |
+| `SERVICE_PORT`                    | No       | `8080`                   | HTTP server port                             |
+| `SERVICE_HOST`                    | No       | `0.0.0.0`                | HTTP server host                             |
+| `SERVICE_LOG_LEVEL`               | No       | `info`                   | Log level (`debug`, `info`, `warn`, `error`) |
+| `SERVICE_ENVIRONMENT`             | No       | `production`             | Environment name                             |
+| `SERVICE_OPENAI_API_KEY`          | No       | -                        | OpenAI API key (required for AI features)    |
+| `SERVICE_OPENAI_ENRICHMENT_MODEL` | No       | `gpt-4o-mini`            | Model for sentiment/topic analysis           |
+| `SERVICE_OPENAI_EMBEDDING_MODEL`  | No       | `text-embedding-3-small` | Model for semantic search embeddings         |
+| `SERVICE_WEBHOOK_URLS`            | No       | -                        | Comma-separated webhook URLs                 |
+
+<Info>
+  If `SERVICE_OPENAI_API_KEY` is not provided, Hub will still work but text responses won't be enriched with sentiment/topic analysis or available for semantic search. [Learn more about AI enrichment →](/core-concepts/ai-enrichment)
+</Info>
+
+[See full environment variable reference →](/reference/environment-variables)
+
+### Database Connection String Format[​](#database-connection-string-format "Direct link to Database Connection String Format")
+
+```
+postgresql://username:password@host:port/database?sslmode=disable
+```
+
+For Docker Compose (services in same network):
+
+```
+postgresql://formbricks:password@postgres:5432/hub?sslmode=disable
+```
+
+For external PostgreSQL:
+
+```
+postgresql://user:pass@db.example.com:5432/hub?sslmode=require
+```
+
+## Managing the Service[​](#managing-the-service "Direct link to Managing the Service")
+
+### View Logs[​](#view-logs "Direct link to View Logs")
+
+```
+# All servicesdocker-compose logs -f# Just the Hub APIdocker-compose logs -f hub# Just PostgreSQLdocker-compose logs -f postgres
+```
+
+### Stop Services[​](#stop-services "Direct link to Stop Services")
+
+```
+docker-compose down
+```
+
+### Stop and Remove Data[​](#stop-and-remove-data "Direct link to Stop and Remove Data")
+
+<Warning>
+  This will delete all stored feedback records!
+</Warning>
+
+```
+docker-compose down -v
+```
+
+### Restart Services[​](#restart-services "Direct link to Restart Services")
+
+```
+docker-compose restart
+```
+
+### Update to Latest Version[​](#update-to-latest-version "Direct link to Update to Latest Version")
+
+```
+docker-compose pulldocker-compose up -d
+```
+
+## Next Steps[​](#next-steps "Direct link to Next Steps")
+
+<Card title="📚 Core ConceptsData ModelAI EnrichmentWebhooksAuthentication" href="./core-concepts/data-model">
+  ###
+
+  *
+  *
+  *
+  *
+</Card>
+
+<Card title="🚀 ReferenceAPI ReferenceEnvironment VariablesArchitecture" href="./api-reference">
+  ###
+
+  *
+  *
+  *
+</Card>
+
+## Troubleshooting[​](#troubleshooting "Direct link to Troubleshooting")
+
+### Port Already in Use[​](#port-already-in-use "Direct link to Port Already in Use")
+
+If port 8080 or 5432 is occupied:
+
+```
+# Change ports in .envSERVICE_PORT=8081
+```
+
+Or modify the port mapping in `docker-compose.yml`:
+
+```
+ports:  - '8081:8080'  # Host:Container
+```
+
+### Container Fails to Start[​](#container-fails-to-start "Direct link to Container Fails to Start")
+
+Check the logs for errors:
+
+```
+docker-compose logs hub
+```
+
+Common issues:
+
+* **Database not ready**: Wait for PostgreSQL healthcheck to pass
+* **Invalid API key**: Ensure `SERVICE_API_KEY` is set in `.env`
+* **Database connection failed**: Check `SERVICE_DATABASE_URL` format
+
+### Database Connection Failed[​](#database-connection-failed "Direct link to Database Connection Failed")
+
+Verify PostgreSQL is running:
+
+```
+docker-compose ps postgres
+```
+
+If unhealthy, check PostgreSQL logs:
+
+```
+docker-compose logs postgres
+```
+
+### Health Check Failing[​](#health-check-failing "Direct link to Health Check Failing")
+
+Check if the service is listening:
+
+```
+docker exec formbricks_hub_api wget -O- http://localhost:8080/health
+```
+
+### Cannot Pull Docker Image[​](#cannot-pull-docker-image "Direct link to Cannot Pull Docker Image")
+
+Ensure you have access to GitHub Container Registry:
+
+```
+docker pull ghcr.io/formbricks/hub:latest
+```
+
+If authentication is required:
+
+```
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+```
+
+### Data Not Persisting[​](#data-not-persisting "Direct link to Data Not Persisting")
+
+Verify the volume is mounted:
+
+```
+docker volume ls | grep postgres_datadocker volume inspect formbricks-hub_postgres_data
+```
+
+## Getting Help[​](#getting-help "Direct link to Getting Help")
+
+* **GitHub Discussions**: [Ask questions and share ideas](https://github.com/formbricks/hub/discussions)
+* **GitHub Issues**: [Report bugs or request features](https://github.com/formbricks/hub/issues)
+* **API Reference**: [Interactive documentation](/api-reference)
+
+[Edit this page](https://github.com/formbricks/hub/tree/main/apps/docs/docs/quickstart.md)
