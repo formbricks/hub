@@ -10,7 +10,6 @@ There are many ways to contribute to Formbricks Hub:
 - **Suggest features** - Share ideas for new functionality
 - **Improve documentation** - Fix typos, clarify instructions, add examples
 - **Write code** - Fix bugs, implement features, optimize performance
-- **Build connectors** - Create import scripts for new data sources
 - **Community support** - Help others in GitHub Discussions
 
 Every contribution, big or small, is valuable and appreciated!
@@ -21,10 +20,9 @@ Every contribution, big or small, is valuable and appreciated!
 
 Before you begin, ensure you have the following installed:
 
-- **Go 1.23+** - [Download](https://go.dev/dl/)
+- **Go 1.24+** - [Download](https://go.dev/dl/)
 - **PostgreSQL 18** - Via Docker (recommended) or local installation
-- **Python 3.11+** - For data import scripts
-- **pnpm 9+** - [Install](https://pnpm.io/installation)
+- **pnpm 10+** - [Install](https://pnpm.io/installation)
 - **Docker & Docker Compose** - [Get Docker](https://docs.docker.com/get-docker/)
 
 ### Local Development Setup
@@ -275,34 +273,6 @@ When requesting a feature, please use the feature request template and include:
 ### Good First Issues
 
 Look for issues labeled `good first issue` - these are specifically chosen for newcomers and come with additional guidance.
-
-## 🏗️ Building Connectors
-
-Want to add support for a new data source? Here's how:
-
-1. **Create a new directory** in `scripts/data-imports/your-source/`
-
-2. **Add import script** (`import.py`) that:
-   - Fetches data from the external API
-   - Maps data to Hub's field types
-   - Calls Hub's REST API
-
-3. **Include documentation**:
-   - `README.md` - Setup and usage instructions
-   - `requirements.txt` - Python dependencies
-   - `.env.example` - Required environment variables
-
-4. **Test thoroughly**:
-   - Test with real data
-   - Test pagination (if applicable)
-   - Test error handling
-
-5. **Submit a PR** with:
-   - Import script
-   - Documentation
-   - Example SQL queries
-
-See existing connectors in `scripts/data-imports/` for examples.
 
 ## 🤝 Code of Conduct
 
