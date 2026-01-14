@@ -65,8 +65,8 @@ Documentation for all CI/CD workflows in the Formbricks Hub repository.
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `image-name` | Yes | - | Docker image name (e.g., `formbricks/hub`) |
-| `context` | No | `./apps/hub` | Build context path |
-| `dockerfile` | No | `./apps/hub/Dockerfile` | Dockerfile path |
+| `context` | No | `.` | Build context path |
+| `dockerfile` | No | `./Dockerfile` | Dockerfile path |
 | `platforms` | No | `linux/amd64,linux/arm64` | Target platforms |
 | `push` | No | `true` | Push image to registry |
 | `tags-input` | No | - | Additional custom tags |
@@ -190,12 +190,12 @@ This triggers the `release.yml` workflow which builds and publishes the Docker i
 - Ensure test database connection string is correct
 
 **Linter errors:**
-- Run locally: `cd apps/hub && make lint`
+- Run locally: `make lint`
 - Check that you're using Go 1.25.3: `go version`
 - Verify golangci-lint configuration in `.golangci.yml`
 
 **Format check failures:**
-- Run locally: `cd apps/hub && gofmt -s -w .`
+- Run locally: `gofmt -s -w .`
 - Commit the formatted code
 
 ### Docker Build Failures
@@ -209,8 +209,8 @@ This triggers the `release.yml` workflow which builds and publishes the Docker i
 - Check buildx and QEMU setup in workflow logs
 
 **Build context errors:**
-- Verify Dockerfile exists at `apps/hub/Dockerfile`
-- Check that context path `apps/hub` is correct
+- Verify Dockerfile exists at `./Dockerfile`
+- Check that context path `.` is correct
 
 ---
 

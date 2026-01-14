@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'apps/docs/**'
+      - 'docs/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
   workflow_dispatch:
@@ -29,19 +29,22 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 10.19.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'pnpm'
+          cache-dependency-path: docs/pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: apps/docs
+        working-directory: docs
         run: pnpm install --frozen-lockfile
 
       - name: Build documentation
-        working-directory: apps/docs
+        working-directory: docs
         run: pnpm build
 
       - name: Setup Pages
@@ -50,7 +53,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'apps/docs/build'
+          path: 'docs/build'
 
   deploy:
     name: Deploy to GitHub Pages

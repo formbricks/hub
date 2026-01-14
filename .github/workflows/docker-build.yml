@@ -11,12 +11,12 @@ on:
         description: 'Build context path'
         required: false
         type: string
-        default: './apps/hub'
+        default: '.'
       dockerfile:
         description: 'Path to Dockerfile'
         required: false
         type: string
-        default: './apps/hub/Dockerfile'
+        default: './Dockerfile'
       platforms:
         description: 'Target platforms'
         required: false

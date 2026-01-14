@@ -38,10 +38,9 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.25.3'
-          cache-dependency-path: apps/hub/go.sum
+          cache-dependency-path: go.sum
 
       - name: Install dependencies
-        working-directory: apps/hub
         run: go mod download
 
       - name: Enable pgvector extension
@@ -49,7 +48,6 @@ jobs:
           PGPASSWORD=test_password psql -h localhost -U formbricks -d hub_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
       - name: Run tests
-        working-directory: apps/hub
         env:
           SERVICE_DATABASE_URL: postgres://formbricks:test_password@localhost:5432/hub_test?sslmode=disable
           SERVICE_API_KEY: test-api-key
@@ -60,11 +58,9 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.5.0
-          working-directory: apps/hub
           args: --timeout=5m
 
       - name: Check code formatting
-        working-directory: apps/hub
         run: |
           if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
             echo "The following files are not formatted:"
@@ -82,23 +78,26 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 10.19.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
+          cache-dependency-path: docs/pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: apps/docs
+        working-directory: docs
         run: pnpm install --frozen-lockfile
 
       - name: Build documentation
-        working-directory: apps/docs
+        working-directory: docs
         run: pnpm build
 
       - name: Check for build artifacts
-        working-directory: apps/docs
+        working-directory: docs
         run: |
           if [ ! -d "build" ]; then
             echo "Build directory not found"

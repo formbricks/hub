@@ -2,7 +2,7 @@ version: 2
 updates:
   # Go modules (security updates always immediate, regular updates grouped weekly)
   - package-ecosystem: "gomod"
-    directory: "/apps/hub"
+    directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -25,7 +25,7 @@ updates:
 
   # npm for docs (security updates always immediate, regular updates grouped monthly)
   - package-ecosystem: "npm"
-    directory: "/apps/docs"
+    directory: "/docs"
     schedule:
       interval: "monthly"
       day: "monday"
@@ -48,27 +48,6 @@ updates:
         patterns:
           - "react*"
           - "@types/react*"
-        update-types:
-          - "minor"
-          - "patch"
-
-  # npm for root workspace (security updates always immediate, regular updates grouped monthly)
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "monthly"
-      day: "monday"
-      time: "09:00"
-    open-pull-requests-limit: 2
-    labels:
-      - "dependencies"
-    commit-message:
-      prefix: "chore(deps)"
-      include: "scope"
-    groups:
-      dev-dependencies:
-        patterns:
-          - "*"
         update-types:
           - "minor"
           - "patch"
@@ -97,7 +76,7 @@ updates:
 
   # Docker (security updates always immediate, regular updates monthly)
   - package-ecosystem: "docker"
-    directory: "/apps/hub"
+    directory: "/"
     schedule:
       interval: "monthly"
       day: "monday"

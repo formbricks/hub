@@ -39,7 +39,7 @@ Closes #
   3. 
 - [ ] Added/updated unit tests
 - [ ] Added/updated integration tests
-- [ ] Verified documentation builds (`pnpm build` in apps/docs)
+- [ ] Verified documentation builds (`pnpm build` in docs)
 
 ## Screenshots / Videos
 

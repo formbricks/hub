@@ -112,8 +112,8 @@ Formbricks Hub follows semantic versioning (semver) and uses GitHub Releases.
    git pull origin main
    
    # Ensure all tests pass
-   cd apps/hub && make test
-   cd ../docs && pnpm build
+   make test
+   cd docs && pnpm build
    ```
 
 2. **Create and push a version tag:**
@@ -231,7 +231,6 @@ Dependabot is configured to:
 
 **Go Dependencies:**
 ```bash
-cd apps/hub
 go get -u ./...
 go mod tidy
 make test
@@ -239,7 +238,7 @@ make test
 
 **npm Dependencies:**
 ```bash
-cd apps/docs
+cd docs
 pnpm update
 pnpm build
 ```
