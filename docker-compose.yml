@@ -22,6 +22,28 @@ services:
       postgres
       -c shared_preload_libraries=vector
 
+  # Hub API service for local development
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: formbricks_hub
+    ports:
+      - '8080:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://formbricks:formbricks_dev@postgres:5432/hub_dev?sslmode=disable
+      ENVIRONMENT: development
+      LOG_LEVEL: debug
+    networks:
+      - formbricks
+    volumes:
+      - .:/app
+    # Overwrite entrypoint to use air for hot reloading if desired, 
+    # or just run the binary. For now we use the default from Dockerfile.
+
 volumes:
   postgres_data:
     driver: local
@@ -29,4 +51,3 @@ volumes:
 networks:
   formbricks:
     driver: bridge
-

@@ -1,0 +1,31 @@
+---
+sidebar_position: 4
+---
+
+import BrowserOnly from '@docusaurus/BrowserOnly';
+
+# API Reference
+
+Explore and test the Hub API endpoints interactively.
+
+<BrowserOnly fallback={<div>Loading API documentation...</div>}>
+  {() => {
+    const SwaggerUI = require('swagger-ui-react').default;
+    require('swagger-ui-react/swagger-ui.css');
+    
+    return (
+      <div style={{ marginTop: '2rem' }}>
+        <SwaggerUI url="/openapi/hub.yaml" />
+        <style>{`
+          [data-theme="dark"] .swagger-ui {
+            filter: invert(88%) hue-rotate(180deg);
+          }
+          
+          [data-theme="dark"] .swagger-ui .microlight {
+            filter: invert(100%) hue-rotate(180deg);
+          }
+        `}</style>
+      </div>
+    );
+  }}
+</BrowserOnly>

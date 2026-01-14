@@ -34,8 +34,8 @@ jobs:
       id-token: write
     with:
       image-name: formbricks/hub
-      context: ./apps/hub
-      dockerfile: ./apps/hub/Dockerfile
+      context: .
+      dockerfile: ./Dockerfile
       platforms: ${{ inputs.platforms }}
       push: ${{ inputs.push }}
       tags-input: type=raw,value=${{ inputs.tag }}

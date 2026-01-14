@@ -83,11 +83,11 @@ Automatically enrich every text response with actionable insights using OpenAI:
 Centralize feedback from anywhere through our simple REST API:
 
 - **Surveys**: Formbricks, Typeform, Google Forms, SurveyMonkey
-- **Reviews**: G2, Trustpilot, Capterra (includes [G2 import script](scripts/data-imports/g2-reviews/))
+- **Reviews**: G2, Trustpilot, Capterra
 - **App Stores**: Apple App Store, Google Play (coming soon)
 - **Support**: Zendesk, Intercom, Help Scout (coming soon)
 - **Social**: Twitter, Reddit (coming soon)
-- **Custom**: Any source via REST API or Python scripts
+- **Custom**: Any source via REST API or scripts
 
 ### 📈 BI-Ready Analytics
 
@@ -212,7 +212,7 @@ curl "http://localhost:8080/v1/experiences/search?q=frustrated%20checkout&limit=
   -H "X-API-Key: YOUR_SERVICE_API_KEY"
 ```
 
-📖 **For complete documentation, see the [Quick Start Guide](https://main.d3n9jg0z7xep8b.amplifyapp.com/quickstart)**
+📖 **For complete documentation, see the [Quick Start Guide](https://hub.formbricks.com/quickstart)**
 
 ---
 
@@ -236,7 +236,6 @@ docker compose up -d  # PostgreSQL
 **3. Run the Hub API:**
 
 ```bash
-cd apps/hub
 cp env.example .env
 # Edit .env with your configuration
 make dev
@@ -282,7 +281,6 @@ The API will be available at `http://localhost:8888`
 - **AI Workers**: Background workers for sentiment analysis, topic extraction, and embeddings
 - **Webhook System**: Worker pool with retry logic for reliable event delivery
 - **BI Tools**: Direct SQL access for Apache Superset, Power BI, Tableau, Looker
-- **Import Scripts** (Python): Data connectors for external sources (G2, Formbricks)
 
 ---
 
@@ -290,31 +288,27 @@ The API will be available at `http://localhost:8888`
 
 ```
 formbricks-hub/
-├── apps/
-│   ├── hub/          # Go API service (REST + workers)
-│   └── docs/           # Docusaurus documentation site
-├── scripts/
-│   └── data-imports/   # Python scripts for data sources
-│       ├── g2-reviews/
-│       └── formbricks-surveys/
-├── packages/           # Shared configs (ESLint, TypeScript)
+├── cmd/               # Go API service entrypoints
+├── internal/          # Go API application logic
+├── docs/              # Docusaurus documentation site
 ├── docker-compose.yml  # Local development stack
-└── turbo.json         # Turborepo configuration
+├── Makefile           # Development commands
+└── openapi.yaml       # API specification
 ```
 
 ---
 
 ## 📚 Documentation
 
-Visit our [documentation site](https://main.d3n9jg0z7xep8b.amplifyapp.com) for complete guides:
+Visit our [documentation site](https://hub.formbricks.com) for complete guides:
 
-- **[Quick Start](https://main.d3n9jg0z7xep8b.amplifyapp.com/quickstart)** - Get up and running in 5 minutes
-- **[Data Model](https://main.d3n9jg0z7xep8b.amplifyapp.com/core-concepts/data-model)** - Understanding the schema
-- **[AI Enrichment](https://main.d3n9jg0z7xep8b.amplifyapp.com/core-concepts/ai-enrichment)** - Automatic sentiment and topic extraction
-- **[Semantic Search](https://main.d3n9jg0z7xep8b.amplifyapp.com/core-concepts/semantic-search)** - Query feedback by meaning
-- **[Webhooks](https://main.d3n9jg0z7xep8b.amplifyapp.com/core-concepts/webhooks)** - React to feedback in real-time
-- **[API Reference](https://main.d3n9jg0z7xep8b.amplifyapp.com/api-reference)** - Complete REST API documentation
-- **[Environment Variables](https://main.d3n9jg0z7xep8b.amplifyapp.com/reference/environment-variables)** - Configuration reference
+- **[Quick Start](https://hub.formbricks.com/quickstart)** - Get up and running in 5 minutes
+- **[Data Model](https://hub.formbricks.com/core-concepts/data-model)** - Understanding the schema
+- **[AI Enrichment](https://hub.formbricks.com/core-concepts/ai-enrichment)** - Automatic sentiment and topic extraction
+- **[Semantic Search](https://hub.formbricks.com/core-concepts/semantic-search)** - Query feedback by meaning
+- **[Webhooks](https://hub.formbricks.com/core-concepts/webhooks)** - React to feedback in real-time
+- **[API Reference](https://hub.formbricks.com/api-reference)** - Complete REST API documentation
+- **[Environment Variables](https://hub.formbricks.com/reference/environment-variables)** - Configuration reference
 
 ---
 

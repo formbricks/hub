@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'apps/docs/**'
+      - 'docs/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
   workflow_dispatch:
@@ -37,11 +37,11 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        working-directory: apps/docs
+        working-directory: docs
         run: pnpm install --frozen-lockfile
 
       - name: Build documentation
-        working-directory: apps/docs
+        working-directory: docs
         run: pnpm build
 
       - name: Setup Pages
@@ -50,7 +50,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'apps/docs/build'
+          path: 'docs/build'
 
   deploy:
     name: Deploy to GitHub Pages
