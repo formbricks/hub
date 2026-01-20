@@ -10,7 +10,7 @@ type ErrorDetail struct {
 	Location string      `json:"location,omitempty"`
 	Message  string      `json:"message,omitempty"`
 	Value    interface{} `json:"value,omitempty"`
-}
+} //@name ErrorDetail
 
 // ProblemDetails represents an RFC 7807 Problem Details error response
 type ProblemDetails struct {
@@ -20,7 +20,7 @@ type ProblemDetails struct {
 	Detail   string        `json:"detail,omitempty"`
 	Instance string        `json:"instance,omitempty"`
 	Errors   []ErrorDetail `json:"errors,omitempty"`
-}
+} //@name ProblemDetails
 
 // RespondError writes an RFC 7807 Problem Details error response
 func RespondError(w http.ResponseWriter, statusCode int, title string, detail string) {

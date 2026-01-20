@@ -42,7 +42,7 @@ type FeedbackRecord struct {
 	UserIdentifier *string         `json:"user_identifier,omitempty"`
 	TenantID       *string         `json:"tenant_id,omitempty"`
 	ResponseID     *string         `json:"response_id,omitempty"`
-}
+} //@name FeedbackRecord
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record
 type CreateFeedbackRecordRequest struct {
@@ -63,7 +63,7 @@ type CreateFeedbackRecordRequest struct {
 	UserIdentifier *string         `json:"user_identifier,omitempty"`
 	TenantID       *string         `json:"tenant_id,omitempty"`
 	ResponseID     *string         `json:"response_id,omitempty"`
-}
+} //@name CreateFeedbackRecordRequest
 
 // UpdateFeedbackRecordRequest represents the request to update a feedback record
 // Only value fields, metadata, language, and user_identifier can be updated
@@ -76,7 +76,7 @@ type UpdateFeedbackRecordRequest struct {
 	Metadata       json.RawMessage `json:"metadata,omitempty" swaggertype:"object"`
 	Language       *string         `json:"language,omitempty"`
 	UserIdentifier *string         `json:"user_identifier,omitempty"`
-}
+} //@name UpdateFeedbackRecordRequest
 
 // ListFeedbackRecordsFilters represents filters for listing feedback records
 type ListFeedbackRecordsFilters struct {
@@ -99,7 +99,7 @@ type ListFeedbackRecordsResponse struct {
 	Total  int64            `json:"total"`
 	Limit  int              `json:"limit"`
 	Offset int              `json:"offset"`
-}
+} //@name ListFeedbackRecordsResponse
 
 // SearchFeedbackRecordsRequest represents search parameters for feedback records
 type SearchFeedbackRecordsRequest struct {
@@ -114,17 +114,17 @@ type SearchFeedbackRecordsRequest struct {
 type SearchResultItem struct {
 	FeedbackRecord
 	SimilarityScore float64 `json:"similarity_score"`
-}
+} //@name SearchResultItem
 
 // SearchFeedbackRecordsResponse represents search results
 type SearchFeedbackRecordsResponse struct {
 	Results []SearchResultItem `json:"results"`
 	Query   string             `json:"query"`
 	Count   int64              `json:"count"`
-}
+} //@name SearchFeedbackRecordsResponse
 
 // BulkDeleteResponse represents the response for bulk delete operation
 type BulkDeleteResponse struct {
 	DeletedCount int64  `json:"deleted_count"`
 	Message      string `json:"message"`
-}
+} //@name BulkDeleteResponse

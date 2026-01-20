@@ -27,7 +27,7 @@ tests-coverage:
 # Generate OpenAPI/Swagger documentation
 openapi:
 	@echo "Generating OpenAPI documentation..."
-	$(HOME)/go/bin/swag init -g cmd/api/main.go -o docs
+	$(HOME)/go/bin/swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
 	@echo "Documentation generated in docs/ folder"
 	@echo "View at: http://localhost:8080/swagger/index.html"
 

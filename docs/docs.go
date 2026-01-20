@@ -10,8 +10,8 @@ const docTemplate = `{
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
         "contact": {
-            "name": "Tiago",
-            "email": "xxxxx@xxxxx.com"
+            "name": "Tiago Farto",
+            "email": "tiago@formbricks.com"
         },
         "version": "{{.Version}}"
     },
@@ -38,153 +38,32 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/experiences": {
+        "/v1/feedback-records": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Retrieve a list of experience data records with optional filters",
+                "description": "Lists feedback records with optional filters and pagination",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "experiences"
+                    "Feedback Records"
                 ],
-                "summary": "List experience data",
+                "summary": "List feedback records with filters",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by source type",
-                        "name": "source_type",
+                        "description": "Filter by tenant ID",
+                        "name": "tenant_id",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by source ID",
-                        "name": "source_id",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by field ID",
-                        "name": "field_id",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by user identifier",
-                        "name": "user_identifier",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Maximum number of records to return",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Number of records to skip",
-                        "name": "offset",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.ExperienceData"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized - Invalid or missing API key",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Create a new experience data record",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "experiences"
-                ],
-                "summary": "Create experience data",
-                "parameters": [
-                    {
-                        "description": "Experience data to create",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.CreateExperienceRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/models.ExperienceData"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized - Invalid or missing API key",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/experiences/search": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Search experience data with advanced filters, full-text search, and pagination",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "experiences"
-                ],
-                "summary": "Search experience data",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Full-text search query",
-                        "name": "query",
+                        "description": "Filter by response ID",
+                        "name": "response_id",
                         "in": "query"
                     },
                     {
@@ -197,12 +76,6 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by source ID",
                         "name": "source_id",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by field ID",
-                        "name": "field_id",
                         "in": "query"
                     },
                     {
@@ -219,26 +92,26 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by collected_at \u003e= start_date (RFC3339 format)",
-                        "name": "start_date",
+                        "description": "Filter by collected_at \u003e= since (ISO 8601 format)",
+                        "name": "since",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Filter by collected_at \u003c= end_date (RFC3339 format)",
-                        "name": "end_date",
+                        "description": "Filter by collected_at \u003c= until (ISO 8601 format)",
+                        "name": "until",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Number of results per page (default 20, max 40)",
-                        "name": "pageSize",
+                        "description": "Number of results to return (max 1000)",
+                        "name": "limit",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Page number (starts at 0, default 0)",
-                        "name": "page",
+                        "description": "Number of results to skip",
+                        "name": "offset",
                         "in": "query"
                     }
                 ],
@@ -246,77 +119,68 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.SearchExperiencesResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request parameters",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ListFeedbackRecordsResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized - Invalid or missing API key",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     }
                 }
-            }
-        },
-        "/v1/experiences/{id}": {
-            "get": {
+            },
+            "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Retrieve a single experience data record by its UUID",
+                "description": "Create a new feedback record data point",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "experiences"
+                    "Feedback Records"
                 ],
-                "summary": "Get experience data by ID",
+                "summary": "Create feedback record",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Experience ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
+                        "description": "Feedback record data to create",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/CreateFeedbackRecordRequest"
+                        }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.ExperienceData"
+                            "$ref": "#/definitions/FeedbackRecord"
                         }
                     },
                     "400": {
-                        "description": "Invalid UUID format",
+                        "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     },
                     "401": {
                         "description": "Unauthorized - Invalid or missing API key",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Experience not found",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     }
                 }
@@ -327,15 +191,199 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Delete an experience data record by ID",
-                "tags": [
-                    "experiences"
+                "description": "Permanently deletes all feedback record data points matching the specified user_identifier. This endpoint supports GDPR Article 17 (Right to Erasure) requests.",
+                "produces": [
+                    "application/json"
                 ],
-                "summary": "Delete experience data",
+                "tags": [
+                    "Feedback Records"
+                ],
+                "summary": "Bulk delete feedback records by user identifier",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Experience ID (UUID)",
+                        "description": "Delete all records matching this user identifier",
+                        "name": "user_identifier",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by tenant ID (optional, for multi-tenant deployments)",
+                        "name": "tenant_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/BulkDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "user_identifier is required",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/feedback-records/search": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Performs vector similarity search on feedback record data using OpenAI embeddings. Only returns text records that have been embedded.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Feedback Records"
+                ],
+                "summary": "Search feedback records using semantic search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Natural language search query",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default 10, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by source type",
+                        "name": "source_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by collection date (ISO 8601)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by collection date (ISO 8601)",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/SearchFeedbackRecordsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request parameters or missing query",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/feedback-records/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieves a single feedback record data point by its UUID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Feedback Records"
+                ],
+                "summary": "Get a feedback record by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Feedback Record ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/FeedbackRecord"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid UUID format",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing API key",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    },
+                    "404": {
+                        "description": "Feedback record not found",
+                        "schema": {
+                            "$ref": "#/definitions/ProblemDetails"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Permanently deletes a feedback record data point",
+                "tags": [
+                    "Feedback Records"
+                ],
+                "summary": "Delete a feedback record",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Feedback Record ID (UUID)",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -343,24 +391,24 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "204": {
-                        "description": "No Content - Successfully deleted"
+                        "description": "No Content"
                     },
                     "400": {
                         "description": "Invalid UUID format",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     },
                     "401": {
                         "description": "Unauthorized - Invalid or missing API key",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     },
                     "404": {
-                        "description": "Experience not found",
+                        "description": "Feedback record not found",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     }
                 }
@@ -371,7 +419,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Update an existing experience data record",
+                "description": "Updates specific fields of a feedback record data point",
                 "consumes": [
                     "application/json"
                 ],
@@ -379,13 +427,13 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "experiences"
+                    "Feedback Records"
                 ],
-                "summary": "Update experience data",
+                "summary": "Update a feedback record",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Experience ID (UUID)",
+                        "description": "Feedback Record ID (UUID)",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -396,7 +444,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.UpdateExperienceRequest"
+                            "$ref": "#/definitions/UpdateFeedbackRecordRequest"
                         }
                     }
                 ],
@@ -404,25 +452,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.ExperienceData"
+                            "$ref": "#/definitions/FeedbackRecord"
                         }
                     },
                     "400": {
                         "description": "Invalid request or UUID format",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     },
                     "401": {
                         "description": "Unauthorized - Invalid or missing API key",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     },
                     "404": {
-                        "description": "Experience not found",
+                        "description": "Feedback record not found",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
+                            "$ref": "#/definitions/ProblemDetails"
                         }
                     }
                 }
@@ -430,18 +478,18 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "handlers.ErrorResponse": {
+        "BulkDeleteResponse": {
             "type": "object",
             "properties": {
-                "error": {
-                    "type": "string"
+                "deleted_count": {
+                    "type": "integer"
                 },
                 "message": {
                     "type": "string"
                 }
             }
         },
-        "models.CreateExperienceRequest": {
+        "CreateFeedbackRecordRequest": {
             "type": "object",
             "properties": {
                 "collected_at": {
@@ -462,6 +510,9 @@ const docTemplate = `{
                 "metadata": {
                     "type": "object"
                 },
+                "response_id": {
+                    "type": "string"
+                },
                 "source_id": {
                     "type": "string"
                 },
@@ -469,6 +520,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "source_type": {
+                    "type": "string"
+                },
+                "tenant_id": {
                     "type": "string"
                 },
                 "user_identifier": {
@@ -491,7 +545,19 @@ const docTemplate = `{
                 }
             }
         },
-        "models.ExperienceData": {
+        "ErrorDetail": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "value": {}
+            }
+        },
+        "FeedbackRecord": {
             "type": "object",
             "properties": {
                 "collected_at": {
@@ -518,6 +584,9 @@ const docTemplate = `{
                 "metadata": {
                     "type": "object"
                 },
+                "response_id": {
+                    "type": "string"
+                },
                 "source_id": {
                     "type": "string"
                 },
@@ -525,6 +594,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "source_type": {
+                    "type": "string"
+                },
+                "tenant_id": {
                     "type": "string"
                 },
                 "updated_at": {
@@ -550,32 +622,78 @@ const docTemplate = `{
                 }
             }
         },
-        "models.SearchExperiencesResponse": {
+        "ListFeedbackRecordsResponse": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.ExperienceData"
+                        "$ref": "#/definitions/FeedbackRecord"
                     }
                 },
-                "page": {
+                "limit": {
                     "type": "integer"
                 },
-                "page_size": {
+                "offset": {
                     "type": "integer"
                 },
-                "total_count": {
-                    "type": "integer"
-                },
-                "total_pages": {
+                "total": {
                     "type": "integer"
                 }
             }
         },
-        "models.UpdateExperienceRequest": {
+        "ProblemDetails": {
             "type": "object",
             "properties": {
+                "detail": {
+                    "type": "string"
+                },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ErrorDetail"
+                    }
+                },
+                "instance": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "SearchFeedbackRecordsResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "query": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SearchResultItem"
+                    }
+                }
+            }
+        },
+        "SearchResultItem": {
+            "type": "object",
+            "properties": {
+                "collected_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
                 "field_id": {
                     "type": "string"
                 },
@@ -585,11 +703,20 @@ const docTemplate = `{
                 "field_type": {
                     "type": "string"
                 },
+                "id": {
+                    "type": "string"
+                },
                 "language": {
                     "type": "string"
                 },
                 "metadata": {
                     "type": "object"
+                },
+                "response_id": {
+                    "type": "string"
+                },
+                "similarity_score": {
+                    "type": "number"
                 },
                 "source_id": {
                     "type": "string"
@@ -599,6 +726,41 @@ const docTemplate = `{
                 },
                 "source_type": {
                     "type": "string"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_identifier": {
+                    "type": "string"
+                },
+                "value_boolean": {
+                    "type": "boolean"
+                },
+                "value_date": {
+                    "type": "string"
+                },
+                "value_json": {
+                    "type": "object"
+                },
+                "value_number": {
+                    "type": "number"
+                },
+                "value_text": {
+                    "type": "string"
+                }
+            }
+        },
+        "UpdateFeedbackRecordRequest": {
+            "type": "object",
+            "properties": {
+                "language": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object"
                 },
                 "user_identifier": {
                     "type": "string"
@@ -638,7 +800,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "",
 	Schemes:          []string{},
 	Title:            "Formbricks Hub API",
-	Description:      "API for managing experience data collection",
+	Description:      "API for managing feedback records collection",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

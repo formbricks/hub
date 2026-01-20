@@ -24,7 +24,7 @@ import (
 // @version 1.0
 // @description API for managing feedback records collection
 //
-// @contact.name 'Tiago Farto'
+// @contact.name Tiago Farto
 // @contact.email tiago@formbricks.com
 
 // @securityDefinitions.apikey BearerAuth

@@ -1,12 +1,12 @@
 definitions:
-  handlers.ErrorResponse:
+  BulkDeleteResponse:
     properties:
-      error:
-        type: string
+      deleted_count:
+        type: integer
       message:
         type: string
     type: object
-  models.CreateExperienceRequest:
+  CreateFeedbackRecordRequest:
     properties:
       collected_at:
         type: string
@@ -20,11 +20,15 @@ definitions:
         type: string
       metadata:
         type: object
+      response_id:
+        type: string
       source_id:
         type: string
       source_name:
         type: string
       source_type:
+        type: string
+      tenant_id:
         type: string
       user_identifier:
         type: string
@@ -39,7 +43,15 @@ definitions:
       value_text:
         type: string
     type: object
-  models.ExperienceData:
+  ErrorDetail:
+    properties:
+      location:
+        type: string
+      message:
+        type: string
+      value: {}
+    type: object
+  FeedbackRecord:
     properties:
       collected_at:
         type: string
@@ -57,11 +69,15 @@ definitions:
         type: string
       metadata:
         type: object
+      response_id:
+        type: string
       source_id:
         type: string
       source_name:
         type: string
       source_type:
+        type: string
+      tenant_id:
         type: string
       updated_at:
         type: string
@@ -78,39 +94,98 @@ definitions:
       value_text:
         type: string
     type: object
-  models.SearchExperiencesResponse:
+  ListFeedbackRecordsResponse:
     properties:
       data:
         items:
-          $ref: '#/definitions/models.ExperienceData'
+          $ref: '#/definitions/FeedbackRecord'
         type: array
-      page:
+      limit:
         type: integer
-      page_size:
+      offset:
         type: integer
-      total_count:
-        type: integer
-      total_pages:
+      total:
         type: integer
     type: object
-  models.UpdateExperienceRequest:
+  ProblemDetails:
     properties:
+      detail:
+        type: string
+      errors:
+        items:
+          $ref: '#/definitions/ErrorDetail'
+        type: array
+      instance:
+        type: string
+      status:
+        type: integer
+      title:
+        type: string
+      type:
+        type: string
+    type: object
+  SearchFeedbackRecordsResponse:
+    properties:
+      count:
+        type: integer
+      query:
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/SearchResultItem'
+        type: array
+    type: object
+  SearchResultItem:
+    properties:
+      collected_at:
+        type: string
+      created_at:
+        type: string
       field_id:
         type: string
       field_label:
         type: string
       field_type:
         type: string
+      id:
+        type: string
       language:
         type: string
       metadata:
         type: object
+      response_id:
+        type: string
+      similarity_score:
+        type: number
       source_id:
         type: string
       source_name:
         type: string
       source_type:
         type: string
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+      user_identifier:
+        type: string
+      value_boolean:
+        type: boolean
+      value_date:
+        type: string
+      value_json:
+        type: object
+      value_number:
+        type: number
+      value_text:
+        type: string
+    type: object
+  UpdateFeedbackRecordRequest:
+    properties:
+      language:
+        type: string
+      metadata:
+        type: object
       user_identifier:
         type: string
       value_boolean:
@@ -126,9 +201,9 @@ definitions:
     type: object
 info:
   contact:
-    email: xxxxx@xxxxx.com
-    name: Tiago
-  description: API for managing experience data collection
+    email: tiago@formbricks.com
+    name: Tiago Farto
+  description: API for managing feedback records collection
   title: Formbricks Hub API
   version: "1.0"
 paths:
@@ -145,196 +220,55 @@ paths:
       summary: Health check
       tags:
       - health
-  /v1/experiences:
-    get:
-      description: Retrieve a list of experience data records with optional filters
+  /v1/feedback-records:
+    delete:
+      description: Permanently deletes all feedback record data points matching the
+        specified user_identifier. This endpoint supports GDPR Article 17 (Right to
+        Erasure) requests.
       parameters:
-      - description: Filter by source type
-        in: query
-        name: source_type
-        type: string
-      - description: Filter by source ID
-        in: query
-        name: source_id
-        type: string
-      - description: Filter by field ID
-        in: query
-        name: field_id
-        type: string
-      - description: Filter by user identifier
+      - description: Delete all records matching this user identifier
         in: query
         name: user_identifier
+        required: true
         type: string
-      - description: Maximum number of records to return
+      - description: Filter by tenant ID (optional, for multi-tenant deployments)
         in: query
-        name: limit
-        type: integer
-      - description: Number of records to skip
-        in: query
-        name: offset
-        type: integer
+        name: tenant_id
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/models.ExperienceData'
-            type: array
+            $ref: '#/definitions/BulkDeleteResponse'
+        "400":
+          description: user_identifier is required
+          schema:
+            $ref: '#/definitions/ProblemDetails'
         "401":
           description: Unauthorized - Invalid or missing API key
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/ProblemDetails'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/ProblemDetails'
       security:
       - BearerAuth: []
-      summary: List experience data
+      summary: Bulk delete feedback records by user identifier
       tags:
-      - experiences
-    post:
-      consumes:
-      - application/json
-      description: Create a new experience data record
-      parameters:
-      - description: Experience data to create
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.CreateExperienceRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/models.ExperienceData'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "401":
-          description: Unauthorized - Invalid or missing API key
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Create experience data
-      tags:
-      - experiences
-  /v1/experiences/{id}:
-    delete:
-      description: Delete an experience data record by ID
-      parameters:
-      - description: Experience ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content - Successfully deleted
-        "400":
-          description: Invalid UUID format
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "401":
-          description: Unauthorized - Invalid or missing API key
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "404":
-          description: Experience not found
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Delete experience data
-      tags:
-      - experiences
+      - Feedback Records
     get:
-      description: Retrieve a single experience data record by its UUID
+      description: Lists feedback records with optional filters and pagination
       parameters:
-      - description: Experience ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.ExperienceData'
-        "400":
-          description: Invalid UUID format
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "401":
-          description: Unauthorized - Invalid or missing API key
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "404":
-          description: Experience not found
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get experience data by ID
-      tags:
-      - experiences
-    patch:
-      consumes:
-      - application/json
-      description: Update an existing experience data record
-      parameters:
-      - description: Experience ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Fields to update
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/models.UpdateExperienceRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.ExperienceData'
-        "400":
-          description: Invalid request or UUID format
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "401":
-          description: Unauthorized - Invalid or missing API key
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-        "404":
-          description: Experience not found
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Update experience data
-      tags:
-      - experiences
-  /v1/experiences/search:
-    get:
-      description: Search experience data with advanced filters, full-text search,
-        and pagination
-      parameters:
-      - description: Full-text search query
+      - description: Filter by tenant ID
         in: query
-        name: query
+        name: tenant_id
+        type: string
+      - description: Filter by response ID
+        in: query
+        name: response_id
         type: string
       - description: Filter by source type
         in: query
@@ -343,10 +277,6 @@ paths:
       - description: Filter by source ID
         in: query
         name: source_id
-        type: string
-      - description: Filter by field ID
-        in: query
-        name: field_id
         type: string
       - description: Filter by field type
         in: query
@@ -356,21 +286,21 @@ paths:
         in: query
         name: user_identifier
         type: string
-      - description: Filter by collected_at >= start_date (RFC3339 format)
+      - description: Filter by collected_at >= since (ISO 8601 format)
         in: query
-        name: start_date
+        name: since
         type: string
-      - description: Filter by collected_at <= end_date (RFC3339 format)
+      - description: Filter by collected_at <= until (ISO 8601 format)
         in: query
-        name: end_date
+        name: until
         type: string
-      - description: Number of results per page (default 20, max 40)
+      - description: Number of results to return (max 1000)
         in: query
-        name: pageSize
+        name: limit
         type: integer
-      - description: Page number (starts at 0, default 0)
+      - description: Number of results to skip
         in: query
-        name: page
+        name: offset
         type: integer
       produces:
       - application/json
@@ -378,24 +308,202 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/models.SearchExperiencesResponse'
-        "400":
-          description: Invalid request parameters
-          schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/ListFeedbackRecordsResponse'
         "401":
           description: Unauthorized - Invalid or missing API key
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/ProblemDetails'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/handlers.ErrorResponse'
+            $ref: '#/definitions/ProblemDetails'
       security:
       - BearerAuth: []
-      summary: Search experience data
+      summary: List feedback records with filters
       tags:
-      - experiences
+      - Feedback Records
+    post:
+      consumes:
+      - application/json
+      description: Create a new feedback record data point
+      parameters:
+      - description: Feedback record data to create
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/CreateFeedbackRecordRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/FeedbackRecord'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+      security:
+      - BearerAuth: []
+      summary: Create feedback record
+      tags:
+      - Feedback Records
+  /v1/feedback-records/{id}:
+    delete:
+      description: Permanently deletes a feedback record data point
+      parameters:
+      - description: Feedback Record ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Invalid UUID format
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "404":
+          description: Feedback record not found
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+      security:
+      - BearerAuth: []
+      summary: Delete a feedback record
+      tags:
+      - Feedback Records
+    get:
+      description: Retrieves a single feedback record data point by its UUID
+      parameters:
+      - description: Feedback Record ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/FeedbackRecord'
+        "400":
+          description: Invalid UUID format
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "404":
+          description: Feedback record not found
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+      security:
+      - BearerAuth: []
+      summary: Get a feedback record by ID
+      tags:
+      - Feedback Records
+    patch:
+      consumes:
+      - application/json
+      description: Updates specific fields of a feedback record data point
+      parameters:
+      - description: Feedback Record ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/UpdateFeedbackRecordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/FeedbackRecord'
+        "400":
+          description: Invalid request or UUID format
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "404":
+          description: Feedback record not found
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+      security:
+      - BearerAuth: []
+      summary: Update a feedback record
+      tags:
+      - Feedback Records
+  /v1/feedback-records/search:
+    get:
+      description: Performs vector similarity search on feedback record data using
+        OpenAI embeddings. Only returns text records that have been embedded.
+      parameters:
+      - description: Natural language search query
+        in: query
+        name: query
+        required: true
+        type: string
+      - description: Maximum number of results to return (default 10, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by source type
+        in: query
+        name: source_type
+        type: string
+      - description: Filter by collection date (ISO 8601)
+        in: query
+        name: since
+        type: string
+      - description: Filter by collection date (ISO 8601)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/SearchFeedbackRecordsResponse'
+        "400":
+          description: Invalid request parameters or missing query
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/ProblemDetails'
+      security:
+      - BearerAuth: []
+      summary: Search feedback records using semantic search
+      tags:
+      - Feedback Records
 securityDefinitions:
   BearerAuth:
     description: Type "Bearer" followed by a space and your API key.

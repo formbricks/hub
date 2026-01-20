@@ -27,8 +27,8 @@ func NewFeedbackRecordsHandler(service *service.FeedbackRecordsService) *Feedbac
 // @Tags Feedback Records
 // @Accept json
 // @Produce json
-// @Param request body models.CreateFeedbackRecordRequest true "Feedback record data to create"
-// @Success 201 {object} models.FeedbackRecord
+// @Param request body CreateFeedbackRecordRequest true "Feedback record data to create"
+// @Success 201 {object} FeedbackRecord
 // @Failure 400 {object} ProblemDetails
 // @Failure 401 {object} ProblemDetails "Unauthorized - Invalid or missing API key"
 // @Security BearerAuth
@@ -55,7 +55,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 // @Tags Feedback Records
 // @Produce json
 // @Param id path string true "Feedback Record ID (UUID)"
-// @Success 200 {object} models.FeedbackRecord
+// @Success 200 {object} FeedbackRecord
 // @Failure 400 {object} ProblemDetails "Invalid UUID format"
 // @Failure 401 {object} ProblemDetails "Unauthorized - Invalid or missing API key"
 // @Failure 404 {object} ProblemDetails "Feedback record not found"
@@ -98,7 +98,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Param until query string false "Filter by collected_at <= until (ISO 8601 format)"
 // @Param limit query int false "Number of results to return (max 1000)"
 // @Param offset query int false "Number of results to skip"
-// @Success 200 {object} models.ListFeedbackRecordsResponse
+// @Success 200 {object} ListFeedbackRecordsResponse
 // @Failure 401 {object} ProblemDetails "Unauthorized - Invalid or missing API key"
 // @Failure 500 {object} ProblemDetails "Internal server error"
 // @Security BearerAuth
@@ -187,8 +187,8 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Param id path string true "Feedback Record ID (UUID)"
-// @Param request body models.UpdateFeedbackRecordRequest true "Fields to update"
-// @Success 200 {object} models.FeedbackRecord
+// @Param request body UpdateFeedbackRecordRequest true "Fields to update"
+// @Success 200 {object} FeedbackRecord
 // @Failure 400 {object} ProblemDetails "Invalid request or UUID format"
 // @Failure 401 {object} ProblemDetails "Unauthorized - Invalid or missing API key"
 // @Failure 404 {object} ProblemDetails "Feedback record not found"
@@ -261,7 +261,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 // @Produce json
 // @Param user_identifier query string true "Delete all records matching this user identifier"
 // @Param tenant_id query string false "Filter by tenant ID (optional, for multi-tenant deployments)"
-// @Success 200 {object} models.BulkDeleteResponse
+// @Success 200 {object} BulkDeleteResponse
 // @Failure 400 {object} ProblemDetails "user_identifier is required"
 // @Failure 401 {object} ProblemDetails "Unauthorized - Invalid or missing API key"
 // @Failure 500 {object} ProblemDetails "Internal server error"
@@ -305,7 +305,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 // @Param source_type query string false "Filter by source type"
 // @Param since query string false "Filter by collection date (ISO 8601)"
 // @Param until query string false "Filter by collection date (ISO 8601)"
-// @Success 200 {object} models.SearchFeedbackRecordsResponse
+// @Success 200 {object} SearchFeedbackRecordsResponse
 // @Failure 400 {object} ProblemDetails "Invalid request parameters or missing query"
 // @Failure 401 {object} ProblemDetails "Unauthorized - Invalid or missing API key"
 // @Failure 500 {object} ProblemDetails "Internal server error"
