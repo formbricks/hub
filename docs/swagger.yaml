@@ -1,0 +1,405 @@
+definitions:
+  handlers.ErrorResponse:
+    properties:
+      error:
+        type: string
+      message:
+        type: string
+    type: object
+  models.CreateExperienceRequest:
+    properties:
+      collected_at:
+        type: string
+      field_id:
+        type: string
+      field_label:
+        type: string
+      field_type:
+        type: string
+      language:
+        type: string
+      metadata:
+        type: object
+      source_id:
+        type: string
+      source_name:
+        type: string
+      source_type:
+        type: string
+      user_identifier:
+        type: string
+      value_boolean:
+        type: boolean
+      value_date:
+        type: string
+      value_json:
+        type: object
+      value_number:
+        type: number
+      value_text:
+        type: string
+    type: object
+  models.ExperienceData:
+    properties:
+      collected_at:
+        type: string
+      created_at:
+        type: string
+      field_id:
+        type: string
+      field_label:
+        type: string
+      field_type:
+        type: string
+      id:
+        type: string
+      language:
+        type: string
+      metadata:
+        type: object
+      source_id:
+        type: string
+      source_name:
+        type: string
+      source_type:
+        type: string
+      updated_at:
+        type: string
+      user_identifier:
+        type: string
+      value_boolean:
+        type: boolean
+      value_date:
+        type: string
+      value_json:
+        type: object
+      value_number:
+        type: number
+      value_text:
+        type: string
+    type: object
+  models.SearchExperiencesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/models.ExperienceData'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total_count:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  models.UpdateExperienceRequest:
+    properties:
+      field_id:
+        type: string
+      field_label:
+        type: string
+      field_type:
+        type: string
+      language:
+        type: string
+      metadata:
+        type: object
+      source_id:
+        type: string
+      source_name:
+        type: string
+      source_type:
+        type: string
+      user_identifier:
+        type: string
+      value_boolean:
+        type: boolean
+      value_date:
+        type: string
+      value_json:
+        type: object
+      value_number:
+        type: number
+      value_text:
+        type: string
+    type: object
+info:
+  contact:
+    email: xxxxx@xxxxx.com
+    name: Tiago
+  description: API for managing experience data collection
+  title: Formbricks Hub API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Check if the API is running
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: Health check
+      tags:
+      - health
+  /v1/experiences:
+    get:
+      description: Retrieve a list of experience data records with optional filters
+      parameters:
+      - description: Filter by source type
+        in: query
+        name: source_type
+        type: string
+      - description: Filter by source ID
+        in: query
+        name: source_id
+        type: string
+      - description: Filter by field ID
+        in: query
+        name: field_id
+        type: string
+      - description: Filter by user identifier
+        in: query
+        name: user_identifier
+        type: string
+      - description: Maximum number of records to return
+        in: query
+        name: limit
+        type: integer
+      - description: Number of records to skip
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.ExperienceData'
+            type: array
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List experience data
+      tags:
+      - experiences
+    post:
+      consumes:
+      - application/json
+      description: Create a new experience data record
+      parameters:
+      - description: Experience data to create
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreateExperienceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.ExperienceData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create experience data
+      tags:
+      - experiences
+  /v1/experiences/{id}:
+    delete:
+      description: Delete an experience data record by ID
+      parameters:
+      - description: Experience ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content - Successfully deleted
+        "400":
+          description: Invalid UUID format
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Experience not found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete experience data
+      tags:
+      - experiences
+    get:
+      description: Retrieve a single experience data record by its UUID
+      parameters:
+      - description: Experience ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ExperienceData'
+        "400":
+          description: Invalid UUID format
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Experience not found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get experience data by ID
+      tags:
+      - experiences
+    patch:
+      consumes:
+      - application/json
+      description: Update an existing experience data record
+      parameters:
+      - description: Experience ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateExperienceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ExperienceData'
+        "400":
+          description: Invalid request or UUID format
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Experience not found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update experience data
+      tags:
+      - experiences
+  /v1/experiences/search:
+    get:
+      description: Search experience data with advanced filters, full-text search,
+        and pagination
+      parameters:
+      - description: Full-text search query
+        in: query
+        name: query
+        type: string
+      - description: Filter by source type
+        in: query
+        name: source_type
+        type: string
+      - description: Filter by source ID
+        in: query
+        name: source_id
+        type: string
+      - description: Filter by field ID
+        in: query
+        name: field_id
+        type: string
+      - description: Filter by field type
+        in: query
+        name: field_type
+        type: string
+      - description: Filter by user identifier
+        in: query
+        name: user_identifier
+        type: string
+      - description: Filter by collected_at >= start_date (RFC3339 format)
+        in: query
+        name: start_date
+        type: string
+      - description: Filter by collected_at <= end_date (RFC3339 format)
+        in: query
+        name: end_date
+        type: string
+      - description: Number of results per page (default 20, max 40)
+        in: query
+        name: pageSize
+        type: integer
+      - description: Page number (starts at 0, default 0)
+        in: query
+        name: page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.SearchExperiencesResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized - Invalid or missing API key
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Search experience data
+      tags:
+      - experiences
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and your API key.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
