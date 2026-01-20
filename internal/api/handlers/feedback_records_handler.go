@@ -157,9 +157,11 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	if limitStr := query.Get("limit"); limitStr != "" {
 		limit, err := strconv.Atoi(limitStr)
-		if err == nil && limit > 0 {
-			filters.Limit = limit
+		if err != nil || limit <= 0 {
+			RespondBadRequest(w, "Invalid limit parameter")
+			return
 		}
+		filters.Limit = limit
 	}
 
 	if offsetStr := query.Get("offset"); offsetStr != "" {
@@ -349,7 +351,7 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 	// Parse limit parameter
 	if limitStr := query.Get("limit"); limitStr != "" {
 		limit, err := strconv.Atoi(limitStr)
-		if err != nil || limit < 0 {
+		if err != nil || limit <= 0 {
 			RespondBadRequest(w, "Invalid limit parameter")
 			return
 		}
