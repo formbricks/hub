@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/formbricks/hub/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xernobyl/formbricks_worktrial/internal/models"
 )
 
 func TestSearchPagination(t *testing.T) {
@@ -19,7 +19,7 @@ func TestSearchPagination(t *testing.T) {
 
 	client := &http.Client{}
 
-	// Create multiple test experiences
+	// Create multiple test feedback records
 	for i := 0; i < 25; i++ {
 		reqBody := map[string]interface{}{
 			"source_type": "formbricks",
@@ -28,14 +28,14 @@ func TestSearchPagination(t *testing.T) {
 			"value_text":  fmt.Sprintf("Test value %d", i),
 		}
 		body, _ := json.Marshal(reqBody)
-		req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 		_, _ = client.Do(req)
 	}
 
-	t.Run("Default pagination (page 0, pageSize 20)", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search", nil)
+	t.Run("Default limit (10)", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -44,18 +44,17 @@ func TestSearchPagination(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Equal(t, 0, result.Page)
-		assert.Equal(t, 20, result.PageSize)
-		assert.LessOrEqual(t, len(result.Data), 20)
-		assert.GreaterOrEqual(t, result.TotalCount, 25)
+		assert.Equal(t, "test", result.Query)
+		assert.LessOrEqual(t, len(result.Results), 10) // Default limit is 10
+		assert.Equal(t, int64(len(result.Results)), result.Count)
 	})
 
-	t.Run("Custom pageSize within limit", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?pageSize=10", nil)
+	t.Run("Custom limit within max", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&limit=5", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -64,16 +63,16 @@ func TestSearchPagination(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Equal(t, 10, result.PageSize)
-		assert.LessOrEqual(t, len(result.Data), 10)
+		assert.LessOrEqual(t, len(result.Results), 5)
+		assert.Equal(t, int64(len(result.Results)), result.Count)
 	})
 
-	t.Run("PageSize exceeds maximum (40)", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?pageSize=100", nil)
+	t.Run("Limit exceeds maximum (100)", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&limit=200", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -82,34 +81,16 @@ func TestSearchPagination(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		// Should be capped at 40
-		assert.Equal(t, 40, result.PageSize)
+		// Should be capped at 100
+		assert.LessOrEqual(t, len(result.Results), 100)
 	})
 
-	t.Run("Navigate to page 1", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?page=1&pageSize=10", nil)
-		req.Header.Set("Authorization", "Bearer "+testAPIKey)
-
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var result models.SearchExperiencesResponse
-		err = decodeData(resp, &result)
-		require.NoError(t, err)
-
-		assert.Equal(t, 1, result.Page)
-		assert.Equal(t, 10, result.PageSize)
-	})
-
-	t.Run("Invalid pageSize parameter", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?pageSize=invalid", nil)
+	t.Run("Missing query parameter", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -119,8 +100,8 @@ func TestSearchPagination(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 
-	t.Run("Invalid page parameter", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?page=invalid", nil)
+	t.Run("Invalid limit parameter", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&limit=invalid", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -130,8 +111,8 @@ func TestSearchPagination(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 
-	t.Run("Negative page parameter", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?page=-1", nil)
+	t.Run("Negative limit parameter", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&limit=-1", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -148,7 +129,7 @@ func TestSearchFilters(t *testing.T) {
 
 	client := &http.Client{}
 
-	// Create test experiences with different attributes
+	// Create test feedback records with different attributes
 	testData := []map[string]interface{}{
 		{
 			"source_type":     "formbricks",
@@ -178,14 +159,14 @@ func TestSearchFilters(t *testing.T) {
 
 	for _, data := range testData {
 		body, _ := json.Marshal(data)
-		req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 		_, _ = client.Do(req)
 	}
 
 	t.Run("Filter by source_type", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?source_type=typeform", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=product&source_type=typeform", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -194,18 +175,18 @@ func TestSearchFilters(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Greater(t, len(result.Data), 0)
-		for _, exp := range result.Data {
-			assert.Equal(t, "typeform", exp.SourceType)
+		assert.Greater(t, len(result.Results), 0)
+		for _, item := range result.Results {
+			assert.Equal(t, "typeform", item.SourceType)
 		}
 	})
 
 	t.Run("Filter by source_id", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?source_id=survey_1", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=Great&source_id=survey_1", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -214,18 +195,18 @@ func TestSearchFilters(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Greater(t, len(result.Data), 0)
-		for _, exp := range result.Data {
-			assert.Equal(t, "survey_1", *exp.SourceID)
+		assert.Greater(t, len(result.Results), 0)
+		for _, item := range result.Results {
+			assert.Equal(t, "survey_1", *item.SourceID)
 		}
 	})
 
 	t.Run("Filter by field_type", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?field_type=number", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=5&field_type=number", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -234,18 +215,18 @@ func TestSearchFilters(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Greater(t, len(result.Data), 0)
-		for _, exp := range result.Data {
-			assert.Equal(t, "number", exp.FieldType)
+		assert.Greater(t, len(result.Results), 0)
+		for _, item := range result.Results {
+			assert.Equal(t, "number", item.FieldType)
 		}
 	})
 
 	t.Run("Filter by user_identifier", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?user_identifier=user_123", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=Great&user_identifier=user_123", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -254,18 +235,18 @@ func TestSearchFilters(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Greater(t, len(result.Data), 0)
-		for _, exp := range result.Data {
-			assert.Equal(t, "user_123", *exp.UserIdentifier)
+		assert.Greater(t, len(result.Results), 0)
+		for _, item := range result.Results {
+			assert.Equal(t, "user_123", *item.UserIdentifier)
 		}
 	})
 
 	t.Run("Multiple filters combined", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?source_type=formbricks&field_type=text", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=Great&source_type=formbricks&field_type=text", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -274,13 +255,13 @@ func TestSearchFilters(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		for _, exp := range result.Data {
-			assert.Equal(t, "formbricks", exp.SourceType)
-			assert.Equal(t, "text", exp.FieldType)
+		for _, item := range result.Results {
+			assert.Equal(t, "formbricks", item.SourceType)
+			assert.Equal(t, "text", item.FieldType)
 		}
 	})
 }
@@ -291,7 +272,7 @@ func TestSearchFullText(t *testing.T) {
 
 	client := &http.Client{}
 
-	// Create test experiences with searchable text
+	// Create test feedback records with searchable text
 	testData := []map[string]interface{}{
 		{
 			"source_type": "formbricks",
@@ -315,14 +296,14 @@ func TestSearchFullText(t *testing.T) {
 
 	for _, data := range testData {
 		body, _ := json.Marshal(data)
-		req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 		_, _ = client.Do(req)
 	}
 
 	t.Run("Search with query parameter", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?query=amazing", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=amazing", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -331,16 +312,18 @@ func TestSearchFullText(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
 		// Should find at least the records with "amazing" in them
-		assert.GreaterOrEqual(t, len(result.Data), 2)
+		assert.GreaterOrEqual(t, len(result.Results), 2)
+		assert.Equal(t, "amazing", result.Query)
+		assert.Equal(t, int64(len(result.Results)), result.Count)
 	})
 
 	t.Run("Search with no results", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?query=nonexistent123xyz", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=nonexistent123xyz", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -349,12 +332,12 @@ func TestSearchFullText(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Equal(t, 0, len(result.Data))
-		assert.Equal(t, 0, result.TotalCount)
+		assert.Equal(t, 0, len(result.Results))
+		assert.Equal(t, int64(0), result.Count)
 	})
 }
 
@@ -364,7 +347,7 @@ func TestSearchDateRange(t *testing.T) {
 
 	client := &http.Client{}
 
-	// Create test experiences with different dates
+	// Create test feedback records with different dates
 	now := time.Now()
 	yesterday := now.Add(-24 * time.Hour)
 	tomorrow := now.Add(24 * time.Hour)
@@ -387,15 +370,15 @@ func TestSearchDateRange(t *testing.T) {
 			"collected_at": data.collectedAt.Format(time.RFC3339),
 		}
 		body, _ := json.Marshal(reqBody)
-		req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 		_, _ = client.Do(req)
 	}
 
-	t.Run("Filter by start_date", func(t *testing.T) {
-		startDate := now.Add(-1 * time.Hour).Format(time.RFC3339)
-		url := fmt.Sprintf("%s/v1/experiences/search?start_date=%s", server.URL, startDate)
+	t.Run("Filter by since date", func(t *testing.T) {
+		sinceDate := now.Add(-1 * time.Hour).Format(time.RFC3339)
+		url := fmt.Sprintf("%s/v1/feedback-records/search?query=feedback&since=%s", server.URL, sinceDate)
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -405,17 +388,20 @@ func TestSearchDateRange(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
 		// Should find records from today and tomorrow
-		assert.GreaterOrEqual(t, len(result.Data), 2)
+		assert.GreaterOrEqual(t, len(result.Results), 2)
+		for _, item := range result.Results {
+			assert.True(t, item.CollectedAt.After(now.Add(-2*time.Hour)) || item.CollectedAt.Equal(now.Add(-1*time.Hour)))
+		}
 	})
 
-	t.Run("Filter by end_date", func(t *testing.T) {
-		endDate := now.Add(1 * time.Hour).Format(time.RFC3339)
-		url := fmt.Sprintf("%s/v1/experiences/search?end_date=%s", server.URL, endDate)
+	t.Run("Filter by until date", func(t *testing.T) {
+		untilDate := now.Add(1 * time.Hour).Format(time.RFC3339)
+		url := fmt.Sprintf("%s/v1/feedback-records/search?query=feedback&until=%s", server.URL, untilDate)
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -425,20 +411,20 @@ func TestSearchDateRange(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
 		// Should exclude tomorrow's record
-		for _, exp := range result.Data {
-			assert.True(t, exp.CollectedAt.Before(now.Add(2*time.Hour)) || exp.CollectedAt.Equal(now.Add(1*time.Hour)))
+		for _, item := range result.Results {
+			assert.True(t, item.CollectedAt.Before(now.Add(2*time.Hour)) || item.CollectedAt.Equal(now.Add(1*time.Hour)))
 		}
 	})
 
 	t.Run("Filter by date range", func(t *testing.T) {
-		startDate := yesterday.Add(-1 * time.Hour).Format(time.RFC3339)
-		endDate := now.Add(1 * time.Hour).Format(time.RFC3339)
-		url := fmt.Sprintf("%s/v1/experiences/search?start_date=%s&end_date=%s", server.URL, startDate, endDate)
+		sinceDate := yesterday.Add(-1 * time.Hour).Format(time.RFC3339)
+		untilDate := now.Add(1 * time.Hour).Format(time.RFC3339)
+		url := fmt.Sprintf("%s/v1/feedback-records/search?query=feedback&since=%s&until=%s", server.URL, sinceDate, untilDate)
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -448,12 +434,12 @@ func TestSearchDateRange(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
 		// Should find yesterday's and today's records
-		assert.GreaterOrEqual(t, len(result.Data), 2)
+		assert.GreaterOrEqual(t, len(result.Results), 2)
 	})
 }
 
@@ -463,7 +449,7 @@ func TestSearchPaginationMetadata(t *testing.T) {
 
 	client := &http.Client{}
 
-	// Create exactly 45 test experiences
+	// Create exactly 45 test feedback records
 	for i := 0; i < 45; i++ {
 		reqBody := map[string]interface{}{
 			"source_type": "pagination_test",
@@ -472,14 +458,14 @@ func TestSearchPaginationMetadata(t *testing.T) {
 			"value_text":  fmt.Sprintf("Value %d", i),
 		}
 		body, _ := json.Marshal(reqBody)
-		req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 		_, _ = client.Do(req)
 	}
 
-	t.Run("Verify pagination metadata", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?source_type=pagination_test&pageSize=10&page=0", nil)
+	t.Run("Verify limit and count", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=Value&source_type=pagination_test&limit=10", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -488,45 +474,29 @@ func TestSearchPaginationMetadata(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Equal(t, 0, result.Page)
-		assert.Equal(t, 10, result.PageSize)
-		assert.GreaterOrEqual(t, result.TotalCount, 45) // At least 45 from this test run
-		assert.GreaterOrEqual(t, result.TotalPages, 5)  // At least 5 pages
-		assert.LessOrEqual(t, len(result.Data), 10)     // Max 10 results per page
+		assert.Equal(t, "Value", result.Query)
+		assert.LessOrEqual(t, len(result.Results), 10) // Max 10 results per limit
+		assert.Equal(t, int64(len(result.Results)), result.Count)
 	})
 
-	t.Run("Last page behavior", func(t *testing.T) {
-		// First get total count
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?source_type=pagination_test&pageSize=10", nil)
+	t.Run("Verify limit enforcement", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=Value&source_type=pagination_test&limit=5", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		var firstPage models.SearchExperiencesResponse
-		decodeData(resp, &firstPage)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		// Navigate to last page
-		lastPage := firstPage.TotalPages - 1
-		req2, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/experiences/search?source_type=pagination_test&pageSize=10&page=%d", server.URL, lastPage), nil)
-		req2.Header.Set("Authorization", "Bearer "+testAPIKey)
-
-		resp2, err := client.Do(req2)
-		require.NoError(t, err)
-		defer resp2.Body.Close()
-
-		assert.Equal(t, http.StatusOK, resp2.StatusCode)
-
-		var result models.SearchExperiencesResponse
-		err = decodeData(resp2, &result)
+		var result models.SearchFeedbackRecordsResponse
+		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Equal(t, lastPage, result.Page)
-		assert.LessOrEqual(t, len(result.Data), 10) // Last page has <= pageSize results
+		assert.LessOrEqual(t, len(result.Results), 5) // Max 5 results per limit
 	})
 }

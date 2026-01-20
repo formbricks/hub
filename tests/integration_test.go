@@ -10,18 +10,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/formbricks/hub/internal/api/handlers"
+	"github.com/formbricks/hub/internal/api/middleware"
+	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/repository"
+	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/pkg/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xernobyl/formbricks_worktrial/internal/api/handlers"
-	"github.com/xernobyl/formbricks_worktrial/internal/api/middleware"
-	"github.com/xernobyl/formbricks_worktrial/internal/config"
-	"github.com/xernobyl/formbricks_worktrial/internal/models"
-	"github.com/xernobyl/formbricks_worktrial/internal/repository"
-	"github.com/xernobyl/formbricks_worktrial/internal/service"
-	"github.com/xernobyl/formbricks_worktrial/pkg/database"
 )
-
-const testAPIKey = "test-api-key-12345"
 
 // setupTestServer creates a test HTTP server with all routes configured
 func setupTestServer(t *testing.T) (*httptest.Server, func()) {
@@ -36,9 +34,9 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize repository, service, and handler layers
-	experienceRepo := repository.NewExperienceRepository(db)
-	experienceService := service.NewExperienceService(experienceRepo)
-	experienceHandler := handlers.NewExperienceHandler(experienceService)
+	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Initialize API key repository for authentication
@@ -52,12 +50,14 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 
 	// Set up protected endpoints
 	protectedMux := http.NewServeMux()
-	protectedMux.HandleFunc("POST /v1/experiences", experienceHandler.Create)
-	protectedMux.HandleFunc("GET /v1/experiences", experienceHandler.List)
-	protectedMux.HandleFunc("GET /v1/experiences/{id}", experienceHandler.Get)
-	protectedMux.HandleFunc("PATCH /v1/experiences/{id}", experienceHandler.Update)
-	protectedMux.HandleFunc("DELETE /v1/experiences/{id}", experienceHandler.Delete)
-	protectedMux.HandleFunc("GET /v1/experiences/search", experienceHandler.Search)
+	protectedMux.HandleFunc("POST /v1/feedback-records", feedbackRecordsHandler.Create)
+	protectedMux.HandleFunc("GET /v1/feedback-records", feedbackRecordsHandler.List)
+	// Register specific routes before wildcard routes to avoid path matching conflicts
+	protectedMux.HandleFunc("GET /v1/feedback-records/search", feedbackRecordsHandler.Search)
+	protectedMux.HandleFunc("GET /v1/feedback-records/{id}", feedbackRecordsHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
+	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
 
 	var protectedHandler http.Handler = protectedMux
 	protectedHandler = middleware.Auth(apiKeyRepo)(protectedHandler)
@@ -106,7 +106,7 @@ func TestHealthEndpoint(t *testing.T) {
 	assert.Equal(t, "OK", string(body))
 }
 
-func TestCreateExperience(t *testing.T) {
+func TestCreateFeedbackRecord(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
@@ -120,7 +120,7 @@ func TestCreateExperience(t *testing.T) {
 		}
 		body, _ := json.Marshal(reqBody)
 
-		resp, err := http.Post(server.URL+"/v1/experiences", "application/json", bytes.NewBuffer(body))
+		resp, err := http.Post(server.URL+"/v1/feedback-records", "application/json", bytes.NewBuffer(body))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -137,7 +137,7 @@ func TestCreateExperience(t *testing.T) {
 		}
 		body, _ := json.Marshal(reqBody)
 
-		req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 
@@ -148,7 +148,7 @@ func TestCreateExperience(t *testing.T) {
 
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
-		var result models.ExperienceData
+		var result models.FeedbackRecord
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
@@ -167,7 +167,7 @@ func TestCreateExperience(t *testing.T) {
 		}
 		body, _ := json.Marshal(reqBody)
 
-		req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 
@@ -180,13 +180,13 @@ func TestCreateExperience(t *testing.T) {
 	})
 }
 
-func TestListExperiences(t *testing.T) {
+func TestListFeedbackRecords(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	client := &http.Client{}
 
-	// Create a test experience first
+	// Create a test feedback record first
 	reqBody := map[string]interface{}{
 		"source_type":  "formbricks",
 		"field_id":     "nps_score",
@@ -194,14 +194,14 @@ func TestListExperiences(t *testing.T) {
 		"value_number": 9,
 	}
 	body, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+	req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 	_, _ = client.Do(req)
 
-	// Test listing experiences
-	t.Run("List all experiences", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences", nil)
+	// Test listing feedback records
+	t.Run("List all feedback records", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -210,16 +210,16 @@ func TestListExperiences(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result []models.ExperienceData
+		var result models.ListFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.NotEmpty(t, result)
+		assert.NotEmpty(t, result.Data)
 	})
 
 	// Test with filters
 	t.Run("List with source_type filter", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences?source_type=formbricks&limit=10", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records?source_type=formbricks&limit=10", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -228,23 +228,23 @@ func TestListExperiences(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result []models.ExperienceData
+		var result models.ListFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		for _, exp := range result {
+		for _, exp := range result.Data {
 			assert.Equal(t, "formbricks", exp.SourceType)
 		}
 	})
 }
 
-func TestGetExperience(t *testing.T) {
+func TestGetFeedbackRecord(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	client := &http.Client{}
 
-	// Create a test experience
+	// Create a test feedback record
 	reqBody := map[string]interface{}{
 		"source_type":  "formbricks",
 		"field_id":     "rating",
@@ -252,7 +252,7 @@ func TestGetExperience(t *testing.T) {
 		"value_number": 5,
 	}
 	body, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+	req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -260,12 +260,12 @@ func TestGetExperience(t *testing.T) {
 	require.NoError(t, err)
 	defer createResp.Body.Close()
 
-	var created models.ExperienceData
+	var created models.FeedbackRecord
 	decodeData(createResp, &created)
 
-	// Test getting the experience by ID
-	t.Run("Get existing experience", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/experiences/%s", server.URL, created.ID), nil)
+	// Test getting the feedback record by ID
+	t.Run("Get existing feedback record", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -274,7 +274,7 @@ func TestGetExperience(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.ExperienceData
+		var result models.FeedbackRecord
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
@@ -282,8 +282,8 @@ func TestGetExperience(t *testing.T) {
 		assert.Equal(t, "formbricks", result.SourceType)
 	})
 
-	t.Run("Get non-existent experience", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/00000000-0000-0000-0000-000000000000", nil)
+	t.Run("Get non-existent feedback record", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -294,13 +294,13 @@ func TestGetExperience(t *testing.T) {
 	})
 }
 
-func TestUpdateExperience(t *testing.T) {
+func TestUpdateFeedbackRecord(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	client := &http.Client{}
 
-	// Create a test experience
+	// Create a test feedback record
 	reqBody := map[string]interface{}{
 		"source_type": "formbricks",
 		"field_id":    "comment",
@@ -308,7 +308,7 @@ func TestUpdateExperience(t *testing.T) {
 		"value_text":  "Initial comment",
 	}
 	body, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+	req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -316,17 +316,17 @@ func TestUpdateExperience(t *testing.T) {
 	require.NoError(t, err)
 	defer createResp.Body.Close()
 
-	var created models.ExperienceData
+	var created models.FeedbackRecord
 	decodeData(createResp, &created)
 
-	// Test updating the experience
-	t.Run("Update experience", func(t *testing.T) {
+	// Test updating the feedback record
+	t.Run("Update feedback record", func(t *testing.T) {
 		updateBody := map[string]interface{}{
 			"value_text": "Updated comment",
 		}
 		body, _ := json.Marshal(updateBody)
 
-		req, _ := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/experiences/%s", server.URL, created.ID), bytes.NewBuffer(body))
+		req, _ := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 
@@ -336,7 +336,7 @@ func TestUpdateExperience(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.ExperienceData
+		var result models.FeedbackRecord
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
@@ -346,13 +346,13 @@ func TestUpdateExperience(t *testing.T) {
 	})
 }
 
-func TestDeleteExperience(t *testing.T) {
+func TestDeleteFeedbackRecord(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	client := &http.Client{}
 
-	// Create a test experience
+	// Create a test feedback record
 	reqBody := map[string]interface{}{
 		"source_type": "formbricks",
 		"field_id":    "temp",
@@ -360,7 +360,7 @@ func TestDeleteExperience(t *testing.T) {
 		"value_text":  "To be deleted",
 	}
 	body, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/experiences", bytes.NewBuffer(body))
+	req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -368,12 +368,12 @@ func TestDeleteExperience(t *testing.T) {
 	require.NoError(t, err)
 	defer createResp.Body.Close()
 
-	var created models.ExperienceData
+	var created models.FeedbackRecord
 	decodeData(createResp, &created)
 
-	// Test deleting the experience
-	t.Run("Delete experience", func(t *testing.T) {
-		req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/experiences/%s", server.URL, created.ID), nil)
+	// Test deleting the feedback record
+	t.Run("Delete feedback record", func(t *testing.T) {
+		req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -385,7 +385,7 @@ func TestDeleteExperience(t *testing.T) {
 
 	// Verify it's deleted
 	t.Run("Verify deletion", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/experiences/%s", server.URL, created.ID), nil)
+		req, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -396,14 +396,14 @@ func TestDeleteExperience(t *testing.T) {
 	})
 }
 
-func TestSearchExperiences(t *testing.T) {
+func TestSearchFeedbackRecords(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	client := &http.Client{}
 
 	t.Run("Search with query parameters", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?source_type=formbricks&pageSize=5", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&source_type=formbricks&limit=5", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -412,19 +412,18 @@ func TestSearchExperiences(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result models.SearchExperiencesResponse
+		var result models.SearchFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		// Should return pagination metadata
-		assert.Equal(t, 0, result.Page)
-		assert.Equal(t, 5, result.PageSize)
-		assert.GreaterOrEqual(t, result.TotalCount, 0)
-		assert.NotNil(t, result.Data)
+		// Should return search results
+		assert.Equal(t, "test", result.Query)
+		assert.LessOrEqual(t, len(result.Results), 5)
+		assert.Equal(t, int64(len(result.Results)), result.Count)
 	})
 
 	t.Run("Search with invalid date format", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/experiences/search?start_date=invalid", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&since=invalid", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)

@@ -9,23 +9,23 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/formbricks/hub/docs" // Import generated docs
 	httpSwagger "github.com/swaggo/http-swagger"
-	_ "github.com/xernobyl/formbricks_worktrial/docs" // Import generated docs
 
-	"github.com/xernobyl/formbricks_worktrial/internal/api/handlers"
-	"github.com/xernobyl/formbricks_worktrial/internal/api/middleware"
-	"github.com/xernobyl/formbricks_worktrial/internal/config"
-	"github.com/xernobyl/formbricks_worktrial/internal/repository"
-	"github.com/xernobyl/formbricks_worktrial/internal/service"
-	"github.com/xernobyl/formbricks_worktrial/pkg/database"
+	"github.com/formbricks/hub/internal/api/handlers"
+	"github.com/formbricks/hub/internal/api/middleware"
+	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/repository"
+	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/pkg/database"
 )
 
 // @title Formbricks Hub API
 // @version 1.0
-// @description API for managing experience data collection
+// @description API for managing feedback records collection
 //
-// @contact.name Tiago
-// @contact.email xxxxx@xxxxx.com
+// @contact.name 'Tiago Farto'
+// @contact.email tiago@formbricks.com
 
 // @securityDefinitions.apikey BearerAuth
 // @in header
@@ -51,9 +51,9 @@ func main() {
 	defer db.Close()
 
 	// Initialize repository, service, and handler layers
-	experienceRepo := repository.NewExperienceRepository(db)
-	experienceService := service.NewExperienceService(experienceRepo)
-	experienceHandler := handlers.NewExperienceHandler(experienceService)
+	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Initialize API key repository for authentication
@@ -70,13 +70,14 @@ func main() {
 
 	// Set up protected endpoints (authentication required)
 	protectedMux := http.NewServeMux()
-	protectedMux.HandleFunc("POST /v1/experiences", experienceHandler.Create)
-	protectedMux.HandleFunc("GET /v1/experiences", experienceHandler.List)
-	protectedMux.HandleFunc("GET /v1/experiences/{id}", experienceHandler.Get)
-	protectedMux.HandleFunc("PATCH /v1/experiences/{id}", experienceHandler.Update)
-	protectedMux.HandleFunc("DELETE /v1/experiences/{id}", experienceHandler.Delete)
-
-	protectedMux.HandleFunc("GET /v1/experiences/search", experienceHandler.Search)
+	protectedMux.HandleFunc("POST /v1/feedback-records", feedbackRecordsHandler.Create)
+	protectedMux.HandleFunc("GET /v1/feedback-records", feedbackRecordsHandler.List)
+	// Register specific routes before wildcard routes to avoid path matching conflicts
+	protectedMux.HandleFunc("GET /v1/feedback-records/search", feedbackRecordsHandler.Search)
+	protectedMux.HandleFunc("GET /v1/feedback-records/{id}", feedbackRecordsHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
+	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
 
 	// Apply middleware to protected endpoints
 	var protectedHandler http.Handler = protectedMux

@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
-	"github.com/xernobyl/formbricks_worktrial/internal/config"
-	"github.com/xernobyl/formbricks_worktrial/pkg/database"
+	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/pkg/database"
+	"github.com/google/uuid"
 )
 
 func main() {
@@ -45,9 +47,9 @@ func main() {
 		RETURNING id, name, created_at
 	`
 
-	var id string
-	var name string
-	var createdAt interface{}
+	var id uuid.UUID
+	var name *string
+	var createdAt time.Time
 
 	err = db.QueryRow(ctx, query, keyHash, "Test API Key", true).Scan(&id, &name, &createdAt)
 	if err != nil {
@@ -58,18 +60,22 @@ func main() {
 	fmt.Println("✓ API key ready!")
 	fmt.Println()
 	fmt.Println("ID:", id)
-	fmt.Println("Name:", name)
+	if name != nil {
+		fmt.Println("Name:", *name)
+	} else {
+		fmt.Println("Name: (none)")
+	}
 	fmt.Println("Created:", createdAt)
 	fmt.Println()
 	fmt.Println("API Key (use this in your requests):", apiKey)
 	fmt.Println()
 	fmt.Println("Example curl commands:")
 	fmt.Println()
-	fmt.Printf("# List all experiences\n")
-	fmt.Printf("curl -H \"Authorization: Bearer %s\" http://localhost:8080/v1/experiences\n", apiKey)
+	fmt.Printf("# List all feedback records\n")
+	fmt.Printf("curl -H \"Authorization: Bearer %s\" http://localhost:8080/v1/feedback-records\n", apiKey)
 	fmt.Println()
-	fmt.Printf("# Create an experience\n")
+	fmt.Printf("# Create a feedback record\n")
 	fmt.Printf("curl -X POST -H \"Authorization: Bearer %s\" -H \"Content-Type: application/json\" \\\n", apiKey)
 	fmt.Printf("  -d '{\"source_type\":\"formbricks\",\"field_id\":\"feedback\",\"field_type\":\"text\",\"value_text\":\"Great product!\"}' \\\n")
-	fmt.Printf("  http://localhost:8080/v1/experiences\n")
+	fmt.Printf("  http://localhost:8080/v1/feedback-records\n")
 }

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/pkg/database"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/xernobyl/formbricks_worktrial/internal/config"
-	"github.com/xernobyl/formbricks_worktrial/pkg/database"
 )
 
 func main() {

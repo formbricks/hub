@@ -26,7 +26,7 @@ The project uses AI development assistants (like Cursor's AI) for:
 
 **Key Capabilities**:
 - **Connector Discovery**: AI analyzes incoming data to understand structure and semantic meaning
-- **Automatic Mapping**: AI maps source fields to unified experience data model based on semantic understanding
+- **Automatic Mapping**: AI maps source fields to unified feedback records data model based on semantic understanding
 - **Mapping Maintenance**: AI detects schema changes and updates mappings automatically
 - **Taxonomy Application**: Auto-apply consistent taxonomy across sources
 - **Context Enrichment**: AI adds contextual metadata for better analytics

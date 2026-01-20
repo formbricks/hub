@@ -111,22 +111,17 @@ The project follows a comprehensive [feature parity and production readiness pla
 
 2. Set up the development environment:
 ```bash
-make setup
+make dev-setup
 ```
 
 This will:
 - Start PostgreSQL container
-- Create a `.env` file from `.env.example`
+- Install Go dependencies
+- Install development tools (swag for OpenAPI docs)
 - Run database migrations
+- Create a test API key
 
-3. Generate an API key:
-```bash
-make create-key
-# or
-go run ./cmd/createkey/main.go
-```
-
-4. Start the API server:
+3. Start the API server:
 ```bash
 make run
 ```
@@ -168,13 +163,11 @@ go run ./cmd/api/main.go
 - `GET /health` - Health check endpoint
 - `GET /swagger/` - Swagger API documentation
 
-### Feedback Records (Experiences)
-
-**Note**: The API currently uses `/v1/experiences` endpoints. According to the implementation plan, these will be migrated to `/v1/feedback-records`.
+### Feedback Records
 
 #### Create Feedback Record
 ```bash
-POST /v1/experiences
+POST /v1/feedback-records
 Authorization: Bearer <api-key>
 Content-Type: application/json
 
@@ -194,13 +187,13 @@ Content-Type: application/json
 
 #### Get Feedback Record by ID
 ```bash
-GET /v1/experiences/{id}
+GET /v1/feedback-records/{id}
 Authorization: Bearer <api-key>
 ```
 
 #### List Feedback Records
 ```bash
-GET /v1/experiences?source_type=survey&limit=50&offset=0
+GET /v1/feedback-records?source_type=survey&limit=50&offset=0
 Authorization: Bearer <api-key>
 ```
 
@@ -214,13 +207,13 @@ Query parameters:
 
 #### Search Feedback Records
 ```bash
-GET /v1/experiences/search?query=feedback&source_type=survey&pageSize=20&page=0
+GET /v1/feedback-records/search?query=feedback&source_type=survey&limit=20
 Authorization: Bearer <api-key>
 ```
 
 #### Update Feedback Record
 ```bash
-PATCH /v1/experiences/{id}
+PATCH /v1/feedback-records/{id}
 Authorization: Bearer <api-key>
 Content-Type: application/json
 
@@ -232,7 +225,7 @@ Content-Type: application/json
 
 #### Delete Feedback Record
 ```bash
-DELETE /v1/experiences/{id}
+DELETE /v1/feedback-records/{id}
 Authorization: Bearer <api-key>
 ```
 
@@ -242,9 +235,10 @@ Authorization: Bearer <api-key>
 
 ```bash
 make help         # Show all available commands
+make dev-setup    # Set up development environment (docker, deps, tools, migrations, API key)
 make build        # Build all binaries
 make run          # Run the API server
-make test         # Run tests
+make tests        # Run all tests
 make migrate      # Run database migrations
 make create-key   # Generate a new API key
 make docker-up    # Start Docker containers
@@ -255,7 +249,7 @@ make clean        # Clean build artifacts
 ### Running Tests
 
 ```bash
-make test
+make tests
 ```
 
 ### Database Migrations
@@ -296,7 +290,7 @@ See [.env.example](.env.example) for all available configuration options:
 
 ### Create a text response
 ```bash
-curl -X POST http://localhost:8080/v1/experiences \
+curl -X POST http://localhost:8080/v1/feedback-records \
   -H "Authorization: Bearer <your-api-key>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -307,15 +301,15 @@ curl -X POST http://localhost:8080/v1/experiences \
   }'
 ```
 
-### Get all experiences
+### Get all feedback records
 ```bash
-curl http://localhost:8080/v1/experiences \
+curl http://localhost:8080/v1/feedback-records \
   -H "Authorization: Bearer <your-api-key>"
 ```
 
-### Update an experience
+### Update a feedback record
 ```bash
-curl -X PATCH http://localhost:8080/v1/experiences/{id} \
+curl -X PATCH http://localhost:8080/v1/feedback-records/{id} \
   -H "Authorization: Bearer <your-api-key>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -323,9 +317,9 @@ curl -X PATCH http://localhost:8080/v1/experiences/{id} \
   }'
 ```
 
-### Delete an experience
+### Delete a feedback record
 ```bash
-curl -X DELETE http://localhost:8080/v1/experiences/{id} \
+curl -X DELETE http://localhost:8080/v1/feedback-records/{id} \
   -H "Authorization: Bearer <your-api-key>"
 ```
 

@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/formbricks/hub/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/xernobyl/formbricks_worktrial/internal/models"
 )
 
 // DBPool is an interface for database operations used by the repository

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/xernobyl/formbricks_worktrial/internal/repository"
+	"github.com/formbricks/hub/internal/repository"
 )
 
 type contextKey string

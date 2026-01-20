@@ -1,4 +1,4 @@
-module github.com/xernobyl/formbricks_worktrial
+module github.com/formbricks/hub
 
 go 1.25.6
 

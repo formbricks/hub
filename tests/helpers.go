@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/pkg/database"
 	"github.com/stretchr/testify/require"
-	"github.com/xernobyl/formbricks_worktrial/internal/config"
-	"github.com/xernobyl/formbricks_worktrial/pkg/database"
 )
+
+const testAPIKey = "test-api-key-12345"
 
 // EnsureTestAPIKey ensures the test API key exists in the database
 func EnsureTestAPIKey(t *testing.T) {
@@ -48,8 +50,8 @@ func CleanupTestData(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	// Delete all experience data created during tests
+	// Delete all feedback records created during tests
 	// Be careful with this in production!
-	_, err = db.Exec(ctx, "DELETE FROM experience_data WHERE source_type = 'formbricks'")
+	_, err = db.Exec(ctx, "DELETE FROM feedback_records WHERE source_type = 'formbricks'")
 	require.NoError(t, err)
 }

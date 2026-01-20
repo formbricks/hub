@@ -5,38 +5,51 @@ import (
 	"net/http"
 )
 
-// ErrorResponse represents an API error response
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message,omitempty"`
+// ErrorDetail represents a single error detail in RFC 7807 Problem Details
+type ErrorDetail struct {
+	Location string      `json:"location,omitempty"`
+	Message  string      `json:"message,omitempty"`
+	Value    interface{} `json:"value,omitempty"`
 }
 
-// SuccessResponse represents a generic success response
-type SuccessResponse struct {
-	Data interface{} `json:"data,omitempty"`
+// ProblemDetails represents an RFC 7807 Problem Details error response
+type ProblemDetails struct {
+	Type     string        `json:"type,omitempty"`
+	Title    string        `json:"title"`
+	Status   int           `json:"status"`
+	Detail   string        `json:"detail,omitempty"`
+	Instance string        `json:"instance,omitempty"`
+	Errors   []ErrorDetail `json:"errors,omitempty"`
 }
 
-// RespondJSON writes a JSON response
-func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+// RespondError writes an RFC 7807 Problem Details error response
+func RespondError(w http.ResponseWriter, statusCode int, title string, detail string) {
+	problem := ProblemDetails{
+		Type:   "about:blank",
+		Title:  title,
+		Status: statusCode,
+		Detail: detail,
+	}
+
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(problem)
+}
+
+// RespondBadRequest writes a 400 Bad Request error response
+func RespondBadRequest(w http.ResponseWriter, detail string) {
+	RespondError(w, http.StatusBadRequest, "Bad Request", detail)
+}
+
+// DataResponse wraps a single data object in a consistent response format
+type DataResponse struct {
+	Data interface{} `json:"data"`
+}
+
+// RespondSuccess wraps a single object in a {"data": ...} structure
+// Use this for single-object responses (Create, Get, Update) to maintain consistency
+func RespondSuccess(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-
-	if data != nil {
-		json.NewEncoder(w).Encode(data)
-	}
-}
-
-// RespondError writes an error JSON response
-func RespondError(w http.ResponseWriter, statusCode int, errorType string, message string) {
-	RespondJSON(w, statusCode, ErrorResponse{
-		Error:   errorType,
-		Message: message,
-	})
-}
-
-// RespondSuccess writes a success JSON response
-func RespondSuccess(w http.ResponseWriter, statusCode int, data interface{}) {
-	RespondJSON(w, statusCode, SuccessResponse{
-		Data: data,
-	})
+	json.NewEncoder(w).Encode(DataResponse{Data: data})
 }
