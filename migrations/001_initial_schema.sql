@@ -13,10 +13,10 @@ CREATE TABLE feedback_records (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
 
   source_type VARCHAR NOT NULL,
-  source_id VARCHAR,
+  source_id VARCHAR(255),
   source_name VARCHAR,
 
-  field_id VARCHAR NOT NULL,
+  field_id VARCHAR(255) NOT NULL,
   field_label VARCHAR,
   field_type VARCHAR NOT NULL,
 
@@ -28,7 +28,7 @@ CREATE TABLE feedback_records (
 
   metadata JSONB,
   language VARCHAR(10),
-  user_identifier VARCHAR,
+  user_identifier VARCHAR(255),
 
   -- Multi-tenancy fields
   tenant_id VARCHAR(255),
