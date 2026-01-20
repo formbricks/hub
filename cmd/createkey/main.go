@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -32,8 +33,36 @@ func main() {
 	}
 	defer db.Close()
 
-	// Generate API key
-	apiKey := "test-api-key-12345"
+	// Generate a random API key
+	// Character set: uppercase letters, lowercase letters, and numbers
+	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	const keyLength = 32
+
+	// Calculate charset length and rejection sampling threshold
+	charsetLen := len(charset)
+	// Use rejection sampling to avoid modulo bias
+	// Calculate the largest multiple of charsetLen that fits in a byte (0-255)
+	// This ensures uniform distribution across all characters
+	maxValidByte := byte((255 / charsetLen) * charsetLen)
+
+	// Build the API key by selecting random characters from the charset
+	apiKeyBytes := make([]byte, keyLength)
+	randomByte := make([]byte, 1)
+	for i := range apiKeyBytes {
+		// Use rejection sampling: keep generating until we get a value < maxValidByte
+		for {
+			if _, err := rand.Read(randomByte); err != nil {
+				slog.Error("Failed to generate random API key", "error", err)
+				os.Exit(1)
+			}
+			if randomByte[0] < maxValidByte {
+				apiKeyBytes[i] = charset[int(randomByte[0])%charsetLen]
+				break
+			}
+		}
+	}
+
+	apiKey := string(apiKeyBytes)
 
 	// Hash the API key
 	hash := sha256.Sum256([]byte(apiKey))
@@ -51,7 +80,7 @@ func main() {
 	var name *string
 	var createdAt time.Time
 
-	err = db.QueryRow(ctx, query, keyHash, "Test API Key", true).Scan(&id, &name, &createdAt)
+	err = db.QueryRow(ctx, query, keyHash, "Generated API Key", true).Scan(&id, &name, &createdAt)
 	if err != nil {
 		slog.Error("Failed to create/update API key", "error", err)
 		os.Exit(1)
