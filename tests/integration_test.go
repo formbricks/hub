@@ -33,6 +33,9 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	require.NoError(t, err, "Failed to connect to database")
 
+	// Ensure test API key exists in database
+	EnsureTestAPIKey(t)
+
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)

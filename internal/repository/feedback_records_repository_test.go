@@ -40,8 +40,10 @@ func TestBuildSearchQuery(t *testing.T) {
 
 	t.Run("builds basic query with only query parameter", func(t *testing.T) {
 		queryStr := "test"
+		limit := 10
 		req := &models.SearchFeedbackRecordsRequest{
 			Query: &queryStr,
+			Limit: limit,
 		}
 
 		query, args, err := buildSearchQuery(req)
@@ -60,7 +62,7 @@ func TestBuildSearchQuery(t *testing.T) {
 
 		// Check args
 		assert.Equal(t, "%test%", args[0])
-		assert.Equal(t, 10, args[1]) // Default limit
+		assert.Equal(t, limit, args[1])
 	})
 
 	t.Run("includes source_type filter", func(t *testing.T) {
@@ -185,6 +187,7 @@ func TestBuildSearchQuery(t *testing.T) {
 		userIdentifier := "user_123"
 		since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		until := time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)
+		limit := 10
 		req := &models.SearchFeedbackRecordsRequest{
 			Query:          &queryStr,
 			SourceType:     &sourceType,
@@ -193,6 +196,7 @@ func TestBuildSearchQuery(t *testing.T) {
 			UserIdentifier: &userIdentifier,
 			Since:          &since,
 			Until:          &until,
+			Limit:          limit,
 		}
 
 		query, args, err := buildSearchQuery(req)
@@ -218,35 +222,36 @@ func TestBuildSearchQuery(t *testing.T) {
 		assert.Equal(t, "user_123", args[4])
 		assert.Equal(t, since, args[5])
 		assert.Equal(t, until, args[6])
-		assert.Equal(t, 10, args[7]) // Default limit
+		assert.Equal(t, limit, args[7])
 	})
 
-	t.Run("uses default limit when limit is 0", func(t *testing.T) {
+	t.Run("uses provided limit value", func(t *testing.T) {
 		queryStr := "test"
+		limit := 25
 		req := &models.SearchFeedbackRecordsRequest{
 			Query: &queryStr,
-			Limit: 0,
+			Limit: limit,
 		}
 
 		query, args, err := buildSearchQuery(req)
 
 		require.NoError(t, err)
 		assert.Contains(t, query, "LIMIT $2")
-		assert.Equal(t, 10, args[1]) // Default limit
+		assert.Equal(t, limit, args[1])
 	})
 
-	t.Run("uses default limit when limit is negative", func(t *testing.T) {
+	t.Run("uses limit exactly as provided (no defaults)", func(t *testing.T) {
 		queryStr := "test"
 		req := &models.SearchFeedbackRecordsRequest{
 			Query: &queryStr,
-			Limit: -5,
+			Limit: 0, // Repository uses whatever is provided - defaults handled by service
 		}
 
 		query, args, err := buildSearchQuery(req)
 
 		require.NoError(t, err)
 		assert.Contains(t, query, "LIMIT $2")
-		assert.Equal(t, 10, args[1]) // Default limit
+		assert.Equal(t, 0, args[1]) // Repository uses value as-is
 	})
 
 	t.Run("uses custom limit when provided", func(t *testing.T) {
@@ -263,18 +268,18 @@ func TestBuildSearchQuery(t *testing.T) {
 		assert.Equal(t, 25, args[1])
 	})
 
-	t.Run("caps limit at maximum of 100", func(t *testing.T) {
+	t.Run("uses limit exactly as provided (no capping)", func(t *testing.T) {
 		queryStr := "test"
 		req := &models.SearchFeedbackRecordsRequest{
 			Query: &queryStr,
-			Limit: 200,
+			Limit: 200, // Repository uses whatever is provided - capping handled by service
 		}
 
 		query, args, err := buildSearchQuery(req)
 
 		require.NoError(t, err)
 		assert.Contains(t, query, "LIMIT $2")
-		assert.Equal(t, 100, args[1]) // Capped at 100
+		assert.Equal(t, 200, args[1]) // Repository uses value as-is
 	})
 
 	t.Run("handles query with special characters", func(t *testing.T) {
@@ -283,10 +288,13 @@ func TestBuildSearchQuery(t *testing.T) {
 			Query: &queryStr,
 		}
 
-		_, args, err := buildSearchQuery(req)
+		query, args, err := buildSearchQuery(req)
 
 		require.NoError(t, err)
-		assert.Equal(t, "%test%_query%", args[0])
+		// Special characters should be escaped to prevent ILIKE wildcard injection
+		assert.Equal(t, "%test\\%\\_query%", args[0])
+		// Query should include ESCAPE clause for proper ILIKE escaping
+		assert.Contains(t, query, "ESCAPE '\\'")
 	})
 
 	t.Run("query structure is correct", func(t *testing.T) {
@@ -356,5 +364,50 @@ func TestBuildSearchQuery(t *testing.T) {
 		assert.Equal(t, "%test%", args[0])
 		// The query should use ILIKE (case-insensitive)
 		assert.Contains(t, query, "ILIKE")
+		// The query should include ESCAPE clause for proper ILIKE escaping
+		assert.Contains(t, query, "ESCAPE '\\'")
+	})
+}
+
+func TestEscapeILIKE(t *testing.T) {
+	t.Run("escapes percent sign", func(t *testing.T) {
+		result := escapeILIKE("test%query")
+		assert.Equal(t, "test\\%query", result)
+	})
+
+	t.Run("escapes underscore", func(t *testing.T) {
+		result := escapeILIKE("test_query")
+		assert.Equal(t, "test\\_query", result)
+	})
+
+	t.Run("escapes backslash first", func(t *testing.T) {
+		result := escapeILIKE("test\\query")
+		assert.Equal(t, "test\\\\query", result)
+	})
+
+	t.Run("escapes multiple special characters", func(t *testing.T) {
+		result := escapeILIKE("test%_query\\value")
+		assert.Equal(t, "test\\%\\_query\\\\value", result)
+	})
+
+	t.Run("handles empty string", func(t *testing.T) {
+		result := escapeILIKE("")
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("handles string with no special characters", func(t *testing.T) {
+		result := escapeILIKE("normal text")
+		assert.Equal(t, "normal text", result)
+	})
+
+	t.Run("handles only special characters", func(t *testing.T) {
+		result := escapeILIKE("%_\\")
+		assert.Equal(t, "\\%\\_\\\\", result)
+	})
+
+	t.Run("handles backslash before wildcards", func(t *testing.T) {
+		// Backslash must be escaped first, then wildcards
+		result := escapeILIKE("\\%\\_")
+		assert.Equal(t, "\\\\\\%\\\\\\_", result)
 	})
 }

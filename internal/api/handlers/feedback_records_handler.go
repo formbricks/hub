@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/formbricks/hub/internal/api/response"
+	"github.com/formbricks/hub/internal/api/validation"
 	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
@@ -54,10 +53,16 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Validate request
+	if err := validation.ValidateStruct(&req); err != nil {
+		validation.RespondValidationError(w, err)
+		return
+	}
+
 	record, err := h.service.CreateFeedbackRecord(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrValidation) {
-			response.RespondBadRequest(w, err.Error())
+		if errors.Is(err, apperrors.ErrNotFound) {
+			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
 		response.RespondInternalServerError(w, "An unexpected error occurred")
@@ -126,73 +131,12 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Security BearerAuth
 // @Router /v1/feedback-records [get]
 func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-
 	filters := &models.ListFeedbackRecordsFilters{}
 
-	if tenantID := query.Get("tenant_id"); tenantID != "" {
-		filters.TenantID = &tenantID
-	}
-
-	if responseID := query.Get("response_id"); responseID != "" {
-		filters.ResponseID = &responseID
-	}
-
-	if sourceType := query.Get("source_type"); sourceType != "" {
-		filters.SourceType = &sourceType
-	}
-
-	if sourceID := query.Get("source_id"); sourceID != "" {
-		filters.SourceID = &sourceID
-	}
-
-	if fieldType := query.Get("field_type"); fieldType != "" {
-		filters.FieldType = &fieldType
-	}
-
-	if fieldID := query.Get("field_id"); fieldID != "" {
-		filters.FieldID = &fieldID
-	}
-
-	if userIdentifier := query.Get("user_identifier"); userIdentifier != "" {
-		filters.UserIdentifier = &userIdentifier
-	}
-
-	// Parse ISO 8601 date parameters
-	if sinceStr := query.Get("since"); sinceStr != "" {
-		since, err := time.Parse(time.RFC3339, sinceStr)
-		if err != nil {
-			response.RespondBadRequest(w, "Invalid since format, use ISO 8601")
-			return
-		}
-		filters.Since = &since
-	}
-
-	if untilStr := query.Get("until"); untilStr != "" {
-		until, err := time.Parse(time.RFC3339, untilStr)
-		if err != nil {
-			response.RespondBadRequest(w, "Invalid until format, use ISO 8601")
-			return
-		}
-		filters.Until = &until
-	}
-
-	if limitStr := query.Get("limit"); limitStr != "" {
-		limit, err := strconv.Atoi(limitStr)
-		if err != nil || limit <= 0 {
-			response.RespondBadRequest(w, "Invalid limit parameter")
-			return
-		}
-		filters.Limit = limit
-	}
-
-	if offsetStr := query.Get("offset"); offsetStr != "" {
-		offset, err := strconv.Atoi(offsetStr)
-		if err != nil || offset < 0 {
-			response.RespondBadRequest(w, "Invalid offset parameter")
-			return
-		}
-		filters.Offset = offset
+	// Decode and validate query parameters
+	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
+		validation.RespondValidationError(w, err)
+		return
 	}
 
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
@@ -237,14 +181,16 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Validate request (all fields are optional for update, but validate if provided)
+	if err := validation.ValidateStruct(&req); err != nil {
+		validation.RespondValidationError(w, err)
+		return
+	}
+
 	record, err := h.service.UpdateFeedbackRecord(r.Context(), id, &req)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
-			return
-		}
-		if errors.Is(err, apperrors.ErrValidation) {
-			response.RespondBadRequest(w, err.Error())
 			return
 		}
 		response.RespondInternalServerError(w, "An unexpected error occurred")
@@ -348,65 +294,12 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 // @Security BearerAuth
 // @Router /v1/feedback-records/search [get]
 func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-
 	req := &models.SearchFeedbackRecordsRequest{}
 
-	// Parse required query parameter
-	if q := query.Get("query"); q != "" {
-		req.Query = &q
-	} else {
-		response.RespondBadRequest(w, "query parameter is required")
+	// Decode and validate query parameters
+	if err := validation.ValidateAndDecodeQueryParams(r, req); err != nil {
+		validation.RespondValidationError(w, err)
 		return
-	}
-
-	// Parse source_type filter
-	if sourceType := query.Get("source_type"); sourceType != "" {
-		req.SourceType = &sourceType
-	}
-
-	// Parse source_id filter
-	if sourceID := query.Get("source_id"); sourceID != "" {
-		req.SourceID = &sourceID
-	}
-
-	// Parse field_type filter
-	if fieldType := query.Get("field_type"); fieldType != "" {
-		req.FieldType = &fieldType
-	}
-
-	// Parse user_identifier filter
-	if userIdentifier := query.Get("user_identifier"); userIdentifier != "" {
-		req.UserIdentifier = &userIdentifier
-	}
-
-	// Parse ISO 8601 date parameters
-	if sinceStr := query.Get("since"); sinceStr != "" {
-		since, err := time.Parse(time.RFC3339, sinceStr)
-		if err != nil {
-			response.RespondBadRequest(w, "Invalid since format, use ISO 8601")
-			return
-		}
-		req.Since = &since
-	}
-
-	if untilStr := query.Get("until"); untilStr != "" {
-		until, err := time.Parse(time.RFC3339, untilStr)
-		if err != nil {
-			response.RespondBadRequest(w, "Invalid until format, use ISO 8601")
-			return
-		}
-		req.Until = &until
-	}
-
-	// Parse limit parameter
-	if limitStr := query.Get("limit"); limitStr != "" {
-		limit, err := strconv.Atoi(limitStr)
-		if err != nil || limit <= 0 {
-			response.RespondBadRequest(w, "Invalid limit parameter")
-			return
-		}
-		req.Limit = limit
 	}
 
 	// Call service to search

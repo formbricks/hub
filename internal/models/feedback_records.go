@@ -47,12 +47,12 @@ type FeedbackRecord struct {
 // CreateFeedbackRecordRequest represents the request to create a feedback record
 type CreateFeedbackRecordRequest struct {
 	CollectedAt    *time.Time      `json:"collected_at,omitempty"`
-	SourceType     string          `json:"source_type"`
+	SourceType     string          `json:"source_type" validate:"required"`
 	SourceID       *string         `json:"source_id,omitempty"`
 	SourceName     *string         `json:"source_name,omitempty"`
-	FieldID        string          `json:"field_id"`
+	FieldID        string          `json:"field_id" validate:"required"`
 	FieldLabel     *string         `json:"field_label,omitempty"`
-	FieldType      string          `json:"field_type"`
+	FieldType      string          `json:"field_type" validate:"required,field_type"`
 	ValueText      *string         `json:"value_text,omitempty"`
 	ValueNumber    *float64        `json:"value_number,omitempty"`
 	ValueBoolean   *bool           `json:"value_boolean,omitempty"`
@@ -80,17 +80,17 @@ type UpdateFeedbackRecordRequest struct {
 
 // ListFeedbackRecordsFilters represents filters for listing feedback records
 type ListFeedbackRecordsFilters struct {
-	TenantID       *string
-	ResponseID     *string
-	SourceType     *string
-	SourceID       *string
-	FieldID        *string
-	FieldType      *string
-	UserIdentifier *string
-	Since          *time.Time
-	Until          *time.Time
-	Limit          int
-	Offset         int
+	TenantID       *string    `form:"tenant_id"`
+	ResponseID     *string    `form:"response_id"`
+	SourceType     *string    `form:"source_type"`
+	SourceID       *string    `form:"source_id"`
+	FieldID        *string    `form:"field_id"`
+	FieldType      *string    `form:"field_type"`
+	UserIdentifier *string    `form:"user_identifier"`
+	Since          *time.Time `form:"since" validate:"omitempty"`
+	Until          *time.Time `form:"until" validate:"omitempty"`
+	Limit          int        `form:"limit" validate:"omitempty,min=1,max=1000"`
+	Offset         int        `form:"offset" validate:"omitempty,min=0"`
 }
 
 // ListFeedbackRecordsResponse represents the response for listing feedback records
@@ -103,14 +103,14 @@ type ListFeedbackRecordsResponse struct {
 
 // SearchFeedbackRecordsRequest represents search parameters for feedback records
 type SearchFeedbackRecordsRequest struct {
-	Query          *string    `json:"query,omitempty"`           // Full-text search query (required)
-	SourceType     *string    `json:"source_type,omitempty"`     // Filter by source type
-	SourceID       *string    `json:"source_id,omitempty"`       // Filter by source ID
-	FieldType      *string    `json:"field_type,omitempty"`      // Filter by field type
-	UserIdentifier *string    `json:"user_identifier,omitempty"` // Filter by user identifier
-	Since          *time.Time `json:"since,omitempty"`            // Filter by collected_at >= since (ISO 8601)
-	Until          *time.Time `json:"until,omitempty"`            // Filter by collected_at <= until (ISO 8601)
-	Limit          int        `json:"limit,omitempty"`            // Maximum number of results (default 10, max 100)
+	Query          *string    `form:"query" validate:"required"`        // Full-text search query (required)
+	SourceType     *string    `form:"source_type"`                      // Filter by source type
+	SourceID       *string    `form:"source_id"`                        // Filter by source ID
+	FieldType      *string    `form:"field_type"`                       // Filter by field type
+	UserIdentifier *string    `form:"user_identifier"`                  // Filter by user identifier
+	Since          *time.Time `form:"since" validate:"omitempty"`       // Filter by collected_at >= since (ISO 8601)
+	Until          *time.Time `form:"until" validate:"omitempty"`       // Filter by collected_at <= until (ISO 8601)
+	Limit          int        `form:"limit" validate:"omitempty,min=1"` // Maximum number of results (default 10, max 100, capped in service)
 }
 
 // SearchResultItem represents a single search result with similarity score

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 )
@@ -33,10 +32,6 @@ func NewFeedbackRecordsService(repo FeedbackRecordsRepository) *FeedbackRecordsS
 
 // CreateFeedbackRecord creates a new feedback record
 func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
-	if err := s.validateCreateRequest(req); err != nil {
-		return nil, err
-	}
-
 	return s.repo.Create(ctx, req)
 }
 
@@ -47,11 +42,9 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 
 // ListFeedbackRecords retrieves a list of feedback records with optional filters
 func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
+	// Set default limit if not provided (validation ensures it's within bounds if provided)
 	if filters.Limit <= 0 {
 		filters.Limit = 100 // Default limit
-	}
-	if filters.Limit > 1000 {
-		filters.Limit = 1000 // Max limit
 	}
 
 	records, err := s.repo.List(ctx, filters)
@@ -74,10 +67,6 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filter
 
 // UpdateFeedbackRecord updates an existing feedback record
 func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
-	if err := s.validateUpdateRequest(req); err != nil {
-		return nil, err
-	}
-
 	return s.repo.Update(ctx, id, req)
 }
 
@@ -88,17 +77,13 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 
 // SearchFeedbackRecords performs semantic search
 func (s *FeedbackRecordsService) SearchFeedbackRecords(ctx context.Context, req *models.SearchFeedbackRecordsRequest) (*models.SearchFeedbackRecordsResponse, error) {
-	// Validate required query parameter
-	if req.Query == nil || *req.Query == "" {
-		return nil, apperrors.NewValidationError("query", "query parameter is required")
-	}
-
-	// Set default limit and enforce max
+	// Set default limit if not provided
 	if req.Limit <= 0 {
 		req.Limit = 10 // Default limit
 	}
+	// Cap limit at maximum of 100
 	if req.Limit > 100 {
-		req.Limit = 100 // Max limit
+		req.Limit = 100
 	}
 
 	// Call repository search
@@ -135,34 +120,4 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 	}
 
 	return s.repo.BulkDelete(ctx, userIdentifier, tenantID)
-}
-
-// validateCreateRequest validates the create request
-func (s *FeedbackRecordsService) validateCreateRequest(req *models.CreateFeedbackRecordRequest) error {
-	if req.SourceType == "" {
-		return apperrors.NewValidationError("source_type", "source_type is required")
-	}
-
-	if req.FieldID == "" {
-		return apperrors.NewValidationError("field_id", "field_id is required")
-	}
-
-	if req.FieldType == "" {
-		return apperrors.NewValidationError("field_type", "field_type is required")
-	}
-
-	// Validate field_type enum
-	_, ok := models.ValidFieldTypes[req.FieldType]
-	if !ok {
-		return apperrors.NewValidationError("field_type", fmt.Sprintf("invalid field_type: %s. Must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date", req.FieldType))
-	}
-
-	return nil
-}
-
-// validateUpdateRequest validates the update request
-// Note: Only value fields, metadata, language, and user_identifier can be updated
-func (s *FeedbackRecordsService) validateUpdateRequest(_ *models.UpdateFeedbackRecordRequest) error {
-	// No validation needed for update - all fields are optional and valid
-	return nil
 }

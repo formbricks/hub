@@ -382,6 +382,17 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	return result.RowsAffected(), nil
 }
 
+// escapeILIKE escapes special characters in a string for safe use in ILIKE patterns
+// Escapes backslashes, percent signs, and underscores so they are treated as literal characters
+func escapeILIKE(s string) string {
+	// Escape backslashes first (must be done before escaping other characters)
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	// Escape wildcard characters
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // buildSearchQuery builds a search query with WHERE clause, ORDER BY, and LIMIT
 // Returns the full query string and arguments
 func buildSearchQuery(req *models.SearchFeedbackRecordsRequest) (string, []interface{}, error) {
@@ -395,19 +406,27 @@ func buildSearchQuery(req *models.SearchFeedbackRecordsRequest) (string, []inter
 		FROM feedback_records
 	`
 
+	// Note: Query validation is handled by service layer and handler validation
+	// Repository assumes valid input and focuses on data access concerns
+	// Minimal defensive check to prevent panics (not business validation)
+	if req.Query == nil || *req.Query == "" {
+		return "", nil, fmt.Errorf("query parameter is required")
+	}
+
 	var conditions []string
 	var args []interface{}
 	argCount := 1
 
 	// Search across multiple fields using the same search pattern
-	// All four ILIKE conditions use $1 with the same value
-	// Note: Query validation should be done in the service layer before calling this method
-	searchPattern := "%" + *req.Query + "%"
+	// Escape user input to prevent ILIKE wildcard injection
+	// All four ILIKE conditions use $1 with the same value and ESCAPE clause
+	escapedQuery := escapeILIKE(*req.Query)
+	searchPattern := "%" + escapedQuery + "%"
 	conditions = append(conditions, `(
-		value_text ILIKE $1 OR
-		field_label ILIKE $1 OR
-		source_name ILIKE $1 OR
-		field_id ILIKE $1
+		value_text ILIKE $1 ESCAPE '\' OR
+		field_label ILIKE $1 ESCAPE '\' OR
+		source_name ILIKE $1 ESCAPE '\' OR
+		field_id ILIKE $1 ESCAPE '\'
 	)`)
 	args = append(args, searchPattern)
 	argCount++
@@ -459,8 +478,7 @@ func buildSearchQuery(req *models.SearchFeedbackRecordsRequest) (string, []inter
 	// Add ORDER BY
 	orderBy := " ORDER BY collected_at DESC"
 
-	// Add pagination
-	// Note: Limit validation and defaults should be handled in the service layer
+	// Add pagination (limit is already validated and set by service layer)
 	paginationClause := fmt.Sprintf(" LIMIT $%d", argCount)
 	args = append(args, req.Limit)
 
