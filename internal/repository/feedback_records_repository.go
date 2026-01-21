@@ -34,14 +34,14 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		INSERT INTO feedback_records (
 			collected_at, source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
+			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
+			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id
 	`
 
@@ -49,13 +49,13 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 	err := r.db.QueryRow(ctx, query,
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType,
-		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate, req.ValueJSON,
+		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
 		req.Metadata, req.Language, req.UserIdentifier, req.TenantID, req.ResponseID,
 	).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
+		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
 	)
 	if err != nil {
@@ -71,7 +71,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
+			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id
 		FROM feedback_records
 		WHERE id = $1
@@ -82,7 +82,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
+		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
 	)
 	if err != nil {
@@ -169,7 +169,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
+			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id
 		FROM feedback_records
 	`
@@ -204,7 +204,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 			&record.SourceType, &record.SourceID, &record.SourceName,
 			&record.FieldID, &record.FieldLabel, &record.FieldType,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
 		)
 		if err != nil {
@@ -267,12 +267,6 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 		argCount++
 	}
 
-	if req.ValueJSON != nil {
-		updates = append(updates, fmt.Sprintf("value_json = $%d", argCount))
-		args = append(args, req.ValueJSON)
-		argCount++
-	}
-
 	if req.Metadata != nil {
 		updates = append(updates, fmt.Sprintf("metadata = $%d", argCount))
 		args = append(args, req.Metadata)
@@ -308,7 +302,7 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
+			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id
 	`, strings.Join(updates, ", "), argCount)
 
@@ -328,7 +322,7 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
+		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
 	)
 	if err != nil {
