@@ -37,12 +37,6 @@ build:
 	go build -o bin/api cmd/api/main.go
 	@echo "Binary created: bin/api"
 
-# Build the migration tool
-build-migrate:
-	@echo "Building migration tool..."
-	go build -o bin/migrate cmd/migrate/main.go
-	@echo "Binary created: bin/migrate"
-
 # Run the API server
 run:
 	@echo "Starting API server..."
@@ -51,7 +45,22 @@ run:
 # Run database migrations
 migrate:
 	@echo "Running database migrations..."
-	go run cmd/migrate/main.go up
+	@if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		if [ -z "$$DATABASE_URL" ]; then \
+			echo "Error: DATABASE_URL not found in .env file"; \
+			exit 1; \
+		fi && \
+		psql "$$DATABASE_URL" -f migrations/001_initial_schema.sql; \
+	else \
+		if [ -z "$$DATABASE_URL" ]; then \
+			echo "Error: DATABASE_URL environment variable is not set"; \
+			echo "Please set it or create a .env file with DATABASE_URL"; \
+			exit 1; \
+		fi && \
+		psql "$$DATABASE_URL" -f migrations/001_initial_schema.sql; \
+	fi
+	@echo "Migration completed successfully"
 
 # Create an API key
 create-key:

@@ -80,7 +80,6 @@ The project follows a comprehensive [feature parity and production readiness pla
 .
 ├── cmd/
 │   ├── api/              # API server entrypoint
-│   ├── migrate/          # Migration runner
 │   └── createkey/        # API key generation utility
 ├── internal/
 │   ├── api/
@@ -144,7 +143,7 @@ cp .env.example .env
 
 3. Run migrations:
 ```bash
-go run ./cmd/migrate/main.go
+make migrate
 ```
 
 4. Generate an API key:
@@ -254,17 +253,14 @@ make tests
 
 ### Database Migrations
 
-Migrations are stored in the `migrations/` directory and are executed in alphabetical order.
+Migrations are stored in the `migrations/` directory.
 
 To run migrations:
 ```bash
 make migrate
 ```
 
-Or manually:
-```bash
-go run ./cmd/migrate/main.go
-```
+This will execute `migrations/001_initial_schema.sql` using `psql`. Make sure you have `DATABASE_URL` set in your environment or `.env` file.
 
 ### API Key Management
 

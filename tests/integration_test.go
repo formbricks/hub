@@ -79,15 +79,10 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	return server, cleanup
 }
 
-// decodeData decodes the {"data": ...} wrapper from API responses
+// decodeData decodes JSON responses directly from the response body.
+// The API handlers use RespondJSON which encodes responses directly without wrapping.
 func decodeData(resp *http.Response, v interface{}) error {
-	var wrapper struct {
-		Data json.RawMessage `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
-		return err
-	}
-	return json.Unmarshal(wrapper.Data, v)
+	return json.NewDecoder(resp.Body).Decode(v)
 }
 
 func TestHealthEndpoint(t *testing.T) {
