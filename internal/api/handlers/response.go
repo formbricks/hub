@@ -41,6 +41,11 @@ func RespondBadRequest(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusBadRequest, "Bad Request", detail)
 }
 
+// RespondUnauthorized writes a 401 Unauthorized error response
+func RespondUnauthorized(w http.ResponseWriter, detail string) {
+	RespondError(w, http.StatusUnauthorized, "Unauthorized", detail)
+}
+
 // DataResponse wraps a single data object in a consistent response format
 type DataResponse struct {
 	Data interface{} `json:"data"`

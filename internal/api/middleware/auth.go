@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/repository"
 )
 
@@ -18,27 +19,27 @@ func Auth(apiKeyRepo *repository.APIKeyRepository) func(http.Handler) http.Handl
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
+				handlers.RespondUnauthorized(w, "Missing Authorization header")
 				return
 			}
 
 			// Expected format: "Bearer <api-key>"
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-				http.Error(w, "Invalid Authorization header format. Expected: Bearer <api-key>", http.StatusUnauthorized)
+				handlers.RespondUnauthorized(w, "Invalid Authorization header format. Expected: Bearer <api-key>")
 				return
 			}
 
 			apiKey := parts[1]
 			if apiKey == "" {
-				http.Error(w, "API key is empty", http.StatusUnauthorized)
+				handlers.RespondUnauthorized(w, "API key is empty")
 				return
 			}
 
 			// Validate the API key
 			validatedKey, err := apiKeyRepo.ValidateAPIKey(r.Context(), apiKey)
 			if err != nil {
-				http.Error(w, "Invalid or inactive API key", http.StatusUnauthorized)
+				handlers.RespondUnauthorized(w, "Invalid or inactive API key")
 				return
 			}
 
