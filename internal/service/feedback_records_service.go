@@ -6,17 +6,28 @@ import (
 
 	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
-	"github.com/formbricks/hub/internal/repository"
 	"github.com/google/uuid"
 )
 
+// FeedbackRecordsRepository defines the interface for feedback records data access.
+type FeedbackRecordsRepository interface {
+	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
+	List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error)
+	Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error)
+	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
+	Search(ctx context.Context, req *models.SearchFeedbackRecordsRequest) ([]models.FeedbackRecord, error)
+}
+
 // FeedbackRecordsService handles business logic for feedback records
 type FeedbackRecordsService struct {
-	repo *repository.FeedbackRecordsRepository
+	repo FeedbackRecordsRepository
 }
 
 // NewFeedbackRecordsService creates a new feedback records service
-func NewFeedbackRecordsService(repo *repository.FeedbackRecordsRepository) *FeedbackRecordsService {
+func NewFeedbackRecordsService(repo FeedbackRecordsRepository) *FeedbackRecordsService {
 	return &FeedbackRecordsService{repo: repo}
 }
 
