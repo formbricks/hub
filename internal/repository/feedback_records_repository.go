@@ -58,7 +58,6 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
 	)
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to create feedback record: %w", err)
 	}
@@ -86,7 +85,6 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
 	)
-
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
@@ -335,7 +333,6 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
 	)
-
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")

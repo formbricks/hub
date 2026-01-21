@@ -3,6 +3,7 @@
 # Default target - show help
 help:
 	@echo "Available targets:"
+	@echo "Available targets:"
 	@echo "  make tests       - Run all tests"
 	@echo "  make openapi     - Generate OpenAPI/Swagger documentation"
 	@echo "  make build       - Build the API server"
@@ -11,6 +12,8 @@ help:
 	@echo "  make docker-up   - Start Docker containers"
 	@echo "  make docker-down - Stop Docker containers"
 	@echo "  make clean       - Clean build artifacts"
+	@echo "  make fmt         - Format code with gofumpt"
+	@echo "  make fmt-check   - Check if code is formatted"
 
 # Run all tests
 tests:
@@ -103,13 +106,24 @@ deps:
 install-tools:
 	@echo "Installing development tools..."
 	go install github.com/swaggo/swag/cmd/swag@latest
+	go install mvdan.cc/gofumpt@latest
 	@echo "Tools installed"
 
 # Format code
 fmt:
 	@echo "Formatting code..."
-	go fmt ./...
+	$(HOME)/go/bin/gofumpt -l -w .
 	@echo "Code formatted"
+
+# Check code formatting (fails if code needs formatting)
+fmt-check:
+	@echo "Checking code formatting..."
+	@if [ -n "$$($(HOME)/go/bin/gofumpt -l .)" ]; then \
+		echo "Error: Code is not formatted. Run 'make fmt' to fix."; \
+		$(HOME)/go/bin/gofumpt -l .; \
+		exit 1; \
+	fi
+	@echo "Code is properly formatted"
 
 # Lint code
 lint:

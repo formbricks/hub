@@ -51,7 +51,6 @@ func (r *APIKeyRepository) ValidateAPIKey(ctx context.Context, apiKey string) (*
 		&key.ID, &key.KeyHash, &key.Name, &key.IsActive,
 		&key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
 	)
-
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("invalid or inactive API key")

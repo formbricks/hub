@@ -192,7 +192,7 @@ func TestBuildSearchQuery(t *testing.T) {
 			Query:          &queryStr,
 			SourceType:     &sourceType,
 			SourceID:       &sourceID,
-			FieldType:     &fieldType,
+			FieldType:      &fieldType,
 			UserIdentifier: &userIdentifier,
 			Since:          &since,
 			Until:          &until,
@@ -334,7 +334,7 @@ func TestBuildSearchQuery(t *testing.T) {
 		req := &models.SearchFeedbackRecordsRequest{
 			Query:      &queryStr,
 			SourceType: &sourceType,
-			FieldType: &fieldType,
+			FieldType:  &fieldType,
 		}
 
 		query, _, err := buildSearchQuery(req)

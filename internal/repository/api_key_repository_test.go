@@ -40,7 +40,7 @@ func TestHashAPIKey(t *testing.T) {
 		{
 			name:   "hashes simple API key",
 			apiKey: "test-api-key-123",
-			want:   func() string {
+			want: func() string {
 				hash := sha256.Sum256([]byte("test-api-key-123"))
 				return hex.EncodeToString(hash[:])
 			}(),
@@ -48,7 +48,7 @@ func TestHashAPIKey(t *testing.T) {
 		{
 			name:   "hashes empty string",
 			apiKey: "",
-			want:   func() string {
+			want: func() string {
 				hash := sha256.Sum256([]byte(""))
 				return hex.EncodeToString(hash[:])
 			}(),
@@ -56,7 +56,7 @@ func TestHashAPIKey(t *testing.T) {
 		{
 			name:   "hashes long API key",
 			apiKey: "very-long-api-key-with-many-characters-1234567890abcdefghijklmnopqrstuvwxyz",
-			want:   func() string {
+			want: func() string {
 				hash := sha256.Sum256([]byte("very-long-api-key-with-many-characters-1234567890abcdefghijklmnopqrstuvwxyz"))
 				return hex.EncodeToString(hash[:])
 			}(),
@@ -64,7 +64,7 @@ func TestHashAPIKey(t *testing.T) {
 		{
 			name:   "produces consistent hash",
 			apiKey: "consistent-key",
-			want:   func() string {
+			want: func() string {
 				hash := sha256.Sum256([]byte("consistent-key"))
 				return hex.EncodeToString(hash[:])
 			}(),
