@@ -56,15 +56,10 @@ func RespondInternalServerError(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusInternalServerError, "Internal Server Error", detail)
 }
 
-// DataResponse wraps a single data object in a consistent response format
-type DataResponse struct {
-	Data interface{} `json:"data"`
-}
-
-// RespondSuccess wraps a single object in a {"data": ...} structure
-// Use this for single-object responses (Create, Get, Update) to maintain consistency
-func RespondSuccess(w http.ResponseWriter, statusCode int, data interface{}) {
+// RespondJSON writes a JSON response directly without wrapping
+// Use this for all responses to match the Swagger documentation schema
+func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(DataResponse{Data: data})
+	json.NewEncoder(w).Encode(data)
 }

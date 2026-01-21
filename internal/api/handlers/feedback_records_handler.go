@@ -52,7 +52,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	RespondSuccess(w, http.StatusCreated, record)
+	RespondJSON(w, http.StatusCreated, record)
 }
 
 // Get handles GET /v1/feedback-records/{id}
@@ -90,7 +90,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondSuccess(w, http.StatusOK, record)
+	RespondJSON(w, http.StatusOK, record)
 }
 
 // List handles GET /v1/feedback-records
@@ -176,9 +176,11 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	if offsetStr := query.Get("offset"); offsetStr != "" {
 		offset, err := strconv.Atoi(offsetStr)
-		if err == nil && offset >= 0 {
-			filters.Offset = offset
+		if err != nil || offset < 0 {
+			RespondBadRequest(w, "Invalid offset parameter")
+			return
 		}
+		filters.Offset = offset
 	}
 
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
@@ -187,7 +189,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondSuccess(w, http.StatusOK, result)
+	RespondJSON(w, http.StatusOK, result)
 }
 
 // Update handles PATCH /v1/feedback-records/{id}
@@ -237,7 +239,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	RespondSuccess(w, http.StatusOK, record)
+	RespondJSON(w, http.StatusOK, record)
 }
 
 // Delete handles DELETE /v1/feedback-records/{id}
@@ -314,7 +316,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 		Message:      "Successfully deleted feedback records",
 	}
 
-	RespondSuccess(w, http.StatusOK, response)
+	RespondJSON(w, http.StatusOK, response)
 }
 
 // Search handles GET /v1/feedback-records/search
@@ -387,5 +389,5 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	RespondSuccess(w, http.StatusOK, result)
+	RespondJSON(w, http.StatusOK, result)
 }
