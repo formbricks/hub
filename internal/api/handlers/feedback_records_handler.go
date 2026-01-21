@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/google/uuid"
@@ -42,7 +44,11 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 
 	record, err := h.service.CreateFeedbackRecord(r.Context(), &req)
 	if err != nil {
-		RespondBadRequest(w, err.Error())
+		if errors.Is(err, apperrors.ErrValidation) {
+			RespondBadRequest(w, err.Error())
+			return
+		}
+		RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
@@ -76,7 +82,11 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	record, err := h.service.GetFeedbackRecord(r.Context(), id)
 	if err != nil {
-		RespondError(w, http.StatusNotFound, "Not Found", err.Error())
+		if errors.Is(err, apperrors.ErrNotFound) {
+			RespondNotFound(w, "Feedback record not found")
+			return
+		}
+		RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
@@ -173,7 +183,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
@@ -215,7 +225,15 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 
 	record, err := h.service.UpdateFeedbackRecord(r.Context(), id, &req)
 	if err != nil {
-		RespondBadRequest(w, err.Error())
+		if errors.Is(err, apperrors.ErrNotFound) {
+			RespondNotFound(w, "Feedback record not found")
+			return
+		}
+		if errors.Is(err, apperrors.ErrValidation) {
+			RespondBadRequest(w, err.Error())
+			return
+		}
+		RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
@@ -247,7 +265,11 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.service.DeleteFeedbackRecord(r.Context(), id); err != nil {
-		RespondError(w, http.StatusNotFound, "Not Found", err.Error())
+		if errors.Is(err, apperrors.ErrNotFound) {
+			RespondNotFound(w, "Feedback record not found")
+			return
+		}
+		RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
@@ -283,7 +305,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 
 	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), userIdentifier, tenantID)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
@@ -361,7 +383,7 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 	// Call service to search
 	result, err := h.service.SearchFeedbackRecords(r.Context(), req)
 	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 

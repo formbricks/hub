@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/google/uuid"
@@ -123,21 +124,21 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 // validateCreateRequest validates the create request
 func (s *FeedbackRecordsService) validateCreateRequest(req *models.CreateFeedbackRecordRequest) error {
 	if req.SourceType == "" {
-		return fmt.Errorf("source_type is required")
+		return apperrors.NewValidationError("source_type", "source_type is required")
 	}
 
 	if req.FieldID == "" {
-		return fmt.Errorf("field_id is required")
+		return apperrors.NewValidationError("field_id", "field_id is required")
 	}
 
 	if req.FieldType == "" {
-		return fmt.Errorf("field_type is required")
+		return apperrors.NewValidationError("field_type", "field_type is required")
 	}
 
 	// Validate field_type enum
 	_, ok := models.ValidFieldTypes[req.FieldType]
 	if !ok {
-		return fmt.Errorf("invalid field_type: %s. Must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date", req.FieldType)
+		return apperrors.NewValidationError("field_type", fmt.Sprintf("invalid field_type: %s. Must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date", req.FieldType))
 	}
 
 	return nil

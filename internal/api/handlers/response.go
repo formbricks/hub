@@ -46,6 +46,16 @@ func RespondUnauthorized(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusUnauthorized, "Unauthorized", detail)
 }
 
+// RespondNotFound writes a 404 Not Found error response
+func RespondNotFound(w http.ResponseWriter, detail string) {
+	RespondError(w, http.StatusNotFound, "Not Found", detail)
+}
+
+// RespondInternalServerError writes a 500 Internal Server Error response
+func RespondInternalServerError(w http.ResponseWriter, detail string) {
+	RespondError(w, http.StatusInternalServerError, "Internal Server Error", detail)
+}
+
 // DataResponse wraps a single data object in a consistent response format
 type DataResponse struct {
 	Data interface{} `json:"data"`

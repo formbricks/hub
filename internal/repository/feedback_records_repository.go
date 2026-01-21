@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -88,7 +89,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("feedback record not found")
+			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
 	}
@@ -374,7 +375,7 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("feedback record not found")
+			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 		return nil, fmt.Errorf("failed to update feedback record: %w", err)
 	}
@@ -392,7 +393,7 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("feedback record not found")
+		return apperrors.NewNotFoundError("feedback record", "feedback record not found")
 	}
 
 	return nil
