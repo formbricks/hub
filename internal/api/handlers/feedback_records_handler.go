@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,17 +10,27 @@ import (
 
 	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
-	"github.com/formbricks/hub/internal/service"
 	"github.com/google/uuid"
 )
 
+// FeedbackRecordsService defines the interface for feedback records business logic.
+type FeedbackRecordsService interface {
+	CreateFeedbackRecord(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
+	ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error)
+	UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error
+	BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
+	SearchFeedbackRecords(ctx context.Context, req *models.SearchFeedbackRecordsRequest) (*models.SearchFeedbackRecordsResponse, error)
+}
+
 // FeedbackRecordsHandler handles HTTP requests for feedback records
 type FeedbackRecordsHandler struct {
-	service *service.FeedbackRecordsService
+	service FeedbackRecordsService
 }
 
 // NewFeedbackRecordsHandler creates a new feedback records handler
-func NewFeedbackRecordsHandler(service *service.FeedbackRecordsService) *FeedbackRecordsHandler {
+func NewFeedbackRecordsHandler(service FeedbackRecordsService) *FeedbackRecordsHandler {
 	return &FeedbackRecordsHandler{service: service}
 }
 
