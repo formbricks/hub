@@ -345,7 +345,8 @@ func TestGetFeedbackRecord(t *testing.T) {
 	defer createResp.Body.Close()
 
 	var created models.FeedbackRecord
-	decodeData(createResp, &created)
+	err = decodeData(createResp, &created)
+	require.NoError(t, err)
 
 	// Test getting the feedback record by ID
 	t.Run("Get existing feedback record", func(t *testing.T) {
@@ -419,7 +420,8 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 	defer createResp.Body.Close()
 
 	var created models.FeedbackRecord
-	decodeData(createResp, &created)
+	err = decodeData(createResp, &created)
+	require.NoError(t, err)
 
 	// Test updating the feedback record
 	t.Run("Update feedback record", func(t *testing.T) {
@@ -483,7 +485,8 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 	defer createResp.Body.Close()
 
 	var created models.FeedbackRecord
-	decodeData(createResp, &created)
+	err = decodeData(createResp, &created)
+	require.NoError(t, err)
 
 	// Test deleting the feedback record
 	t.Run("Delete feedback record", func(t *testing.T) {

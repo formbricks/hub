@@ -2,6 +2,7 @@ package response
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 )
 
@@ -33,7 +34,9 @@ func RespondError(w http.ResponseWriter, statusCode int, title string, detail st
 
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(problem)
+	if err := json.NewEncoder(w).Encode(problem); err != nil {
+		slog.Error("Failed to encode error response", "error", err)
+	}
 }
 
 // RespondBadRequest writes a 400 Bad Request error response
@@ -60,5 +63,7 @@ func RespondInternalServerError(w http.ResponseWriter, detail string) {
 func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		slog.Error("Failed to encode JSON response", "error", err)
+	}
 }

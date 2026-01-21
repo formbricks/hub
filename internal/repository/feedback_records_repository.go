@@ -153,7 +153,6 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, 
 	if filters.Until != nil {
 		conditions = append(conditions, fmt.Sprintf("collected_at <= $%d", argCount))
 		args = append(args, *filters.Until)
-		argCount++
 	}
 
 	whereClause := ""
@@ -190,7 +189,6 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	if filters.Offset > 0 {
 		query += fmt.Sprintf(" OFFSET $%d", argCount)
 		args = append(args, filters.Offset)
-		argCount++
 	}
 
 	rows, err := r.db.Query(ctx, query, args...)
@@ -368,7 +366,6 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	if tenantID != nil {
 		query += fmt.Sprintf(" AND tenant_id = $%d", argCount)
 		args = append(args, *tenantID)
-		argCount++
 	}
 
 	result, err := r.db.Exec(ctx, query, args...)

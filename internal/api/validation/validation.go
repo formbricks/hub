@@ -3,6 +3,7 @@ package validation
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -27,7 +28,9 @@ func init() {
 	decoder = form.NewDecoder()
 
 	// Register custom validators
-	validate.RegisterValidation("field_type", validateFieldType)
+	if err := validate.RegisterValidation("field_type", validateFieldType); err != nil {
+		slog.Error("Failed to register field_type validator", "error", err)
+	}
 
 	// Register custom type converters for form decoding
 	// Handle *time.Time (pointer type used in our models)
@@ -126,7 +129,9 @@ func RespondValidationError(w http.ResponseWriter, err error) {
 
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(problem)
+	if err := json.NewEncoder(w).Encode(problem); err != nil {
+		slog.Error("Failed to encode validation error response", "error", err)
+	}
 }
 
 // DecodeQueryParams decodes URL query parameters into a struct
