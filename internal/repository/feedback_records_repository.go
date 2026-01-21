@@ -97,17 +97,9 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	return &record, nil
 }
 
-// List retrieves feedback records with optional filters
-func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
-	query := `
-		SELECT id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
-			metadata, language, user_identifier, tenant_id, response_id
-		FROM feedback_records
-	`
-
+// buildFilterConditions builds WHERE clause conditions and arguments from filters
+// Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice
+func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, []interface{}) {
 	var conditions []string
 	var args []interface{}
 	argCount := 1
@@ -166,9 +158,28 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 		argCount++
 	}
 
+	whereClause := ""
 	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
 	}
+
+	return whereClause, args
+}
+
+// List retrieves feedback records with optional filters
+func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
+	query := `
+		SELECT id, collected_at, created_at, updated_at,
+			source_type, source_id, source_name,
+			field_id, field_label, field_type,
+			value_text, value_number, value_boolean, value_date, value_json,
+			metadata, language, user_identifier, tenant_id, response_id
+		FROM feedback_records
+	`
+
+	whereClause, args := buildFilterConditions(filters)
+	query += whereClause
+	argCount := len(args) + 1
 
 	query += " ORDER BY collected_at DESC"
 
@@ -217,67 +228,8 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error) {
 	query := `SELECT COUNT(*) FROM feedback_records`
 
-	var conditions []string
-	var args []interface{}
-	argCount := 1
-
-	if filters.TenantID != nil {
-		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", argCount))
-		args = append(args, *filters.TenantID)
-		argCount++
-	}
-
-	if filters.ResponseID != nil {
-		conditions = append(conditions, fmt.Sprintf("response_id = $%d", argCount))
-		args = append(args, *filters.ResponseID)
-		argCount++
-	}
-
-	if filters.SourceType != nil {
-		conditions = append(conditions, fmt.Sprintf("source_type = $%d", argCount))
-		args = append(args, *filters.SourceType)
-		argCount++
-	}
-
-	if filters.SourceID != nil {
-		conditions = append(conditions, fmt.Sprintf("source_id = $%d", argCount))
-		args = append(args, *filters.SourceID)
-		argCount++
-	}
-
-	if filters.FieldID != nil {
-		conditions = append(conditions, fmt.Sprintf("field_id = $%d", argCount))
-		args = append(args, *filters.FieldID)
-		argCount++
-	}
-
-	if filters.FieldType != nil {
-		conditions = append(conditions, fmt.Sprintf("field_type = $%d", argCount))
-		args = append(args, *filters.FieldType)
-		argCount++
-	}
-
-	if filters.UserIdentifier != nil {
-		conditions = append(conditions, fmt.Sprintf("user_identifier = $%d", argCount))
-		args = append(args, *filters.UserIdentifier)
-		argCount++
-	}
-
-	if filters.Since != nil {
-		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", argCount))
-		args = append(args, *filters.Since)
-		argCount++
-	}
-
-	if filters.Until != nil {
-		conditions = append(conditions, fmt.Sprintf("collected_at <= $%d", argCount))
-		args = append(args, *filters.Until)
-		argCount++
-	}
-
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
+	whereClause, args := buildFilterConditions(filters)
+	query += whereClause
 
 	var count int64
 	err := r.db.QueryRow(ctx, query, args...).Scan(&count)
@@ -288,9 +240,9 @@ func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.L
 	return count, nil
 }
 
-// Update updates an existing feedback record
-// Only value fields, metadata, language, and user_identifier can be updated
-func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+// buildUpdateQuery builds an UPDATE query with SET clause and arguments
+// Returns the query string, arguments, and a boolean indicating if any updates were provided
+func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time) (string, []interface{}, bool) {
 	var updates []string
 	var args []interface{}
 	argCount := 1
@@ -344,11 +296,11 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 	}
 
 	if len(updates) == 0 {
-		return r.GetByID(ctx, id)
+		return "", nil, false
 	}
 
 	updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
-	args = append(args, time.Now())
+	args = append(args, updatedAt)
 	argCount++
 
 	args = append(args, id)
@@ -363,6 +315,17 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 			value_text, value_number, value_boolean, value_date, value_json,
 			metadata, language, user_identifier, tenant_id, response_id
 	`, strings.Join(updates, ", "), argCount)
+
+	return query, args, true
+}
+
+// Update updates an existing feedback record
+// Only value fields, metadata, language, and user_identifier can be updated
+func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+	query, args, hasUpdates := buildUpdateQuery(req, id, time.Now())
+	if !hasUpdates {
+		return r.GetByID(ctx, id)
+	}
 
 	var record models.FeedbackRecord
 	err := r.db.QueryRow(ctx, query, args...).Scan(
@@ -419,9 +382,9 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	return result.RowsAffected(), nil
 }
 
-// Search performs semantic search with filters
-// Note: Currently implements full-text search. Semantic search with embeddings will be added later.
-func (r *FeedbackRecordsRepository) Search(ctx context.Context, req *models.SearchFeedbackRecordsRequest) ([]models.FeedbackRecord, error) {
+// buildSearchQuery builds a search query with WHERE clause, ORDER BY, and LIMIT
+// Returns the full query string and arguments
+func buildSearchQuery(req *models.SearchFeedbackRecordsRequest) (string, []interface{}, error) {
 	// Build base query
 	baseQuery := `
 		SELECT id, collected_at, created_at, updated_at,
@@ -438,7 +401,7 @@ func (r *FeedbackRecordsRepository) Search(ctx context.Context, req *models.Sear
 
 	// Full-text search on text fields (required for search endpoint)
 	if req.Query == nil || *req.Query == "" {
-		return nil, fmt.Errorf("query parameter is required")
+		return "", nil, fmt.Errorf("query parameter is required")
 	}
 
 	// Search across multiple fields using the same search pattern
@@ -492,8 +455,19 @@ func (r *FeedbackRecordsRepository) Search(ctx context.Context, req *models.Sear
 	paginationClause := fmt.Sprintf(" LIMIT $%d", argCount)
 	args = append(args, limit)
 
-	// Execute search query
+	// Build full query
 	fullQuery := baseQuery + whereClause + orderBy + paginationClause
+
+	return fullQuery, args, nil
+}
+
+// Search performs semantic search with filters
+// Note: Currently implements full-text search. Semantic search with embeddings will be added later.
+func (r *FeedbackRecordsRepository) Search(ctx context.Context, req *models.SearchFeedbackRecordsRequest) ([]models.FeedbackRecord, error) {
+	fullQuery, args, err := buildSearchQuery(req)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.db.Query(ctx, fullQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search feedback records: %w", err)
