@@ -110,6 +110,7 @@ deps:
 install-tools:
 	@echo "Installing development tools..."
 	go install mvdan.cc/gofumpt@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	@echo "Tools installed"
 
 # Format code
@@ -131,7 +132,7 @@ fmt-check:
 # Lint code
 lint:
 	@echo "Linting code..."
-	golangci-lint run ./...
+	$(HOME)/go/bin/golangci-lint run ./...
 
 # Run everything needed for development
 dev-setup: docker-up deps install-tools migrate
