@@ -1,4 +1,4 @@
-.PHONY: help tests openapi build run migrate clean docker-up docker-down
+.PHONY: help tests tests-coverage openapi build run migrate clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all
 
 # Default target - show help
 help:
@@ -65,10 +65,6 @@ migrate:
 	fi
 	@echo "Migration completed successfully"
 
-# Create an API key
-create-key:
-	@echo "Creating API key..."
-	go run cmd/createkey/main.go
 
 # Start Docker containers
 docker-up:
@@ -131,8 +127,9 @@ lint:
 	golangci-lint run ./...
 
 # Run everything needed for development
-dev-setup: docker-up deps install-tools migrate create-key
+dev-setup: docker-up deps install-tools migrate
 	@echo "Development environment ready!"
+	@echo "Set API_KEY environment variable for authentication"
 	@echo "Run 'make run' to start the API server"
 
 # Full test suite (unit + integration)

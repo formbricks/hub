@@ -26,7 +26,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 
 - ✅ **RESTful API** for feedback record CRUD operations
 - ✅ **PostgreSQL** for data persistence with optimized schema
-- ✅ **API Key Authentication** with secure key management
+- ✅ **API Key Authentication** via environment variable
 - ✅ **Clean Architecture** with repository, service, and handler layers
 - ✅ **Docker Compose** for local development
 - ✅ **Database Migrations** with version tracking
@@ -47,8 +47,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 ```
 .
 ├── cmd/
-│   ├── api/              # API server entrypoint
-│   └── createkey/        # API key generation utility
+│   └── api/              # API server entrypoint
 ├── internal/
 │   ├── api/
 │   │   ├── handlers/     # HTTP request handlers
@@ -86,7 +85,6 @@ This will:
 - Install Go dependencies
 - Install development tools (swag for OpenAPI docs)
 - Run database migrations
-- Create a test API key
 
 3. Start the API server:
 ```bash
@@ -114,9 +112,14 @@ cp .env.example .env
 make migrate
 ```
 
-4. Generate an API key:
+4. Set your API key:
 ```bash
-go run ./cmd/createkey/main.go
+export API_KEY=your-secret-key-here
+```
+
+Or add it to your `.env` file:
+```
+API_KEY=your-secret-key-here
 ```
 
 5. Start the server:
@@ -202,12 +205,11 @@ Authorization: Bearer <api-key>
 
 ```bash
 make help         # Show all available commands
-make dev-setup    # Set up development environment (docker, deps, tools, migrations, API key)
+make dev-setup    # Set up development environment (docker, deps, tools, migrations)
 make build        # Build all binaries
 make run          # Run the API server
 make tests        # Run all tests
 make migrate      # Run database migrations
-make create-key   # Generate a new API key
 make docker-up    # Start Docker containers
 make docker-down  # Stop Docker containers
 make clean        # Clean build artifacts
@@ -230,16 +232,23 @@ make migrate
 
 This will execute `migrations/001_initial_schema.sql` using `psql`. Make sure you have `DATABASE_URL` set in your environment or `.env` file.
 
-### API Key Management
+### API Key Authentication
 
-Generate a new API key:
+Authentication is done via a single API key set in the `API_KEY` environment variable. The API key is validated against this environment variable for all protected endpoints.
+
+Set your API key:
 ```bash
-make create-key
-# or
-go run ./cmd/createkey/main.go
+export API_KEY=your-secret-key-here
 ```
 
-API keys are stored in the `api_keys` table and are used for authentication via the `Authorization: Bearer <key>` header.
+Or add it to your `.env` file:
+```
+API_KEY=your-secret-key-here
+```
+
+All protected endpoints require the `Authorization: Bearer <key>` header with the API key matching the `API_KEY` environment variable.
+
+**Important**: The `API_KEY` environment variable is **required**. The server will fail to start if `API_KEY` is not set.
 
 ## Environment Variables
 
@@ -247,6 +256,7 @@ See [.env.example](.env.example) for all available configuration options:
 
 - `DATABASE_URL` - PostgreSQL connection string
 - `PORT` - HTTP server port (default: 8080)
+- `API_KEY` - API key for authentication (required for protected endpoints)
 - `ENV` - Environment (development/production)
 - `LOG_LEVEL` - Logging level (debug, info, warn, error)
 

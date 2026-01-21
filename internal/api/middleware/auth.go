@@ -1,21 +1,16 @@
 package middleware
 
 import (
-	"context"
-	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/formbricks/hub/internal/api/response"
-	"github.com/formbricks/hub/internal/repository"
 )
 
-type contextKey string
-
-const APIKeyContextKey contextKey = "api_key"
-
 // Auth middleware validates API keys from the Authorization header
-func Auth(apiKeyRepo *repository.APIKeyRepository) func(http.Handler) http.Handler {
+// It compares the provided key against the API key from configuration
+// The apiKey parameter must not be empty (enforced at server startup)
+func Auth(apiKey string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -31,32 +26,20 @@ func Auth(apiKeyRepo *repository.APIKeyRepository) func(http.Handler) http.Handl
 				return
 			}
 
-			apiKey := parts[1]
-			if apiKey == "" {
+			providedKey := parts[1]
+			if providedKey == "" {
 				response.RespondUnauthorized(w, "API key is empty")
 				return
 			}
 
-			// Validate the API key
-			validatedKey, err := apiKeyRepo.ValidateAPIKey(r.Context(), apiKey)
-			if err != nil {
-				response.RespondUnauthorized(w, "Invalid or inactive API key")
+			// Compare the provided key with the configured key
+			if providedKey != apiKey {
+				response.RespondUnauthorized(w, "Invalid API key")
 				return
 			}
 
-			// Update last used timestamp asynchronously (don't block the request)
-			go func() {
-				// Create a new context for the background operation
-				bgCtx := context.Background()
-				err := apiKeyRepo.UpdateLastUsedAt(bgCtx, validatedKey.KeyHash)
-				if err != nil {
-					slog.Error("Failed to update last used timestamp", "error", err)
-				}
-			}()
-
-			// Store the validated API key in the request context
-			ctx := context.WithValue(r.Context(), APIKeyContextKey, validatedKey)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			// Key is valid, proceed with the request
+			next.ServeHTTP(w, r)
 		})
 	}
 }

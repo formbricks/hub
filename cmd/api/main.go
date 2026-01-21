@@ -56,9 +56,6 @@ func main() {
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
-	// Initialize API key repository for authentication
-	apiKeyRepo := repository.NewAPIKeyRepository(db)
-
 	// Set up public endpoints (no authentication required)
 	publicMux := http.NewServeMux()
 	publicMux.HandleFunc("GET /health", healthHandler.Check)
@@ -81,7 +78,7 @@ func main() {
 
 	// Apply middleware to protected endpoints
 	var protectedHandler http.Handler = protectedMux
-	protectedHandler = middleware.Auth(apiKeyRepo)(protectedHandler)
+	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
 	// protectedHandler = middleware.CORS(protectedHandler)	// CORS disabled
 
 	// Combine both handlers

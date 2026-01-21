@@ -8,7 +8,7 @@ Before running the tests, ensure:
 
 1. PostgreSQL is running (via docker-compose)
 2. Database migrations have been applied
-3. The test API key exists in the database
+3. The `API_KEY` environment variable is set (tests will set it automatically)
 
 ## Running Tests
 
@@ -50,7 +50,7 @@ The integration tests cover:
 
 The tests use a predefined API key: `test-api-key-12345`
 
-This key is automatically created when you run `go run ./cmd/createkey`
+The test setup automatically sets this key in the `API_KEY` environment variable for authentication.
 
 ## Notes
 

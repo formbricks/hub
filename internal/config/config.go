@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strconv"
 
@@ -11,6 +12,7 @@ import (
 type Config struct {
 	DatabaseURL string
 	Port        string
+	APIKey      string
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -37,15 +39,21 @@ func getEnvAsInt(key string, defaultValue int) int {
 // Load reads configuration from environment variables and returns a Config struct.
 // It automatically loads .env file if it exists.
 // Returns default values for any missing environment variables.
+// API_KEY is required and the function will return an error if it's not set.
 func Load() (*Config, error) {
 	// Load .env file if it exists (ignore error if file doesn't exist)
 	_ = godotenv.Load()
 
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		return nil, errors.New("API_KEY environment variable is required but not set")
+	}
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://formbricks:formbricks_dev@localhost:5432/formbricks_hub?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
+		APIKey:      apiKey,
 	}
 
-	// No errors for know, can be returned eventually if an environment variable is missing
 	return cfg, nil
 }

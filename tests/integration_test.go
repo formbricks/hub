@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/formbricks/hub/internal/api/handlers"
@@ -25,6 +26,9 @@ import (
 func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	ctx := context.Background()
 
+	// Set test API key in environment for authentication (must be set before loading config)
+	os.Setenv("API_KEY", testAPIKey)
+
 	// Load configuration
 	cfg, err := config.Load()
 	require.NoError(t, err, "Failed to load configuration")
@@ -33,17 +37,11 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	require.NoError(t, err, "Failed to connect to database")
 
-	// Ensure test API key exists in database
-	EnsureTestAPIKey(t)
-
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
-
-	// Initialize API key repository for authentication
-	apiKeyRepo := repository.NewAPIKeyRepository(db)
 
 	// Set up public endpoints
 	publicMux := http.NewServeMux()
@@ -63,7 +61,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
 
 	var protectedHandler http.Handler = protectedMux
-	protectedHandler = middleware.Auth(apiKeyRepo)(protectedHandler)
+	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
 
 	// Combine both handlers
 	mainMux := http.NewServeMux()
@@ -119,6 +117,72 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		body, _ := json.Marshal(reqBody)
 
 		resp, err := http.Post(server.URL+"/v1/feedback-records", "application/json", bytes.NewBuffer(body))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	// Test with invalid API key
+	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"source_type": "formbricks",
+			"field_id":    "feedback",
+			"field_type":  "text",
+			"value_text":  "Great product!",
+		}
+		body, _ := json.Marshal(reqBody)
+
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req.Header.Set("Authorization", "Bearer wrong-key-12345")
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	// Test with empty API key in header
+	t.Run("Unauthorized with empty API key", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"source_type": "formbricks",
+			"field_id":    "feedback",
+			"field_type":  "text",
+			"value_text":  "Great product!",
+		}
+		body, _ := json.Marshal(reqBody)
+
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req.Header.Set("Authorization", "Bearer ")
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	// Test with malformed Authorization header
+	t.Run("Unauthorized with malformed Authorization header", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"source_type": "formbricks",
+			"field_id":    "feedback",
+			"field_type":  "text",
+			"value_text":  "Great product!",
+		}
+		body, _ := json.Marshal(reqBody)
+
+		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req.Header.Set("Authorization", "InvalidFormat")
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -184,6 +248,18 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	client := &http.Client{}
 
+	// Test with invalid API key
+	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records", nil)
+		req.Header.Set("Authorization", "Bearer wrong-key-12345")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
 	// Create a test feedback record first
 	reqBody := map[string]interface{}{
 		"source_type":  "formbricks",
@@ -242,6 +318,18 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 	client := &http.Client{}
 
+	// Test with invalid API key
+	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", nil)
+		req.Header.Set("Authorization", "Bearer wrong-key-12345")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
 	// Create a test feedback record
 	reqBody := map[string]interface{}{
 		"source_type":  "formbricks",
@@ -298,6 +386,24 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 	client := &http.Client{}
 
+	// Test with invalid API key
+	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
+		updateBody := map[string]interface{}{
+			"value_text": "Updated comment",
+		}
+		body, _ := json.Marshal(updateBody)
+
+		req, _ := http.NewRequest("PATCH", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", bytes.NewBuffer(body))
+		req.Header.Set("Authorization", "Bearer wrong-key-12345")
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
 	// Create a test feedback record
 	reqBody := map[string]interface{}{
 		"source_type": "formbricks",
@@ -350,6 +456,18 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	client := &http.Client{}
 
+	// Test with invalid API key
+	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
+		req, _ := http.NewRequest("DELETE", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", nil)
+		req.Header.Set("Authorization", "Bearer wrong-key-12345")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
 	// Create a test feedback record
 	reqBody := map[string]interface{}{
 		"source_type": "formbricks",
@@ -399,6 +517,18 @@ func TestSearchFeedbackRecords(t *testing.T) {
 	defer cleanup()
 
 	client := &http.Client{}
+
+	// Test with invalid API key
+	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test", nil)
+		req.Header.Set("Authorization", "Bearer wrong-key-12345")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
 
 	t.Run("Search with query parameters", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&source_type=formbricks&limit=5", nil)
