@@ -48,7 +48,7 @@ func Auth(apiKeyRepo *repository.APIKeyRepository) func(http.Handler) http.Handl
 			go func() {
 				// Create a new context for the background operation
 				bgCtx := context.Background()
-				err = apiKeyRepo.UpdateLastUsedAt(bgCtx, validatedKey.KeyHash)
+				err := apiKeyRepo.UpdateLastUsedAt(bgCtx, validatedKey.KeyHash)
 				if err != nil {
 					slog.Error("Failed to update last used timestamp", "error", err)
 				}
