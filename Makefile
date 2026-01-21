@@ -1,11 +1,10 @@
-.PHONY: help tests tests-coverage openapi build run migrate clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all
+.PHONY: help tests tests-coverage build run migrate clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all
 
 # Default target - show help
 help:
 	@echo "Available targets:"
 	@echo "Available targets:"
 	@echo "  make tests       - Run all tests"
-	@echo "  make openapi     - Generate OpenAPI/Swagger documentation"
 	@echo "  make build       - Build the API server"
 	@echo "  make run         - Run the API server"
 	@echo "  make migrate     - Run database migrations"
@@ -26,13 +25,6 @@ tests-coverage:
 	go test ./tests/... -v -cover -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
-
-# Generate OpenAPI/Swagger documentation
-openapi:
-	@echo "Generating OpenAPI documentation..."
-	$(HOME)/go/bin/swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
-	@echo "Documentation generated in docs/ folder"
-	@echo "View at: http://localhost:8080/swagger/index.html"
 
 # Build the API server
 build:
@@ -101,7 +93,6 @@ deps:
 # Install development tools
 install-tools:
 	@echo "Installing development tools..."
-	go install github.com/swaggo/swag/cmd/swag@latest
 	go install mvdan.cc/gofumpt@latest
 	@echo "Tools installed"
 

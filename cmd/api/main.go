@@ -9,9 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/formbricks/hub/docs" // Import generated docs
-	httpSwagger "github.com/swaggo/http-swagger"
-
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
@@ -19,18 +16,6 @@ import (
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/pkg/database"
 )
-
-// @title Formbricks Hub API
-// @version 1.0
-// @description API for managing feedback records collection
-//
-// @contact.name Tiago Farto
-// @contact.email tiago@formbricks.com
-
-// @securityDefinitions.apikey BearerAuth
-// @in header
-// @name Authorization
-// @description Type "Bearer" followed by a space and your API key.
 
 func main() {
 	ctx := context.Background()
@@ -59,7 +44,6 @@ func main() {
 	// Set up public endpoints (no authentication required)
 	publicMux := http.NewServeMux()
 	publicMux.HandleFunc("GET /health", healthHandler.Check)
-	publicMux.HandleFunc("GET /swagger/", httpSwagger.WrapHandler)
 
 	// Apply middleware to public endpoints
 	var publicHandler http.Handler = publicMux
@@ -84,7 +68,7 @@ func main() {
 	// Combine both handlers
 	mainMux := http.NewServeMux()
 	mainMux.Handle("/v1/", protectedHandler)
-	mainMux.Handle("/", publicHandler) // Catch-all for public routes (/health, /swagger/, etc.)
+	mainMux.Handle("/", publicHandler) // Catch-all for public routes (/health, etc.)
 
 	// Apply logging to all requests
 	handler := middleware.Logging(mainMux)

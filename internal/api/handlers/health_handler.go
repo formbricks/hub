@@ -11,12 +11,6 @@ func NewHealthHandler() *HealthHandler {
 }
 
 // Check handles GET /health
-// @Summary Health check
-// @Description Check if the API is running
-// @Tags health
-// @Produce plain
-// @Success 200 {string} string "OK"
-// @Router /health [get]
 func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
