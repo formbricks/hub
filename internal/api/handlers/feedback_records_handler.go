@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/formbricks/hub/internal/api/response"
 	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
@@ -49,21 +50,21 @@ func NewFeedbackRecordsHandler(service FeedbackRecordsService) *FeedbackRecordsH
 func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateFeedbackRecordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondBadRequest(w, "Invalid request body")
+		response.RespondBadRequest(w, "Invalid request body")
 		return
 	}
 
 	record, err := h.service.CreateFeedbackRecord(r.Context(), &req)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrValidation) {
-			RespondBadRequest(w, err.Error())
+			response.RespondBadRequest(w, err.Error())
 			return
 		}
-		RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
-	RespondJSON(w, http.StatusCreated, record)
+	response.RespondJSON(w, http.StatusCreated, record)
 }
 
 // Get handles GET /v1/feedback-records/{id}
@@ -81,27 +82,27 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		RespondBadRequest(w, "Feedback Record ID is required")
+		response.RespondBadRequest(w, "Feedback Record ID is required")
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		RespondBadRequest(w, "Invalid UUID format")
+		response.RespondBadRequest(w, "Invalid UUID format")
 		return
 	}
 
 	record, err := h.service.GetFeedbackRecord(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrNotFound) {
-			RespondNotFound(w, "Feedback record not found")
+			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
-		RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, record)
+	response.RespondJSON(w, http.StatusOK, record)
 }
 
 // List handles GET /v1/feedback-records
@@ -161,7 +162,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if sinceStr := query.Get("since"); sinceStr != "" {
 		since, err := time.Parse(time.RFC3339, sinceStr)
 		if err != nil {
-			RespondBadRequest(w, "Invalid since format, use ISO 8601")
+			response.RespondBadRequest(w, "Invalid since format, use ISO 8601")
 			return
 		}
 		filters.Since = &since
@@ -170,7 +171,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if untilStr := query.Get("until"); untilStr != "" {
 		until, err := time.Parse(time.RFC3339, untilStr)
 		if err != nil {
-			RespondBadRequest(w, "Invalid until format, use ISO 8601")
+			response.RespondBadRequest(w, "Invalid until format, use ISO 8601")
 			return
 		}
 		filters.Until = &until
@@ -179,7 +180,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if limitStr := query.Get("limit"); limitStr != "" {
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil || limit <= 0 {
-			RespondBadRequest(w, "Invalid limit parameter")
+			response.RespondBadRequest(w, "Invalid limit parameter")
 			return
 		}
 		filters.Limit = limit
@@ -188,7 +189,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if offsetStr := query.Get("offset"); offsetStr != "" {
 		offset, err := strconv.Atoi(offsetStr)
 		if err != nil || offset < 0 {
-			RespondBadRequest(w, "Invalid offset parameter")
+			response.RespondBadRequest(w, "Invalid offset parameter")
 			return
 		}
 		filters.Offset = offset
@@ -196,11 +197,11 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
 	if err != nil {
-		RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, result)
+	response.RespondJSON(w, http.StatusOK, result)
 }
 
 // Update handles PATCH /v1/feedback-records/{id}
@@ -220,37 +221,37 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		RespondBadRequest(w, "Feedback Record ID is required")
+		response.RespondBadRequest(w, "Feedback Record ID is required")
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		RespondBadRequest(w, "Invalid UUID format")
+		response.RespondBadRequest(w, "Invalid UUID format")
 		return
 	}
 
 	var req models.UpdateFeedbackRecordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondBadRequest(w, "Invalid request body")
+		response.RespondBadRequest(w, "Invalid request body")
 		return
 	}
 
 	record, err := h.service.UpdateFeedbackRecord(r.Context(), id, &req)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrNotFound) {
-			RespondNotFound(w, "Feedback record not found")
+			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
 		if errors.Is(err, apperrors.ErrValidation) {
-			RespondBadRequest(w, err.Error())
+			response.RespondBadRequest(w, err.Error())
 			return
 		}
-		RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, record)
+	response.RespondJSON(w, http.StatusOK, record)
 }
 
 // Delete handles DELETE /v1/feedback-records/{id}
@@ -267,22 +268,22 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		RespondBadRequest(w, "Feedback Record ID is required")
+		response.RespondBadRequest(w, "Feedback Record ID is required")
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		RespondBadRequest(w, "Invalid UUID format")
+		response.RespondBadRequest(w, "Invalid UUID format")
 		return
 	}
 
 	if err := h.service.DeleteFeedbackRecord(r.Context(), id); err != nil {
 		if errors.Is(err, apperrors.ErrNotFound) {
-			RespondNotFound(w, "Feedback record not found")
+			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
-		RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
@@ -307,7 +308,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 
 	userIdentifier := query.Get("user_identifier")
 	if userIdentifier == "" {
-		RespondBadRequest(w, "user_identifier is required")
+		response.RespondBadRequest(w, "user_identifier is required")
 		return
 	}
 
@@ -318,16 +319,16 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 
 	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), userIdentifier, tenantID)
 	if err != nil {
-		RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
-	response := models.BulkDeleteResponse{
+	resp := models.BulkDeleteResponse{
 		DeletedCount: deletedCount,
 		Message:      "Successfully deleted feedback records",
 	}
 
-	RespondJSON(w, http.StatusOK, response)
+	response.RespondJSON(w, http.StatusOK, resp)
 }
 
 // Search handles GET /v1/feedback-records/search
@@ -355,7 +356,7 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 	if q := query.Get("query"); q != "" {
 		req.Query = &q
 	} else {
-		RespondBadRequest(w, "query parameter is required")
+		response.RespondBadRequest(w, "query parameter is required")
 		return
 	}
 
@@ -383,7 +384,7 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 	if sinceStr := query.Get("since"); sinceStr != "" {
 		since, err := time.Parse(time.RFC3339, sinceStr)
 		if err != nil {
-			RespondBadRequest(w, "Invalid since format, use ISO 8601")
+			response.RespondBadRequest(w, "Invalid since format, use ISO 8601")
 			return
 		}
 		req.Since = &since
@@ -392,7 +393,7 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 	if untilStr := query.Get("until"); untilStr != "" {
 		until, err := time.Parse(time.RFC3339, untilStr)
 		if err != nil {
-			RespondBadRequest(w, "Invalid until format, use ISO 8601")
+			response.RespondBadRequest(w, "Invalid until format, use ISO 8601")
 			return
 		}
 		req.Until = &until
@@ -402,7 +403,7 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 	if limitStr := query.Get("limit"); limitStr != "" {
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil || limit <= 0 {
-			RespondBadRequest(w, "Invalid limit parameter")
+			response.RespondBadRequest(w, "Invalid limit parameter")
 			return
 		}
 		req.Limit = limit
@@ -411,9 +412,9 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 	// Call service to search
 	result, err := h.service.SearchFeedbackRecords(r.Context(), req)
 	if err != nil {
-		RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
 
-	RespondJSON(w, http.StatusOK, result)
+	response.RespondJSON(w, http.StatusOK, result)
 }
