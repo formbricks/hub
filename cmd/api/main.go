@@ -53,8 +53,6 @@ func main() {
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("POST /v1/feedback-records", feedbackRecordsHandler.Create)
 	protectedMux.HandleFunc("GET /v1/feedback-records", feedbackRecordsHandler.List)
-	// Register specific routes before wildcard routes to avoid path matching conflicts
-	protectedMux.HandleFunc("GET /v1/feedback-records/search", feedbackRecordsHandler.Search)
 	protectedMux.HandleFunc("GET /v1/feedback-records/{id}", feedbackRecordsHandler.Get)
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)

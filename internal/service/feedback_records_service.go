@@ -17,7 +17,6 @@ type FeedbackRecordsRepository interface {
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
-	Search(ctx context.Context, req *models.SearchFeedbackRecordsRequest) ([]models.FeedbackRecord, error)
 }
 
 // FeedbackRecordsService handles business logic for feedback records
@@ -73,44 +72,6 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 // DeleteFeedbackRecord deletes a feedback record by ID
 func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error {
 	return s.repo.Delete(ctx, id)
-}
-
-// SearchFeedbackRecords performs semantic search
-func (s *FeedbackRecordsService) SearchFeedbackRecords(ctx context.Context, req *models.SearchFeedbackRecordsRequest) (*models.SearchFeedbackRecordsResponse, error) {
-	// Set default limit if not provided
-	if req.Limit <= 0 {
-		req.Limit = 10 // Default limit
-	}
-	// Cap limit at maximum of 100
-	if req.Limit > 100 {
-		req.Limit = 100
-	}
-
-	// Call repository search
-	records, err := s.repo.Search(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to SearchResultItem with similarity_score (0 for now, until semantic search is implemented)
-	results := make([]models.SearchResultItem, len(records))
-	for i, record := range records {
-		results[i] = models.SearchResultItem{
-			FeedbackRecord:  record,
-			SimilarityScore: 0.0, // Will be populated when semantic search is implemented
-		}
-	}
-
-	query := ""
-	if req.Query != nil {
-		query = *req.Query
-	}
-
-	return &models.SearchFeedbackRecordsResponse{
-		Results: results,
-		Query:   query,
-		Count:   int64(len(results)),
-	}, nil
 }
 
 // BulkDeleteFeedbackRecords deletes all feedback records matching user_identifier and optional tenant_id

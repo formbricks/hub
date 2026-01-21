@@ -21,7 +21,6 @@ type FeedbackRecordsService interface {
 	UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error
 	BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
-	SearchFeedbackRecords(ctx context.Context, req *models.SearchFeedbackRecordsRequest) (*models.SearchFeedbackRecordsResponse, error)
 }
 
 // FeedbackRecordsHandler handles HTTP requests for feedback records
@@ -199,24 +198,4 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 	}
 
 	response.RespondJSON(w, http.StatusOK, resp)
-}
-
-// Search handles GET /v1/feedback-records/search
-func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) {
-	req := &models.SearchFeedbackRecordsRequest{}
-
-	// Decode and validate query parameters
-	if err := validation.ValidateAndDecodeQueryParams(r, req); err != nil {
-		validation.RespondValidationError(w, err)
-		return
-	}
-
-	// Call service to search
-	result, err := h.service.SearchFeedbackRecords(r.Context(), req)
-	if err != nil {
-		response.RespondInternalServerError(w, "An unexpected error occurred")
-		return
-	}
-
-	response.RespondJSON(w, http.StatusOK, result)
 }

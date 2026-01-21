@@ -53,8 +53,6 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("POST /v1/feedback-records", feedbackRecordsHandler.Create)
 	protectedMux.HandleFunc("GET /v1/feedback-records", feedbackRecordsHandler.List)
-	// Register specific routes before wildcard routes to avoid path matching conflicts
-	protectedMux.HandleFunc("GET /v1/feedback-records/search", feedbackRecordsHandler.Search)
 	protectedMux.HandleFunc("GET /v1/feedback-records/{id}", feedbackRecordsHandler.Get)
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
@@ -509,55 +507,5 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	})
-}
-
-func TestSearchFeedbackRecords(t *testing.T) {
-	server, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	client := &http.Client{}
-
-	// Test with invalid API key
-	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test", nil)
-		req.Header.Set("Authorization", "Bearer wrong-key-12345")
-
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("Search with query parameters", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&source_type=formbricks&limit=5", nil)
-		req.Header.Set("Authorization", "Bearer "+testAPIKey)
-
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var result models.SearchFeedbackRecordsResponse
-		err = decodeData(resp, &result)
-		require.NoError(t, err)
-
-		// Should return search results
-		assert.Equal(t, "test", result.Query)
-		assert.LessOrEqual(t, len(result.Results), 5)
-		assert.Equal(t, int64(len(result.Results)), result.Count)
-	})
-
-	t.Run("Search with invalid date format", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/search?query=test&since=invalid", nil)
-		req.Header.Set("Authorization", "Bearer "+testAPIKey)
-
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 }

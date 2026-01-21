@@ -101,31 +101,6 @@ type ListFeedbackRecordsResponse struct {
 	Offset int              `json:"offset"`
 }
 
-// SearchFeedbackRecordsRequest represents search parameters for feedback records
-type SearchFeedbackRecordsRequest struct {
-	Query          *string    `form:"query" validate:"required"`        // Full-text search query (required)
-	SourceType     *string    `form:"source_type"`                      // Filter by source type
-	SourceID       *string    `form:"source_id"`                        // Filter by source ID
-	FieldType      *string    `form:"field_type"`                       // Filter by field type
-	UserIdentifier *string    `form:"user_identifier"`                  // Filter by user identifier
-	Since          *time.Time `form:"since" validate:"omitempty"`       // Filter by collected_at >= since (ISO 8601)
-	Until          *time.Time `form:"until" validate:"omitempty"`       // Filter by collected_at <= until (ISO 8601)
-	Limit          int        `form:"limit" validate:"omitempty,min=1"` // Maximum number of results (default 10, max 100, capped in service)
-}
-
-// SearchResultItem represents a single search result with similarity score
-type SearchResultItem struct {
-	FeedbackRecord
-	SimilarityScore float64 `json:"similarity_score"`
-}
-
-// SearchFeedbackRecordsResponse represents search results
-type SearchFeedbackRecordsResponse struct {
-	Results []SearchResultItem `json:"results"`
-	Query   string             `json:"query"`
-	Count   int64              `json:"count"`
-}
-
 // BulkDeleteResponse represents the response for bulk delete operation
 type BulkDeleteResponse struct {
 	DeletedCount int64  `json:"deleted_count"`
