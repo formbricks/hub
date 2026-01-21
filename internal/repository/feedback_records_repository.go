@@ -423,6 +423,27 @@ func buildSearchQuery(req *models.SearchFeedbackRecordsRequest) (string, []inter
 		argCount++
 	}
 
+	// Filter by source_id
+	if req.SourceID != nil {
+		conditions = append(conditions, fmt.Sprintf("source_id = $%d", argCount))
+		args = append(args, *req.SourceID)
+		argCount++
+	}
+
+	// Filter by field_type
+	if req.FieldType != nil {
+		conditions = append(conditions, fmt.Sprintf("field_type = $%d", argCount))
+		args = append(args, *req.FieldType)
+		argCount++
+	}
+
+	// Filter by user_identifier
+	if req.UserIdentifier != nil {
+		conditions = append(conditions, fmt.Sprintf("user_identifier = $%d", argCount))
+		args = append(args, *req.UserIdentifier)
+		argCount++
+	}
+
 	// Filter by date range (since/until)
 	if req.Since != nil {
 		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", argCount))

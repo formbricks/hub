@@ -364,6 +364,21 @@ func (h *FeedbackRecordsHandler) Search(w http.ResponseWriter, r *http.Request) 
 		req.SourceType = &sourceType
 	}
 
+	// Parse source_id filter
+	if sourceID := query.Get("source_id"); sourceID != "" {
+		req.SourceID = &sourceID
+	}
+
+	// Parse field_type filter
+	if fieldType := query.Get("field_type"); fieldType != "" {
+		req.FieldType = &fieldType
+	}
+
+	// Parse user_identifier filter
+	if userIdentifier := query.Get("user_identifier"); userIdentifier != "" {
+		req.UserIdentifier = &userIdentifier
+	}
+
 	// Parse ISO 8601 date parameters
 	if sinceStr := query.Get("since"); sinceStr != "" {
 		since, err := time.Parse(time.RFC3339, sinceStr)

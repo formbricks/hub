@@ -143,6 +143,7 @@ func TestSearchFilters(t *testing.T) {
 			"source_type":     "formbricks",
 			"source_id":       "survey_2",
 			"field_id":        "question_2",
+			"field_label":     "Rating out of 5",
 			"field_type":      "number",
 			"value_number":    5,
 			"user_identifier": "user_456",
@@ -151,6 +152,7 @@ func TestSearchFilters(t *testing.T) {
 			"source_type":     "typeform",
 			"source_id":       "form_1",
 			"field_id":        "rating",
+			"field_label":     "Product rating",
 			"field_type":      "number",
 			"value_number":    4,
 			"user_identifier": "user_123",
@@ -201,6 +203,7 @@ func TestSearchFilters(t *testing.T) {
 
 		assert.Greater(t, len(result.Results), 0)
 		for _, item := range result.Results {
+			require.NotNil(t, item.SourceID, "SourceID should not be nil for this test")
 			assert.Equal(t, "survey_1", *item.SourceID)
 		}
 	})
@@ -241,6 +244,7 @@ func TestSearchFilters(t *testing.T) {
 
 		assert.Greater(t, len(result.Results), 0)
 		for _, item := range result.Results {
+			require.NotNil(t, item.UserIdentifier, "UserIdentifier should not be nil for this test")
 			assert.Equal(t, "user_123", *item.UserIdentifier)
 		}
 	})

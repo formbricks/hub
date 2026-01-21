@@ -103,11 +103,14 @@ type ListFeedbackRecordsResponse struct {
 
 // SearchFeedbackRecordsRequest represents search parameters for feedback records
 type SearchFeedbackRecordsRequest struct {
-	Query      *string    `json:"query,omitempty"`       // Full-text search query (required)
-	SourceType *string    `json:"source_type,omitempty"` // Filter by source type
-	Since      *time.Time `json:"since,omitempty"`       // Filter by collected_at >= since (ISO 8601)
-	Until      *time.Time `json:"until,omitempty"`       // Filter by collected_at <= until (ISO 8601)
-	Limit      int        `json:"limit,omitempty"`       // Maximum number of results (default 10, max 100)
+	Query          *string    `json:"query,omitempty"`           // Full-text search query (required)
+	SourceType     *string    `json:"source_type,omitempty"`     // Filter by source type
+	SourceID       *string    `json:"source_id,omitempty"`       // Filter by source ID
+	FieldType      *string    `json:"field_type,omitempty"`      // Filter by field type
+	UserIdentifier *string    `json:"user_identifier,omitempty"` // Filter by user identifier
+	Since          *time.Time `json:"since,omitempty"`            // Filter by collected_at >= since (ISO 8601)
+	Until          *time.Time `json:"until,omitempty"`            // Filter by collected_at <= until (ISO 8601)
+	Limit          int        `json:"limit,omitempty"`            // Maximum number of results (default 10, max 100)
 }
 
 // SearchResultItem represents a single search result with similarity score
