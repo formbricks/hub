@@ -88,6 +88,11 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 
 // SearchFeedbackRecords performs semantic search
 func (s *FeedbackRecordsService) SearchFeedbackRecords(ctx context.Context, req *models.SearchFeedbackRecordsRequest) (*models.SearchFeedbackRecordsResponse, error) {
+	// Validate required query parameter
+	if req.Query == nil || *req.Query == "" {
+		return nil, apperrors.NewValidationError("query", "query parameter is required")
+	}
+
 	// Set default limit and enforce max
 	if req.Limit <= 0 {
 		req.Limit = 10 // Default limit

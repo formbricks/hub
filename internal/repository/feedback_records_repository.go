@@ -399,13 +399,9 @@ func buildSearchQuery(req *models.SearchFeedbackRecordsRequest) (string, []inter
 	var args []interface{}
 	argCount := 1
 
-	// Full-text search on text fields (required for search endpoint)
-	if req.Query == nil || *req.Query == "" {
-		return "", nil, fmt.Errorf("query parameter is required")
-	}
-
 	// Search across multiple fields using the same search pattern
 	// All four ILIKE conditions use $1 with the same value
+	// Note: Query validation should be done in the service layer before calling this method
 	searchPattern := "%" + *req.Query + "%"
 	conditions = append(conditions, `(
 		value_text ILIKE $1 OR
@@ -463,18 +459,10 @@ func buildSearchQuery(req *models.SearchFeedbackRecordsRequest) (string, []inter
 	// Add ORDER BY
 	orderBy := " ORDER BY collected_at DESC"
 
-	// Set default limit if not provided
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 10 // Default limit
-	}
-	if limit > 100 {
-		limit = 100 // Max limit
-	}
-
 	// Add pagination
+	// Note: Limit validation and defaults should be handled in the service layer
 	paginationClause := fmt.Sprintf(" LIMIT $%d", argCount)
-	args = append(args, limit)
+	args = append(args, req.Limit)
 
 	// Build full query
 	fullQuery := baseQuery + whereClause + orderBy + paginationClause
