@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -47,7 +48,10 @@ func Auth(apiKeyRepo *repository.APIKeyRepository) func(http.Handler) http.Handl
 			go func() {
 				// Create a new context for the background operation
 				bgCtx := context.Background()
-				_ = apiKeyRepo.UpdateLastUsedAt(bgCtx, validatedKey.KeyHash)
+				err = apiKeyRepo.UpdateLastUsedAt(bgCtx, validatedKey.KeyHash)
+				if err != nil {
+					slog.Error("Failed to update last used timestamp", "error", err)
+				}
 			}()
 
 			// Store the validated API key in the request context
