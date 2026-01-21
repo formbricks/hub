@@ -33,38 +33,6 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 - ✅ **Swagger/OpenAPI** documentation
 - ✅ **Health Check** endpoints
 
-### Planned Features (See Implementation Plan)
-
-The project follows a comprehensive [feature parity and production readiness plan](.cursor/plans/feature_parity_implementation_plan_766455a7.plan.md) organized by priority:
-
-**Priority 1: Critical Security & Production Readiness**
-- Rate limiting
-- Request size limits
-- Error sanitization
-- API key security enhancements
-
-**Priority 2: Core Features**
-- API specification alignment (`/v1/feedback-records` endpoint)
-- Webhook system (Standard Webhooks)
-- Bulk delete (GDPR compliance)
-- Multi-tenancy support
-- Enhanced database indexing
-
-**Priority 3-7: Observability, Operations & Advanced Features**
-- Structured logging with request ID tracking
-- Prometheus metrics
-- OpenTelemetry integration
-- Health check enhancements
-- Configuration validation
-- Security headers & CORS
-- And more...
-
-**Future: AI-Powered Connector Architecture**
-- AI-powered connector discovery and mapping
-- Multiple ingestion methods (file imports, streaming, webhooks)
-- Semantic data context understanding
-- Automatic field mapping and taxonomy application
-
 ## Tech Stack
 
 - **Language**: Go 1.25.6
@@ -341,21 +309,6 @@ This separation allows for:
 - **Webhook Communication**: Events sent via Standard Webhooks (no workflow engine)
 - **Performance First**: Optimized for high-throughput data processing and analytics
 
-## Roadmap
-
-See the [comprehensive implementation plan](.cursor/plans/feature_parity_implementation_plan_766455a7.plan.md) for detailed roadmap and priorities.
-
-**Current Focus**:
-- Security & production readiness improvements
-- API specification alignment
-- Core feature implementation (webhooks, bulk operations, multi-tenancy)
-
-**Future Enhancements**:
-- AI-powered connector framework
-- Semantic search capabilities
-- AI enrichment (sentiment, emotion, topics)
-- Advanced observability and monitoring
-
 ## Contributing
 
 This is an open-source project. Contributions are welcome! Please ensure:
@@ -371,6 +324,4 @@ Apache 2.0
 
 ## Related Documentation
 
-- [Implementation Plan](.cursor/plans/feature_parity_implementation_plan_766455a7.plan.md) - Comprehensive feature parity and production readiness plan
 - [API Documentation](http://localhost:8080/swagger/) - Interactive Swagger documentation (when server is running)
-- [Agents Documentation](agents.md) - AI agents and assistants used in the project
