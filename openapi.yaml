@@ -25,7 +25,6 @@ paths:
                 - name: tenant_id
                   in: query
                   description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
-                  explode: false
                   schema:
                     type: string
                     description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
@@ -33,7 +32,6 @@ paths:
                 - name: response_id
                   in: query
                   description: Filter by response ID (get all answers from one submission). NULL bytes not allowed.
-                  explode: false
                   schema:
                     type: string
                     description: Filter by response ID (get all answers from one submission). NULL bytes not allowed.
@@ -41,7 +39,6 @@ paths:
                 - name: source_type
                   in: query
                   description: Filter by source type. NULL bytes not allowed.
-                  explode: false
                   schema:
                     type: string
                     description: Filter by source type. NULL bytes not allowed.
@@ -49,7 +46,6 @@ paths:
                 - name: source_id
                   in: query
                   description: Filter by source ID (NULL bytes not allowed)
-                  explode: false
                   schema:
                     type: string
                     description: Filter by source ID (NULL bytes not allowed)
@@ -57,7 +53,6 @@ paths:
                 - name: field_type
                   in: query
                   description: Filter by field type. NULL bytes not allowed.
-                  explode: false
                   schema:
                     type: string
                     description: Filter by field type. NULL bytes not allowed.
@@ -65,7 +60,6 @@ paths:
                 - name: user_identifier
                   in: query
                   description: Filter by user identifier. NULL bytes not allowed.
-                  explode: false
                   schema:
                     type: string
                     description: Filter by user identifier. NULL bytes not allowed.
@@ -73,7 +67,6 @@ paths:
                 - name: since
                   in: query
                   description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
-                  explode: false
                   schema:
                     type: string
                     format: date-time
@@ -83,7 +76,6 @@ paths:
                 - name: until
                   in: query
                   description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
-                  explode: false
                   schema:
                     type: string
                     format: date-time
@@ -93,7 +85,6 @@ paths:
                 - name: limit
                   in: query
                   description: Number of results to return (max 1000)
-                  explode: false
                   schema:
                     type: integer
                     description: Number of results to return (max 1000)
@@ -104,7 +95,6 @@ paths:
                 - name: offset
                   in: query
                   description: Number of results to skip
-                  explode: false
                   schema:
                     type: integer
                     description: Number of results to skip
@@ -161,7 +151,6 @@ paths:
                   in: query
                   description: Delete all records matching this user identifier (required). NULL bytes not allowed.
                   required: true
-                  explode: false
                   schema:
                     type: string
                     description: Delete all records matching this user identifier (required). NULL bytes not allowed.
@@ -170,7 +159,6 @@ paths:
                 - name: tenant_id
                   in: query
                   description: Filter by tenant ID (optional, for multi-tenant deployments). NULL bytes not allowed.
-                  explode: false
                   schema:
                     type: string
                     description: Filter by tenant ID (optional, for multi-tenant deployments). NULL bytes not allowed.
@@ -269,81 +257,6 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/FeedbackRecordData'
-                default:
-                    description: Error
-                    content:
-                        application/problem+json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorModel'
-    /v1/feedback-records/search:
-        get:
-            tags:
-                - Feedback Records
-            summary: Search feedback records using semantic search
-            description: Performs vector similarity search on feedback record data using OpenAI embeddings. Only returns text records that have been embedded.
-            operationId: search-feedback-records
-            parameters:
-                - name: query
-                  in: query
-                  description: Natural language search query
-                  required: true
-                  explode: false
-                  schema:
-                    type: string
-                    description: Natural language search query
-                    examples:
-                        - pricing feedback
-                    minLength: 1
-                    maxLength: 1000
-                  example: pricing feedback
-                - name: limit
-                  in: query
-                  description: Maximum number of results to return
-                  explode: false
-                  schema:
-                    type: integer
-                    description: Maximum number of results to return
-                    format: int64
-                    default: 10
-                    minimum: 1
-                    maximum: 100
-                - name: source_type
-                  in: query
-                  description: Filter by source type (e.g., survey, review)
-                  explode: false
-                  schema:
-                    type: string
-                    description: Filter by source type (e.g., survey, review)
-                    examples:
-                        - survey
-                  example: survey
-                - name: since
-                  in: query
-                  description: Filter by collection date (ISO 8601)
-                  explode: false
-                  schema:
-                    type: string
-                    description: Filter by collection date (ISO 8601)
-                    examples:
-                        - "2024-01-01T00:00:00Z"
-                  example: "2024-01-01T00:00:00Z"
-                - name: until
-                  in: query
-                  description: Filter by collection date (ISO 8601)
-                  explode: false
-                  schema:
-                    type: string
-                    description: Filter by collection date (ISO 8601)
-                    examples:
-                        - "2024-12-31T23:59:59Z"
-                  example: "2024-12-31T23:59:59Z"
-            responses:
-                "200":
-                    description: OK
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/SearchOutputBody'
                 default:
                     description: Error
                     content:
@@ -694,135 +607,6 @@ components:
                 - total
                 - limit
                 - offset
-        SearchOutputBody:
-            type: object
-            additionalProperties: false
-            properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://0.0.0.0:8080/schemas/SearchOutputBody.json
-                    readOnly: true
-                count:
-                    type: integer
-                    description: Number of results returned
-                    format: int64
-                query:
-                    type: string
-                    description: The search query that was executed
-                results:
-                    type: array
-                    description: Search results ordered by relevance
-                    items:
-                        $ref: '#/components/schemas/SearchResultItem'
-            required:
-                - results
-                - query
-                - count
-        SearchResultItem:
-            type: object
-            additionalProperties: false
-            properties:
-                collected_at:
-                    type: string
-                    description: When the feedback was collected
-                    format: date-time
-                created_at:
-                    type: string
-                    description: When this record was created
-                    format: date-time
-                emotion:
-                    type: string
-                    description: 'AI-detected emotion: joy, anger, frustration, sadness, neutral'
-                field_id:
-                    type: string
-                    description: Identifier for the question/field
-                field_label:
-                    type: string
-                    description: The actual question text
-                field_type:
-                    type: string
-                    description: Type of field
-                id:
-                    type: string
-                    description: UUIDv7 primary key
-                language:
-                    type: string
-                    description: ISO language code. NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
-                metadata:
-                    type: object
-                    description: Additional context
-                    additionalProperties: {}
-                response_id:
-                    type: string
-                    description: Groups answers from a single submission
-                sentiment:
-                    type: string
-                    description: 'AI-detected sentiment: positive, negative, neutral'
-                sentiment_score:
-                    type: number
-                    description: Sentiment intensity from -1 (negative) to +1 (positive)
-                    format: double
-                similarity_score:
-                    type: number
-                    description: Cosine similarity score (0-1, higher is more similar)
-                    format: double
-                source_id:
-                    type: string
-                    description: Reference to survey/form/ticket ID
-                source_name:
-                    type: string
-                    description: Human-readable name
-                source_type:
-                    type: string
-                    description: Type of feedback source
-                tenant_id:
-                    type: string
-                    description: Tenant/organization identifier. NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
-                topics:
-                    type: array
-                    description: Key topics extracted by AI
-                    items:
-                        type: string
-                updated_at:
-                    type: string
-                    description: When this record was last updated
-                    format: date-time
-                user_identifier:
-                    type: string
-                    description: User identifier
-                value_boolean:
-                    type: boolean
-                    description: Boolean response
-                value_date:
-                    type: string
-                    description: Date response
-                    format: date-time
-                value_json:
-                    type: object
-                    description: Complex response
-                    additionalProperties: {}
-                value_number:
-                    type: number
-                    description: Numeric response
-                    format: double
-                value_text:
-                    type: string
-                    description: Text response. NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
-            required:
-                - similarity_score
-                - id
-                - collected_at
-                - created_at
-                - updated_at
-                - source_type
-                - field_id
-                - field_type
         UpdateFeedbackRecordInputBody:
             type: object
             additionalProperties: false

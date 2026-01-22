@@ -175,12 +175,6 @@ Query parameters:
 - `limit` - Number of results (default: 100, max: 1000)
 - `offset` - Pagination offset
 
-#### Search Feedback Records
-```bash
-GET /v1/feedback-records/search?query=feedback&source_type=survey&limit=20
-Authorization: Bearer <api-key>
-```
-
 #### Update Feedback Record
 ```bash
 PATCH /v1/feedback-records/{id}
