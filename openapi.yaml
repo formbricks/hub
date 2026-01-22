@@ -1,0 +1,831 @@
+openapi: 3.1.0
+info:
+    title: Formbricks Hub API
+    description: "Feedback record storage service for the Formbricks ecosystem.\n\n\U0001F4DA Full Documentation: https://hub.formbricks.com\n\U0001F680 Quick Start: https://hub.formbricks.com/quickstart\n\U0001F50C Connector Ecosystem: Coming soon"
+    contact:
+        name: Formbricks Team
+        url: https://formbricks.com
+        email: support@formbricks.com
+    license:
+        name: Apache-2.0
+        url: https://www.apache.org/licenses/LICENSE-2.0
+    version: 1.0.0
+servers:
+    - url: http://0.0.0.0:8080
+      description: API server
+paths:
+    /v1/feedback-records:
+        get:
+            tags:
+                - Feedback Records
+            summary: List feedback records with filters
+            description: Lists feedback records with optional filters and pagination
+            operationId: list-feedback-records
+            parameters:
+                - name: tenant_id
+                  in: query
+                  description: Filter by tenant ID (for multi-tenant deployments)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by tenant ID (for multi-tenant deployments)
+                - name: response_id
+                  in: query
+                  description: Filter by response ID (get all answers from one submission)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by response ID (get all answers from one submission)
+                - name: source_type
+                  in: query
+                  description: Filter by source type
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by source type
+                - name: source_id
+                  in: query
+                  description: Filter by source ID
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by source ID
+                - name: field_type
+                  in: query
+                  description: Filter by field type
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by field type
+                - name: user_identifier
+                  in: query
+                  description: Filter by user identifier
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by user identifier
+                - name: since
+                  in: query
+                  description: Filter by collected_at >= since (ISO 8601 format)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by collected_at >= since (ISO 8601 format)
+                - name: until
+                  in: query
+                  description: Filter by collected_at <= until (ISO 8601 format)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by collected_at <= until (ISO 8601 format)
+                - name: limit
+                  in: query
+                  description: Number of results to return (max 1000)
+                  explode: false
+                  schema:
+                    type: integer
+                    description: Number of results to return (max 1000)
+                    format: int64
+                    default: 100
+                    minimum: 1
+                    maximum: 1000
+                - name: offset
+                  in: query
+                  description: Number of results to skip
+                  explode: false
+                  schema:
+                    type: integer
+                    description: Number of results to skip
+                    format: int64
+                    default: 0
+                    minimum: 0
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListFeedbackRecordsOutputBody'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        post:
+            tags:
+                - Feedback Records
+            summary: Create a new feedback record
+            description: Creates a new feedback record data point
+            operationId: create-feedback-record
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateFeedbackRecordInputBody'
+                required: true
+            responses:
+                "201":
+                    description: Created
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/FeedbackRecordData'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        delete:
+            tags:
+                - Feedback Records
+            summary: Bulk delete feedback records by user identifier
+            description: Permanently deletes all feedback record data points matching the specified user_identifier. This endpoint supports GDPR Article 17 (Right to Erasure) requests.
+            operationId: bulk-delete-feedback-records
+            parameters:
+                - name: user_identifier
+                  in: query
+                  description: Delete all records matching this user identifier (required)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Delete all records matching this user identifier (required)
+                    minLength: 1
+                - name: tenant_id
+                  in: query
+                  description: Filter by tenant ID (optional, for multi-tenant deployments)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by tenant ID (optional, for multi-tenant deployments)
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BulkDeleteFeedbackRecordsOutputBody'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/feedback-records/{id}:
+        get:
+            tags:
+                - Feedback Records
+            summary: Get a feedback record by ID
+            description: Retrieves a single feedback record data point by its UUID
+            operationId: get-feedback-record
+            parameters:
+                - name: id
+                  in: path
+                  description: Feedback Record ID (UUID)
+                  required: true
+                  schema:
+                    type: string
+                    description: Feedback Record ID (UUID)
+                    format: uuid
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/FeedbackRecordData'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        delete:
+            tags:
+                - Feedback Records
+            summary: Delete a feedback record
+            description: Permanently deletes a feedback record data point
+            operationId: delete-feedback-record
+            parameters:
+                - name: id
+                  in: path
+                  description: Feedback Record ID (UUID)
+                  required: true
+                  schema:
+                    type: string
+                    description: Feedback Record ID (UUID)
+                    format: uuid
+            responses:
+                "204":
+                    description: No Content
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        patch:
+            tags:
+                - Feedback Records
+            summary: Update a feedback record
+            description: Updates specific fields of a feedback record data point
+            operationId: update-feedback-record
+            parameters:
+                - name: id
+                  in: path
+                  description: Feedback Record ID (UUID)
+                  required: true
+                  schema:
+                    type: string
+                    description: Feedback Record ID (UUID)
+                    format: uuid
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpdateFeedbackRecordInputBody'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/FeedbackRecordData'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/feedback-records/search:
+        get:
+            tags:
+                - Feedback Records
+            summary: Search feedback records using semantic search
+            description: Performs vector similarity search on feedback record data using OpenAI embeddings. Only returns text records that have been embedded.
+            operationId: search-feedback-records
+            parameters:
+                - name: query
+                  in: query
+                  description: Natural language search query
+                  required: true
+                  explode: false
+                  schema:
+                    type: string
+                    description: Natural language search query
+                    examples:
+                        - pricing feedback
+                    minLength: 1
+                    maxLength: 1000
+                  example: pricing feedback
+                - name: limit
+                  in: query
+                  description: Maximum number of results to return
+                  explode: false
+                  schema:
+                    type: integer
+                    description: Maximum number of results to return
+                    format: int64
+                    default: 10
+                    minimum: 1
+                    maximum: 100
+                - name: source_type
+                  in: query
+                  description: Filter by source type (e.g., survey, review)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by source type (e.g., survey, review)
+                    examples:
+                        - survey
+                  example: survey
+                - name: since
+                  in: query
+                  description: Filter by collection date (ISO 8601)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by collection date (ISO 8601)
+                    examples:
+                        - "2024-01-01T00:00:00Z"
+                  example: "2024-01-01T00:00:00Z"
+                - name: until
+                  in: query
+                  description: Filter by collection date (ISO 8601)
+                  explode: false
+                  schema:
+                    type: string
+                    description: Filter by collection date (ISO 8601)
+                    examples:
+                        - "2024-12-31T23:59:59Z"
+                  example: "2024-12-31T23:59:59Z"
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SearchOutputBody'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+components:
+    schemas:
+        BulkDeleteFeedbackRecordsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                $schema:
+                    type: string
+                    description: A URL to the JSON Schema for this object.
+                    format: uri
+                    examples:
+                        - http://0.0.0.0:8080/schemas/BulkDeleteFeedbackRecordsOutputBody.json
+                    readOnly: true
+                deleted_count:
+                    type: integer
+                    description: Number of records deleted
+                    format: int64
+                message:
+                    type: string
+                    description: Human-readable status message
+            required:
+                - deleted_count
+                - message
+        CreateFeedbackRecordInputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                $schema:
+                    type: string
+                    description: A URL to the JSON Schema for this object.
+                    format: uri
+                    examples:
+                        - http://0.0.0.0:8080/schemas/CreateFeedbackRecordInputBody.json
+                    readOnly: true
+                collected_at:
+                    type: string
+                    description: When the feedback was collected (defaults to now)
+                    format: date-time
+                field_id:
+                    type: string
+                    description: Identifier for the question/field
+                    examples:
+                        - q1
+                    minLength: 1
+                    maxLength: 255
+                field_label:
+                    type: string
+                    description: The actual question text
+                    examples:
+                        - How satisfied are you?
+                field_type:
+                    type: string
+                    description: 'Field type: text (enrichable), categorical, nps, csat, ces, rating, number, boolean, date'
+                    examples:
+                        - rating
+                    enum:
+                        - text
+                        - categorical
+                        - nps
+                        - csat
+                        - ces
+                        - rating
+                        - number
+                        - boolean
+                        - date
+                    minLength: 1
+                    maxLength: 255
+                language:
+                    type: string
+                    description: ISO language code
+                    examples:
+                        - en
+                    maxLength: 10
+                metadata:
+                    type: object
+                    description: User agent, device, location, referrer, tags, etc.
+                    additionalProperties: {}
+                response_id:
+                    type: string
+                    description: Groups multiple answers from a single submission/session
+                    examples:
+                        - resp-abc-123
+                    maxLength: 255
+                source_id:
+                    type: string
+                    description: Reference to survey/form/ticket ID
+                    examples:
+                        - survey-123
+                source_name:
+                    type: string
+                    description: Human-readable name
+                    examples:
+                        - Q1 NPS Survey
+                source_type:
+                    type: string
+                    description: Type of feedback source (e.g., survey, review, feedback_form)
+                    examples:
+                        - survey
+                    minLength: 1
+                    maxLength: 255
+                tenant_id:
+                    type: string
+                    description: Tenant/organization identifier for multi-tenancy
+                    examples:
+                        - org-123
+                    maxLength: 255
+                user_identifier:
+                    type: string
+                    description: Anonymous ID or email hash
+                    examples:
+                        - user-abc-123
+                value_boolean:
+                    type: boolean
+                    description: For yes/no questions
+                    examples:
+                        - true
+                value_date:
+                    type: string
+                    description: For date responses
+                    format: date-time
+                value_json:
+                    type: object
+                    description: For complex responses like multiple choice arrays
+                    additionalProperties: {}
+                value_number:
+                    type: number
+                    description: For ratings, NPS scores, numeric responses
+                    format: double
+                    examples:
+                        - 9
+                value_text:
+                    type: string
+                    description: For open-ended text responses
+                    examples:
+                        - Great service!
+            required:
+                - source_type
+                - field_id
+                - field_type
+        ErrorDetail:
+            type: object
+            additionalProperties: false
+            properties:
+                location:
+                    type: string
+                    description: Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'
+                message:
+                    type: string
+                    description: Error message text
+                value:
+                    description: The value at the given location
+        ErrorModel:
+            type: object
+            additionalProperties: false
+            properties:
+                $schema:
+                    type: string
+                    description: A URL to the JSON Schema for this object.
+                    format: uri
+                    examples:
+                        - http://0.0.0.0:8080/schemas/ErrorModel.json
+                    readOnly: true
+                detail:
+                    type: string
+                    description: A human-readable explanation specific to this occurrence of the problem.
+                    examples:
+                        - Property foo is required but is missing.
+                errors:
+                    type: array
+                    description: Optional list of individual error details
+                    items:
+                        $ref: '#/components/schemas/ErrorDetail'
+                instance:
+                    type: string
+                    description: A URI reference that identifies the specific occurrence of the problem.
+                    format: uri
+                    examples:
+                        - https://example.com/error-log/abc123
+                status:
+                    type: integer
+                    description: HTTP status code
+                    format: int64
+                    examples:
+                        - 400
+                title:
+                    type: string
+                    description: A short, human-readable summary of the problem type. This value should not change between occurrences of the error.
+                    examples:
+                        - Bad Request
+                type:
+                    type: string
+                    description: A URI reference to human-readable documentation for the error.
+                    format: uri
+                    default: about:blank
+                    examples:
+                        - https://example.com/errors/example
+        FeedbackRecordData:
+            type: object
+            additionalProperties: false
+            properties:
+                $schema:
+                    type: string
+                    description: A URL to the JSON Schema for this object.
+                    format: uri
+                    examples:
+                        - http://0.0.0.0:8080/schemas/FeedbackRecordData.json
+                    readOnly: true
+                collected_at:
+                    type: string
+                    description: When the feedback was collected
+                    format: date-time
+                created_at:
+                    type: string
+                    description: When this record was created
+                    format: date-time
+                emotion:
+                    type: string
+                    description: 'AI-detected emotion: joy, anger, frustration, sadness, neutral'
+                field_id:
+                    type: string
+                    description: Identifier for the question/field
+                field_label:
+                    type: string
+                    description: The actual question text
+                field_type:
+                    type: string
+                    description: Type of field
+                id:
+                    type: string
+                    description: UUIDv7 primary key
+                language:
+                    type: string
+                    description: ISO language code
+                metadata:
+                    type: object
+                    description: Additional context
+                    additionalProperties: {}
+                response_id:
+                    type: string
+                    description: Groups answers from a single submission
+                sentiment:
+                    type: string
+                    description: 'AI-detected sentiment: positive, negative, neutral'
+                sentiment_score:
+                    type: number
+                    description: Sentiment intensity from -1 (negative) to +1 (positive)
+                    format: double
+                source_id:
+                    type: string
+                    description: Reference to survey/form/ticket ID
+                source_name:
+                    type: string
+                    description: Human-readable name
+                source_type:
+                    type: string
+                    description: Type of feedback source
+                tenant_id:
+                    type: string
+                    description: Tenant/organization identifier
+                topics:
+                    type: array
+                    description: Key topics extracted by AI
+                    items:
+                        type: string
+                updated_at:
+                    type: string
+                    description: When this record was last updated
+                    format: date-time
+                user_identifier:
+                    type: string
+                    description: User identifier
+                value_boolean:
+                    type: boolean
+                    description: Boolean response
+                value_date:
+                    type: string
+                    description: Date response
+                    format: date-time
+                value_json:
+                    type: object
+                    description: Complex response
+                    additionalProperties: {}
+                value_number:
+                    type: number
+                    description: Numeric response
+                    format: double
+                value_text:
+                    type: string
+                    description: Text response
+            required:
+                - id
+                - collected_at
+                - created_at
+                - updated_at
+                - source_type
+                - field_id
+                - field_type
+        ListFeedbackRecordsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                $schema:
+                    type: string
+                    description: A URL to the JSON Schema for this object.
+                    format: uri
+                    examples:
+                        - http://0.0.0.0:8080/schemas/ListFeedbackRecordsOutputBody.json
+                    readOnly: true
+                data:
+                    type: array
+                    description: List of feedback records
+                    items:
+                        $ref: '#/components/schemas/FeedbackRecordData'
+                limit:
+                    type: integer
+                    description: Limit used in query
+                    format: int64
+                offset:
+                    type: integer
+                    description: Offset used in query
+                    format: int64
+                total:
+                    type: integer
+                    description: Total count of feedback records matching filters
+                    format: int64
+            required:
+                - data
+                - total
+                - limit
+                - offset
+        SearchOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                $schema:
+                    type: string
+                    description: A URL to the JSON Schema for this object.
+                    format: uri
+                    examples:
+                        - http://0.0.0.0:8080/schemas/SearchOutputBody.json
+                    readOnly: true
+                count:
+                    type: integer
+                    description: Number of results returned
+                    format: int64
+                query:
+                    type: string
+                    description: The search query that was executed
+                results:
+                    type: array
+                    description: Search results ordered by relevance
+                    items:
+                        $ref: '#/components/schemas/SearchResultItem'
+            required:
+                - results
+                - query
+                - count
+        SearchResultItem:
+            type: object
+            additionalProperties: false
+            properties:
+                collected_at:
+                    type: string
+                    description: When the feedback was collected
+                    format: date-time
+                created_at:
+                    type: string
+                    description: When this record was created
+                    format: date-time
+                emotion:
+                    type: string
+                    description: 'AI-detected emotion: joy, anger, frustration, sadness, neutral'
+                field_id:
+                    type: string
+                    description: Identifier for the question/field
+                field_label:
+                    type: string
+                    description: The actual question text
+                field_type:
+                    type: string
+                    description: Type of field
+                id:
+                    type: string
+                    description: UUIDv7 primary key
+                language:
+                    type: string
+                    description: ISO language code
+                metadata:
+                    type: object
+                    description: Additional context
+                    additionalProperties: {}
+                response_id:
+                    type: string
+                    description: Groups answers from a single submission
+                sentiment:
+                    type: string
+                    description: 'AI-detected sentiment: positive, negative, neutral'
+                sentiment_score:
+                    type: number
+                    description: Sentiment intensity from -1 (negative) to +1 (positive)
+                    format: double
+                similarity_score:
+                    type: number
+                    description: Cosine similarity score (0-1, higher is more similar)
+                    format: double
+                source_id:
+                    type: string
+                    description: Reference to survey/form/ticket ID
+                source_name:
+                    type: string
+                    description: Human-readable name
+                source_type:
+                    type: string
+                    description: Type of feedback source
+                tenant_id:
+                    type: string
+                    description: Tenant/organization identifier
+                topics:
+                    type: array
+                    description: Key topics extracted by AI
+                    items:
+                        type: string
+                updated_at:
+                    type: string
+                    description: When this record was last updated
+                    format: date-time
+                user_identifier:
+                    type: string
+                    description: User identifier
+                value_boolean:
+                    type: boolean
+                    description: Boolean response
+                value_date:
+                    type: string
+                    description: Date response
+                    format: date-time
+                value_json:
+                    type: object
+                    description: Complex response
+                    additionalProperties: {}
+                value_number:
+                    type: number
+                    description: Numeric response
+                    format: double
+                value_text:
+                    type: string
+                    description: Text response
+            required:
+                - similarity_score
+                - id
+                - collected_at
+                - created_at
+                - updated_at
+                - source_type
+                - field_id
+                - field_type
+        UpdateFeedbackRecordInputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                $schema:
+                    type: string
+                    description: A URL to the JSON Schema for this object.
+                    format: uri
+                    examples:
+                        - http://0.0.0.0:8080/schemas/UpdateFeedbackRecordInputBody.json
+                    readOnly: true
+                language:
+                    type: string
+                    description: Update language
+                metadata:
+                    type: object
+                    description: Update metadata
+                    additionalProperties: {}
+                user_identifier:
+                    type: string
+                    description: Update user identifier
+                value_boolean:
+                    type: boolean
+                    description: Update boolean response
+                value_date:
+                    type: string
+                    description: Update date response
+                    format: date-time
+                value_json:
+                    type: object
+                    description: Update complex response
+                    additionalProperties: {}
+                value_number:
+                    type: number
+                    description: Update numeric response
+                    format: double
+                value_text:
+                    type: string
+                    description: Update text response
