@@ -10,7 +10,6 @@ import (
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,42 +34,32 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		INSERT INTO feedback_records (
 			collected_at, source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
+			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
-			metadata, language, user_identifier, tenant_id, response_id,
-			emotion, sentiment, sentiment_score, topics
+			value_text, value_number, value_boolean, value_date,
+			metadata, language, user_identifier, tenant_id, response_id
 	`
 
 	var record models.FeedbackRecord
-	var topicsArray pgtype.Array[string]
 	err := r.db.QueryRow(ctx, query,
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType,
-		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate, req.ValueJSON,
+		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
 		req.Metadata, req.Language, req.UserIdentifier, req.TenantID, req.ResponseID,
 	).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
+		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-		&record.Emotion, &record.Sentiment, &record.SentimentScore, &topicsArray,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create feedback record: %w", err)
-	}
-
-	// Convert pgtype.Array[string] to []string
-	if topicsArray.Valid {
-		record.Topics = topicsArray.Elements
-	} else {
-		record.Topics = nil
 	}
 
 	return &record, nil
@@ -82,35 +71,25 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
-			metadata, language, user_identifier, tenant_id, response_id,
-			emotion, sentiment, sentiment_score, topics
+			value_text, value_number, value_boolean, value_date,
+			metadata, language, user_identifier, tenant_id, response_id
 		FROM feedback_records
 		WHERE id = $1
 	`
 
 	var record models.FeedbackRecord
-	var topicsArray pgtype.Array[string]
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
+		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-		&record.Emotion, &record.Sentiment, &record.SentimentScore, &topicsArray,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
-	}
-
-	// Convert pgtype.Array[string] to []string
-	if topicsArray.Valid {
-		record.Topics = topicsArray.Elements
-	} else {
-		record.Topics = nil
 	}
 
 	return &record, nil
@@ -190,9 +169,8 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
-			metadata, language, user_identifier, tenant_id, response_id,
-			emotion, sentiment, sentiment_score, topics
+			value_text, value_number, value_boolean, value_date,
+			metadata, language, user_identifier, tenant_id, response_id
 		FROM feedback_records
 	`
 
@@ -219,26 +197,18 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	}
 	defer rows.Close()
 
-	records := []models.FeedbackRecord{} // Initialize as empty slice, not nil
+	var records []models.FeedbackRecord
 	for rows.Next() {
 		var record models.FeedbackRecord
-		var topicsArray pgtype.Array[string]
 		err := rows.Scan(
 			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 			&record.SourceType, &record.SourceID, &record.SourceName,
 			&record.FieldID, &record.FieldLabel, &record.FieldType,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-			&record.Emotion, &record.Sentiment, &record.SentimentScore, &topicsArray,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
-		}
-		// Convert pgtype.Array[string] to []string
-		if topicsArray.Valid {
-			record.Topics = topicsArray.Elements
-		} else {
-			record.Topics = nil
 		}
 		records = append(records, record)
 	}
@@ -297,17 +267,7 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 		argCount++
 	}
 
-	// Check length, not nil, because json.RawMessage is []byte (slice, not pointer)
-	// An empty slice []byte{} is not nil, so we check length to determine if field was provided
-	if len(req.ValueJSON) > 0 {
-		updates = append(updates, fmt.Sprintf("value_json = $%d", argCount))
-		args = append(args, req.ValueJSON)
-		argCount++
-	}
-
-	// Check length, not nil, because json.RawMessage is []byte (slice, not pointer)
-	// An empty slice []byte{} is not nil, so we check length to determine if field was provided
-	if len(req.Metadata) > 0 {
+	if req.Metadata != nil {
 		updates = append(updates, fmt.Sprintf("metadata = $%d", argCount))
 		args = append(args, req.Metadata)
 		argCount++
@@ -342,9 +302,8 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
-			value_text, value_number, value_boolean, value_date, value_json,
-			metadata, language, user_identifier, tenant_id, response_id,
-			emotion, sentiment, sentiment_score, topics
+			value_text, value_number, value_boolean, value_date,
+			metadata, language, user_identifier, tenant_id, response_id
 	`, strings.Join(updates, ", "), argCount)
 
 	return query, args, true
@@ -359,27 +318,18 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 	}
 
 	var record models.FeedbackRecord
-	var topicsArray pgtype.Array[string]
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate, &record.ValueJSON,
+		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-		&record.Emotion, &record.Sentiment, &record.SentimentScore, &topicsArray,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 		return nil, fmt.Errorf("failed to update feedback record: %w", err)
-	}
-
-	// Convert pgtype.Array[string] to []string
-	if topicsArray.Valid {
-		record.Topics = topicsArray.Elements
-	} else {
-		record.Topics = nil
 	}
 
 	return &record, nil
