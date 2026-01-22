@@ -30,8 +30,7 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: test_db
-        ports:
-          - 5432:5432
+        # Do not map container port to the host; use service hostname 'postgres' instead.
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -39,13 +38,14 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable
+      # Use the service hostname 'postgres' instead of localhost to avoid host port conflicts.
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/test_db?sslmode=disable
       API_KEY: ${{ secrets.API_KEY }}
       PORT: 8080
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4 # v4.2.2
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -53,7 +53,7 @@ jobs:
           go-version: '1.25.6'
 
       - name: Cache Go modules
-        uses: actions/cache@v4 # v4.2.0
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -77,21 +77,25 @@ jobs:
           API_PID=$!
           echo "API_PID=$API_PID" >> $GITHUB_ENV
 
-          # Wait for server to be healthy
+          # Wait for server to be healthy (up to ~60s)
           for i in {1..30}; do
             if curl -s http://localhost:8080/health | grep -q "OK"; then
               echo "Server is ready"
-              exit 0
+              break
             fi
             echo "Waiting for server... ($i/30)"
             sleep 2
           done
-          echo "Server failed to start. Checking logs..."
-          ps aux | grep api
-          exit 1
+
+          # Verify we actually became ready
+          if ! curl -s http://localhost:8080/health | grep -q "OK"; then
+            echo "Server failed to start. Checking logs..."
+            ps aux | grep api || true
+            exit 1
+          fi
 
       - name: Run API contract tests
-        uses: schemathesis/action@7ae55300fa709bac039cb2353f59c19f9a26df01 # v2.1.0
+        uses: schemathesis/action@v2
         with:
           schema: ./openapi.yaml
           base-url: http://localhost:8080
