@@ -1,2 +1,6 @@
 .vscode
 .cursor
+bin/
+.env
+*.out
+*.html

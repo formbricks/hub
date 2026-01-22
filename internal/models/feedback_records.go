@@ -7,19 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ValidFieldTypes is a map of valid field types
-var ValidFieldTypes = map[string]struct{}{
-	"text":        {},
-	"categorical": {},
-	"nps":         {},
-	"csat":        {},
-	"ces":         {},
-	"rating":      {},
-	"number":      {},
-	"boolean":     {},
-	"date":        {},
-}
-
 // FeedbackRecord represents a single feedback record
 type FeedbackRecord struct {
 	ID             uuid.UUID       `json:"id"`
