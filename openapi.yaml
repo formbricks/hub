@@ -66,6 +66,12 @@ paths:
                     type: string
                     description: Filter by source ID (NULL bytes not allowed)
                     pattern: '^[^\x00]*$'
+                - name: field_id
+                  in: query
+                  description: Filter by field ID. NULL bytes not allowed.
+                  schema:
+                    type: string
+                    pattern: '^[^\x00]*$'
                 - name: field_type
                   in: query
                   description: Filter by field type. NULL bytes not allowed.
