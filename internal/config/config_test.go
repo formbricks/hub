@@ -149,7 +149,7 @@ func TestLoad(t *testing.T) {
 			port:            "",
 			setDatabaseURL:  false,
 			setPort:         false,
-			wantDatabaseURL: "postgres://formbricks:formbricks_dev@localhost:5432/formbricks_hub?sslmode=disable",
+			wantDatabaseURL: "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable",
 			wantPort:        "8080",
 		},
 		{
@@ -167,7 +167,7 @@ func TestLoad(t *testing.T) {
 			port:            "3000",
 			setDatabaseURL:  false,
 			setPort:         true,
-			wantDatabaseURL: "postgres://formbricks:formbricks_dev@localhost:5432/formbricks_hub?sslmode=disable",
+			wantDatabaseURL: "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable",
 			wantPort:        "3000",
 		},
 		{

@@ -29,7 +29,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 - ✅ **API Key Authentication** via environment variable
 - ✅ **Clean Architecture** with repository, service, and handler layers
 - ✅ **Docker Compose** for local development
-- ✅ **Database Migrations** with version tracking
+- ✅ **Database Schema** initialization
 - ✅ **Swagger/OpenAPI** documentation
 - ✅ **Health Check** endpoints
 
@@ -58,7 +58,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 │   └── config/           # Configuration management
 ├── pkg/
 │   └── database/         # Database utilities and connection pooling
-├── migrations/           # SQL migrations
+├── sql/                  # SQL schema files
 ├── tests/               # Integration tests
 └── docs/                # API documentation (Swagger)
 ```
@@ -84,7 +84,7 @@ This will:
 - Start PostgreSQL container
 - Install Go dependencies
 - Install development tools (swag for OpenAPI docs)
-- Run database migrations
+- Initialize database schema
 
 3. Start the API server:
 ```bash
@@ -107,9 +107,9 @@ docker-compose up -d
 cp .env.example .env
 ```
 
-3. Run migrations:
+3. Initialize database schema:
 ```bash
-make migrate
+make init-db
 ```
 
 4. Set your API key:
@@ -205,11 +205,11 @@ Authorization: Bearer <api-key>
 
 ```bash
 make help         # Show all available commands
-make dev-setup    # Set up development environment (docker, deps, tools, migrations)
+make dev-setup    # Set up development environment (docker, deps, tools, schema)
 make build        # Build all binaries
 make run          # Run the API server
 make tests        # Run all tests
-make migrate      # Run database migrations
+make init-db      # Initialize database schema
 make docker-up    # Start Docker containers
 make docker-down  # Stop Docker containers
 make clean        # Clean build artifacts
@@ -221,16 +221,16 @@ make clean        # Clean build artifacts
 make tests
 ```
 
-### Database Migrations
+### Database Schema
 
-Migrations are stored in the `migrations/` directory.
+The database schema is stored in the `sql/` directory.
 
-To run migrations:
+To initialize the database schema:
 ```bash
-make migrate
+make init-db
 ```
 
-This will execute `migrations/001_initial_schema.sql` using `psql`. Make sure you have `DATABASE_URL` set in your environment or `.env` file.
+This will execute `sql/001_initial_schema.sql` using `psql`. Make sure you have `DATABASE_URL` set in your environment or `.env` file.
 
 ### API Key Authentication
 

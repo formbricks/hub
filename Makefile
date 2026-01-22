@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run migrate clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all schemathesis
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all schemathesis
 
 # Default target - show help
 help:
@@ -7,7 +7,7 @@ help:
 	@echo "  make tests       - Run all tests"
 	@echo "  make build       - Build the API server"
 	@echo "  make run         - Run the API server"
-	@echo "  make migrate     - Run database migrations"
+	@echo "  make init-db     - Initialize database schema"
 	@echo "  make docker-up   - Start Docker containers"
 	@echo "  make docker-down - Stop Docker containers"
 	@echo "  make clean       - Clean build artifacts"
@@ -45,7 +45,7 @@ run:
 		echo "API_KEY=test-api-key-12345" >> .env; \
 		echo "" >> .env; \
 		echo "# Database connection URL" >> .env; \
-		echo "DATABASE_URL=postgres://formbricks:formbricks_dev@localhost:5432/formbricks_hub?sslmode=disable" >> .env; \
+		echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable" >> .env; \
 		echo "" >> .env; \
 		echo "# Server port (default: 8080)" >> .env; \
 		echo "PORT=8080" >> .env; \
@@ -54,25 +54,25 @@ run:
 	@echo "Starting API server..."
 	go run cmd/api/main.go
 
-# Run database migrations
-migrate:
-	@echo "Running database migrations..."
+# Initialize database schema
+init-db:
+	@echo "Initializing database schema..."
 	@if [ -f .env ]; then \
 		export $$(grep -v '^#' .env | xargs) && \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL not found in .env file"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f migrations/001_initial_schema.sql; \
+		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
 	else \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL environment variable is not set"; \
 			echo "Please set it or create a .env file with DATABASE_URL"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f migrations/001_initial_schema.sql; \
+		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
 	fi
-	@echo "Migration completed successfully"
+	@echo "Database schema initialized successfully"
 
 
 # Start Docker containers
@@ -136,7 +136,7 @@ lint:
 	$(HOME)/go/bin/golangci-lint run ./...
 
 # Run everything needed for development
-dev-setup: docker-up deps install-tools migrate
+dev-setup: docker-up deps install-tools init-db
 	@echo "Development environment ready!"
 	@echo "Set API_KEY environment variable for authentication"
 	@echo "Run 'make run' to start the API server"

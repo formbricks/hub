@@ -4,16 +4,16 @@
 - `cmd/api/` holds the API server entrypoint (`main.go`).
 - `internal/` contains core application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, and `config`.
 - `pkg/` provides shared utilities (currently `pkg/database`).
-- `migrations/` stores SQL migration files (e.g., `migrations/001_initial_schema.sql`).
+- `sql/` stores SQL schema files (e.g., `sql/001_initial_schema.sql`).
 - `tests/` contains integration tests.
 
 ## Build, Test, and Development Commands
-- `make dev-setup`: start Postgres via Docker, install Go deps/tools, and run migrations.
+- `make dev-setup`: start Postgres via Docker, install Go deps/tools, and initialize database schema.
 - `make run`: create a default `.env` if missing and run the API server.
 - `make build`: build the API binary to `bin/api`.
 - `make tests`: run integration tests in `tests/`.
 - `make tests-coverage`: generate `coverage.html`.
-- `make migrate`: apply SQL migrations using `DATABASE_URL`.
+- `make init-db`: initialize database schema using `DATABASE_URL`.
 - `make fmt` / `make fmt-check`: format or verify formatting with `gofumpt`.
 - `make lint`: run `golangci-lint` (requires `make install-tools`).
 

@@ -26,9 +26,9 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_USER: formbricks
-          POSTGRES_PASSWORD: formbricks_dev
-          POSTGRES_DB: formbricks_hub
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
         ports:
           - 5432:5432
         options: >-
@@ -38,7 +38,7 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: postgres://formbricks:formbricks_dev@localhost:5432/formbricks_hub?sslmode=disable
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable
       API_KEY: ${{ secrets.API_KEY }}
       PORT: 8080
 
@@ -64,8 +64,8 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Run database migrations
-        run: make migrate
+      - name: Initialize database schema
+        run: make init-db
 
       - name: Build application
         run: make build
