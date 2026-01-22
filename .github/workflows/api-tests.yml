@@ -25,12 +25,13 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: test_db
-        # Do not map container port to the host; use service hostname 'postgres' instead.
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -38,8 +39,7 @@ jobs:
           --health-retries 5
 
     env:
-      # Use the service hostname 'postgres' instead of localhost to avoid host port conflicts.
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/test_db?sslmode=disable
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable
       API_KEY: ${{ secrets.API_KEY }}
       PORT: 8080
 
