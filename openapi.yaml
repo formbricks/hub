@@ -71,8 +71,6 @@ paths:
                     type: string
                     format: date-time
                     description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
-                    minimum: "1970-01-01T00:00:00Z"
-                    maximum: "2080-12-31T23:59:59Z"
                 - name: until
                   in: query
                   description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
@@ -80,8 +78,6 @@ paths:
                     type: string
                     format: date-time
                     description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
-                    minimum: "1970-01-01T00:00:00Z"
-                    maximum: "2080-12-31T23:59:59Z"
                 - name: limit
                   in: query
                   description: Number of results to return (max 1000)
@@ -301,8 +297,6 @@ components:
                     type: string
                     description: When the feedback was collected (defaults to now). Must be between 1970-01-01 and 2080-12-31.
                     format: date-time
-                    minimum: "1970-01-01T00:00:00Z"
-                    maximum: "2080-12-31T23:59:59Z"
                 field_id:
                     type: string
                     description: Identifier for the question/field. NULL bytes not allowed.
@@ -389,8 +383,6 @@ components:
                     type: string
                     description: For date responses. Must be between 1970-01-01 and 2080-12-31.
                     format: date-time
-                    minimum: "1970-01-01T00:00:00Z"
-                    maximum: "2080-12-31T23:59:59Z"
                 value_json:
                     type: object
                     description: For complex responses like multiple choice arrays. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
@@ -637,8 +629,6 @@ components:
                     type: string
                     description: Update date response. Must be between 1970-01-01 and 2080-12-31.
                     format: date-time
-                    minimum: "1970-01-01T00:00:00Z"
-                    maximum: "2080-12-31T23:59:59Z"
                 value_json:
                     type: object
                     description: Update complex response. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
