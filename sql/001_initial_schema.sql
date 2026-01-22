@@ -24,7 +24,6 @@ CREATE TABLE feedback_records (
   value_number DOUBLE PRECISION,
   value_boolean BOOLEAN,
   value_date TIMESTAMP,
-  value_json JSONB,
 
   metadata JSONB,
   language VARCHAR(10),

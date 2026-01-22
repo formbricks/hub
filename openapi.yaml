@@ -405,10 +405,6 @@ components:
                     type: string
                     description: For date responses. Must be between 1970-01-01 and 2080-12-31.
                     format: date-time
-                value_json:
-                    type: object
-                    description: For complex responses like multiple choice arrays. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
-                    additionalProperties: {}
                 value_number:
                     type: number
                     description: For ratings, NPS scores, numeric responses. Must be between -1e15 and +1e15.
@@ -553,10 +549,6 @@ components:
                     type: string
                     description: Date response
                     format: date-time
-                value_json:
-                    type: object
-                    description: Complex response
-                    additionalProperties: {}
                 value_number:
                     type: number
                     description: Numeric response
@@ -636,10 +628,6 @@ components:
                     type: string
                     description: Update date response. Must be between 1970-01-01 and 2080-12-31.
                     format: date-time
-                value_json:
-                    type: object
-                    description: Update complex response. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
-                    additionalProperties: {}
                 value_number:
                     type: number
                     description: Update numeric response. Must be between -1e15 and +1e15.
