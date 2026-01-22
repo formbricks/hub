@@ -14,6 +14,22 @@ servers:
     - url: http://localhost:8080
       description: Local development server
 paths:
+    /health:
+        get:
+            tags:
+                - Health
+            summary: Health check
+            description: Returns OK if the service is running
+            operationId: health-check
+            security: [] # No authentication required for health check
+            responses:
+                "200":
+                    description: Service is healthy
+                    content:
+                        text/plain:
+                            schema:
+                                type: string
+                                example: "OK"
     /v1/feedback-records:
         get:
             tags:
