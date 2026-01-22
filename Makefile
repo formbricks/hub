@@ -160,8 +160,7 @@ schemathesis:
 			--url http://localhost:8080 \
 			--header "Authorization: Bearer $${API_KEY:-test-api-key-12345}" \
 			--checks all \
-			--max-examples 50 \
-			--exclude-operation-id search-feedback-records; \
+			--max-examples 50; \
 	else \
 		if [ -z "$$API_KEY" ]; then \
 			echo "Error: API_KEY environment variable is not set and .env file not found"; \
@@ -172,6 +171,5 @@ schemathesis:
 			--url http://localhost:8080 \
 			--header "Authorization: Bearer $$API_KEY" \
 			--checks all \
-			--max-examples 50 \
-			--exclude-operation-id search-feedback-records; \
+			--max-examples 50; \
 	fi

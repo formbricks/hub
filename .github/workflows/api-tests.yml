@@ -1,10 +1,5 @@
 name: API Tests
 
-# REQUIRED SECRET:
-# API_KEY: Any string value (e.g., test-api-key-for-ci).
-# The app validates via simple string match with process.env.API_KEY.
-# Add this secret to GitHub repository settings (Settings > Secrets and variables > Actions).
-
 # This workflow tests your API against the OpenAPI spec using Schemathesis.
 # It only runs the "examples" phase (fast & deterministic).
 # For thorough fuzzing, run locally: make schemathesis
@@ -25,12 +20,13 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18-alpine
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: test_db
-        # Do not map container port to the host; use service hostname 'postgres' instead.
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -38,9 +34,8 @@ jobs:
           --health-retries 5
 
     env:
-      # Use the service hostname 'postgres' instead of localhost to avoid host port conflicts.
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/test_db?sslmode=disable
-      API_KEY: ${{ secrets.API_KEY }}
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable
+      API_KEY: test-api-key-for-ci
       PORT: 8080
 
     steps:
@@ -107,8 +102,7 @@ jobs:
           # Skips the slow "coverage" and "fuzzing" phases.
           args: >-
             --phases examples
-            --exclude-operation-id search-feedback-records
-            -H "Authorization: Bearer ${{ secrets.API_KEY }}"
+            -H "Authorization: Bearer test-api-key-for-ci"
 
       - name: Stop API server
         if: always()
