@@ -45,15 +45,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version: '1.25.6'
 
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cache/go-build
@@ -95,7 +95,7 @@ jobs:
           fi
 
       - name: Run API contract tests
-        uses: schemathesis/action@v2
+        uses: schemathesis/action@1f15936316e0742005bf69657b5909ac68f04cb3
         with:
           schema: ./openapi.yaml
           base-url: http://localhost:8080
