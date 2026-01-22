@@ -13,6 +13,7 @@ type Config struct {
 	DatabaseURL string
 	Port        string
 	APIKey      string
+	LogLevel    string
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -53,6 +54,7 @@ func Load() (*Config, error) {
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://formbricks:formbricks_dev@localhost:5432/formbricks_hub?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
 		APIKey:      apiKey,
+		LogLevel:    getEnv("LOG_LEVEL", "info"),
 	}
 
 	return cfg, nil

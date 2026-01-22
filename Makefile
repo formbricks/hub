@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run migrate clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all
+.PHONY: help tests tests-coverage build run migrate clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all schemathesis
 
 # Default target - show help
 help:
@@ -13,6 +13,7 @@ help:
 	@echo "  make clean       - Clean build artifacts"
 	@echo "  make fmt         - Format code with gofumpt"
 	@echo "  make fmt-check   - Check if code is formatted"
+	@echo "  make schemathesis - Run Schemathesis API tests (requires API server running)"
 
 # Run all tests
 tests:
@@ -143,3 +144,34 @@ dev-setup: docker-up deps install-tools migrate
 # Full test suite (unit + integration)
 test-all: tests
 	@echo "All tests passed!"
+
+# Run Schemathesis API tests
+# Requires: API server running (make run in another terminal)
+# Requires: uvx (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)
+schemathesis:
+	@echo "Running Schemathesis API tests..."
+	@export PATH="$$HOME/.local/bin:$$PATH" && \
+	if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		if [ -z "$$API_KEY" ]; then \
+			echo "Warning: API_KEY not found in .env file, tests may fail authentication"; \
+		fi && \
+		uvx schemathesis run ./openapi.yaml \
+			--url http://localhost:8080 \
+			--header "Authorization: Bearer $${API_KEY:-test-api-key-12345}" \
+			--checks all \
+			--max-examples 50 \
+			--exclude-operation-id search-feedback-records; \
+	else \
+		if [ -z "$$API_KEY" ]; then \
+			echo "Error: API_KEY environment variable is not set and .env file not found"; \
+			echo "Please set API_KEY or create a .env file"; \
+			exit 1; \
+		fi && \
+		uvx schemathesis run ./openapi.yaml \
+			--url http://localhost:8080 \
+			--header "Authorization: Bearer $$API_KEY" \
+			--checks all \
+			--max-examples 50 \
+			--exclude-operation-id search-feedback-records; \
+	fi

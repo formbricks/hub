@@ -24,60 +24,72 @@ paths:
             parameters:
                 - name: tenant_id
                   in: query
-                  description: Filter by tenant ID (for multi-tenant deployments)
+                  description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
                   explode: false
                   schema:
                     type: string
-                    description: Filter by tenant ID (for multi-tenant deployments)
+                    description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 - name: response_id
                   in: query
-                  description: Filter by response ID (get all answers from one submission)
+                  description: Filter by response ID (get all answers from one submission). NULL bytes not allowed.
                   explode: false
                   schema:
                     type: string
-                    description: Filter by response ID (get all answers from one submission)
+                    description: Filter by response ID (get all answers from one submission). NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 - name: source_type
                   in: query
-                  description: Filter by source type
+                  description: Filter by source type. NULL bytes not allowed.
                   explode: false
                   schema:
                     type: string
-                    description: Filter by source type
+                    description: Filter by source type. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 - name: source_id
                   in: query
-                  description: Filter by source ID
+                  description: Filter by source ID (NULL bytes not allowed)
                   explode: false
                   schema:
                     type: string
-                    description: Filter by source ID
+                    description: Filter by source ID (NULL bytes not allowed)
+                    pattern: '^[^\x00]*$'
                 - name: field_type
                   in: query
-                  description: Filter by field type
+                  description: Filter by field type. NULL bytes not allowed.
                   explode: false
                   schema:
                     type: string
-                    description: Filter by field type
+                    description: Filter by field type. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 - name: user_identifier
                   in: query
-                  description: Filter by user identifier
+                  description: Filter by user identifier. NULL bytes not allowed.
                   explode: false
                   schema:
                     type: string
-                    description: Filter by user identifier
+                    description: Filter by user identifier. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 - name: since
                   in: query
-                  description: Filter by collected_at >= since (ISO 8601 format)
+                  description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
                   explode: false
                   schema:
                     type: string
-                    description: Filter by collected_at >= since (ISO 8601 format)
+                    format: date-time
+                    description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+                    minimum: "1970-01-01T00:00:00Z"
+                    maximum: "2080-12-31T23:59:59Z"
                 - name: until
                   in: query
-                  description: Filter by collected_at <= until (ISO 8601 format)
+                  description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
                   explode: false
                   schema:
                     type: string
-                    description: Filter by collected_at <= until (ISO 8601 format)
+                    format: date-time
+                    description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+                    minimum: "1970-01-01T00:00:00Z"
+                    maximum: "2080-12-31T23:59:59Z"
                 - name: limit
                   in: query
                   description: Number of results to return (max 1000)
@@ -99,6 +111,7 @@ paths:
                     format: int64
                     default: 0
                     minimum: 0
+                    maximum: 2147483647
             responses:
                 "200":
                     description: OK
@@ -146,19 +159,22 @@ paths:
             parameters:
                 - name: user_identifier
                   in: query
-                  description: Delete all records matching this user identifier (required)
+                  description: Delete all records matching this user identifier (required). NULL bytes not allowed.
+                  required: true
                   explode: false
                   schema:
                     type: string
-                    description: Delete all records matching this user identifier (required)
+                    description: Delete all records matching this user identifier (required). NULL bytes not allowed.
                     minLength: 1
+                    pattern: '^[^\x00]*$'
                 - name: tenant_id
                   in: query
-                  description: Filter by tenant ID (optional, for multi-tenant deployments)
+                  description: Filter by tenant ID (optional, for multi-tenant deployments). NULL bytes not allowed.
                   explode: false
                   schema:
                     type: string
-                    description: Filter by tenant ID (optional, for multi-tenant deployments)
+                    description: Filter by tenant ID (optional, for multi-tenant deployments). NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
             responses:
                 "200":
                     description: OK
@@ -370,15 +386,18 @@ components:
                     readOnly: true
                 collected_at:
                     type: string
-                    description: When the feedback was collected (defaults to now)
+                    description: When the feedback was collected (defaults to now). Must be between 1970-01-01 and 2080-12-31.
                     format: date-time
+                    minimum: "1970-01-01T00:00:00Z"
+                    maximum: "2080-12-31T23:59:59Z"
                 field_id:
                     type: string
-                    description: Identifier for the question/field
+                    description: Identifier for the question/field. NULL bytes not allowed.
                     examples:
                         - q1
                     minLength: 1
                     maxLength: 255
+                    pattern: '^[^\x00]*$'
                 field_label:
                     type: string
                     description: The actual question text
@@ -403,13 +422,14 @@ components:
                     maxLength: 255
                 language:
                     type: string
-                    description: ISO language code
+                    description: ISO language code. NULL bytes not allowed.
                     examples:
                         - en
                     maxLength: 10
+                    pattern: '^[^\x00]*$'
                 metadata:
                     type: object
-                    description: User agent, device, location, referrer, tags, etc.
+                    description: User agent, device, location, referrer, tags, etc. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
                     additionalProperties: {}
                 response_id:
                     type: string
@@ -429,17 +449,19 @@ components:
                         - Q1 NPS Survey
                 source_type:
                     type: string
-                    description: Type of feedback source (e.g., survey, review, feedback_form)
+                    description: Type of feedback source (e.g., survey, review, feedback_form). NULL bytes not allowed.
                     examples:
                         - survey
                     minLength: 1
                     maxLength: 255
+                    pattern: '^[^\x00]*$'
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier for multi-tenancy
+                    description: Tenant/organization identifier for multi-tenancy. NULL bytes not allowed.
                     examples:
                         - org-123
                     maxLength: 255
+                    pattern: '^[^\x00]*$'
                 user_identifier:
                     type: string
                     description: Anonymous ID or email hash
@@ -452,23 +474,28 @@ components:
                         - true
                 value_date:
                     type: string
-                    description: For date responses
+                    description: For date responses. Must be between 1970-01-01 and 2080-12-31.
                     format: date-time
+                    minimum: "1970-01-01T00:00:00Z"
+                    maximum: "2080-12-31T23:59:59Z"
                 value_json:
                     type: object
-                    description: For complex responses like multiple choice arrays
+                    description: For complex responses like multiple choice arrays. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
                     additionalProperties: {}
                 value_number:
                     type: number
-                    description: For ratings, NPS scores, numeric responses
+                    description: For ratings, NPS scores, numeric responses. Must be between -1e15 and +1e15.
                     format: double
+                    minimum: -1000000000000000
+                    maximum: 1000000000000000
                     examples:
                         - 9
                 value_text:
                     type: string
-                    description: For open-ended text responses
+                    description: For open-ended text responses. NULL bytes not allowed.
                     examples:
                         - Great service!
+                    pattern: '^[^\x00]*$'
             required:
                 - source_type
                 - field_id
@@ -566,7 +593,8 @@ components:
                     description: UUIDv7 primary key
                 language:
                     type: string
-                    description: ISO language code
+                    description: ISO language code. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 metadata:
                     type: object
                     description: Additional context
@@ -592,7 +620,8 @@ components:
                     description: Type of feedback source
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier
+                    description: Tenant/organization identifier. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 topics:
                     type: array
                     description: Key topics extracted by AI
@@ -622,7 +651,8 @@ components:
                     format: double
                 value_text:
                     type: string
-                    description: Text response
+                    description: Text response. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
             required:
                 - id
                 - collected_at
@@ -720,7 +750,8 @@ components:
                     description: UUIDv7 primary key
                 language:
                     type: string
-                    description: ISO language code
+                    description: ISO language code. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 metadata:
                     type: object
                     description: Additional context
@@ -750,7 +781,8 @@ components:
                     description: Type of feedback source
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier
+                    description: Tenant/organization identifier. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 topics:
                     type: array
                     description: Key topics extracted by AI
@@ -780,7 +812,8 @@ components:
                     format: double
                 value_text:
                     type: string
-                    description: Text response
+                    description: Text response. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
             required:
                 - similarity_score
                 - id
@@ -803,10 +836,12 @@ components:
                     readOnly: true
                 language:
                     type: string
-                    description: Update language
+                    description: Update language. NULL bytes not allowed.
+                    maxLength: 10
+                    pattern: '^[^\x00]*$'
                 metadata:
                     type: object
-                    description: Update metadata
+                    description: Update metadata. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
                     additionalProperties: {}
                 user_identifier:
                     type: string
@@ -816,16 +851,21 @@ components:
                     description: Update boolean response
                 value_date:
                     type: string
-                    description: Update date response
+                    description: Update date response. Must be between 1970-01-01 and 2080-12-31.
                     format: date-time
+                    minimum: "1970-01-01T00:00:00Z"
+                    maximum: "2080-12-31T23:59:59Z"
                 value_json:
                     type: object
-                    description: Update complex response
+                    description: Update complex response. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
                     additionalProperties: {}
                 value_number:
                     type: number
-                    description: Update numeric response
+                    description: Update numeric response. Must be between -1e15 and +1e15.
                     format: double
+                    minimum: -1000000000000000
+                    maximum: 1000000000000000
                 value_text:
                     type: string
-                    description: Update text response
+                    description: Update text response. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
