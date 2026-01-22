@@ -11,8 +11,8 @@ info:
         url: https://www.apache.org/licenses/LICENSE-2.0
     version: 1.0.0
 servers:
-    - url: http://0.0.0.0:8080
-      description: API server
+    - url: http://localhost:8080
+      description: Local development server
 paths:
     /v1/feedback-records:
         get:
@@ -274,7 +274,7 @@ components:
                     description: A URL to the JSON Schema for this object.
                     format: uri
                     examples:
-                        - http://0.0.0.0:8080/schemas/BulkDeleteFeedbackRecordsOutputBody.json
+                        - http://localhost:8080/schemas/BulkDeleteFeedbackRecordsOutputBody.json
                     readOnly: true
                 deleted_count:
                     type: integer
@@ -295,7 +295,7 @@ components:
                     description: A URL to the JSON Schema for this object.
                     format: uri
                     examples:
-                        - http://0.0.0.0:8080/schemas/CreateFeedbackRecordInputBody.json
+                        - http://localhost:8080/schemas/CreateFeedbackRecordInputBody.json
                     readOnly: true
                 collected_at:
                     type: string
@@ -434,7 +434,7 @@ components:
                     description: A URL to the JSON Schema for this object.
                     format: uri
                     examples:
-                        - http://0.0.0.0:8080/schemas/ErrorModel.json
+                        - http://localhost:8080/schemas/ErrorModel.json
                     readOnly: true
                 detail:
                     type: string
@@ -479,7 +479,7 @@ components:
                     description: A URL to the JSON Schema for this object.
                     format: uri
                     examples:
-                        - http://0.0.0.0:8080/schemas/FeedbackRecordData.json
+                        - http://localhost:8080/schemas/FeedbackRecordData.json
                     readOnly: true
                 collected_at:
                     type: string
@@ -583,7 +583,7 @@ components:
                     description: A URL to the JSON Schema for this object.
                     format: uri
                     examples:
-                        - http://0.0.0.0:8080/schemas/ListFeedbackRecordsOutputBody.json
+                        - http://localhost:8080/schemas/ListFeedbackRecordsOutputBody.json
                     readOnly: true
                 data:
                     type: array
@@ -616,7 +616,7 @@ components:
                     description: A URL to the JSON Schema for this object.
                     format: uri
                     examples:
-                        - http://0.0.0.0:8080/schemas/UpdateFeedbackRecordInputBody.json
+                        - http://localhost:8080/schemas/UpdateFeedbackRecordInputBody.json
                     readOnly: true
                 language:
                     type: string
