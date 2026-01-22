@@ -1,10 +1,12 @@
 package validation
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -30,6 +32,21 @@ func init() {
 	// Register custom validators
 	if err := validate.RegisterValidation("field_type", validateFieldType); err != nil {
 		slog.Error("Failed to register field_type validator", "error", err)
+	}
+	if err := validate.RegisterValidation("json_object", validateJSONObject); err != nil {
+		slog.Error("Failed to register json_object validator", "error", err)
+	}
+	if err := validate.RegisterValidation("date_range", validateDateRange); err != nil {
+		slog.Error("Failed to register date_range validator", "error", err)
+	}
+	if err := validate.RegisterValidation("numeric_range", validateNumericRange); err != nil {
+		slog.Error("Failed to register numeric_range validator", "error", err)
+	}
+	if err := validate.RegisterValidation("no_null_bytes", validateNoNullBytes); err != nil {
+		slog.Error("Failed to register no_null_bytes validator", "error", err)
+	}
+	if err := validate.RegisterValidation("json_no_null_bytes", validateJSONNoNullBytes); err != nil {
+		slog.Error("Failed to register json_no_null_bytes validator", "error", err)
 	}
 
 	// Register custom type converters for form decoding
@@ -88,6 +105,16 @@ func formatFieldError(fieldError validator.FieldError) string {
 		return fmt.Sprintf("%s must be one of: %s", field, fieldError.Param())
 	case "field_type":
 		return fmt.Sprintf("%s must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date", field)
+	case "json_object":
+		return fmt.Sprintf("%s must be a valid JSON object", field)
+	case "date_range":
+		return fmt.Sprintf("%s must be between 1970-01-01 and 2080-12-31", field)
+	case "numeric_range":
+		return fmt.Sprintf("%s must be between -1e15 and +1e15", field)
+	case "no_null_bytes":
+		return fmt.Sprintf("%s contains invalid character encoding (NULL bytes are not allowed)", field)
+	case "json_no_null_bytes":
+		return fmt.Sprintf("%s contains invalid character encoding (NULL bytes are not allowed in JSON)", field)
 	case "uuid":
 		return fmt.Sprintf("%s must be a valid UUID", field)
 	case "rfc3339":
@@ -165,4 +192,160 @@ func validateFieldType(fl validator.FieldLevel) bool {
 		"date":        true,
 	}
 	return validTypes[value]
+}
+
+// validateJSONObject validates that a json.RawMessage field is a valid JSON object
+// (not null, not an array, not a primitive). If the field is empty/nil, validation passes
+// (use with omitempty for optional fields).
+func validateJSONObject(fl validator.FieldLevel) bool {
+	// Get the field value as json.RawMessage (which is []byte)
+	rawMsg := fl.Field().Interface().(json.RawMessage)
+
+	// If empty, validation passes (use with omitempty for optional fields)
+	if len(rawMsg) == 0 {
+		return true
+	}
+
+	// Trim whitespace to check for "null"
+	valueStr := strings.TrimSpace(string(rawMsg))
+	if valueStr == "" || valueStr == "null" {
+		return false
+	}
+
+	// Must start with '{' to be a JSON object
+	if !strings.HasPrefix(valueStr, "{") {
+		return false
+	}
+
+	// Try to unmarshal as a map to ensure it's valid JSON and an object
+	var test map[string]interface{}
+	if err := json.Unmarshal(rawMsg, &test); err != nil {
+		return false
+	}
+
+	// Ensure it's not nil (shouldn't happen after successful unmarshal, but be safe)
+	return test != nil
+}
+
+// validateDateRange validates that a time.Time is within the allowed range (1970-01-01 to 2080-12-31)
+func validateDateRange(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if !field.IsValid() || field.IsZero() {
+		return true // Let omitempty handle empty values
+	}
+
+	// Handle *time.Time (pointer)
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			return true // nil is valid (omitempty)
+		}
+		field = field.Elem()
+	}
+
+	if field.Kind() != reflect.Struct {
+		return false
+	}
+
+	// Extract time.Time value
+	timeValue, ok := field.Interface().(time.Time)
+	if !ok {
+		return false
+	}
+
+	minDate := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	maxDate := time.Date(2080, 12, 31, 23, 59, 59, 999999999, time.UTC)
+
+	return !timeValue.Before(minDate) && !timeValue.After(maxDate)
+}
+
+// validateNumericRange validates that a numeric value is within the allowed range (-1e15 to +1e15)
+func validateNumericRange(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if !field.IsValid() || field.IsZero() {
+		return true // Let omitempty handle empty values
+	}
+
+	// Handle *float64 (pointer)
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			return true // nil is valid (omitempty)
+		}
+		field = field.Elem()
+	}
+
+	var value float64
+	switch field.Kind() {
+	case reflect.Float32, reflect.Float64:
+		value = field.Float()
+	default:
+		return false
+	}
+
+	const minValue = -1e15
+	const maxValue = 1e15
+
+	// Check for NaN
+	if value != value {
+		return false
+	}
+
+	// Check for Infinity (approximate)
+	if value > 1e308 || value < -1e308 {
+		return false
+	}
+
+	return value >= minValue && value <= maxValue
+}
+
+// validateNoNullBytes validates that a string does not contain NULL bytes
+func validateNoNullBytes(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if !field.IsValid() || field.IsZero() {
+		return true // Let omitempty handle empty values
+	}
+
+	// Handle *string (pointer)
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			return true // nil is valid (omitempty)
+		}
+		field = field.Elem()
+	}
+
+	if field.Kind() != reflect.String {
+		return false
+	}
+
+	value := field.String()
+	return !strings.Contains(value, "\x00")
+}
+
+// validateJSONNoNullBytes validates that a json.RawMessage does not contain NULL bytes or \u0000
+func validateJSONNoNullBytes(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if !field.IsValid() || field.IsZero() {
+		return true // Let omitempty handle empty values
+	}
+
+	// json.RawMessage is []byte, not a pointer
+	if field.Kind() != reflect.Slice || field.Type() != reflect.TypeOf(json.RawMessage{}) {
+		return false
+	}
+
+	value := field.Bytes()
+	if len(value) == 0 {
+		return true // Empty JSON is valid
+	}
+
+	// Check for NULL bytes
+	if bytes.Contains(value, []byte("\x00")) {
+		return false
+	}
+
+	// Check for \u0000 escape sequence
+	if bytes.Contains(value, []byte("\\u0000")) {
+		return false
+	}
+
+	return true
 }
