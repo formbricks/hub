@@ -32,13 +32,7 @@ CREATE TABLE feedback_records (
 
   -- Multi-tenancy fields
   tenant_id VARCHAR(255),
-  response_id VARCHAR(255),
-
-  -- AI-enriched fields
-  emotion VARCHAR(50),
-  sentiment VARCHAR(50),
-  sentiment_score DOUBLE PRECISION,
-  topics TEXT[]
+  response_id VARCHAR(255)
 );
 
 -- Indexes
@@ -63,7 +57,3 @@ CREATE INDEX idx_feedback_records_tenant_user_identifier ON feedback_records(ten
 CREATE INDEX idx_feedback_records_tenant_collected_at ON feedback_records(tenant_id, collected_at);
 CREATE INDEX idx_feedback_records_tenant_source_type ON feedback_records(tenant_id, source_type);
 CREATE INDEX idx_feedback_records_tenant_field_type ON feedback_records(tenant_id, field_type);
-
--- Indexes for AI fields
-CREATE INDEX idx_feedback_records_sentiment ON feedback_records(sentiment);
-CREATE INDEX idx_feedback_records_emotion ON feedback_records(emotion);

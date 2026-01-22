@@ -503,9 +503,6 @@ components:
                     type: string
                     description: When this record was created
                     format: date-time
-                emotion:
-                    type: string
-                    description: 'AI-detected emotion: joy, anger, frustration, sadness, neutral'
                 field_id:
                     type: string
                     description: Identifier for the question/field
@@ -529,13 +526,6 @@ components:
                 response_id:
                     type: string
                     description: Groups answers from a single submission
-                sentiment:
-                    type: string
-                    description: 'AI-detected sentiment: positive, negative, neutral'
-                sentiment_score:
-                    type: number
-                    description: Sentiment intensity from -1 (negative) to +1 (positive)
-                    format: double
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID
@@ -549,11 +539,6 @@ components:
                     type: string
                     description: Tenant/organization identifier. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
-                topics:
-                    type: array
-                    description: Key topics extracted by AI
-                    items:
-                        type: string
                 updated_at:
                     type: string
                     description: When this record was last updated
