@@ -13,6 +13,8 @@ info:
 servers:
     - url: http://localhost:8080
       description: Local development server
+security:
+    - ApiKeyAuth: []
 paths:
     /health:
         get:
@@ -282,6 +284,12 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
 components:
+    securitySchemes:
+        ApiKeyAuth:
+            type: http
+            scheme: bearer
+            bearerFormat: API Key
+            description: API key authentication via Bearer token in Authorization header
     schemas:
         BulkDeleteFeedbackRecordsOutputBody:
             type: object
