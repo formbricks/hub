@@ -15,10 +15,19 @@ help:
 	@echo "  make fmt-check   - Check if code is formatted"
 	@echo "  make schemathesis - Run Schemathesis API tests (requires API server running)"
 
-# Run all tests
+# Run all tests (integration tests in tests/ directory)
 tests:
-	@echo "Running all tests..."
+	@echo "Running integration tests..."
 	go test ./tests/... -v
+
+# Run unit tests (fast, no database required)
+test-unit:
+	@echo "Running unit tests..."
+	go test ./internal/... -v
+
+# Run all tests (unit + integration)
+test-all: test-unit tests
+	@echo "All tests passed!"
 
 # Run tests with coverage
 tests-coverage:
@@ -117,15 +126,17 @@ install-tools:
 # Format code
 fmt:
 	@echo "Formatting code..."
-	$(HOME)/go/bin/gofumpt -l -w .
+	@command -v gofumpt >/dev/null 2>&1 || { echo "Error: gofumpt not found. Install with: make install-tools"; exit 1; }
+	gofumpt -l -w .
 	@echo "Code formatted"
 
 # Check code formatting (fails if code needs formatting)
 fmt-check:
 	@echo "Checking code formatting..."
-	@if [ -n "$$($(HOME)/go/bin/gofumpt -l .)" ]; then \
+	@command -v gofumpt >/dev/null 2>&1 || { echo "Error: gofumpt not found. Install with: make install-tools"; exit 1; }
+	@if [ -n "$$(gofumpt -l .)" ]; then \
 		echo "Error: Code is not formatted. Run 'make fmt' to fix."; \
-		$(HOME)/go/bin/gofumpt -l .; \
+		gofumpt -l .; \
 		exit 1; \
 	fi
 	@echo "Code is properly formatted"
@@ -133,10 +144,23 @@ fmt-check:
 # Lint code
 lint:
 	@echo "Linting code..."
-	$(HOME)/go/bin/golangci-lint run ./...
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	golangci-lint run ./...
+
+# Install git hooks from .githooks directory
+install-hooks:
+	@echo "Installing git hooks..."
+	@if [ -d .githooks ]; then \
+		cp .githooks/pre-commit .git/hooks/pre-commit && \
+		chmod +x .git/hooks/pre-commit && \
+		echo "✅ Git hooks installed successfully"; \
+	else \
+		echo "Error: .githooks directory not found"; \
+		exit 1; \
+	fi
 
 # Run everything needed for development
-dev-setup: docker-up deps install-tools init-db
+dev-setup: docker-up deps install-tools init-db install-hooks
 	@echo "Development environment ready!"
 	@echo "Set API_KEY environment variable for authentication"
 	@echo "Run 'make run' to start the API server"
