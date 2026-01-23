@@ -98,10 +98,11 @@ jobs:
           version: "4.4.4"
           # Only test schema conformance
           checks: not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance
-          # Only run the "examples" phase (fast & deterministic).
-          # Skips the slow "coverage" and "fuzzing" phases.
+          # Run examples phase with stateful testing via OpenAPI links.
+          # This chains operations: POST creates a record, then GET/PATCH/DELETE use its ID.
           args: >-
             --phases examples
+            --stateful=links
             -H "Authorization: Bearer test-api-key-for-ci"
 
       - name: Stop API server

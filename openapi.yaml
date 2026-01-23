@@ -265,6 +265,22 @@ paths:
                                         user_identifier: "user-abc-123"
                                         tenant_id: "org-123"
                                         language: "en"
+                    links:
+                        GetCreatedRecord:
+                            operationId: get-feedback-record
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Retrieve the created feedback record by ID
+                        UpdateCreatedRecord:
+                            operationId: update-feedback-record
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Update the created feedback record by ID
+                        DeleteCreatedRecord:
+                            operationId: delete-feedback-record
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Delete the created feedback record by ID
                 default:
                     description: Error
                     content:
