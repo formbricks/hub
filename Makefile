@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run migrate clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all schemathesis
 
 # Default target - show help
 help:
@@ -7,12 +7,13 @@ help:
 	@echo "  make tests       - Run all tests"
 	@echo "  make build       - Build the API server"
 	@echo "  make run         - Run the API server"
-	@echo "  make migrate     - Run database migrations"
+	@echo "  make init-db     - Initialize database schema"
 	@echo "  make docker-up   - Start Docker containers"
 	@echo "  make docker-down - Stop Docker containers"
 	@echo "  make clean       - Clean build artifacts"
 	@echo "  make fmt         - Format code with gofumpt"
 	@echo "  make fmt-check   - Check if code is formatted"
+	@echo "  make schemathesis - Run Schemathesis API tests (requires API server running)"
 
 # Run all tests
 tests:
@@ -44,7 +45,7 @@ run:
 		echo "API_KEY=test-api-key-12345" >> .env; \
 		echo "" >> .env; \
 		echo "# Database connection URL" >> .env; \
-		echo "DATABASE_URL=postgres://formbricks:formbricks_dev@localhost:5432/formbricks_hub?sslmode=disable" >> .env; \
+		echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable" >> .env; \
 		echo "" >> .env; \
 		echo "# Server port (default: 8080)" >> .env; \
 		echo "PORT=8080" >> .env; \
@@ -53,25 +54,25 @@ run:
 	@echo "Starting API server..."
 	go run cmd/api/main.go
 
-# Run database migrations
-migrate:
-	@echo "Running database migrations..."
+# Initialize database schema
+init-db:
+	@echo "Initializing database schema..."
 	@if [ -f .env ]; then \
 		export $$(grep -v '^#' .env | xargs) && \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL not found in .env file"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f migrations/001_initial_schema.sql; \
+		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
 	else \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL environment variable is not set"; \
 			echo "Please set it or create a .env file with DATABASE_URL"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f migrations/001_initial_schema.sql; \
+		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
 	fi
-	@echo "Migration completed successfully"
+	@echo "Database schema initialized successfully"
 
 
 # Start Docker containers
@@ -135,7 +136,7 @@ lint:
 	$(HOME)/go/bin/golangci-lint run ./...
 
 # Run everything needed for development
-dev-setup: docker-up deps install-tools migrate
+dev-setup: docker-up deps install-tools init-db
 	@echo "Development environment ready!"
 	@echo "Set API_KEY environment variable for authentication"
 	@echo "Run 'make run' to start the API server"
@@ -143,3 +144,37 @@ dev-setup: docker-up deps install-tools migrate
 # Full test suite (unit + integration)
 test-all: tests
 	@echo "All tests passed!"
+
+# Run Schemathesis API tests (all phases for thorough local testing)
+# Phases: examples (schema examples), coverage (boundary values), stateful (API sequences), fuzzing (random)
+# This runs more thorough tests than CI to find edge-case bugs.
+# Requires: API server running (make run in another terminal)
+# Requires: uvx (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)
+schemathesis:
+	@echo "Running Schemathesis API tests (all phases)..."
+	@echo "This is deeper testing than CI - may find edge-case bugs."
+	@export PATH="$$HOME/.local/bin:$$PATH" && \
+	if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		if [ -z "$$API_KEY" ]; then \
+			echo "Warning: API_KEY not found in .env file, tests may fail authentication"; \
+		fi && \
+		uvx schemathesis run ./openapi.yaml \
+			--url http://localhost:8080 \
+			--header "Authorization: Bearer $${API_KEY:-test-api-key-12345}" \
+			--checks all \
+			--phases examples,coverage,stateful,fuzzing \
+			--max-examples 50; \
+	else \
+		if [ -z "$$API_KEY" ]; then \
+			echo "Error: API_KEY environment variable is not set and .env file not found"; \
+			echo "Please set API_KEY or create a .env file"; \
+			exit 1; \
+		fi && \
+		uvx schemathesis run ./openapi.yaml \
+			--url http://localhost:8080 \
+			--header "Authorization: Bearer $$API_KEY" \
+			--checks all \
+			--phases examples,coverage,stateful,fuzzing \
+			--max-examples 50; \
+	fi

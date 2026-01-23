@@ -1,0 +1,16 @@
+# Schemathesis configuration for Formbricks Hub API
+# Documentation: https://schemathesis.readthedocs.io/en/stable/configuration/
+
+# Base URL for the API (can be overridden via --base-url flag)
+base-url = "http://localhost:8080"
+
+# Request timeout in seconds
+request-timeout = 5
+
+# Disable SSL verification for local development
+tls-verify = false
+
+# Hypothesis settings (property-based testing)
+[generation]
+# Maximum number of examples to generate per endpoint
+max-examples = 50

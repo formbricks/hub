@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -30,6 +31,9 @@ func init() {
 	// Register custom validators
 	if err := validate.RegisterValidation("field_type", validateFieldType); err != nil {
 		slog.Error("Failed to register field_type validator", "error", err)
+	}
+	if err := validate.RegisterValidation("no_null_bytes", validateNoNullBytes); err != nil {
+		slog.Error("Failed to register no_null_bytes validator", "error", err)
 	}
 
 	// Register custom type converters for form decoding
@@ -92,6 +96,8 @@ func formatFieldError(fieldError validator.FieldError) string {
 		return fmt.Sprintf("%s must be a valid UUID", field)
 	case "rfc3339":
 		return fmt.Sprintf("%s must be in RFC3339 format (ISO 8601)", field)
+	case "no_null_bytes":
+		return fmt.Sprintf("%s must not contain NULL bytes", field)
 	default:
 		return fmt.Sprintf("%s is invalid", field)
 	}
@@ -165,4 +171,26 @@ func validateFieldType(fl validator.FieldLevel) bool {
 		"date":        true,
 	}
 	return validTypes[value]
+}
+
+// validateNoNullBytes checks that a string field does not contain NULL bytes
+// Handles both string and *string types
+func validateNoNullBytes(fl validator.FieldLevel) bool {
+	field := fl.Field()
+
+	// Handle pointer types
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			return true // nil pointer is valid (handled by omitempty)
+		}
+		field = field.Elem()
+	}
+
+	// Must be a string type
+	if field.Kind() != reflect.String {
+		return true // Not a string, skip validation
+	}
+
+	value := field.String()
+	return !strings.Contains(value, "\x00")
 }

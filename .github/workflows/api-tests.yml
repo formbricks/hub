@@ -1,0 +1,113 @@
+name: API Tests
+
+# This workflow tests your API against the OpenAPI spec using Schemathesis.
+# It only runs the "examples" phase (fast & deterministic).
+# For thorough fuzzing, run locally: make schemathesis
+
+on:
+  pull_request:
+
+concurrency:
+  group: api-tests-${{ github.head_ref }}
+
+  cancel-in-progress: true
+
+jobs:
+  api-tests:
+    name: API Contract Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable
+      API_KEY: test-api-key-for-ci
+      PORT: 8080
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.25.6'
+
+      - name: Cache Go modules
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Initialize database schema
+        run: make init-db
+
+      - name: Build application
+        run: make build
+
+      - name: Start API server
+        run: |
+          ./bin/api &
+          API_PID=$!
+          echo "API_PID=$API_PID" >> $GITHUB_ENV
+
+          # Wait for server to be healthy (up to ~60s)
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/health | grep -q "OK"; then
+              echo "Server is ready"
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 2
+          done
+
+          # Verify we actually became ready
+          if ! curl -s http://localhost:8080/health | grep -q "OK"; then
+            echo "Server failed to start. Checking logs..."
+            ps aux | grep api || true
+            exit 1
+          fi
+
+      - name: Run API contract tests
+        uses: schemathesis/action@1f15936316e0742005bf69657b5909ac68f04cb3
+        with:
+          schema: ./openapi.yaml
+          base-url: http://localhost:8080
+          # Pin version to avoid regressions from newer Schemathesis releases
+          version: "4.4.4"
+          # Only test schema conformance
+          checks: not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance
+          # Only run examples phase for fast, deterministic CI testing.
+          # For deeper testing (stateful, fuzzing), run locally: make schemathesis
+          args: >-
+            --phases examples
+            -H "Authorization: Bearer test-api-key-for-ci"
+
+      - name: Stop API server
+        if: always()
+        run: |
+          if [ ! -z "$API_PID" ]; then
+            kill $API_PID || true
+          fi
+          pkill -f "./bin/api" || true
