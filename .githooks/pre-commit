@@ -33,7 +33,7 @@ if [ -n "$SECRET_MATCHES" ]; then
     # Show which files contain matches
     echo "Files with potential secrets:"
     for file in $(git diff --cached --name-only); do
-        if git diff --cached -- "$file" 2>/dev/null | grep -qiE "(password|secret|api_key|token|private_key)" | grep -qvE "(test|example|sample|TODO|FIXME)"; then
+        if git diff --cached -- "$file" 2>/dev/null | grep -iE "(password|secret|api_key|token|private_key)" | grep -vE "(test|example|sample|TODO|FIXME)" | grep -q .; then
             echo "  - $file"
         fi
     done
