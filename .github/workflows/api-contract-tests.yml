@@ -1,4 +1,4 @@
-name: API Tests
+name: API Contract Tests
 
 # This workflow tests your API against the OpenAPI spec using Schemathesis.
 # It only runs the "examples" phase (fast & deterministic).
@@ -6,14 +6,22 @@ name: API Tests
 
 on:
   pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'openapi.yaml'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - '.github/workflows/api-contract-tests.yml'
 
 concurrency:
-  group: api-tests-${{ github.head_ref }}
-
+  group: api-contract-tests-${{ github.head_ref }}
   cancel-in-progress: true
 
 jobs:
-  api-tests:
+  api-contract-tests:
     name: API Contract Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -60,35 +68,8 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Verify go.mod and go.sum
-        run: |
-          go mod verify
-          go mod tidy
-          git diff --exit-code go.mod go.sum || (echo "Error: go.mod or go.sum are out of sync. Run 'go mod tidy' and commit the changes." && exit 1)
-
-      - name: Install development tools
-        run: |
-          go install mvdan.cc/gofumpt@latest
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-
-      - name: Check code formatting
-        run: make fmt-check
-
-      - name: Run linter
-        run: make lint
-
-      - name: Security scan
-        run: govulncheck ./...
-
-      - name: Run unit tests
-        run: make test-unit
-
       - name: Initialize database schema
         run: make init-db
-
-      - name: Run integration tests
-        run: make tests
 
       - name: Build application
         run: make build
