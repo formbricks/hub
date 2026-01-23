@@ -186,6 +186,10 @@ func TestLoad(t *testing.T) {
 			// Clean up
 			defer os.Unsetenv("DATABASE_URL")
 			defer os.Unsetenv("PORT")
+			defer os.Unsetenv("API_KEY")
+
+			// API_KEY is required for Load() to succeed
+			os.Setenv("API_KEY", "test-api-key")
 
 			if tt.setDatabaseURL {
 				os.Setenv("DATABASE_URL", tt.databaseURL)
@@ -212,6 +216,9 @@ func TestLoad(t *testing.T) {
 }
 
 func TestLoadAlwaysReturnsNilError(t *testing.T) {
+	defer os.Unsetenv("API_KEY")
+	os.Setenv("API_KEY", "test-api-key")
+
 	cfg, err := Load()
 	if err != nil {
 		t.Errorf("Load() error = %v, want nil", err)
