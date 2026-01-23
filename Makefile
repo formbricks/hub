@@ -145,11 +145,14 @@ dev-setup: docker-up deps install-tools init-db
 test-all: tests
 	@echo "All tests passed!"
 
-# Run Schemathesis API tests
+# Run Schemathesis API tests (all phases for thorough local testing)
+# Phases: examples (schema examples), coverage (boundary values), stateful (API sequences), fuzzing (random)
+# This runs more thorough tests than CI to find edge-case bugs.
 # Requires: API server running (make run in another terminal)
 # Requires: uvx (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)
 schemathesis:
-	@echo "Running Schemathesis API tests..."
+	@echo "Running Schemathesis API tests (all phases)..."
+	@echo "This is deeper testing than CI - may find edge-case bugs."
 	@export PATH="$$HOME/.local/bin:$$PATH" && \
 	if [ -f .env ]; then \
 		export $$(grep -v '^#' .env | xargs) && \
@@ -160,6 +163,7 @@ schemathesis:
 			--url http://localhost:8080 \
 			--header "Authorization: Bearer $${API_KEY:-test-api-key-12345}" \
 			--checks all \
+			--phases examples,coverage,stateful,fuzzing \
 			--max-examples 50; \
 	else \
 		if [ -z "$$API_KEY" ]; then \
@@ -171,5 +175,6 @@ schemathesis:
 			--url http://localhost:8080 \
 			--header "Authorization: Bearer $$API_KEY" \
 			--checks all \
+			--phases examples,coverage,stateful,fuzzing \
 			--max-examples 50; \
 	fi
