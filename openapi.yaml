@@ -295,13 +295,6 @@ components:
             type: object
             additionalProperties: false
             properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://localhost:8080/schemas/BulkDeleteFeedbackRecordsOutputBody.json
-                    readOnly: true
                 deleted_count:
                     type: integer
                     description: Number of records deleted
@@ -440,13 +433,6 @@ components:
             type: object
             additionalProperties: false
             properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://localhost:8080/schemas/ErrorModel.json
-                    readOnly: true
                 detail:
                     type: string
                     description: A human-readable explanation specific to this occurrence of the problem.
@@ -485,13 +471,6 @@ components:
             type: object
             additionalProperties: false
             properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://localhost:8080/schemas/FeedbackRecordData.json
-                    readOnly: true
                 collected_at:
                     type: string
                     description: When the feedback was collected
@@ -571,13 +550,6 @@ components:
             type: object
             additionalProperties: false
             properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://localhost:8080/schemas/ListFeedbackRecordsOutputBody.json
-                    readOnly: true
                 data:
                     type: array
                     description: List of feedback records
