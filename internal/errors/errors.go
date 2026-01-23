@@ -71,38 +71,3 @@ func NewValidationError(field, message string) *ValidationError {
 		Message: message,
 	}
 }
-
-// ErrInvalidInput represents an invalid input error
-// This should be used when client input is invalid (e.g., NULL bytes, out of range)
-var ErrInvalidInput = &InvalidInputError{}
-
-// InvalidInputError is a sentinel error for invalid input data
-type InvalidInputError struct {
-	Field   string
-	Message string
-}
-
-// Error implements the error interface
-func (e *InvalidInputError) Error() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	if e.Field != "" {
-		return fmt.Sprintf("invalid input for field: %s", e.Field)
-	}
-	return "invalid input"
-}
-
-// Is implements the error interface for error comparison
-func (e *InvalidInputError) Is(target error) bool {
-	_, ok := target.(*InvalidInputError)
-	return ok
-}
-
-// NewInvalidInputError creates a new InvalidInputError with a custom message
-func NewInvalidInputError(field, message string) *InvalidInputError {
-	return &InvalidInputError{
-		Field:   field,
-		Message: message,
-	}
-}
