@@ -125,8 +125,8 @@ jobs:
           version: "4.4.4"
           # Only test schema conformance
           checks: not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance
-          # Only run the "examples" phase (fast & deterministic).
-          # Skips the slow "coverage" and "fuzzing" phases.
+          # Only run examples phase for fast, deterministic CI testing.
+          # For deeper testing (stateful, fuzzing), run locally: make schemathesis
           args: >-
             --phases examples
             -H "Authorization: Bearer test-api-key-for-ci"

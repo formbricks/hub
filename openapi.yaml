@@ -129,12 +129,47 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/ListFeedbackRecordsOutputBody'
+                            examples:
+                                basic:
+                                    summary: Basic list response
+                                    value:
+                                        data:
+                                            - id: "018e1234-5678-9abc-def0-123456789abc"
+                                              collected_at: "2024-01-15T10:30:00Z"
+                                              created_at: "2024-01-15T10:30:00Z"
+                                              updated_at: "2024-01-15T10:30:00Z"
+                                              source_type: "survey"
+                                              field_id: "q1"
+                                              field_type: "rating"
+                                              field_label: "How satisfied are you?"
+                                              value_number: 9
+                                              response_id: "resp-abc-123"
+                                              source_id: "survey-123"
+                                              source_name: "Q1 NPS Survey"
+                                              user_identifier: "user-abc-123"
+                                              tenant_id: "org-123"
+                                        total: 1
+                                        limit: 100
+                                        offset: 0
                 default:
                     description: Error
                     content:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                validation_error:
+                                    summary: Validation error
+                                    value:
+                                        type: "about:blank"
+                                        title: "Bad Request"
+                                        status: 400
+                                        detail: "Validation failed"
+                                        instance: "/v1/feedback-records"
+                                        errors:
+                                            - location: "body.field_id"
+                                              message: "Field is required"
+                                              value: null
         post:
             tags:
                 - Feedback Records
@@ -146,6 +181,63 @@ paths:
                     application/json:
                         schema:
                             $ref: '#/components/schemas/CreateFeedbackRecordInputBody'
+                        examples:
+                            rating:
+                                summary: Rating feedback
+                                value:
+                                    source_type: "survey"
+                                    field_id: "q1"
+                                    field_type: "rating"
+                                    field_label: "How satisfied are you?"
+                                    value_number: 9
+                                    response_id: "resp-abc-123"
+                                    source_id: "survey-123"
+                                    source_name: "Q1 NPS Survey"
+                                    user_identifier: "user-abc-123"
+                                    tenant_id: "org-123"
+                                    language: "en"
+                            text:
+                                summary: Text feedback
+                                value:
+                                    source_type: "survey"
+                                    field_id: "q2"
+                                    field_type: "text"
+                                    field_label: "What can we improve?"
+                                    value_text: "Great service! Keep it up."
+                                    response_id: "resp-abc-123"
+                                    source_id: "survey-123"
+                                    source_name: "Q1 NPS Survey"
+                                    user_identifier: "user-abc-123"
+                                    tenant_id: "org-123"
+                                    language: "en"
+                            nps:
+                                summary: NPS score
+                                value:
+                                    source_type: "survey"
+                                    field_id: "nps"
+                                    field_type: "nps"
+                                    field_label: "How likely are you to recommend us?"
+                                    value_number: 8
+                                    response_id: "resp-abc-123"
+                                    source_id: "survey-123"
+                                    source_name: "NPS Survey"
+                                    user_identifier: "user-abc-123"
+                                    tenant_id: "org-123"
+                                    language: "en"
+                            boolean:
+                                summary: Boolean feedback
+                                value:
+                                    source_type: "survey"
+                                    field_id: "q3"
+                                    field_type: "boolean"
+                                    field_label: "Would you use our service again?"
+                                    value_boolean: true
+                                    response_id: "resp-abc-123"
+                                    source_id: "survey-123"
+                                    source_name: "Q1 NPS Survey"
+                                    user_identifier: "user-abc-123"
+                                    tenant_id: "org-123"
+                                    language: "en"
                 required: true
             responses:
                 "201":
@@ -154,12 +246,56 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/FeedbackRecordData'
+                            examples:
+                                created:
+                                    summary: Created feedback record
+                                    value:
+                                        id: "018e1234-5678-9abc-def0-123456789abc"
+                                        collected_at: "2024-01-15T10:30:00Z"
+                                        created_at: "2024-01-15T10:30:00Z"
+                                        updated_at: "2024-01-15T10:30:00Z"
+                                        source_type: "survey"
+                                        field_id: "q1"
+                                        field_type: "rating"
+                                        field_label: "How satisfied are you?"
+                                        value_number: 9
+                                        response_id: "resp-abc-123"
+                                        source_id: "survey-123"
+                                        source_name: "Q1 NPS Survey"
+                                        user_identifier: "user-abc-123"
+                                        tenant_id: "org-123"
+                                        language: "en"
+                    links:
+                        GetCreatedRecord:
+                            operationId: get-feedback-record
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Retrieve the created feedback record by ID
+                        UpdateCreatedRecord:
+                            operationId: update-feedback-record
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Update the created feedback record by ID
+                        DeleteCreatedRecord:
+                            operationId: delete-feedback-record
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Delete the created feedback record by ID
                 default:
                     description: Error
                     content:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                validation_error:
+                                    summary: Validation error
+                                    value:
+                                        type: "about:blank"
+                                        title: "Bad Request"
+                                        status: 400
+                                        detail: "Required field 'field_id' is missing"
+                                        instance: "/v1/feedback-records"
         delete:
             tags:
                 - Feedback Records
@@ -190,6 +326,12 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/BulkDeleteFeedbackRecordsOutputBody'
+                            examples:
+                                success:
+                                    summary: Successful bulk delete
+                                    value:
+                                        deleted_count: 42
+                                        message: "Successfully deleted 42 feedback records"
                 default:
                     description: Error
                     content:
@@ -269,6 +411,27 @@ paths:
                     application/json:
                         schema:
                             $ref: '#/components/schemas/UpdateFeedbackRecordInputBody'
+                        examples:
+                            update_text:
+                                summary: Update text value
+                                value:
+                                    value_text: "Updated feedback text"
+                            update_number:
+                                summary: Update numeric value
+                                value:
+                                    value_number: 10
+                            update_metadata:
+                                summary: Update metadata
+                                value:
+                                    metadata:
+                                        tags:
+                                            - "important"
+                                            - "follow-up"
+                                        priority: "high"
+                            update_user:
+                                summary: Update user identifier
+                                value:
+                                    user_identifier: "user-xyz-789"
                 required: true
             responses:
                 "200":
@@ -277,12 +440,56 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/FeedbackRecordData'
+                            examples:
+                                updated:
+                                    summary: Updated feedback record
+                                    value:
+                                        id: "018e1234-5678-9abc-def0-123456789abc"
+                                        collected_at: "2024-01-15T10:30:00Z"
+                                        created_at: "2024-01-15T10:30:00Z"
+                                        updated_at: "2024-01-15T11:00:00Z"
+                                        source_type: "survey"
+                                        field_id: "q1"
+                                        field_type: "rating"
+                                        field_label: "How satisfied are you?"
+                                        value_number: 10
+                                        response_id: "resp-abc-123"
+                                        source_id: "survey-123"
+                                        source_name: "Q1 NPS Survey"
+                                        user_identifier: "user-abc-123"
+                                        tenant_id: "org-123"
+                                        language: "en"
+                                        metadata:
+                                            tags:
+                                                - "important"
+                                                - "follow-up"
                 default:
                     description: Error
                     content:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                not_found:
+                                    summary: Record not found
+                                    value:
+                                        type: "about:blank"
+                                        title: "Not Found"
+                                        status: 404
+                                        detail: "Feedback record with ID '018e1234-5678-9abc-def0-123456789abc' not found"
+                                        instance: "/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
+                                validation_error:
+                                    summary: Validation error
+                                    value:
+                                        type: "about:blank"
+                                        title: "Bad Request"
+                                        status: 400
+                                        detail: "Invalid update request"
+                                        instance: "/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
+                                        errors:
+                                            - location: "body.value_text"
+                                              message: "Text value cannot be empty"
+                                              value: ""
 components:
     securitySchemes:
         ApiKeyAuth:
@@ -295,13 +502,6 @@ components:
             type: object
             additionalProperties: false
             properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://localhost:8080/schemas/BulkDeleteFeedbackRecordsOutputBody.json
-                    readOnly: true
                 deleted_count:
                     type: integer
                     description: Number of records deleted
@@ -440,13 +640,6 @@ components:
             type: object
             additionalProperties: false
             properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://localhost:8080/schemas/ErrorModel.json
-                    readOnly: true
                 detail:
                     type: string
                     description: A human-readable explanation specific to this occurrence of the problem.
@@ -485,13 +678,6 @@ components:
             type: object
             additionalProperties: false
             properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://localhost:8080/schemas/FeedbackRecordData.json
-                    readOnly: true
                 collected_at:
                     type: string
                     description: When the feedback was collected
@@ -511,6 +697,7 @@ components:
                     description: Type of field
                 id:
                     type: string
+                    format: uuid
                     description: UUIDv7 primary key
                 language:
                     type: string
@@ -570,13 +757,6 @@ components:
             type: object
             additionalProperties: false
             properties:
-                $schema:
-                    type: string
-                    description: A URL to the JSON Schema for this object.
-                    format: uri
-                    examples:
-                        - http://localhost:8080/schemas/ListFeedbackRecordsOutputBody.json
-                    readOnly: true
                 data:
                     type: array
                     description: List of feedback records

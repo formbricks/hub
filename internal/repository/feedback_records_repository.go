@@ -197,7 +197,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	}
 	defer rows.Close()
 
-	var records []models.FeedbackRecord
+	records := []models.FeedbackRecord{} // Initialize as empty slice, not nil
 	for rows.Next() {
 		var record models.FeedbackRecord
 		err := rows.Scan(
