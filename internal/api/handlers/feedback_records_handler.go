@@ -36,7 +36,9 @@ func NewFeedbackRecordsHandler(service FeedbackRecordsService) *FeedbackRecordsH
 // Create handles POST /v1/feedback-records
 func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateFeedbackRecordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		response.RespondBadRequest(w, "Invalid request body")
 		return
 	}
@@ -121,7 +123,9 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req models.UpdateFeedbackRecordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		response.RespondBadRequest(w, "Invalid request body")
 		return
 	}
@@ -173,20 +177,15 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 
 // BulkDelete handles DELETE /v1/feedback-records?user_identifier=<id>
 func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
+	filters := &models.BulkDeleteFilters{}
 
-	userIdentifier := query.Get("user_identifier")
-	if userIdentifier == "" {
-		response.RespondBadRequest(w, "user_identifier is required")
+	// Decode and validate query parameters
+	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
+		validation.RespondValidationError(w, err)
 		return
 	}
 
-	var tenantID *string
-	if tenantIDStr := query.Get("tenant_id"); tenantIDStr != "" {
-		tenantID = &tenantIDStr
-	}
-
-	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), userIdentifier, tenantID)
+	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters.UserIdentifier, filters.TenantID)
 	if err != nil {
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
