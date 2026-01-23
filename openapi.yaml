@@ -511,6 +511,7 @@ components:
                     description: Type of field
                 id:
                     type: string
+                    format: uuid
                     description: UUIDv7 primary key
                 language:
                     type: string
