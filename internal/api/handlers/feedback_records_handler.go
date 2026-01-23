@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/formbricks/hub/internal/api/response"
@@ -193,7 +194,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 
 	resp := models.BulkDeleteResponse{
 		DeletedCount: deletedCount,
-		Message:      "Successfully deleted feedback records",
+		Message:      fmt.Sprintf("Successfully deleted %d feedback records", deletedCount),
 	}
 
 	response.RespondJSON(w, http.StatusOK, resp)
