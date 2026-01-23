@@ -1,18 +1,27 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all schemathesis
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks
 
 # Default target - show help
 help:
 	@echo "Available targets:"
-	@echo "Available targets:"
-	@echo "  make tests       - Run all tests"
-	@echo "  make build       - Build the API server"
-	@echo "  make run         - Run the API server"
-	@echo "  make init-db     - Initialize database schema"
-	@echo "  make docker-up   - Start Docker containers"
-	@echo "  make docker-down - Stop Docker containers"
-	@echo "  make clean       - Clean build artifacts"
-	@echo "  make fmt         - Format code with gofumpt"
-	@echo "  make fmt-check   - Check if code is formatted"
+	@echo "  make help         - Show this help message"
+	@echo "  make dev-setup    - Set up development environment (docker, deps, tools, schema, hooks)"
+	@echo "  make build        - Build the API server"
+	@echo "  make run          - Run the API server"
+	@echo "  make test-unit    - Run unit tests (fast, no database)"
+	@echo "  make tests        - Run integration tests"
+	@echo "  make test-all     - Run all tests (unit + integration)"
+	@echo "  make tests-coverage - Run tests with coverage report"
+	@echo "  make init-db      - Initialize database schema"
+	@echo "  make fmt          - Format code with gofumpt"
+	@echo "  make fmt-check    - Check if code is formatted"
+	@echo "  make lint         - Run linter"
+	@echo "  make deps         - Install Go dependencies"
+	@echo "  make install-tools - Install development tools (gofumpt, golangci-lint)"
+	@echo "  make install-hooks - Install git hooks"
+	@echo "  make docker-up    - Start Docker containers"
+	@echo "  make docker-down  - Stop Docker containers"
+	@echo "  make docker-clean - Stop Docker containers and remove volumes"
+	@echo "  make clean        - Clean build artifacts"
 	@echo "  make schemathesis - Run Schemathesis API tests (requires API server running)"
 
 # Run all tests (integration tests in tests/ directory)
@@ -29,10 +38,10 @@ test-unit:
 test-all: test-unit tests
 	@echo "All tests passed!"
 
-# Run tests with coverage
+# Run tests with coverage (unit + integration)
 tests-coverage:
 	@echo "Running tests with coverage..."
-	go test ./tests/... -v -cover -coverprofile=coverage.out
+	go test ./internal/... ./tests/... -v -cover -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
@@ -164,10 +173,6 @@ dev-setup: docker-up deps install-tools init-db install-hooks
 	@echo "Development environment ready!"
 	@echo "Set API_KEY environment variable for authentication"
 	@echo "Run 'make run' to start the API server"
-
-# Full test suite (unit + integration)
-test-all: tests
-	@echo "All tests passed!"
 
 # Run Schemathesis API tests (all phases for thorough local testing)
 # Phases: examples (schema examples), coverage (boundary values), stateful (API sequences), fuzzing (random)
