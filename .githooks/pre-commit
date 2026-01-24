@@ -53,15 +53,26 @@ if [ -n "$SECRET_MATCHES" ]; then
     echo ""
 fi
 
-# Step 1: Format code (this will modify files if needed)
-echo "Formatting code with gofumpt..."
-make fmt
+# Step 1: Format only staged Go files
+echo "Formatting staged Go files with gofumpt..."
 
-# Stage any files that were formatted
-if [ -n "$(git diff --name-only)" ]; then
-    echo "Staging formatted files..."
-    git add -u
-    echo "⚠️  Some files were auto-formatted and have been staged."
+# Get list of staged Go files
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -n "$STAGED_GO_FILES" ]; then
+    # Check which files need formatting (before formatting)
+    FILES_NEEDING_FORMAT=$(echo "$STAGED_GO_FILES" | xargs gofumpt -l 2>/dev/null || true)
+    
+    if [ -n "$FILES_NEEDING_FORMAT" ]; then
+        # Format only the staged Go files
+        echo "$STAGED_GO_FILES" | xargs gofumpt -w
+        
+        # Stage ONLY the files that were formatted (not all unstaged changes)
+        echo "Staging formatted files..."
+        echo "$FILES_NEEDING_FORMAT" | xargs git add
+        echo "⚠️  Some files were auto-formatted and have been staged:"
+        echo "$FILES_NEEDING_FORMAT" | sed 's/^/    /'
+    fi
 fi
 
 # Step 2: Run linter
