@@ -83,8 +83,9 @@ make dev-setup
 This will:
 - Start PostgreSQL container
 - Install Go dependencies
-- Install development tools (swag for OpenAPI docs)
+- Install development tools (gofumpt, golangci-lint)
 - Initialize database schema
+- Install git hooks for code quality
 
 3. Start the API server:
 ```bash
@@ -212,7 +213,31 @@ make clean        # Clean build artifacts
 ### Running Tests
 
 ```bash
-make tests
+make test-unit    # Fast unit tests (no database)
+make tests        # Integration tests (requires database)
+make test-all     # Run all tests
+```
+
+### Git Hooks
+
+The repository includes pre-commit hooks for code quality. To install them:
+
+```bash
+make install-hooks
+```
+
+The pre-commit hook automatically:
+1. Checks for potential secrets in staged changes (warning only)
+2. Formats staged Go files with `gofumpt`
+3. Runs the linter (`golangci-lint`)
+
+If formatting or linting fails, the commit is blocked.
+
+**Note:** Git hooks are automatically installed when you run `make dev-setup`.
+
+To bypass hooks temporarily (use sparingly):
+```bash
+git commit --no-verify -m "WIP: work in progress"
 ```
 
 ### Database Schema
