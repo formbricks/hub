@@ -1,4 +1,4 @@
-name: API Tests
+name: API Contract Tests
 
 # This workflow tests your API against the OpenAPI spec using Schemathesis.
 # It only runs the "examples" phase (fast & deterministic).
@@ -6,16 +6,24 @@ name: API Tests
 
 on:
   pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'openapi.yaml'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - '.github/workflows/api-contract-tests.yml'
 
 concurrency:
-  group: api-tests-${{ github.head_ref }}
-
+  group: api-contract-tests-${{ github.head_ref }}
   cancel-in-progress: true
 
 jobs:
-  api-tests:
+  api-contract-tests:
     name: API Contract Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     services:

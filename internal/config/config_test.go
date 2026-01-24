@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"testing"
 )
 
@@ -42,11 +41,8 @@ func TestGetEnv(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clean up
-			defer os.Unsetenv(tt.key)
-
 			if tt.shouldSet {
-				os.Setenv(tt.key, tt.envValue)
+				t.Setenv(tt.key, tt.envValue)
 			}
 
 			got := getEnv(tt.key, tt.defaultValue)
@@ -118,11 +114,8 @@ func TestGetEnvAsInt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clean up
-			defer os.Unsetenv(tt.key)
-
 			if tt.shouldSet {
-				os.Setenv(tt.key, tt.envValue)
+				t.Setenv(tt.key, tt.envValue)
 			}
 
 			got := getEnvAsInt(tt.key, tt.defaultValue)
@@ -183,15 +176,14 @@ func TestLoad(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clean up
-			defer os.Unsetenv("DATABASE_URL")
-			defer os.Unsetenv("PORT")
+			// API_KEY is required for Load() to succeed
+			t.Setenv("API_KEY", "test-api-key")
 
 			if tt.setDatabaseURL {
-				os.Setenv("DATABASE_URL", tt.databaseURL)
+				t.Setenv("DATABASE_URL", tt.databaseURL)
 			}
 			if tt.setPort {
-				os.Setenv("PORT", tt.port)
+				t.Setenv("PORT", tt.port)
 			}
 
 			cfg, err := Load()
@@ -212,6 +204,8 @@ func TestLoad(t *testing.T) {
 }
 
 func TestLoadAlwaysReturnsNilError(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+
 	cfg, err := Load()
 	if err != nil {
 		t.Errorf("Load() error = %v, want nil", err)

@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# Git pre-commit hook to enforce code formatting and linting
+# This hook runs before each commit to ensure code quality
+
+set -e
+
+# Add Go bin directories to PATH (git hooks run in minimal environment)
+export PATH="$HOME/go/bin:${GOPATH:-$HOME/go}/bin:$PATH"
+
+echo "Running pre-commit checks..."
+
+# Check if gofumpt is installed
+if ! command -v gofumpt >/dev/null 2>&1; then
+    echo "Error: gofumpt not found. Install it with: make install-tools"
+    exit 1
+fi
+
+# Check if golangci-lint is installed
+if ! command -v golangci-lint >/dev/null 2>&1; then
+    echo "Error: golangci-lint not found. Install it with: make install-tools"
+    exit 1
+fi
+
+# Check for potential secrets and show what was found (warning only)
+SECRET_MATCHES=$(git diff --cached | grep -iE "(password|secret|api_key|token|private_key)" | grep -vE "(test|example|sample|TODO|FIXME)" || true)
+
+if [ -n "$SECRET_MATCHES" ]; then
+    echo ""
+    echo "⚠️  WARNING: Potential secrets detected in staged changes!"
+    echo ""
+    
+    # Show which files contain matches
+    echo "Files with potential secrets:"
+    for file in $(git diff --cached --name-only); do
+        if git diff --cached -- "$file" 2>/dev/null | grep -iE "(password|secret|api_key|token|private_key)" | grep -vE "(test|example|sample|TODO|FIXME)" | grep -q .; then
+            echo "  - $file"
+        fi
+    done
+    
+    echo ""
+    echo "Sample matches (showing context):"
+    echo "----------------------------------------"
+    git diff --cached | grep -B3 -A3 -iE "(password|secret|api_key|token|private_key)" | grep -vE "(test|example|sample|TODO|FIXME|^--$)" | head -40
+    echo "----------------------------------------"
+    echo ""
+    echo "To see full details, run:"
+    echo "  git diff --cached | grep -B5 -A5 -iE '(password|secret|api_key|token|private_key)'"
+    echo ""
+    echo "⚠️  Please review the above matches to ensure no real credentials are being committed."
+    echo "   If these are test values or false positives, you can ignore this warning."
+    echo "   If you need to undo this commit, run: git reset HEAD~1"
+    echo ""
+fi
+
+# Step 1: Format only staged Go files
+echo "Formatting staged Go files with gofumpt..."
+
+# Get list of staged Go files
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -n "$STAGED_GO_FILES" ]; then
+    # Check which files need formatting (before formatting)
+    FILES_NEEDING_FORMAT=$(echo "$STAGED_GO_FILES" | xargs gofumpt -l 2>/dev/null || true)
+    
+    if [ -n "$FILES_NEEDING_FORMAT" ]; then
+        # Format only the staged Go files
+        echo "$STAGED_GO_FILES" | xargs gofumpt -w
+        
+        # Stage ONLY the files that were formatted (not all unstaged changes)
+        echo "Staging formatted files..."
+        echo "$FILES_NEEDING_FORMAT" | xargs git add
+        echo "⚠️  Some files were auto-formatted and have been staged:"
+        echo "$FILES_NEEDING_FORMAT" | sed 's/^/    /'
+    fi
+fi
+
+# Step 2: Run linter
+echo "Running linter..."
+if ! make lint; then
+    echo ""
+    echo "❌ Linting failed. Please fix the errors above before committing."
+    exit 1
+fi
+
+echo "✅ Pre-commit checks passed!"
+exit 0
