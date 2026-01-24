@@ -126,11 +126,17 @@ deps:
 	@echo "Dependencies installed"
 
 # Install development tools
+# Tool versions - update these periodically
+GOFUMPT_VERSION := v0.9.2
+GOLANGCI_LINT_VERSION := v2.8.0
+GOVULNCHECK_VERSION := v1.1.4
+
 install-tools:
 	@echo "Installing development tools..."
-	go install mvdan.cc/gofumpt@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	@echo "Tools installed"
+	go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	@echo "Tools installed (gofumpt $(GOFUMPT_VERSION), golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION))"
 
 # Format code
 fmt:
