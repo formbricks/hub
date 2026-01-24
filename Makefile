@@ -134,7 +134,7 @@ GOVULNCHECK_VERSION := v1.1.4
 install-tools:
 	@echo "Installing development tools..."
 	go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	@echo "Tools installed (gofumpt $(GOFUMPT_VERSION), golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION))"
 
