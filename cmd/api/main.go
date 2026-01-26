@@ -43,6 +43,15 @@ func main() {
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
+
+	knowledgeRecordsRepo := repository.NewKnowledgeRecordsRepository(db)
+	knowledgeRecordsService := service.NewKnowledgeRecordsService(knowledgeRecordsRepo)
+	knowledgeRecordsHandler := handlers.NewKnowledgeRecordsHandler(knowledgeRecordsService)
+
+	topicsRepo := repository.NewTopicsRepository(db)
+	topicsService := service.NewTopicsService(topicsRepo)
+	topicsHandler := handlers.NewTopicsHandler(topicsService)
+
 	healthHandler := handlers.NewHealthHandler()
 
 	// Set up public endpoints (no authentication required)
@@ -61,6 +70,19 @@ func main() {
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
+
+	protectedMux.HandleFunc("POST /v1/knowledge-records", knowledgeRecordsHandler.Create)
+	protectedMux.HandleFunc("GET /v1/knowledge-records", knowledgeRecordsHandler.List)
+	protectedMux.HandleFunc("GET /v1/knowledge-records/{id}", knowledgeRecordsHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/knowledge-records/{id}", knowledgeRecordsHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/knowledge-records/{id}", knowledgeRecordsHandler.Delete)
+	protectedMux.HandleFunc("DELETE /v1/knowledge-records", knowledgeRecordsHandler.BulkDelete)
+
+	protectedMux.HandleFunc("POST /v1/topics", topicsHandler.Create)
+	protectedMux.HandleFunc("GET /v1/topics", topicsHandler.List)
+	protectedMux.HandleFunc("GET /v1/topics/{id}", topicsHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/topics/{id}", topicsHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/topics/{id}", topicsHandler.Delete)
 
 	// Apply middleware to protected endpoints
 	var protectedHandler http.Handler = protectedMux
