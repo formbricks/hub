@@ -74,7 +74,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id,
-			topic_id, classification_confidence, sentiment, sentiment_score, emotion
+			topic_id, classification_confidence
 		FROM feedback_records
 		WHERE id = $1
 	`
@@ -86,7 +86,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-		&record.TopicID, &record.ClassificationConfidence, &record.Sentiment, &record.SentimentScore, &record.Emotion,
+		&record.TopicID, &record.ClassificationConfidence,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -174,7 +174,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id,
-			topic_id, classification_confidence, sentiment, sentiment_score, emotion
+			topic_id, classification_confidence
 		FROM feedback_records
 	`
 
@@ -210,7 +210,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			&record.FieldID, &record.FieldLabel, &record.FieldType,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-			&record.TopicID, &record.ClassificationConfidence, &record.Sentiment, &record.SentimentScore, &record.Emotion,
+			&record.TopicID, &record.ClassificationConfidence,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
@@ -309,7 +309,7 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id, response_id,
-			topic_id, classification_confidence, sentiment, sentiment_score, emotion
+			topic_id, classification_confidence
 	`, strings.Join(updates, ", "), argCount)
 
 	return query, args, true
@@ -330,7 +330,7 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-		&record.TopicID, &record.ClassificationConfidence, &record.Sentiment, &record.SentimentScore, &record.Emotion,
+		&record.TopicID, &record.ClassificationConfidence,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -381,9 +381,8 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 func (r *FeedbackRecordsRepository) UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error {
 	query := `
 		UPDATE feedback_records
-		SET embedding = $1, topic_id = $2, classification_confidence = $3,
-			sentiment = $4, sentiment_score = $5, emotion = $6, updated_at = $7
-		WHERE id = $8
+		SET embedding = $1, topic_id = $2, classification_confidence = $3, updated_at = $4
+		WHERE id = $5
 	`
 
 	var embeddingValue interface{}
@@ -393,7 +392,6 @@ func (r *FeedbackRecordsRepository) UpdateEnrichment(ctx context.Context, id uui
 
 	result, err := r.db.Exec(ctx, query,
 		embeddingValue, req.TopicID, req.ClassificationConfidence,
-		req.Sentiment, req.SentimentScore, req.Emotion,
 		time.Now(), id,
 	)
 	if err != nil {

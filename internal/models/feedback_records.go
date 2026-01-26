@@ -29,12 +29,9 @@ type FeedbackRecord struct {
 	TenantID       *string         `json:"tenant_id,omitempty"`
 	ResponseID     *string         `json:"response_id,omitempty"`
 
-	// AI enrichment fields
+	// AI enrichment fields (embedding-based)
 	TopicID                  *uuid.UUID `json:"topic_id,omitempty"`
 	ClassificationConfidence *float64   `json:"classification_confidence,omitempty"`
-	Sentiment                *string    `json:"sentiment,omitempty"`
-	SentimentScore           *float64   `json:"sentiment_score,omitempty"`
-	Emotion                  *string    `json:"emotion,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record
@@ -110,7 +107,4 @@ type UpdateFeedbackEnrichmentRequest struct {
 	Embedding                []float32
 	TopicID                  *uuid.UUID
 	ClassificationConfidence *float64
-	Sentiment                *string
-	SentimentScore           *float64
-	Emotion                  *string
 }
