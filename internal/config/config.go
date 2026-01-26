@@ -10,10 +10,11 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	DatabaseURL string
-	Port        string
-	APIKey      string
-	LogLevel    string
+	DatabaseURL  string
+	Port         string
+	APIKey       string
+	LogLevel     string
+	OpenAIAPIKey string // Optional: for AI enrichment features
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -51,10 +52,11 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
-		Port:        getEnv("PORT", "8080"),
-		APIKey:      apiKey,
-		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		DatabaseURL:  getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
+		Port:         getEnv("PORT", "8080"),
+		APIKey:       apiKey,
+		LogLevel:     getEnv("LOG_LEVEL", "info"),
+		OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"), // Optional: empty if not configured
 	}
 
 	return cfg, nil

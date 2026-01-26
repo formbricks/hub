@@ -28,6 +28,13 @@ type FeedbackRecord struct {
 	UserIdentifier *string         `json:"user_identifier,omitempty"`
 	TenantID       *string         `json:"tenant_id,omitempty"`
 	ResponseID     *string         `json:"response_id,omitempty"`
+
+	// AI enrichment fields
+	TopicID                  *uuid.UUID `json:"topic_id,omitempty"`
+	ClassificationConfidence *float64   `json:"classification_confidence,omitempty"`
+	Sentiment                *string    `json:"sentiment,omitempty"`
+	SentimentScore           *float64   `json:"sentiment_score,omitempty"`
+	Emotion                  *string    `json:"emotion,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record
@@ -95,4 +102,15 @@ type BulkDeleteFilters struct {
 type BulkDeleteResponse struct {
 	DeletedCount int64  `json:"deleted_count"`
 	Message      string `json:"message"`
+}
+
+// UpdateFeedbackEnrichmentRequest represents internal request to update AI-enriched fields
+// Used by the service layer, not exposed via API
+type UpdateFeedbackEnrichmentRequest struct {
+	Embedding                []float32
+	TopicID                  *uuid.UUID
+	ClassificationConfidence *float64
+	Sentiment                *string
+	SentimentScore           *float64
+	Emotion                  *string
 }

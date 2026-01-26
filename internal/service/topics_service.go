@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"log/slog"
 
+	"github.com/formbricks/hub/internal/embeddings"
 	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
@@ -18,16 +20,26 @@ type TopicsRepository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	ExistsByTitleAndParent(ctx context.Context, title string, parentID *uuid.UUID, tenantID *string) (bool, error)
 	ExistsByTitleAndParentExcluding(ctx context.Context, title string, parentID *uuid.UUID, tenantID *string, excludeID uuid.UUID) (bool, error)
+	UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error
 }
 
 // TopicsService handles business logic for topics
 type TopicsService struct {
-	repo TopicsRepository
+	repo            TopicsRepository
+	embeddingClient embeddings.Client // nil if embeddings are disabled
 }
 
 // NewTopicsService creates a new topics service
 func NewTopicsService(repo TopicsRepository) *TopicsService {
 	return &TopicsService{repo: repo}
+}
+
+// NewTopicsServiceWithEmbeddings creates a service with embedding support
+func NewTopicsServiceWithEmbeddings(repo TopicsRepository, embeddingClient embeddings.Client) *TopicsService {
+	return &TopicsService{
+		repo:            repo,
+		embeddingClient: embeddingClient,
+	}
 }
 
 // CreateTopic creates a new topic with validation
@@ -65,7 +77,32 @@ func (s *TopicsService) CreateTopic(ctx context.Context, req *models.CreateTopic
 	}
 
 	// Create topic (level is calculated in repository)
-	return s.repo.Create(ctx, req)
+	topic, err := s.repo.Create(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate embedding asynchronously if client is configured
+	if s.embeddingClient != nil {
+		go s.generateEmbedding(topic.ID, req.Title)
+	}
+
+	return topic, nil
+}
+
+// generateEmbedding generates and stores embedding for a topic
+func (s *TopicsService) generateEmbedding(id uuid.UUID, title string) {
+	ctx := context.Background()
+
+	embedding, err := s.embeddingClient.GetEmbedding(ctx, title)
+	if err != nil {
+		slog.Error("failed to generate embedding", "record_type", "topic", "id", id, "error", err)
+		return
+	}
+
+	if err := s.repo.UpdateEmbedding(ctx, id, embedding); err != nil {
+		slog.Error("failed to store embedding", "record_type", "topic", "id", id, "error", err)
+	}
 }
 
 // GetTopic retrieves a single topic by ID
@@ -118,7 +155,17 @@ func (s *TopicsService) UpdateTopic(ctx context.Context, id uuid.UUID, req *mode
 		}
 	}
 
-	return s.repo.Update(ctx, id, req)
+	topic, err := s.repo.Update(ctx, id, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Regenerate embedding if title was updated and client is configured
+	if req.Title != nil && s.embeddingClient != nil {
+		go s.generateEmbedding(id, *req.Title)
+	}
+
+	return topic, nil
 }
 
 // DeleteTopic deletes a topic by ID

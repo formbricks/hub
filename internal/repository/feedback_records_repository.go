@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgvector/pgvector-go"
 )
 
 // FeedbackRecordsRepository handles data access for feedback records
@@ -72,7 +73,8 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, response_id
+			metadata, language, user_identifier, tenant_id, response_id,
+			topic_id, classification_confidence, sentiment, sentiment_score, emotion
 		FROM feedback_records
 		WHERE id = $1
 	`
@@ -84,6 +86,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
+		&record.TopicID, &record.ClassificationConfidence, &record.Sentiment, &record.SentimentScore, &record.Emotion,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -170,7 +173,8 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, response_id
+			metadata, language, user_identifier, tenant_id, response_id,
+			topic_id, classification_confidence, sentiment, sentiment_score, emotion
 		FROM feedback_records
 	`
 
@@ -206,6 +210,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			&record.FieldID, &record.FieldLabel, &record.FieldType,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
+			&record.TopicID, &record.ClassificationConfidence, &record.Sentiment, &record.SentimentScore, &record.Emotion,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
@@ -303,7 +308,8 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, response_id
+			metadata, language, user_identifier, tenant_id, response_id,
+			topic_id, classification_confidence, sentiment, sentiment_score, emotion
 	`, strings.Join(updates, ", "), argCount)
 
 	return query, args, true
@@ -324,6 +330,7 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
+		&record.TopicID, &record.ClassificationConfidence, &record.Sentiment, &record.SentimentScore, &record.Emotion,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -368,4 +375,34 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	}
 
 	return result.RowsAffected(), nil
+}
+
+// UpdateEnrichment updates the AI enrichment fields for a feedback record
+func (r *FeedbackRecordsRepository) UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error {
+	query := `
+		UPDATE feedback_records
+		SET embedding = $1, topic_id = $2, classification_confidence = $3,
+			sentiment = $4, sentiment_score = $5, emotion = $6, updated_at = $7
+		WHERE id = $8
+	`
+
+	var embeddingValue interface{}
+	if req.Embedding != nil {
+		embeddingValue = pgvector.NewVector(req.Embedding)
+	}
+
+	result, err := r.db.Exec(ctx, query,
+		embeddingValue, req.TopicID, req.ClassificationConfidence,
+		req.Sentiment, req.SentimentScore, req.Emotion,
+		time.Now(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update feedback record enrichment: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperrors.NewNotFoundError("feedback record", "feedback record not found")
+	}
+
+	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/embeddings"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/pkg/database"
@@ -39,17 +40,41 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize embedding client if OpenAI API key is configured
+	var embeddingClient embeddings.Client
+	if cfg.OpenAIAPIKey != "" {
+		embeddingClient = embeddings.NewOpenAIClient(cfg.OpenAIAPIKey)
+		slog.Info("AI enrichment enabled", "embedding_model", "text-embedding-3-small")
+	} else {
+		slog.Info("AI enrichment disabled (OPENAI_API_KEY not set)")
+	}
+
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	var feedbackRecordsService *service.FeedbackRecordsService
+	if embeddingClient != nil {
+		feedbackRecordsService = service.NewFeedbackRecordsServiceWithEmbeddings(feedbackRecordsRepo, embeddingClient)
+	} else {
+		feedbackRecordsService = service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	}
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 
 	knowledgeRecordsRepo := repository.NewKnowledgeRecordsRepository(db)
-	knowledgeRecordsService := service.NewKnowledgeRecordsService(knowledgeRecordsRepo)
+	var knowledgeRecordsService *service.KnowledgeRecordsService
+	if embeddingClient != nil {
+		knowledgeRecordsService = service.NewKnowledgeRecordsServiceWithEmbeddings(knowledgeRecordsRepo, embeddingClient)
+	} else {
+		knowledgeRecordsService = service.NewKnowledgeRecordsService(knowledgeRecordsRepo)
+	}
 	knowledgeRecordsHandler := handlers.NewKnowledgeRecordsHandler(knowledgeRecordsService)
 
 	topicsRepo := repository.NewTopicsRepository(db)
-	topicsService := service.NewTopicsService(topicsRepo)
+	var topicsService *service.TopicsService
+	if embeddingClient != nil {
+		topicsService = service.NewTopicsServiceWithEmbeddings(topicsRepo, embeddingClient)
+	} else {
+		topicsService = service.NewTopicsService(topicsRepo)
+	}
 	topicsHandler := handlers.NewTopicsHandler(topicsService)
 
 	healthHandler := handlers.NewHealthHandler()

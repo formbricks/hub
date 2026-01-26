@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgvector/pgvector-go"
 )
 
 // KnowledgeRecordsRepository handles data access for knowledge records
@@ -213,4 +214,24 @@ func (r *KnowledgeRecordsRepository) BulkDelete(ctx context.Context, tenantID st
 	}
 
 	return result.RowsAffected(), nil
+}
+
+// UpdateEmbedding updates the embedding vector for a knowledge record
+func (r *KnowledgeRecordsRepository) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
+	query := `
+		UPDATE knowledge_records
+		SET embedding = $1, updated_at = $2
+		WHERE id = $3
+	`
+
+	result, err := r.db.Exec(ctx, query, pgvector.NewVector(embedding), time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update knowledge record embedding: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperrors.NewNotFoundError("knowledge record", "knowledge record not found")
+	}
+
+	return nil
 }

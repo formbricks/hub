@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgvector/pgvector-go"
 )
 
 // TopicsRepository handles data access for topics
@@ -298,4 +299,24 @@ func (r *TopicsRepository) ExistsByTitleAndParentExcluding(ctx context.Context, 
 	}
 
 	return exists, nil
+}
+
+// UpdateEmbedding updates the embedding vector for a topic
+func (r *TopicsRepository) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
+	query := `
+		UPDATE topics
+		SET embedding = $1, updated_at = $2
+		WHERE id = $3
+	`
+
+	result, err := r.db.Exec(ctx, query, pgvector.NewVector(embedding), time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update topic embedding: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperrors.NewNotFoundError("topic", "topic not found")
+	}
+
+	return nil
 }

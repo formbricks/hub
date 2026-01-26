@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
+	"github.com/formbricks/hub/internal/embeddings"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 )
@@ -17,11 +19,13 @@ type FeedbackRecordsRepository interface {
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
+	UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error
 }
 
 // FeedbackRecordsService handles business logic for feedback records
 type FeedbackRecordsService struct {
-	repo FeedbackRecordsRepository
+	repo            FeedbackRecordsRepository
+	embeddingClient embeddings.Client // nil if embeddings are disabled
 }
 
 // NewFeedbackRecordsService creates a new feedback records service
@@ -29,9 +33,47 @@ func NewFeedbackRecordsService(repo FeedbackRecordsRepository) *FeedbackRecordsS
 	return &FeedbackRecordsService{repo: repo}
 }
 
+// NewFeedbackRecordsServiceWithEmbeddings creates a service with embedding support
+func NewFeedbackRecordsServiceWithEmbeddings(repo FeedbackRecordsRepository, embeddingClient embeddings.Client) *FeedbackRecordsService {
+	return &FeedbackRecordsService{
+		repo:            repo,
+		embeddingClient: embeddingClient,
+	}
+}
+
 // CreateFeedbackRecord creates a new feedback record
 func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
-	return s.repo.Create(ctx, req)
+	record, err := s.repo.Create(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate embedding for text feedback asynchronously if client is configured
+	if s.embeddingClient != nil && req.FieldType == "text" && req.ValueText != nil && *req.ValueText != "" {
+		go s.enrichRecord(record.ID, *req.ValueText)
+	}
+
+	return record, nil
+}
+
+// enrichRecord generates embedding and enriches the feedback record
+func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string) {
+	ctx := context.Background()
+
+	embedding, err := s.embeddingClient.GetEmbedding(ctx, text)
+	if err != nil {
+		slog.Error("failed to generate embedding", "record_type", "feedback_record", "id", id, "error", err)
+		return
+	}
+
+	// Store the embedding (classification will be added later)
+	enrichReq := &models.UpdateFeedbackEnrichmentRequest{
+		Embedding: embedding,
+	}
+
+	if err := s.repo.UpdateEnrichment(ctx, id, enrichReq); err != nil {
+		slog.Error("failed to store enrichment", "record_type", "feedback_record", "id", id, "error", err)
+	}
 }
 
 // GetFeedbackRecord retrieves a single feedback record by ID
@@ -66,7 +108,20 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filter
 
 // UpdateFeedbackRecord updates an existing feedback record
 func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
-	return s.repo.Update(ctx, id, req)
+	record, err := s.repo.Update(ctx, id, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Regenerate embedding if text was updated and client is configured
+	if s.embeddingClient != nil && req.ValueText != nil && *req.ValueText != "" {
+		// Check if this is a text field (the record has the field_type)
+		if record.FieldType == "text" {
+			go s.enrichRecord(id, *req.ValueText)
+		}
+	}
+
+	return record, nil
 }
 
 // DeleteFeedbackRecord deletes a feedback record by ID
