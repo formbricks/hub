@@ -88,6 +88,13 @@ paths:
                     type: string
                     description: Filter by user identifier. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                - name: topic_id
+                  in: query
+                  description: Filter by classified topic ID. Returns feedback records that have been classified into this topic via AI enrichment.
+                  schema:
+                    type: string
+                    format: uuid
+                    description: Filter by classified topic ID
                 - name: since
                   in: query
                   description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
@@ -148,6 +155,8 @@ paths:
                                               source_name: "Q1 NPS Survey"
                                               user_identifier: "user-abc-123"
                                               tenant_id: "org-123"
+                                              topic_id: "019bfba0-373f-7123-ae5e-00b641be401c"
+                                              classification_confidence: 0.87
                                         total: 1
                                         limit: 100
                                         offset: 0
@@ -1437,6 +1446,16 @@ components:
                     type: string
                     description: Text response. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                topic_id:
+                    type: string
+                    format: uuid
+                    description: ID of the topic this feedback was classified into (via AI enrichment). Null if not yet classified or no matching topic found.
+                classification_confidence:
+                    type: number
+                    format: double
+                    minimum: 0
+                    maximum: 1
+                    description: Confidence score (0-1) of the AI topic classification. Higher values indicate more confident classification.
             required:
                 - id
                 - collected_at
