@@ -113,9 +113,10 @@ func main() {
 	protectedMux.HandleFunc("DELETE /v1/topics/{id}", topicsHandler.Delete)
 
 	// Apply middleware to protected endpoints
+	// Order matters: CORS must wrap Auth so OPTIONS preflight requests bypass authentication
 	var protectedHandler http.Handler = protectedMux
 	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
-	// protectedHandler = middleware.CORS(protectedHandler)	// CORS disabled
+	protectedHandler = middleware.CORS(protectedHandler) // CORS wraps Auth
 
 	// Combine both handlers
 	mainMux := http.NewServeMux()
