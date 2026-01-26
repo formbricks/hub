@@ -48,3 +48,10 @@ type ListTopicsResponse struct {
 	Limit  int     `json:"limit"`
 	Offset int     `json:"offset"`
 }
+
+// TopicMatch represents a topic matched by vector similarity search
+type TopicMatch struct {
+	TopicID    uuid.UUID `json:"topic_id"`
+	Title      string    `json:"title"`
+	Similarity float64   `json:"similarity"`
+}

@@ -75,6 +75,7 @@ type ListFeedbackRecordsFilters struct {
 	FieldID        *string    `form:"field_id" validate:"omitempty,no_null_bytes"`
 	FieldType      *string    `form:"field_type" validate:"omitempty,no_null_bytes"`
 	UserIdentifier *string    `form:"user_identifier" validate:"omitempty,no_null_bytes"`
+	TopicID        *uuid.UUID `form:"topic_id" validate:"omitempty"`
 	Since          *time.Time `form:"since" validate:"omitempty"`
 	Until          *time.Time `form:"until" validate:"omitempty"`
 	Limit          int        `form:"limit" validate:"omitempty,min=1,max=1000"`

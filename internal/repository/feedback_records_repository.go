@@ -147,6 +147,12 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, 
 		argCount++
 	}
 
+	if filters.TopicID != nil {
+		conditions = append(conditions, fmt.Sprintf("topic_id = $%d", argCount))
+		args = append(args, *filters.TopicID)
+		argCount++
+	}
+
 	if filters.Since != nil {
 		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", argCount))
 		args = append(args, *filters.Since)

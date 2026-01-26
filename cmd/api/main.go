@@ -50,10 +50,22 @@ func main() {
 	}
 
 	// Initialize repository, service, and handler layers
+	// Topics repo is initialized first as it's used for feedback classification
+	topicsRepo := repository.NewTopicsRepository(db)
+	var topicsService *service.TopicsService
+	if embeddingClient != nil {
+		topicsService = service.NewTopicsServiceWithEmbeddings(topicsRepo, embeddingClient)
+	} else {
+		topicsService = service.NewTopicsService(topicsRepo)
+	}
+	topicsHandler := handlers.NewTopicsHandler(topicsService)
+
+	// Feedback records service uses topics repo for classification
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	var feedbackRecordsService *service.FeedbackRecordsService
 	if embeddingClient != nil {
-		feedbackRecordsService = service.NewFeedbackRecordsServiceWithEmbeddings(feedbackRecordsRepo, embeddingClient)
+		// Enable both embedding and classification
+		feedbackRecordsService = service.NewFeedbackRecordsServiceWithClassification(feedbackRecordsRepo, embeddingClient, topicsRepo)
 	} else {
 		feedbackRecordsService = service.NewFeedbackRecordsService(feedbackRecordsRepo)
 	}
@@ -67,15 +79,6 @@ func main() {
 		knowledgeRecordsService = service.NewKnowledgeRecordsService(knowledgeRecordsRepo)
 	}
 	knowledgeRecordsHandler := handlers.NewKnowledgeRecordsHandler(knowledgeRecordsService)
-
-	topicsRepo := repository.NewTopicsRepository(db)
-	var topicsService *service.TopicsService
-	if embeddingClient != nil {
-		topicsService = service.NewTopicsServiceWithEmbeddings(topicsRepo, embeddingClient)
-	} else {
-		topicsService = service.NewTopicsService(topicsRepo)
-	}
-	topicsHandler := handlers.NewTopicsHandler(topicsService)
 
 	healthHandler := handlers.NewHealthHandler()
 

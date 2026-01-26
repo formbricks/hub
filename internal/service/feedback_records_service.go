@@ -10,6 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// DefaultClassificationThreshold is the minimum similarity score for topic classification
+const DefaultClassificationThreshold = 0.5
+
 // FeedbackRecordsRepository defines the interface for feedback records data access.
 type FeedbackRecordsRepository interface {
 	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
@@ -22,10 +25,16 @@ type FeedbackRecordsRepository interface {
 	UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error
 }
 
+// TopicClassifier defines the interface for topic classification via vector similarity
+type TopicClassifier interface {
+	FindSimilarTopic(ctx context.Context, embedding []float32, tenantID *string, minSimilarity float64) (*models.TopicMatch, error)
+}
+
 // FeedbackRecordsService handles business logic for feedback records
 type FeedbackRecordsService struct {
 	repo            FeedbackRecordsRepository
-	embeddingClient embeddings.Client // nil if embeddings are disabled
+	embeddingClient embeddings.Client  // nil if embeddings are disabled
+	topicClassifier TopicClassifier    // nil if classification is disabled
 }
 
 // NewFeedbackRecordsService creates a new feedback records service
@@ -41,6 +50,15 @@ func NewFeedbackRecordsServiceWithEmbeddings(repo FeedbackRecordsRepository, emb
 	}
 }
 
+// NewFeedbackRecordsServiceWithClassification creates a service with embedding and classification support
+func NewFeedbackRecordsServiceWithClassification(repo FeedbackRecordsRepository, embeddingClient embeddings.Client, topicClassifier TopicClassifier) *FeedbackRecordsService {
+	return &FeedbackRecordsService{
+		repo:            repo,
+		embeddingClient: embeddingClient,
+		topicClassifier: topicClassifier,
+	}
+}
+
 // CreateFeedbackRecord creates a new feedback record
 func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
 	record, err := s.repo.Create(ctx, req)
@@ -50,27 +68,40 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 
 	// Generate embedding for text feedback asynchronously if client is configured
 	if s.embeddingClient != nil && req.FieldType == "text" && req.ValueText != nil && *req.ValueText != "" {
-		go s.enrichRecord(record.ID, *req.ValueText)
+		go s.enrichRecord(record.ID, *req.ValueText, req.TenantID)
 	}
 
 	return record, nil
 }
 
-// enrichRecord generates embedding and enriches the feedback record
-func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string) {
+// enrichRecord generates embedding, classifies against topics, and enriches the feedback record
+func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string, tenantID *string) {
 	ctx := context.Background()
 
+	// 1. Generate embedding
 	embedding, err := s.embeddingClient.GetEmbedding(ctx, text)
 	if err != nil {
 		slog.Error("failed to generate embedding", "record_type", "feedback_record", "id", id, "error", err)
 		return
 	}
 
-	// Store the embedding (classification will be added later)
 	enrichReq := &models.UpdateFeedbackEnrichmentRequest{
 		Embedding: embedding,
 	}
 
+	// 2. Classify against topics if classifier is available
+	if s.topicClassifier != nil {
+		match, err := s.topicClassifier.FindSimilarTopic(ctx, embedding, tenantID, DefaultClassificationThreshold)
+		if err != nil {
+			slog.Error("failed to classify feedback", "record_type", "feedback_record", "id", id, "error", err)
+		} else if match != nil {
+			enrichReq.TopicID = &match.TopicID
+			enrichReq.ClassificationConfidence = &match.Similarity
+			slog.Debug("classified feedback", "id", id, "topic_id", match.TopicID, "topic_title", match.Title, "confidence", match.Similarity)
+		}
+	}
+
+	// 3. Store enrichment data
 	if err := s.repo.UpdateEnrichment(ctx, id, enrichReq); err != nil {
 		slog.Error("failed to store enrichment", "record_type", "feedback_record", "id", id, "error", err)
 	}
@@ -117,7 +148,7 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 	if s.embeddingClient != nil && req.ValueText != nil && *req.ValueText != "" {
 		// Check if this is a text field (the record has the field_type)
 		if record.FieldType == "text" {
-			go s.enrichRecord(id, *req.ValueText)
+			go s.enrichRecord(id, *req.ValueText, record.TenantID)
 		}
 	}
 
