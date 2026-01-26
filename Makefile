@@ -48,7 +48,7 @@ tests-coverage:
 # Build the API server
 build:
 	@echo "Building API server..."
-	go build -o bin/api cmd/api/main.go
+	@go build -o bin/api ./cmd/api
 	@echo "Binary created: bin/api"
 
 # Run the API server
