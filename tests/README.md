@@ -7,7 +7,7 @@ This directory contains integration tests for the Formbricks Hub API.
 Before running the tests, ensure:
 
 1. PostgreSQL is running (via docker-compose)
-2. Database migrations have been applied
+2. Database schema has been initialized
 3. The `API_KEY` environment variable is set (tests will set it automatically)
 
 ## Running Tests

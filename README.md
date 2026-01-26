@@ -30,7 +30,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 - ✅ **API Key Authentication** via environment variable
 - ✅ **Clean Architecture** with repository, service, and handler layers
 - ✅ **Docker Compose** for local development
-- ✅ **Database Migrations** with version tracking
+- ✅ **Database Schema** initialization
 - ✅ **Swagger/OpenAPI** documentation
 - ✅ **Health Check** endpoints
 
@@ -59,7 +59,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 │   └── config/           # Configuration management
 ├── pkg/
 │   └── database/         # Database utilities and connection pooling
-├── migrations/           # SQL migrations
+├── sql/                  # SQL schema files
 ├── tests/               # Integration tests
 └── docs/                # API documentation (Swagger)
 ```
@@ -86,8 +86,9 @@ This will:
 
 - Start PostgreSQL container
 - Install Go dependencies
-- Install development tools (swag for OpenAPI docs)
-- Run database migrations
+- Install development tools (gofumpt, golangci-lint)
+- Initialize database schema
+- Install git hooks for code quality
 
 3. Start the API server:
 
@@ -113,10 +114,10 @@ docker compose up -d
 cp .env.example .env
 ```
 
-3. Run migrations:
+3. Initialize database schema:
 
 ```bash
-make migrate
+make init-db
 ```
 
 4. Set your API key:
@@ -190,13 +191,6 @@ Query parameters:
 - `limit` - Number of results (default: 100, max: 1000)
 - `offset` - Pagination offset
 
-#### Search Feedback Records
-
-```bash
-GET /v1/feedback-records/search?query=feedback&source_type=survey&limit=20
-Authorization: Bearer <api-key>
-```
-
 #### Update Feedback Record
 
 ```bash
@@ -223,11 +217,11 @@ Authorization: Bearer <api-key>
 
 ```bash
 make help         # Show all available commands
-make dev-setup    # Set up development environment (docker, deps, tools, migrations)
+make dev-setup    # Set up development environment (docker, deps, tools, schema)
 make build        # Build all binaries
 make run          # Run the API server
 make tests        # Run all tests
-make migrate      # Run database migrations
+make init-db      # Initialize database schema
 make docker-up    # Start Docker containers
 make docker-down  # Stop Docker containers
 make clean        # Clean build artifacts
@@ -236,20 +230,46 @@ make clean        # Clean build artifacts
 ### Running Tests
 
 ```bash
-make tests
+make test-unit    # Fast unit tests (no database)
+make tests        # Integration tests (requires database)
+make test-all     # Run all tests
 ```
 
-### Database Migrations
+### Git Hooks
 
-Migrations are stored in the `migrations/` directory.
-
-To run migrations:
+The repository includes pre-commit hooks for code quality. To install them:
 
 ```bash
-make migrate
+make install-hooks
 ```
 
-This will execute `migrations/001_initial_schema.sql` using `psql`. Make sure you have `DATABASE_URL` set in your environment or `.env` file.
+The pre-commit hook automatically:
+
+1. Checks for potential secrets in staged changes (warning only)
+2. Formats staged Go files with `gofumpt`
+3. Runs the linter (`golangci-lint`)
+
+If formatting or linting fails, the commit is blocked.
+
+**Note:** Git hooks are automatically installed when you run `make dev-setup`.
+
+To bypass hooks temporarily (use sparingly):
+
+```bash
+git commit --no-verify -m "WIP: work in progress"
+```
+
+### Database Schema
+
+The database schema is stored in the `sql/` directory.
+
+To initialize the database schema:
+
+```bash
+make init-db
+```
+
+This will execute `sql/001_initial_schema.sql` using `psql`. Make sure you have `DATABASE_URL` set in your environment or `.env` file.
 
 ### API Key Authentication
 

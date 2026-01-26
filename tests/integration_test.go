@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/formbricks/hub/internal/api/handlers"
@@ -27,7 +26,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	ctx := context.Background()
 
 	// Set test API key in environment for authentication (must be set before loading config)
-	os.Setenv("API_KEY", testAPIKey)
+	t.Setenv("API_KEY", testAPIKey)
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -90,7 +89,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/health")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -116,7 +115,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 
 		resp, err := http.Post(server.URL+"/v1/feedback-records", "application/json", bytes.NewBuffer(body))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -138,7 +137,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -160,7 +159,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -182,7 +181,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -204,7 +203,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
@@ -234,7 +233,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
@@ -253,7 +252,7 @@ func TestListFeedbackRecords(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -278,7 +277,7 @@ func TestListFeedbackRecords(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -296,7 +295,7 @@ func TestListFeedbackRecords(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -323,7 +322,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -342,7 +341,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer createResp.Body.Close()
+	defer func() { _ = createResp.Body.Close() }()
 
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
@@ -355,7 +354,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -373,7 +372,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
@@ -398,7 +397,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -417,7 +416,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer createResp.Body.Close()
+	defer func() { _ = createResp.Body.Close() }()
 
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
@@ -436,7 +435,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -463,7 +462,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -482,7 +481,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer createResp.Body.Close()
+	defer func() { _ = createResp.Body.Close() }()
 
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
@@ -495,7 +494,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 	})
@@ -507,7 +506,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})

@@ -1,28 +1,47 @@
-.PHONY: help tests tests-coverage build run migrate clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks
 
 # Default target - show help
 help:
 	@echo "Available targets:"
-	@echo "Available targets:"
-	@echo "  make tests       - Run all tests"
-	@echo "  make build       - Build the API server"
-	@echo "  make run         - Run the API server"
-	@echo "  make migrate     - Run database migrations"
-	@echo "  make docker-up   - Start Docker containers"
-	@echo "  make docker-down - Stop Docker containers"
-	@echo "  make clean       - Clean build artifacts"
-	@echo "  make fmt         - Format code with gofumpt"
-	@echo "  make fmt-check   - Check if code is formatted"
+	@echo "  make help         - Show this help message"
+	@echo "  make dev-setup    - Set up development environment (docker, deps, tools, schema, hooks)"
+	@echo "  make build        - Build the API server"
+	@echo "  make run          - Run the API server"
+	@echo "  make test-unit    - Run unit tests (fast, no database)"
+	@echo "  make tests        - Run integration tests"
+	@echo "  make test-all     - Run all tests (unit + integration)"
+	@echo "  make tests-coverage - Run tests with coverage report"
+	@echo "  make init-db      - Initialize database schema"
+	@echo "  make fmt          - Format code with gofumpt"
+	@echo "  make fmt-check    - Check if code is formatted"
+	@echo "  make lint         - Run linter"
+	@echo "  make deps         - Install Go dependencies"
+	@echo "  make install-tools - Install development tools (gofumpt, golangci-lint)"
+	@echo "  make install-hooks - Install git hooks"
+	@echo "  make docker-up    - Start Docker containers"
+	@echo "  make docker-down  - Stop Docker containers"
+	@echo "  make docker-clean - Stop Docker containers and remove volumes"
+	@echo "  make clean        - Clean build artifacts"
+	@echo "  make schemathesis - Run Schemathesis API tests (requires API server running)"
 
-# Run all tests
+# Run all tests (integration tests in tests/ directory)
 tests:
-	@echo "Running all tests..."
+	@echo "Running integration tests..."
 	go test ./tests/... -v
 
-# Run tests with coverage
+# Run unit tests (fast, no database required)
+test-unit:
+	@echo "Running unit tests..."
+	go test ./internal/... -v
+
+# Run all tests (unit + integration)
+test-all: test-unit tests
+	@echo "All tests passed!"
+
+# Run tests with coverage (unit + integration)
 tests-coverage:
 	@echo "Running tests with coverage..."
-	go test ./tests/... -v -cover -coverprofile=coverage.out
+	go test ./internal/... ./tests/... -v -cover -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
@@ -44,7 +63,7 @@ run:
 		echo "API_KEY=test-api-key-12345" >> .env; \
 		echo "" >> .env; \
 		echo "# Database connection URL" >> .env; \
-		echo "DATABASE_URL=postgres://formbricks:formbricks_dev@localhost:5432/formbricks_hub?sslmode=disable" >> .env; \
+		echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable" >> .env; \
 		echo "" >> .env; \
 		echo "# Server port (default: 8080)" >> .env; \
 		echo "PORT=8080" >> .env; \
@@ -53,25 +72,25 @@ run:
 	@echo "Starting API server..."
 	go run cmd/api/main.go
 
-# Run database migrations
-migrate:
-	@echo "Running database migrations..."
+# Initialize database schema
+init-db:
+	@echo "Initializing database schema..."
 	@if [ -f .env ]; then \
 		export $$(grep -v '^#' .env | xargs) && \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL not found in .env file"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f migrations/001_initial_schema.sql; \
+		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
 	else \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL environment variable is not set"; \
 			echo "Please set it or create a .env file with DATABASE_URL"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f migrations/001_initial_schema.sql; \
+		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
 	fi
-	@echo "Migration completed successfully"
+	@echo "Database schema initialized successfully"
 
 
 # Start Docker containers
@@ -107,24 +126,32 @@ deps:
 	@echo "Dependencies installed"
 
 # Install development tools
+# Tool versions - update these periodically
+GOFUMPT_VERSION := v0.9.2
+GOLANGCI_LINT_VERSION := v2.8.0
+GOVULNCHECK_VERSION := v1.1.4
+
 install-tools:
 	@echo "Installing development tools..."
-	go install mvdan.cc/gofumpt@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	@echo "Tools installed"
+	go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	@echo "Tools installed (gofumpt $(GOFUMPT_VERSION), golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION))"
 
 # Format code
 fmt:
 	@echo "Formatting code..."
-	$(HOME)/go/bin/gofumpt -l -w .
+	@command -v gofumpt >/dev/null 2>&1 || { echo "Error: gofumpt not found. Install with: make install-tools"; exit 1; }
+	gofumpt -l -w .
 	@echo "Code formatted"
 
 # Check code formatting (fails if code needs formatting)
 fmt-check:
 	@echo "Checking code formatting..."
-	@if [ -n "$$($(HOME)/go/bin/gofumpt -l .)" ]; then \
+	@command -v gofumpt >/dev/null 2>&1 || { echo "Error: gofumpt not found. Install with: make install-tools"; exit 1; }
+	@if [ -n "$$(gofumpt -l .)" ]; then \
 		echo "Error: Code is not formatted. Run 'make fmt' to fix."; \
-		$(HOME)/go/bin/gofumpt -l .; \
+		gofumpt -l .; \
 		exit 1; \
 	fi
 	@echo "Code is properly formatted"
@@ -132,14 +159,57 @@ fmt-check:
 # Lint code
 lint:
 	@echo "Linting code..."
-	$(HOME)/go/bin/golangci-lint run ./...
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	golangci-lint run ./...
+
+# Install git hooks from .githooks directory
+install-hooks:
+	@echo "Installing git hooks..."
+	@if [ -d .githooks ]; then \
+		cp .githooks/pre-commit .git/hooks/pre-commit && \
+		chmod +x .git/hooks/pre-commit && \
+		echo "✅ Git hooks installed successfully"; \
+	else \
+		echo "Error: .githooks directory not found"; \
+		exit 1; \
+	fi
 
 # Run everything needed for development
-dev-setup: docker-up deps install-tools migrate
+dev-setup: docker-up deps install-tools init-db install-hooks
 	@echo "Development environment ready!"
 	@echo "Set API_KEY environment variable for authentication"
 	@echo "Run 'make run' to start the API server"
 
-# Full test suite (unit + integration)
-test-all: tests
-	@echo "All tests passed!"
+# Run Schemathesis API tests (all phases for thorough local testing)
+# Phases: examples (schema examples), coverage (boundary values), stateful (API sequences), fuzzing (random)
+# This runs more thorough tests than CI to find edge-case bugs.
+# Requires: API server running (make run in another terminal)
+# Requires: uvx (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)
+schemathesis:
+	@echo "Running Schemathesis API tests (all phases)..."
+	@echo "This is deeper testing than CI - may find edge-case bugs."
+	@export PATH="$$HOME/.local/bin:$$PATH" && \
+	if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		if [ -z "$$API_KEY" ]; then \
+			echo "Warning: API_KEY not found in .env file, tests may fail authentication"; \
+		fi && \
+		uvx schemathesis run ./openapi.yaml \
+			--url http://localhost:8080 \
+			--header "Authorization: Bearer $${API_KEY:-test-api-key-12345}" \
+			--checks all \
+			--phases examples,coverage,stateful,fuzzing \
+			--max-examples 50; \
+	else \
+		if [ -z "$$API_KEY" ]; then \
+			echo "Error: API_KEY environment variable is not set and .env file not found"; \
+			echo "Please set API_KEY or create a .env file"; \
+			exit 1; \
+		fi && \
+		uvx schemathesis run ./openapi.yaml \
+			--url http://localhost:8080 \
+			--header "Authorization: Bearer $$API_KEY" \
+			--checks all \
+			--phases examples,coverage,stateful,fuzzing \
+			--max-examples 50; \
+	fi
