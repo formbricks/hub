@@ -13,6 +13,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 - **Headless/API-only design** - UI lives in XM Suite (Hub is the backend)
 
 **Key Design Principles**:
+
 - **Performance First**: Optimized for high-throughput data ingestion and retrieval
 - **Data Processing**: Focus on query performance, indexing strategies, and analytics capabilities
 - **Simple Architecture**: Barebones implementation with raw `net/http` and `pgx` for maintainability
@@ -76,17 +77,20 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 1. Clone the repository and navigate to the project directory
 
 2. Set up the development environment:
+
 ```bash
 make dev-setup
 ```
 
 This will:
+
 - Start PostgreSQL container
 - Install Go dependencies
 - Install development tools (swag for OpenAPI docs)
 - Run database migrations
 
 3. Start the API server:
+
 ```bash
 make run
 ```
@@ -98,31 +102,37 @@ The server will start on `http://localhost:8080`
 If you prefer not to use Make:
 
 1. Start Docker containers:
+
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 2. Copy environment variables:
+
 ```bash
 cp .env.example .env
 ```
 
 3. Run migrations:
+
 ```bash
 make migrate
 ```
 
 4. Set your API key:
+
 ```bash
 export API_KEY=your-secret-key-here
 ```
 
 Or add it to your `.env` file:
+
 ```
 API_KEY=your-secret-key-here
 ```
 
 5. Start the server:
+
 ```bash
 go run ./cmd/api/main.go
 ```
@@ -130,12 +140,14 @@ go run ./cmd/api/main.go
 ## API Endpoints
 
 ### Health Check
+
 - `GET /health` - Health check endpoint
 - `GET /swagger/` - Swagger API documentation
 
 ### Feedback Records
 
 #### Create Feedback Record
+
 ```bash
 POST /v1/feedback-records
 Authorization: Bearer <api-key>
@@ -156,18 +168,21 @@ Content-Type: application/json
 ```
 
 #### Get Feedback Record by ID
+
 ```bash
 GET /v1/feedback-records/{id}
 Authorization: Bearer <api-key>
 ```
 
 #### List Feedback Records
+
 ```bash
 GET /v1/feedback-records?source_type=survey&limit=50&offset=0
 Authorization: Bearer <api-key>
 ```
 
 Query parameters:
+
 - `source_type` - Filter by source type
 - `source_id` - Filter by source ID
 - `field_id` - Filter by field ID
@@ -176,12 +191,14 @@ Query parameters:
 - `offset` - Pagination offset
 
 #### Search Feedback Records
+
 ```bash
 GET /v1/feedback-records/search?query=feedback&source_type=survey&limit=20
 Authorization: Bearer <api-key>
 ```
 
 #### Update Feedback Record
+
 ```bash
 PATCH /v1/feedback-records/{id}
 Authorization: Bearer <api-key>
@@ -194,6 +211,7 @@ Content-Type: application/json
 ```
 
 #### Delete Feedback Record
+
 ```bash
 DELETE /v1/feedback-records/{id}
 Authorization: Bearer <api-key>
@@ -226,6 +244,7 @@ make tests
 Migrations are stored in the `migrations/` directory.
 
 To run migrations:
+
 ```bash
 make migrate
 ```
@@ -237,11 +256,13 @@ This will execute `migrations/001_initial_schema.sql` using `psql`. Make sure yo
 Authentication is done via a single API key set in the `API_KEY` environment variable. The API key is validated against this environment variable for all protected endpoints.
 
 Set your API key:
+
 ```bash
 export API_KEY=your-secret-key-here
 ```
 
 Or add it to your `.env` file:
+
 ```
 API_KEY=your-secret-key-here
 ```
@@ -263,6 +284,7 @@ See [.env.example](.env.example) for all available configuration options:
 ## Example Requests
 
 ### Create a text response
+
 ```bash
 curl -X POST http://localhost:8080/v1/feedback-records \
   -H "Authorization: Bearer <your-api-key>" \
@@ -276,12 +298,14 @@ curl -X POST http://localhost:8080/v1/feedback-records \
 ```
 
 ### Get all feedback records
+
 ```bash
 curl http://localhost:8080/v1/feedback-records \
   -H "Authorization: Bearer <your-api-key>"
 ```
 
 ### Update a feedback record
+
 ```bash
 curl -X PATCH http://localhost:8080/v1/feedback-records/{id} \
   -H "Authorization: Bearer <your-api-key>" \
@@ -292,6 +316,7 @@ curl -X PATCH http://localhost:8080/v1/feedback-records/{id} \
 ```
 
 ### Delete a feedback record
+
 ```bash
 curl -X DELETE http://localhost:8080/v1/feedback-records/{id} \
   -H "Authorization: Bearer <your-api-key>"
@@ -307,6 +332,7 @@ The application follows a clean architecture pattern:
 4. **Models** - Define domain entities and DTOs
 
 This separation allows for:
+
 - Easy testing and mocking
 - Clear separation of concerns
 - Simple maintenance and refactoring
