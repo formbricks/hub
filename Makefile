@@ -81,14 +81,20 @@ init-db:
 			echo "Error: DATABASE_URL not found in .env file"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
+		for f in sql/*.sql; do \
+			echo "Applying $$f..."; \
+			psql "$$DATABASE_URL" -f "$$f"; \
+		done; \
 	else \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL environment variable is not set"; \
 			echo "Please set it or create a .env file with DATABASE_URL"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
+		for f in sql/*.sql; do \
+			echo "Applying $$f..."; \
+			psql "$$DATABASE_URL" -f "$$f"; \
+		done; \
 	fi
 	@echo "Database schema initialized successfully"
 
