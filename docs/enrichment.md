@@ -156,9 +156,9 @@ Following RFC 7807 Problem Details (`application/problem+json`):
 ### Phase 1: MVP (Current)
 - [x] Knowledge Records CRUD API
 - [x] Topics CRUD API with hierarchy
-- [ ] Database schema and migrations
-- [ ] Service and repository implementation
-- [ ] Integration tests
+- [x] Database schema and migrations
+- [x] Service and repository implementation
+- [x] Integration tests
 
 ### Phase 2: Vector Search
 - [ ] pgvector integration for knowledge records
@@ -200,4 +200,4 @@ Following existing feedback-records patterns:
 ---
 
 *Last updated: January 2026*
-*Status: OpenAPI spec complete, implementation pending*
+*Status: Phase 1 MVP complete - API fully implemented*
