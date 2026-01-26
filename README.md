@@ -100,7 +100,7 @@ If you prefer not to use Make:
 
 1. Start Docker containers:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 2. Copy environment variables:

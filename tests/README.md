@@ -13,16 +13,19 @@ Before running the tests, ensure:
 ## Running Tests
 
 Run all integration tests:
+
 ```bash
 go test ./tests/... -v
 ```
 
 Run a specific test:
+
 ```bash
 go test ./tests -run TestHealthEndpoint -v
 ```
 
 Run tests with coverage:
+
 ```bash
 go test ./tests/... -v -cover
 ```

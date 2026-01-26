@@ -96,20 +96,20 @@ init-db:
 # Start Docker containers
 docker-up:
 	@echo "Starting Docker containers..."
-	docker-compose up -d
+	docker compose up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 3
-	@docker-compose ps
+	@docker compose ps
 
 # Stop Docker containers
 docker-down:
 	@echo "Stopping Docker containers..."
-	docker-compose down
+	docker compose down
 
 # Stop and remove volumes
 docker-clean:
 	@echo "Stopping Docker containers and removing volumes..."
-	docker-compose down -v
+	docker compose down -v
 
 # Clean build artifacts
 clean:
