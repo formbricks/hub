@@ -7,6 +7,20 @@ type ResponsesResponse struct {
 	Data []Response `json:"data"`
 }
 
+// WebhookEvent represents a webhook event from Formbricks
+type WebhookEvent struct {
+	WebhookID string   `json:"webhookId"`
+	Event     string   `json:"event"` // e.g., "responseCreated", "responseUpdated", "responseFinished"
+	Data      Response `json:"data"`  // The response data
+}
+
+// Webhook event types
+const (
+	EventResponseCreated  = "responseCreated"
+	EventResponseUpdated  = "responseUpdated"
+	EventResponseFinished = "responseFinished"
+)
+
 // Response represents a single survey response
 type Response struct {
 	ID                string                  `json:"id"`
@@ -24,6 +38,17 @@ type Response struct {
 	SingleUseID       *string                 `json:"singleUseId"`
 	Language          *string                 `json:"language"`
 	DisplayID         string                  `json:"displayId"`
+	Survey            *Survey                 `json:"survey,omitempty"` // Included in webhook events
+	Tags              []string                `json:"tags,omitempty"`
+}
+
+// Survey represents survey metadata (included in webhook events)
+type Survey struct {
+	Title     string    `json:"title"`
+	Type      string    `json:"type"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // Meta contains metadata about the response

@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-// PullInputConnector defines the interface for pull-based input connectors
-type PullInputConnector interface {
+// PollingInputConnector defines the interface for polling-based input connectors
+type PollingInputConnector interface {
 	Poll(ctx context.Context) error
 }
 
-// Poller manages periodic polling for pull input connectors
+// Poller manages periodic polling for polling input connectors
 type Poller struct {
 	interval time.Duration
 	name     string
@@ -28,7 +28,7 @@ func NewPoller(interval time.Duration, name string) *Poller {
 // Start begins polling the connector at the specified interval
 // It polls immediately on startup, then continues polling at the specified interval.
 // The polling stops when the context is cancelled.
-func (p *Poller) Start(ctx context.Context, connector PullInputConnector) {
+func (p *Poller) Start(ctx context.Context, connector PollingInputConnector) {
 	go func() {
 		ticker := time.NewTicker(p.interval)
 		defer ticker.Stop()

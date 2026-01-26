@@ -13,6 +13,7 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/connector"
 	formbricksconnector "github.com/formbricks/hub/internal/connector/formbricks"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
@@ -47,9 +48,20 @@ func main() {
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
+	// Initialize webhook router and register push input connectors
+	webhookRouter := connector.NewWebhookRouter()
+	if fbWebhook, apiKey := formbricksconnector.NewWebhookConnectorIfConfigured(feedbackRecordsService); fbWebhook != nil {
+		if err := webhookRouter.Register("formbricks", fbWebhook, apiKey); err != nil {
+			slog.Error("Failed to register Formbricks webhook connector", "error", err)
+		}
+	}
+	webhookHandler := handlers.NewWebhookHandler(webhookRouter)
+
 	// Set up public endpoints (no authentication required)
 	publicMux := http.NewServeMux()
 	publicMux.HandleFunc("GET /health", healthHandler.Check)
+	// Webhook endpoints are public but use their own API key authentication
+	publicMux.HandleFunc("POST /webhooks/{connector}", webhookHandler.Handle)
 
 	// Apply middleware to public endpoints
 	var publicHandler http.Handler = publicMux

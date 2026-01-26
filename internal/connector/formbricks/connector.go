@@ -38,7 +38,7 @@ func NewConnector(cfg Config) *Connector {
 }
 
 // Poll fetches responses from Formbricks and creates feedback records
-// Implements connector.PullInputConnector interface
+// Implements connector.PollingInputConnector interface
 func (c *Connector) Poll(ctx context.Context) error {
 	slog.Info("Polling Formbricks for responses", "survey_id", c.surveyID)
 
@@ -92,12 +92,12 @@ func StartIfConfigured(ctx context.Context, feedbackService *service.FeedbackRec
 		formbricksURL = "https://app.formbricks.com/api/v2" // Default
 	}
 
-	formbricksKey := os.Getenv("FORMBRICKS_API_KEY")
+	formbricksKey := os.Getenv("FORMBRICKS_POLLING_API_KEY")
 	surveyID := os.Getenv("FORMBRICKS_SURVEY_ID")
 
 	// Only start connector if both API key and survey ID are provided
 	if formbricksKey == "" || surveyID == "" {
-		slog.Info("Formbricks connector not configured (FORMBRICKS_API_KEY and FORMBRICKS_SURVEY_ID required)")
+		slog.Info("Formbricks polling connector not configured (FORMBRICKS_POLLING_API_KEY and FORMBRICKS_SURVEY_ID required)")
 		return
 	}
 
