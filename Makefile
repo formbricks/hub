@@ -141,15 +141,24 @@ install-tools:
 # Format code
 fmt:
 	@echo "Formatting code..."
-	@command -v gofumpt >/dev/null 2>&1 || { echo "Error: gofumpt not found. Install with: make install-tools"; exit 1; }
-	gofumpt -l -w .
+	@GOPATH_BIN=$$(go env GOPATH)/bin; \
+	if [ ! -f "$$GOPATH_BIN/gofumpt" ]; then \
+		echo "Error: gofumpt not found. Install with: make install-tools"; \
+		exit 1; \
+	fi
+	@PATH=$$(go env GOPATH)/bin:$$PATH gofumpt -l -w .
 	@echo "Code formatted"
 
 # Check code formatting (fails if code needs formatting)
 fmt-check:
 	@echo "Checking code formatting..."
-	@command -v gofumpt >/dev/null 2>&1 || { echo "Error: gofumpt not found. Install with: make install-tools"; exit 1; }
-	@if [ -n "$$(gofumpt -l .)" ]; then \
+	@GOPATH_BIN=$$(go env GOPATH)/bin; \
+	if [ ! -f "$$GOPATH_BIN/gofumpt" ]; then \
+		echo "Error: gofumpt not found. Install with: make install-tools"; \
+		exit 1; \
+	fi
+	@PATH=$$(go env GOPATH)/bin:$$PATH; \
+	if [ -n "$$(gofumpt -l .)" ]; then \
 		echo "Error: Code is not formatted. Run 'make fmt' to fix."; \
 		gofumpt -l .; \
 		exit 1; \
@@ -159,8 +168,12 @@ fmt-check:
 # Lint code
 lint:
 	@echo "Linting code..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
-	golangci-lint run ./...
+	@GOPATH_BIN=$$(go env GOPATH)/bin; \
+	if [ ! -f "$$GOPATH_BIN/golangci-lint" ]; then \
+		echo "Error: golangci-lint not found. Install with: make install-tools"; \
+		exit 1; \
+	fi
+	@PATH=$$(go env GOPATH)/bin:$$PATH golangci-lint run ./...
 
 # Install git hooks from .githooks directory
 install-hooks:
