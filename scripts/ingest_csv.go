@@ -104,15 +104,15 @@ var defaultTopics = []struct {
 
 // CSV column indices (0-based)
 const (
-	colResponseID       = 1  // Response ID
-	colTimestamp        = 2  // Timestamp
-	colCountry          = 11 // Country code
-	colHelpedSolve      = 16 // "How we helped solve your problems"
-	colHelpBetter       = 17 // "How we can help better"
-	colMissingFeature   = 18 // "ONE feature you are missing"
-	colNPSScore         = 28 // NPS score (1-10)
-	colNPSReason        = 29 // "Why did you choose this number"
-	colEmail            = 31 // Email (user identifier)
+	colResponseID     = 1  // Response ID
+	colTimestamp      = 2  // Timestamp
+	colCountry        = 11 // Country code
+	colHelpedSolve    = 16 // "How we helped solve your problems"
+	colHelpBetter     = 17 // "How we can help better"
+	colMissingFeature = 18 // "ONE feature you are missing"
+	colNPSScore       = 28 // NPS score (1-10)
+	colNPSReason      = 29 // "Why did you choose this number"
+	colEmail          = 31 // Email (user identifier)
 )
 
 func main() {
@@ -235,7 +235,7 @@ func createTopic(client *http.Client, cfg Config, title string, parentID *string
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -258,7 +258,7 @@ func processCSV(cfg Config) Stats {
 		fmt.Printf("Error opening file: %v\n", err)
 		os.Exit(1)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	reader := csv.NewReader(file)
 	reader.FieldsPerRecord = -1 // Allow variable field counts
@@ -424,7 +424,7 @@ func postFeedback(client *http.Client, cfg Config, feedback FeedbackRequest) err
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

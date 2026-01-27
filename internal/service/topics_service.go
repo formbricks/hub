@@ -84,26 +84,63 @@ func (s *TopicsService) CreateTopic(ctx context.Context, req *models.CreateTopic
 	}
 
 	// Generate embedding asynchronously if client is configured
+	// Use hierarchical path (e.g., "Performance > API") for better context
 	if s.embeddingClient != nil {
-		go s.generateEmbedding(topic.ID, req.Title)
+		hierarchyPath := s.buildHierarchyPath(ctx, req.Title, req.ParentID)
+		go s.generateEmbedding(topic.ID, hierarchyPath)
 	}
 
 	return topic, nil
 }
 
-// generateEmbedding generates and stores embedding for a topic
-func (s *TopicsService) generateEmbedding(id uuid.UUID, title string) {
+// generateEmbedding generates and stores embedding for a topic using its hierarchical path
+func (s *TopicsService) generateEmbedding(id uuid.UUID, hierarchyPath string) {
 	ctx := context.Background()
 
-	embedding, err := s.embeddingClient.GetEmbedding(ctx, title)
+	slog.Debug("generating embedding for topic", "id", id, "path", hierarchyPath)
+
+	embedding, err := s.embeddingClient.GetEmbedding(ctx, hierarchyPath)
 	if err != nil {
-		slog.Error("failed to generate embedding", "record_type", "topic", "id", id, "error", err)
+		slog.Error("failed to generate embedding", "record_type", "topic", "id", id, "path", hierarchyPath, "error", err)
 		return
 	}
 
 	if err := s.repo.UpdateEmbedding(ctx, id, embedding); err != nil {
 		slog.Error("failed to store embedding", "record_type", "topic", "id", id, "error", err)
+		return
 	}
+
+	slog.Info("embedding generated successfully", "record_type", "topic", "id", id, "path", hierarchyPath)
+}
+
+// buildHierarchyPath builds the full hierarchy path for a topic (e.g., "Performance > API > Latency")
+func (s *TopicsService) buildHierarchyPath(ctx context.Context, title string, parentID *uuid.UUID) string {
+	if parentID == nil {
+		return title
+	}
+
+	// Build path by walking up the parent chain
+	var pathParts []string
+	pathParts = append(pathParts, title)
+
+	currentParentID := parentID
+	for currentParentID != nil {
+		parent, err := s.repo.GetByID(ctx, *currentParentID)
+		if err != nil {
+			// If we can't fetch parent, just use what we have
+			slog.Warn("failed to fetch parent for hierarchy path", "parent_id", *currentParentID, "error", err)
+			break
+		}
+		pathParts = append([]string{parent.Title}, pathParts...)
+		currentParentID = parent.ParentID
+	}
+
+	// Join with " > " separator
+	result := pathParts[0]
+	for i := 1; i < len(pathParts); i++ {
+		result += " > " + pathParts[i]
+	}
+	return result
 }
 
 // GetTopic retrieves a single topic by ID
@@ -162,8 +199,10 @@ func (s *TopicsService) UpdateTopic(ctx context.Context, id uuid.UUID, req *mode
 	}
 
 	// Regenerate embedding if title was updated and client is configured
+	// Use hierarchical path (e.g., "Performance > API") for better context
 	if req.Title != nil && s.embeddingClient != nil {
-		go s.generateEmbedding(id, *req.Title)
+		hierarchyPath := s.buildHierarchyPath(ctx, topic.Title, topic.ParentID)
+		go s.generateEmbedding(id, hierarchyPath)
 	}
 
 	return topic, nil

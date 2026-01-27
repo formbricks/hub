@@ -73,8 +73,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, response_id,
-			theme_id, topic_id, classification_confidence
+			metadata, language, user_identifier, tenant_id, response_id
 		FROM feedback_records
 		WHERE id = $1
 	`
@@ -86,7 +85,6 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-		&record.ThemeID, &record.TopicID, &record.ClassificationConfidence,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -147,17 +145,7 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, 
 		argCount++
 	}
 
-	if filters.ThemeID != nil {
-		conditions = append(conditions, fmt.Sprintf("theme_id = $%d", argCount))
-		args = append(args, *filters.ThemeID)
-		argCount++
-	}
-
-	if filters.TopicID != nil {
-		conditions = append(conditions, fmt.Sprintf("topic_id = $%d", argCount))
-		args = append(args, *filters.TopicID)
-		argCount++
-	}
+	// Note: TopicID is handled separately via vector similarity search, not here
 
 	if filters.Since != nil {
 		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", argCount))
@@ -178,15 +166,14 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, 
 	return whereClause, args
 }
 
-// List retrieves feedback records with optional filters
+// List retrieves feedback records with optional filters (non-vector based)
 func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, response_id,
-			theme_id, topic_id, classification_confidence
+			metadata, language, user_identifier, tenant_id, response_id
 		FROM feedback_records
 	`
 
@@ -222,7 +209,6 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			&record.FieldID, &record.FieldLabel, &record.FieldType,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-			&record.ThemeID, &record.TopicID, &record.ClassificationConfidence,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
@@ -320,8 +306,7 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 			source_type, source_id, source_name,
 			field_id, field_label, field_type,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, response_id,
-			theme_id, topic_id, classification_confidence
+			metadata, language, user_identifier, tenant_id, response_id
 	`, strings.Join(updates, ", "), argCount)
 
 	return query, args, true
@@ -342,7 +327,6 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 		&record.FieldID, &record.FieldLabel, &record.FieldType,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
-		&record.ThemeID, &record.TopicID, &record.ClassificationConfidence,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -389,12 +373,12 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	return result.RowsAffected(), nil
 }
 
-// UpdateEnrichment updates the AI enrichment fields for a feedback record
+// UpdateEnrichment updates the embedding for a feedback record
 func (r *FeedbackRecordsRepository) UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error {
 	query := `
 		UPDATE feedback_records
-		SET embedding = $1, theme_id = $2, topic_id = $3, classification_confidence = $4, updated_at = $5
-		WHERE id = $6
+		SET embedding = $1, updated_at = $2
+		WHERE id = $3
 	`
 
 	var embeddingValue interface{}
@@ -402,10 +386,7 @@ func (r *FeedbackRecordsRepository) UpdateEnrichment(ctx context.Context, id uui
 		embeddingValue = pgvector.NewVector(req.Embedding)
 	}
 
-	result, err := r.db.Exec(ctx, query,
-		embeddingValue, req.ThemeID, req.TopicID, req.ClassificationConfidence,
-		time.Now(), id,
-	)
+	result, err := r.db.Exec(ctx, query, embeddingValue, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("failed to update feedback record enrichment: %w", err)
 	}
@@ -415,4 +396,184 @@ func (r *FeedbackRecordsRepository) UpdateEnrichment(ctx context.Context, id uui
 	}
 
 	return nil
+}
+
+// ListBySimilarity retrieves feedback records similar to the given embedding vector
+// Returns records with similarity >= minSimilarity, ordered by similarity descending
+// Additional filters can be applied via the filters parameter (except TopicID which is handled by this method)
+func (r *FeedbackRecordsRepository) ListBySimilarity(ctx context.Context, topicEmbedding []float32, minSimilarity float64, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
+	// Build base query with similarity calculation
+	query := `
+		SELECT id, collected_at, created_at, updated_at,
+			source_type, source_id, source_name,
+			field_id, field_label, field_type,
+			value_text, value_number, value_boolean, value_date,
+			metadata, language, user_identifier, tenant_id, response_id,
+			1 - (embedding <=> $1::vector) as similarity
+		FROM feedback_records
+		WHERE embedding IS NOT NULL
+		  AND 1 - (embedding <=> $1::vector) >= $2
+	`
+
+	args := []interface{}{pgvector.NewVector(topicEmbedding), minSimilarity}
+	argCount := 3
+
+	// Add additional filters
+	if filters.TenantID != nil {
+		query += fmt.Sprintf(" AND tenant_id = $%d", argCount)
+		args = append(args, *filters.TenantID)
+		argCount++
+	}
+	if filters.ResponseID != nil {
+		query += fmt.Sprintf(" AND response_id = $%d", argCount)
+		args = append(args, *filters.ResponseID)
+		argCount++
+	}
+	if filters.SourceType != nil {
+		query += fmt.Sprintf(" AND source_type = $%d", argCount)
+		args = append(args, *filters.SourceType)
+		argCount++
+	}
+	if filters.SourceID != nil {
+		query += fmt.Sprintf(" AND source_id = $%d", argCount)
+		args = append(args, *filters.SourceID)
+		argCount++
+	}
+	if filters.FieldID != nil {
+		query += fmt.Sprintf(" AND field_id = $%d", argCount)
+		args = append(args, *filters.FieldID)
+		argCount++
+	}
+	if filters.FieldType != nil {
+		query += fmt.Sprintf(" AND field_type = $%d", argCount)
+		args = append(args, *filters.FieldType)
+		argCount++
+	}
+	if filters.UserIdentifier != nil {
+		query += fmt.Sprintf(" AND user_identifier = $%d", argCount)
+		args = append(args, *filters.UserIdentifier)
+		argCount++
+	}
+	if filters.Since != nil {
+		query += fmt.Sprintf(" AND collected_at >= $%d", argCount)
+		args = append(args, *filters.Since)
+		argCount++
+	}
+	if filters.Until != nil {
+		query += fmt.Sprintf(" AND collected_at <= $%d", argCount)
+		args = append(args, *filters.Until)
+		argCount++
+	}
+
+	// Order by similarity (most similar first)
+	query += " ORDER BY similarity DESC"
+
+	// Add limit/offset
+	if filters.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argCount)
+		args = append(args, filters.Limit)
+		argCount++
+	}
+	if filters.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argCount)
+		args = append(args, filters.Offset)
+	}
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list feedback records by similarity: %w", err)
+	}
+	defer rows.Close()
+
+	records := []models.FeedbackRecord{}
+	for rows.Next() {
+		var record models.FeedbackRecord
+		var similarity float64
+		err := rows.Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
+			&similarity,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
+		}
+		record.Similarity = &similarity
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating feedback records: %w", err)
+	}
+
+	return records, nil
+}
+
+// CountBySimilarity counts feedback records similar to the given embedding vector
+func (r *FeedbackRecordsRepository) CountBySimilarity(ctx context.Context, topicEmbedding []float32, minSimilarity float64, filters *models.ListFeedbackRecordsFilters) (int64, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM feedback_records
+		WHERE embedding IS NOT NULL
+		  AND 1 - (embedding <=> $1::vector) >= $2
+	`
+
+	args := []interface{}{pgvector.NewVector(topicEmbedding), minSimilarity}
+	argCount := 3
+
+	// Add additional filters (same as ListBySimilarity but without limit/offset)
+	if filters.TenantID != nil {
+		query += fmt.Sprintf(" AND tenant_id = $%d", argCount)
+		args = append(args, *filters.TenantID)
+		argCount++
+	}
+	if filters.ResponseID != nil {
+		query += fmt.Sprintf(" AND response_id = $%d", argCount)
+		args = append(args, *filters.ResponseID)
+		argCount++
+	}
+	if filters.SourceType != nil {
+		query += fmt.Sprintf(" AND source_type = $%d", argCount)
+		args = append(args, *filters.SourceType)
+		argCount++
+	}
+	if filters.SourceID != nil {
+		query += fmt.Sprintf(" AND source_id = $%d", argCount)
+		args = append(args, *filters.SourceID)
+		argCount++
+	}
+	if filters.FieldID != nil {
+		query += fmt.Sprintf(" AND field_id = $%d", argCount)
+		args = append(args, *filters.FieldID)
+		argCount++
+	}
+	if filters.FieldType != nil {
+		query += fmt.Sprintf(" AND field_type = $%d", argCount)
+		args = append(args, *filters.FieldType)
+		argCount++
+	}
+	if filters.UserIdentifier != nil {
+		query += fmt.Sprintf(" AND user_identifier = $%d", argCount)
+		args = append(args, *filters.UserIdentifier)
+		argCount++
+	}
+	if filters.Since != nil {
+		query += fmt.Sprintf(" AND collected_at >= $%d", argCount)
+		args = append(args, *filters.Since)
+		argCount++
+	}
+	if filters.Until != nil {
+		query += fmt.Sprintf(" AND collected_at <= $%d", argCount)
+		args = append(args, *filters.Until)
+	}
+
+	var count int64
+	err := r.db.QueryRow(ctx, query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count feedback records by similarity: %w", err)
+	}
+
+	return count, nil
 }

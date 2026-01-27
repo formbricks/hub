@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -321,6 +322,28 @@ func (r *TopicsRepository) UpdateEmbedding(ctx context.Context, id uuid.UUID, em
 	return nil
 }
 
+// GetEmbedding retrieves the embedding vector for a topic
+// Returns nil if the topic has no embedding
+func (r *TopicsRepository) GetEmbedding(ctx context.Context, id uuid.UUID) ([]float32, error) {
+	query := `SELECT embedding FROM topics WHERE id = $1`
+
+	var embedding pgvector.Vector
+	err := r.db.QueryRow(ctx, query, id).Scan(&embedding)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, apperrors.NewNotFoundError("topic", "topic not found")
+		}
+		return nil, fmt.Errorf("failed to get topic embedding: %w", err)
+	}
+
+	// embedding.Slice() returns []float32
+	if embedding.Slice() == nil {
+		return nil, nil // Topic exists but has no embedding
+	}
+
+	return embedding.Slice(), nil
+}
+
 // FindSimilarTopic finds the most similar topic to the given embedding vector.
 // Returns nil if no topics with embeddings exist or similarity is below threshold.
 // If level is provided, only searches topics at that level.
@@ -341,10 +364,20 @@ func (r *TopicsRepository) FindSimilarTopic(ctx context.Context, embedding []flo
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
+			slog.Debug("no topics with embeddings found for similarity search", "level", level)
 			return nil, nil // No topics with embeddings found
 		}
 		return nil, fmt.Errorf("failed to find similar topic: %w", err)
 	}
+
+	slog.Debug("best topic match found",
+		"topic_id", match.TopicID,
+		"topic_title", match.Title,
+		"level", match.Level,
+		"similarity", match.Similarity,
+		"min_similarity", minSimilarity,
+		"above_threshold", match.Similarity >= minSimilarity,
+	)
 
 	// Return nil if similarity is below threshold
 	if match.Similarity < minSimilarity {
