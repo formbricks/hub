@@ -15,6 +15,7 @@ import (
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/connector"
 	formbricksconnector "github.com/formbricks/hub/internal/connector/formbricks"
+	typeformconnector "github.com/formbricks/hub/internal/connector/typeform"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/pkg/database"
@@ -107,8 +108,9 @@ func main() {
 		}
 	}()
 
-	// Start Formbricks connector if configured
+	// Start polling connectors if configured
 	formbricksconnector.StartIfConfigured(ctx, feedbackRecordsService)
+	typeformconnector.StartIfConfigured(ctx, feedbackRecordsService)
 
 	// Wait for interrupt signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)
