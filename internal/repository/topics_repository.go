@@ -24,19 +24,9 @@ func NewTopicsRepository(db *pgxpool.Pool) *TopicsRepository {
 	return &TopicsRepository{db: db}
 }
 
-// Create inserts a new topic with level calculation
+// Create inserts a new topic with the specified level
 func (r *TopicsRepository) Create(ctx context.Context, req *models.CreateTopicRequest) (*models.Topic, error) {
 	tenantID := normalizeTenantID(req.TenantID)
-
-	// Calculate level from parent
-	level := 1
-	if req.ParentID != nil {
-		parent, err := r.GetByID(ctx, *req.ParentID)
-		if err != nil {
-			return nil, err // Will be NotFoundError if parent doesn't exist
-		}
-		level = parent.Level + 1
-	}
 
 	query := `
 		INSERT INTO topics (title, level, parent_id, tenant_id)
@@ -45,14 +35,14 @@ func (r *TopicsRepository) Create(ctx context.Context, req *models.CreateTopicRe
 	`
 
 	var topic models.Topic
-	err := r.db.QueryRow(ctx, query, req.Title, level, req.ParentID, tenantID).Scan(
+	err := r.db.QueryRow(ctx, query, req.Title, req.Level, req.ParentID, tenantID).Scan(
 		&topic.ID, &topic.Title, &topic.Level, &topic.ParentID, &topic.TenantID, &topic.CreatedAt, &topic.UpdatedAt,
 	)
 	if err != nil {
 		// Check for unique constraint violation
 		if strings.Contains(err.Error(), "duplicate key value violates unique constraint") ||
 			strings.Contains(err.Error(), "23505") {
-			return nil, apperrors.NewConflictError("topic", "topic with this title already exists under the same parent")
+			return nil, apperrors.NewConflictError("topic", "topic with this title already exists")
 		}
 		return nil, fmt.Errorf("failed to create topic: %w", err)
 	}
@@ -185,7 +175,7 @@ func (r *TopicsRepository) Count(ctx context.Context, filters *models.ListTopics
 }
 
 // Update updates an existing topic
-// Only title can be updated - parent_id is immutable
+// Only title can be updated
 func (r *TopicsRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateTopicRequest) (*models.Topic, error) {
 	// If no title provided, just return the existing topic
 	if req.Title == nil {
@@ -210,7 +200,7 @@ func (r *TopicsRepository) Update(ctx context.Context, id uuid.UUID, req *models
 		// Check for unique constraint violation
 		if strings.Contains(err.Error(), "duplicate key value violates unique constraint") ||
 			strings.Contains(err.Error(), "23505") {
-			return nil, apperrors.NewConflictError("topic", "topic with this title already exists under the same parent")
+			return nil, apperrors.NewConflictError("topic", "topic with this title already exists")
 		}
 		return nil, fmt.Errorf("failed to update topic: %w", err)
 	}
@@ -234,28 +224,17 @@ func (r *TopicsRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// ExistsByTitleAndParent checks if a topic with the given title exists under the same parent and tenant
-func (r *TopicsRepository) ExistsByTitleAndParent(ctx context.Context, title string, parentID *uuid.UUID, tenantID *string) (bool, error) {
+// ExistsByTitleAndLevel checks if a topic with the given title exists at the given level and tenant
+func (r *TopicsRepository) ExistsByTitleAndLevel(ctx context.Context, title string, level int, tenantID *string) (bool, error) {
 	var query string
 	var args []interface{}
 
-	// Handle NULL parent_id case
-	if parentID == nil {
-		if tenantID == nil {
-			query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND parent_id IS NULL AND tenant_id IS NULL)`
-			args = []interface{}{title}
-		} else {
-			query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND parent_id IS NULL AND tenant_id = $2)`
-			args = []interface{}{title, *tenantID}
-		}
+	if tenantID == nil {
+		query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND level = $2 AND tenant_id IS NULL)`
+		args = []interface{}{title, level}
 	} else {
-		if tenantID == nil {
-			query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND parent_id = $2 AND tenant_id IS NULL)`
-			args = []interface{}{title, *parentID}
-		} else {
-			query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND parent_id = $2 AND tenant_id = $3)`
-			args = []interface{}{title, *parentID, *tenantID}
-		}
+		query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND level = $2 AND tenant_id = $3)`
+		args = []interface{}{title, level, *tenantID}
 	}
 
 	var exists bool
@@ -267,29 +246,18 @@ func (r *TopicsRepository) ExistsByTitleAndParent(ctx context.Context, title str
 	return exists, nil
 }
 
-// ExistsByTitleAndParentExcluding checks if a topic with the given title exists under the same parent and tenant,
+// ExistsByTitleAndLevelExcluding checks if a topic with the given title exists at the given level and tenant,
 // excluding a specific topic ID (used for update uniqueness validation)
-func (r *TopicsRepository) ExistsByTitleAndParentExcluding(ctx context.Context, title string, parentID *uuid.UUID, tenantID *string, excludeID uuid.UUID) (bool, error) {
+func (r *TopicsRepository) ExistsByTitleAndLevelExcluding(ctx context.Context, title string, level int, tenantID *string, excludeID uuid.UUID) (bool, error) {
 	var query string
 	var args []interface{}
 
-	// Handle NULL parent_id case
-	if parentID == nil {
-		if tenantID == nil {
-			query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND parent_id IS NULL AND tenant_id IS NULL AND id != $2)`
-			args = []interface{}{title, excludeID}
-		} else {
-			query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND parent_id IS NULL AND tenant_id = $2 AND id != $3)`
-			args = []interface{}{title, *tenantID, excludeID}
-		}
+	if tenantID == nil {
+		query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND level = $2 AND tenant_id IS NULL AND id != $3)`
+		args = []interface{}{title, level, excludeID}
 	} else {
-		if tenantID == nil {
-			query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND parent_id = $2 AND tenant_id IS NULL AND id != $3)`
-			args = []interface{}{title, *parentID, excludeID}
-		} else {
-			query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND parent_id = $2 AND tenant_id = $3 AND id != $4)`
-			args = []interface{}{title, *parentID, *tenantID, excludeID}
-		}
+		query = `SELECT EXISTS(SELECT 1 FROM topics WHERE title = $1 AND level = $2 AND tenant_id = $3 AND id != $4)`
+		args = []interface{}{title, level, *tenantID, excludeID}
 	}
 
 	var exists bool
@@ -326,7 +294,7 @@ func (r *TopicsRepository) UpdateEmbedding(ctx context.Context, id uuid.UUID, em
 // If level is provided, only searches topics at that level.
 func (r *TopicsRepository) FindSimilarTopic(ctx context.Context, embedding []float32, tenantID *string, level *int, minSimilarity float64) (*models.TopicMatch, error) {
 	query := `
-		SELECT id, title, level, parent_id, 1 - (embedding <=> $1::vector) as similarity
+		SELECT id, title, level, 1 - (embedding <=> $1::vector) as similarity
 		FROM topics
 		WHERE embedding IS NOT NULL
 		  AND ($2::varchar IS NULL OR tenant_id = $2)
@@ -337,7 +305,7 @@ func (r *TopicsRepository) FindSimilarTopic(ctx context.Context, embedding []flo
 
 	var match models.TopicMatch
 	err := r.db.QueryRow(ctx, query, pgvector.NewVector(embedding), tenantID, level).Scan(
-		&match.TopicID, &match.Title, &match.Level, &match.ParentID, &match.Similarity,
+		&match.TopicID, &match.Title, &match.Level, &match.Similarity,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -352,4 +320,41 @@ func (r *TopicsRepository) FindSimilarTopic(ctx context.Context, embedding []flo
 	}
 
 	return &match, nil
+}
+
+// GetChildTopics retrieves Level 2 topics that are children of a given Level 1 topic
+func (r *TopicsRepository) GetChildTopics(ctx context.Context, parentID uuid.UUID, tenantID *string, limit int) ([]models.Topic, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+		SELECT id, title, level, parent_id, tenant_id, created_at, updated_at
+		FROM topics
+		WHERE parent_id = $1
+		  AND ($2::varchar IS NULL OR tenant_id = $2)
+		ORDER BY title ASC
+		LIMIT $3
+	`
+
+	rows, err := r.db.Query(ctx, query, parentID, tenantID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get child topics: %w", err)
+	}
+	defer rows.Close()
+
+	topics := []models.Topic{}
+	for rows.Next() {
+		var topic models.Topic
+		if err := rows.Scan(&topic.ID, &topic.Title, &topic.Level, &topic.ParentID, &topic.TenantID, &topic.CreatedAt, &topic.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan child topic: %w", err)
+		}
+		topics = append(topics, topic)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating child topics: %w", err)
+	}
+
+	return topics, nil
 }

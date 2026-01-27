@@ -10,21 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// Classification thresholds for hierarchical topic assignment
+// Classification threshold for Level 2 topic assignment
 const (
-	// ThemeThreshold is the minimum similarity for theme (level 1) classification
-	// Themes are broader, so we accept lower similarity
-	ThemeThreshold = 0.30
-
-	// SubtopicThreshold is the minimum similarity for subtopic (level 2) classification
-	// Subtopics are specific, so we require higher confidence
-	SubtopicThreshold = 0.40
+	// ClassificationThreshold is the minimum similarity for topic classification
+	// Feedback is only classified to Level 2 topics
+	ClassificationThreshold = 0.30
 )
 
 // Topic levels
 const (
-	LevelTheme    = 1
-	LevelSubtopic = 2
+	Level1 = 1 // Level 1 topics (broad categories)
+	Level2 = 2 // Level 2 topics (specific subtopics)
 )
 
 // FeedbackRecordsRepository defines the interface for feedback records data access.
@@ -48,8 +44,8 @@ type TopicClassifier interface {
 // FeedbackRecordsService handles business logic for feedback records
 type FeedbackRecordsService struct {
 	repo            FeedbackRecordsRepository
-	embeddingClient embeddings.Client  // nil if embeddings are disabled
-	topicClassifier TopicClassifier    // nil if classification is disabled
+	embeddingClient embeddings.Client // nil if embeddings are disabled
+	topicClassifier TopicClassifier   // nil if classification is disabled
 }
 
 // NewFeedbackRecordsService creates a new feedback records service
@@ -89,8 +85,7 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 	return record, nil
 }
 
-// enrichRecord generates embedding, classifies against topics, and enriches the feedback record
-// Uses hierarchical classification: first tries subtopic (level 2), falls back to theme (level 1)
+// enrichRecord generates embedding, classifies against Level 2 topics, and enriches the feedback record
 func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string, tenantID *string) {
 	ctx := context.Background()
 
@@ -105,9 +100,9 @@ func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string, tenantI
 		Embedding: embedding,
 	}
 
-	// 2. Hierarchical classification if classifier is available
+	// 2. Classify to Level 2 topic only if classifier is available
 	if s.topicClassifier != nil {
-		s.classifyHierarchically(ctx, id, embedding, tenantID, enrichReq)
+		s.classifyToLevel2(ctx, id, embedding, tenantID, enrichReq)
 	}
 
 	// 3. Store enrichment data
@@ -116,50 +111,24 @@ func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string, tenantI
 	}
 }
 
-// classifyHierarchically attempts to classify feedback using threshold-based level assignment:
-// - First tries to match a subtopic (level 2) with higher threshold
-// - If subtopic matches, theme is derived from parent_id
-// - If no subtopic matches, tries to match a theme (level 1) with lower threshold
-func (s *FeedbackRecordsService) classifyHierarchically(ctx context.Context, id uuid.UUID, embedding []float32, tenantID *string, enrichReq *models.UpdateFeedbackEnrichmentRequest) {
-	// Try subtopic first (level 2) - requires higher confidence
-	level2 := LevelSubtopic
-	subtopicMatch, err := s.topicClassifier.FindSimilarTopic(ctx, embedding, tenantID, &level2, SubtopicThreshold)
+// classifyToLevel2 attempts to classify feedback to a Level 2 topic
+// Level 1 association is determined dynamically via embedding similarity (not stored)
+func (s *FeedbackRecordsService) classifyToLevel2(ctx context.Context, id uuid.UUID, embedding []float32, tenantID *string, enrichReq *models.UpdateFeedbackEnrichmentRequest) {
+	level2 := Level2
+	match, err := s.topicClassifier.FindSimilarTopic(ctx, embedding, tenantID, &level2, ClassificationThreshold)
 	if err != nil {
-		slog.Error("failed to classify against subtopics", "id", id, "error", err)
-	}
-
-	if subtopicMatch != nil {
-		// High confidence subtopic match - set both subtopic and theme
-		enrichReq.TopicID = &subtopicMatch.TopicID
-		enrichReq.ThemeID = subtopicMatch.ParentID // Theme is the parent of subtopic
-		enrichReq.ClassificationConfidence = &subtopicMatch.Similarity
-		slog.Debug("classified feedback to subtopic",
-			"id", id,
-			"subtopic_id", subtopicMatch.TopicID,
-			"subtopic_title", subtopicMatch.Title,
-			"theme_id", subtopicMatch.ParentID,
-			"confidence", subtopicMatch.Similarity,
-		)
+		slog.Error("failed to classify against Level 2 topics", "id", id, "error", err)
 		return
 	}
 
-	// No subtopic match - try theme (level 1) with lower threshold
-	level1 := LevelTheme
-	themeMatch, err := s.topicClassifier.FindSimilarTopic(ctx, embedding, tenantID, &level1, ThemeThreshold)
-	if err != nil {
-		slog.Error("failed to classify against themes", "id", id, "error", err)
-		return
-	}
-
-	if themeMatch != nil {
-		// Theme-only match (no specific subtopic)
-		enrichReq.ThemeID = &themeMatch.TopicID
-		enrichReq.ClassificationConfidence = &themeMatch.Similarity
-		slog.Debug("classified feedback to theme only",
+	if match != nil {
+		enrichReq.TopicID = &match.TopicID
+		enrichReq.ClassificationConfidence = &match.Similarity
+		slog.Debug("classified feedback to Level 2 topic",
 			"id", id,
-			"theme_id", themeMatch.TopicID,
-			"theme_title", themeMatch.Title,
-			"confidence", themeMatch.Similarity,
+			"topic_id", match.TopicID,
+			"topic_title", match.Title,
+			"confidence", match.Similarity,
 		)
 	}
 }

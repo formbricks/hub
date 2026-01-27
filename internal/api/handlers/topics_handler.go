@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/api/validation"
@@ -20,6 +21,7 @@ type TopicsService interface {
 	ListTopics(ctx context.Context, filters *models.ListTopicsFilters) (*models.ListTopicsResponse, error)
 	UpdateTopic(ctx context.Context, id uuid.UUID, req *models.UpdateTopicRequest) (*models.Topic, error)
 	DeleteTopic(ctx context.Context, id uuid.UUID) error
+	GetChildTopics(ctx context.Context, parentID uuid.UUID, tenantID *string, limit int) ([]models.Topic, error)
 }
 
 // TopicsHandler handles HTTP requests for topics
@@ -50,10 +52,6 @@ func (h *TopicsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	topic, err := h.service.CreateTopic(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
-			response.RespondNotFound(w, "Parent topic not found")
-			return
-		}
 		if errors.Is(err, apperrors.ErrValidation) {
 			response.RespondBadRequest(w, err.Error())
 			return
@@ -184,4 +182,52 @@ func (h *TopicsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetChildren handles GET /v1/topics/{id}/children
+// Returns Level 2 topics that are children of the given Level 1 topic
+func (h *TopicsHandler) GetChildren(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	if idStr == "" {
+		response.RespondBadRequest(w, "Topic ID is required")
+		return
+	}
+
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		response.RespondBadRequest(w, "Invalid UUID format")
+		return
+	}
+
+	// Parse optional tenant_id query param
+	var tenantID *string
+	if tid := r.URL.Query().Get("tenant_id"); tid != "" {
+		tenantID = &tid
+	}
+
+	// Parse optional limit query param (default 100)
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	topics, err := h.service.GetChildTopics(r.Context(), id, tenantID, limit)
+	if err != nil {
+		if errors.Is(err, apperrors.ErrNotFound) {
+			response.RespondNotFound(w, "Topic not found")
+			return
+		}
+		if errors.Is(err, apperrors.ErrValidation) {
+			response.RespondBadRequest(w, err.Error())
+			return
+		}
+		response.RespondInternalServerError(w, "An unexpected error occurred")
+		return
+	}
+
+	response.RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"data": topics,
+	})
 }

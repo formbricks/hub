@@ -50,7 +50,7 @@ func init() {
 		return &t, nil
 	}, (*time.Time)(nil))
 
-	// Handle *uuid.UUID (pointer type used for parent_id filters)
+	// Handle *uuid.UUID (pointer type used for topic_id filters)
 	decoder.RegisterCustomTypeFunc(func(vals []string) (interface{}, error) {
 		if len(vals) == 0 || vals[0] == "" {
 			return (*uuid.UUID)(nil), nil

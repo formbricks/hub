@@ -30,9 +30,7 @@ type FeedbackRecord struct {
 	ResponseID     *string         `json:"response_id,omitempty"`
 
 	// AI enrichment fields (embedding-based)
-	// ThemeID is the level-1 topic (broad category)
-	ThemeID *uuid.UUID `json:"theme_id,omitempty"`
-	// TopicID is the level-2 topic (specific subtopic), only set if confidence is high enough
+	// TopicID is the classified Level 2 topic ID
 	TopicID *uuid.UUID `json:"topic_id,omitempty"`
 	// ClassificationConfidence is the similarity score of the best match
 	ClassificationConfidence *float64 `json:"classification_confidence,omitempty"`
@@ -79,7 +77,6 @@ type ListFeedbackRecordsFilters struct {
 	FieldID        *string    `form:"field_id" validate:"omitempty,no_null_bytes"`
 	FieldType      *string    `form:"field_type" validate:"omitempty,no_null_bytes"`
 	UserIdentifier *string    `form:"user_identifier" validate:"omitempty,no_null_bytes"`
-	ThemeID        *uuid.UUID `form:"theme_id" validate:"omitempty"`
 	TopicID        *uuid.UUID `form:"topic_id" validate:"omitempty"`
 	Since          *time.Time `form:"since" validate:"omitempty"`
 	Until          *time.Time `form:"until" validate:"omitempty"`
@@ -111,7 +108,13 @@ type BulkDeleteResponse struct {
 // Used by the service layer, not exposed via API
 type UpdateFeedbackEnrichmentRequest struct {
 	Embedding                []float32
-	ThemeID                  *uuid.UUID // Level 1 topic
-	TopicID                  *uuid.UUID // Level 2 topic (subtopic)
+	TopicID                  *uuid.UUID // Classified Level 2 topic ID
 	ClassificationConfidence *float64
+}
+
+// EmbeddingRecord represents a feedback record with its embedding for clustering.
+type EmbeddingRecord struct {
+	ID        uuid.UUID
+	Text      string
+	Embedding []float32
 }

@@ -882,6 +882,7 @@ func TestCreateTopic(t *testing.T) {
 	t.Run("Success with valid API key", func(t *testing.T) {
 		reqBody := map[string]interface{}{
 			"title":     "Test Topic",
+			"level":     1,
 			"tenant_id": "test-tenant",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -903,13 +904,13 @@ func TestCreateTopic(t *testing.T) {
 		assert.NotEmpty(t, result.ID)
 		assert.Equal(t, "Test Topic", result.Title)
 		assert.Equal(t, 1, result.Level)
-		assert.Nil(t, result.ParentID)
 		assert.NotNil(t, result.TenantID)
 		assert.Equal(t, "test-tenant", *result.TenantID)
 	})
 
 	t.Run("Bad request with missing title", func(t *testing.T) {
 		reqBody := map[string]interface{}{
+			"level":     1,
 			"tenant_id": "test-tenant",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -926,37 +927,19 @@ func TestCreateTopic(t *testing.T) {
 	})
 }
 
-func TestCreateTopicWithParent(t *testing.T) {
+func TestCreateTopicWithLevel(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	client := &http.Client{}
 
-	// Create parent topic
-	parentReq := map[string]interface{}{
-		"title":     "Parent Topic",
-		"tenant_id": "hierarchy-test-tenant",
-	}
-	body, _ := json.Marshal(parentReq)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
-	req.Header.Set("Authorization", "Bearer "+testAPIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	createResp, err := client.Do(req)
-	require.NoError(t, err)
-	defer func() { _ = createResp.Body.Close() }()
-
-	var parent models.Topic
-	err = decodeData(createResp, &parent)
-	require.NoError(t, err)
-
-	t.Run("Create child topic with valid parent", func(t *testing.T) {
-		childReq := map[string]interface{}{
-			"title":     "Child Topic",
-			"parent_id": parent.ID.String(),
-			"tenant_id": "hierarchy-test-tenant",
+	t.Run("Create Level 1 topic", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"title":     "Level 1 Test Topic",
+			"level":     1,
+			"tenant_id": "level-test-tenant",
 		}
-		body, _ := json.Marshal(childReq)
+		body, _ := json.Marshal(reqBody)
 
 		req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -968,23 +951,21 @@ func TestCreateTopicWithParent(t *testing.T) {
 
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
-		var child models.Topic
-		err = decodeData(resp, &child)
+		var result models.Topic
+		err = decodeData(resp, &result)
 		require.NoError(t, err)
 
-		assert.Equal(t, "Child Topic", child.Title)
-		assert.Equal(t, 2, child.Level) // Parent level (1) + 1
-		assert.NotNil(t, child.ParentID)
-		assert.Equal(t, parent.ID, *child.ParentID)
+		assert.Equal(t, "Level 1 Test Topic", result.Title)
+		assert.Equal(t, 1, result.Level)
 	})
 
-	t.Run("Create topic with non-existent parent returns 404", func(t *testing.T) {
-		childReq := map[string]interface{}{
-			"title":     "Orphan Topic",
-			"parent_id": "00000000-0000-0000-0000-000000000000",
-			"tenant_id": "hierarchy-test-tenant",
+	t.Run("Create Level 2 topic", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"title":     "Level 2 Test Topic",
+			"level":     2,
+			"tenant_id": "level-test-tenant",
 		}
-		body, _ := json.Marshal(childReq)
+		body, _ := json.Marshal(reqBody)
 
 		req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -994,16 +975,23 @@ func TestCreateTopicWithParent(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
-		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
+		var result models.Topic
+		err = decodeData(resp, &result)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Level 2 Test Topic", result.Title)
+		assert.Equal(t, 2, result.Level)
 	})
 
-	t.Run("Create topic with parent from different tenant returns 400", func(t *testing.T) {
-		childReq := map[string]interface{}{
-			"title":     "Cross-tenant Topic",
-			"parent_id": parent.ID.String(),
-			"tenant_id": "different-tenant",
+	t.Run("Create topic with invalid level returns 400", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"title":     "Invalid Level Topic",
+			"level":     3,
+			"tenant_id": "level-test-tenant",
 		}
-		body, _ := json.Marshal(childReq)
+		body, _ := json.Marshal(reqBody)
 
 		req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -1023,9 +1011,10 @@ func TestTopicTitleUniqueness(t *testing.T) {
 
 	client := &http.Client{}
 
-	// Create first topic
+	// Create first Level 1 topic
 	firstReq := map[string]interface{}{
-		"title":     "Unique Title",
+		"title":     "Unique Title L1",
+		"level":     1,
 		"tenant_id": "uniqueness-test-tenant",
 	}
 	body, _ := json.Marshal(firstReq)
@@ -1041,9 +1030,10 @@ func TestTopicTitleUniqueness(t *testing.T) {
 	err = decodeData(firstResp, &firstTopic)
 	require.NoError(t, err)
 
-	t.Run("Create duplicate title under same parent returns 409", func(t *testing.T) {
+	t.Run("Create duplicate title at same level returns 409", func(t *testing.T) {
 		duplicateReq := map[string]interface{}{
-			"title":     "Unique Title", // Same title
+			"title":     "Unique Title L1", // Same title
+			"level":     1,
 			"tenant_id": "uniqueness-test-tenant",
 		}
 		body, _ := json.Marshal(duplicateReq)
@@ -1059,34 +1049,16 @@ func TestTopicTitleUniqueness(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, resp.StatusCode)
 	})
 
-	t.Run("Create same title under different parent succeeds", func(t *testing.T) {
-		// Create a parent topic first
-		parentReq := map[string]interface{}{
-			"title":     "Parent for Uniqueness Test",
+	t.Run("Create same title at different level succeeds", func(t *testing.T) {
+		// Create Level 2 topic with same title as first Level 1 topic
+		level2Req := map[string]interface{}{
+			"title":     "Unique Title L1", // Same title as first topic, but different level
+			"level":     2,
 			"tenant_id": "uniqueness-test-tenant",
 		}
-		body, _ := json.Marshal(parentReq)
+		body, _ := json.Marshal(level2Req)
+
 		req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
-		req.Header.Set("Authorization", "Bearer "+testAPIKey)
-		req.Header.Set("Content-Type", "application/json")
-
-		parentResp, err := client.Do(req)
-		require.NoError(t, err)
-		defer func() { _ = parentResp.Body.Close() }()
-
-		var parent models.Topic
-		err = decodeData(parentResp, &parent)
-		require.NoError(t, err)
-
-		// Create child with same title as first topic (different parent)
-		childReq := map[string]interface{}{
-			"title":     "Unique Title", // Same title as first topic, but different parent
-			"parent_id": parent.ID.String(),
-			"tenant_id": "uniqueness-test-tenant",
-		}
-		body, _ = json.Marshal(childReq)
-
-		req, _ = http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 
@@ -1107,6 +1079,7 @@ func TestListTopics(t *testing.T) {
 	// Create a test topic
 	reqBody := map[string]interface{}{
 		"title":     "List Test Topic",
+		"level":     1,
 		"tenant_id": "list-test-tenant",
 	}
 	body, _ := json.Marshal(reqBody)
@@ -1161,6 +1134,7 @@ func TestGetTopic(t *testing.T) {
 	// Create a test topic
 	reqBody := map[string]interface{}{
 		"title": "Get Test Topic",
+		"level": 1,
 	}
 	body, _ := json.Marshal(reqBody)
 	req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
@@ -1214,6 +1188,7 @@ func TestUpdateTopic(t *testing.T) {
 	// Create a test topic
 	reqBody := map[string]interface{}{
 		"title":     "Initial Title",
+		"level":     1,
 		"tenant_id": "update-test-tenant",
 	}
 	body, _ := json.Marshal(reqBody)
@@ -1274,6 +1249,7 @@ func TestUpdateTopic(t *testing.T) {
 		// Create another topic
 		otherReq := map[string]interface{}{
 			"title":     "Other Topic",
+			"level":     1,
 			"tenant_id": "update-test-tenant",
 		}
 		body, _ := json.Marshal(otherReq)
@@ -1310,6 +1286,7 @@ func TestDeleteTopic(t *testing.T) {
 	// Create a test topic
 	reqBody := map[string]interface{}{
 		"title": "To be deleted",
+		"level": 1,
 	}
 	body, _ := json.Marshal(reqBody)
 	req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
@@ -1347,52 +1324,53 @@ func TestDeleteTopic(t *testing.T) {
 	})
 }
 
-func TestDeleteTopicCascade(t *testing.T) {
+func TestDeleteTopicIndependently(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	client := &http.Client{}
 
-	// Create parent topic
-	parentReq := map[string]interface{}{
-		"title":     "Parent to Delete",
-		"tenant_id": "cascade-test-tenant",
+	// Create Level 1 topic
+	level1Req := map[string]interface{}{
+		"title":     "Level 1 to Delete",
+		"level":     1,
+		"tenant_id": "delete-test-tenant",
 	}
-	body, _ := json.Marshal(parentReq)
+	body, _ := json.Marshal(level1Req)
 	req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	parentResp, err := client.Do(req)
+	level1Resp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { _ = parentResp.Body.Close() }()
+	defer func() { _ = level1Resp.Body.Close() }()
 
-	var parent models.Topic
-	err = decodeData(parentResp, &parent)
+	var level1Topic models.Topic
+	err = decodeData(level1Resp, &level1Topic)
 	require.NoError(t, err)
 
-	// Create child topic
-	childReq := map[string]interface{}{
-		"title":     "Child to Cascade",
-		"parent_id": parent.ID.String(),
-		"tenant_id": "cascade-test-tenant",
+	// Create Level 2 topic
+	level2Req := map[string]interface{}{
+		"title":     "Level 2 Independent",
+		"level":     2,
+		"tenant_id": "delete-test-tenant",
 	}
-	body, _ = json.Marshal(childReq)
+	body, _ = json.Marshal(level2Req)
 	req, _ = http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	childResp, err := client.Do(req)
+	level2Resp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { _ = childResp.Body.Close() }()
+	defer func() { _ = level2Resp.Body.Close() }()
 
-	var child models.Topic
-	err = decodeData(childResp, &child)
+	var level2Topic models.Topic
+	err = decodeData(level2Resp, &level2Topic)
 	require.NoError(t, err)
 
-	t.Run("Delete parent topic cascades to children", func(t *testing.T) {
-		// Delete the parent
-		req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/topics/%s", server.URL, parent.ID), nil)
+	t.Run("Delete Level 1 topic does not affect Level 2 topics", func(t *testing.T) {
+		// Delete Level 1 topic
+		req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/topics/%s", server.URL, level1Topic.ID), nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
@@ -1401,14 +1379,14 @@ func TestDeleteTopicCascade(t *testing.T) {
 
 		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 
-		// Verify child is also deleted
-		req, _ = http.NewRequest("GET", fmt.Sprintf("%s/v1/topics/%s", server.URL, child.ID), nil)
+		// Verify Level 2 topic still exists (no cascade)
+		req, _ = http.NewRequest("GET", fmt.Sprintf("%s/v1/topics/%s", server.URL, level2Topic.ID), nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err = client.Do(req)
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
-		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 }
