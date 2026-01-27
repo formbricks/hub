@@ -173,6 +173,14 @@ func TestWebhookEndpoint(t *testing.T) {
 		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+		// Verify RFC 7807 Problem Details error response
+		var errorResp map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&errorResp)
+		require.NoError(t, err)
+		assert.Equal(t, "Unauthorized", errorResp["title"])
+		assert.Equal(t, float64(401), errorResp["status"])
+		assert.Equal(t, "Invalid API key", errorResp["detail"])
 	})
 
 	t.Run("Unknown connector returns 404", func(t *testing.T) {
@@ -184,6 +192,55 @@ func TestWebhookEndpoint(t *testing.T) {
 		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+		// Verify RFC 7807 Problem Details error response
+		var errorResp map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&errorResp)
+		require.NoError(t, err)
+		assert.Equal(t, "Not Found", errorResp["title"])
+		assert.Equal(t, float64(404), errorResp["status"])
+		assert.Equal(t, "Connector not found", errorResp["detail"])
+	})
+
+	t.Run("Unregistered connector typeform returns 404", func(t *testing.T) {
+		// Simulating a scenario where someone tries to send Typeform webhooks
+		// but only Formbricks is registered
+		req, _ := http.NewRequest("POST", server.URL+"/webhooks/typeform?apiKey=some-api-key", bytes.NewBufferString(`{"event": "form_response"}`))
+		req.Header.Set(contentTypeHeader, contentTypeJSON)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+		// Verify RFC 7807 Problem Details error response
+		var errorResp map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&errorResp)
+		require.NoError(t, err)
+		assert.Equal(t, "Not Found", errorResp["title"])
+		assert.Equal(t, float64(404), errorResp["status"])
+		assert.Equal(t, "Connector not found", errorResp["detail"])
+	})
+
+	t.Run("Wrong API key for valid connector returns 401", func(t *testing.T) {
+		// Try to access formbricks webhook with a completely different API key
+		req, _ := http.NewRequest("POST", server.URL+"/webhooks/formbricks?apiKey=totally-wrong-secret-key", bytes.NewBufferString(`{"event": "testEndpoint"}`))
+		req.Header.Set(contentTypeHeader, contentTypeJSON)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+		// Verify RFC 7807 Problem Details error response
+		var errorResp map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&errorResp)
+		require.NoError(t, err)
+		assert.Equal(t, "Unauthorized", errorResp["title"])
+		assert.Equal(t, float64(401), errorResp["status"])
+		assert.Equal(t, "Invalid API key", errorResp["detail"])
 	})
 
 	t.Run("Invalid JSON payload returns 500", func(t *testing.T) {
@@ -205,6 +262,17 @@ func TestFormbricksWebhookCreatesFeedbackRecords(t *testing.T) {
 
 	client := &http.Client{}
 	ctx := context.Background()
+
+	// Clean up any existing records with this response_id from previous test runs
+	testResponseID := "cmkv5a5x14ogjad01kcjfgb6v"
+	existingRecords, _ := feedbackService.ListFeedbackRecords(ctx, &models.ListFeedbackRecordsFilters{
+		ResponseID: stringPtr(testResponseID),
+	})
+	if existingRecords != nil && len(existingRecords.Data) > 0 {
+		for _, r := range existingRecords.Data {
+			_ = feedbackService.DeleteFeedbackRecord(ctx, r.ID)
+		}
+	}
 
 	t.Run("Formbricks webhook creates feedback records", func(t *testing.T) {
 		// Send webhook request
@@ -388,6 +456,22 @@ func TestFormbricksWebhookDifferentEventTypes(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	// Test testEndpoint event (Formbricks sends this when verifying webhook URL)
+	t.Run("testEndpoint event is acknowledged", func(t *testing.T) {
+		// This is the exact payload Formbricks sends when testing/verifying a webhook URL
+		payload := `{"event": "testEndpoint"}`
+
+		req, _ := http.NewRequest("POST", server.URL+formbricksWebhookPath+testWebhookAPIKey, bytes.NewBufferString(payload))
+		req.Header.Set(contentTypeHeader, contentTypeJSON)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		// Test endpoint should be acknowledged with 200 OK
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 

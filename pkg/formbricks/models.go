@@ -19,6 +19,7 @@ const (
 	EventResponseCreated  = "responseCreated"
 	EventResponseUpdated  = "responseUpdated"
 	EventResponseFinished = "responseFinished"
+	EventTestEndpoint     = "testEndpoint" // Test event sent when verifying webhook URL
 )
 
 // Response represents a single survey response

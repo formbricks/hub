@@ -43,17 +43,23 @@ func (c *WebhookConnector) HandleWebhook(ctx context.Context, payload []byte) er
 		return fmt.Errorf("failed to parse webhook payload: %w", err)
 	}
 
-	slog.Info("Received Formbricks webhook event",
-		"event_type", event.Event,
-		"webhook_id", event.WebhookID,
-		"response_id", event.Data.ID,
-		"survey_id", event.Data.SurveyID,
-	)
-
 	// Process based on event type
 	switch event.Event {
+	case formbricks.EventTestEndpoint:
+		// Test event sent by Formbricks when verifying webhook URL
+		// Just acknowledge it without processing
+		slog.Info("Received Formbricks test endpoint event - webhook verification successful")
+		return nil
+
 	case formbricks.EventResponseCreated, formbricks.EventResponseUpdated, formbricks.EventResponseFinished:
+		slog.Info("Received Formbricks webhook event",
+			"event_type", event.Event,
+			"webhook_id", event.WebhookID,
+			"response_id", event.Data.ID,
+			"survey_id", event.Data.SurveyID,
+		)
 		return c.processResponse(ctx, event)
+
 	default:
 		slog.Warn("Unknown Formbricks webhook event type",
 			"event_type", event.Event,
