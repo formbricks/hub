@@ -181,6 +181,53 @@ func (c *Client) GetResponses(opts GetResponsesOptions) (*ResponsesResponse, err
 	return &responsesResponse, nil
 }
 
+// GetForm retrieves a form definition including all fields
+func (c *Client) GetForm(formID string) (*Form, error) {
+	if formID == "" {
+		return nil, fmt.Errorf("form_id is required")
+	}
+
+	reqURL := fmt.Sprintf("%s/forms/%s", c.baseURL, formID)
+
+	req, err := retryablehttp.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Error("Failed to close response body", "error", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			slog.Error("Failed to read error response body", "error", err)
+		}
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	var form Form
+	if err := json.Unmarshal(body, &form); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal form: %w", err)
+	}
+
+	return &form, nil
+}
+
 // BoolPtr returns a pointer to the bool value
 func BoolPtr(b bool) *bool {
 	return &b

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/formbricks/hub/internal/connector"
@@ -15,7 +16,13 @@ import (
 type Connector struct {
 	client          *typeform.Client
 	formID          string
+	formTitle       string
 	feedbackService *service.FeedbackRecordsService
+
+	// Cached field labels (fieldID/ref -> title)
+	fieldLabels     map[string]string
+	fieldLabelsMu   sync.RWMutex
+	fieldLabelsFetched bool
 }
 
 // Config holds configuration for the Typeform connector
@@ -34,13 +41,76 @@ func NewConnector(cfg Config) *Connector {
 		client:          client,
 		formID:          cfg.FormID,
 		feedbackService: cfg.FeedbackService,
+		fieldLabels:     make(map[string]string),
 	}
+}
+
+// fetchFormDetails fetches form structure to get field labels (called once on first poll)
+func (c *Connector) fetchFormDetails() error {
+	c.fieldLabelsMu.Lock()
+	defer c.fieldLabelsMu.Unlock()
+
+	// Already fetched
+	if c.fieldLabelsFetched {
+		return nil
+	}
+
+	slog.Info("Fetching Typeform form details", "form_id", c.formID)
+
+	form, err := c.client.GetForm(c.formID)
+	if err != nil {
+		slog.Error("Failed to fetch form details from Typeform", "error", err, "form_id", c.formID)
+		return err
+	}
+
+	// Store form title
+	c.formTitle = form.Title
+
+	// Build field labels map (both by ID and by ref for lookup)
+	for _, field := range form.Fields {
+		// Map by field ID
+		c.fieldLabels[field.ID] = field.Title
+
+		// Also map by ref if available (responses may use ref instead of ID)
+		if field.Ref != "" {
+			c.fieldLabels[field.Ref] = field.Title
+		}
+	}
+
+	c.fieldLabelsFetched = true
+	slog.Info("Cached Typeform field labels",
+		"form_id", c.formID,
+		"form_title", c.formTitle,
+		"fields_count", len(form.Fields),
+	)
+
+	return nil
+}
+
+// getFieldLabels returns the cached field labels map
+func (c *Connector) getFieldLabels() map[string]string {
+	c.fieldLabelsMu.RLock()
+	defer c.fieldLabelsMu.RUnlock()
+	return c.fieldLabels
+}
+
+// getFormTitle returns the cached form title
+func (c *Connector) getFormTitle() string {
+	c.fieldLabelsMu.RLock()
+	defer c.fieldLabelsMu.RUnlock()
+	return c.formTitle
 }
 
 // Poll fetches responses from Typeform and creates feedback records
 // Implements connector.PollingInputConnector interface
 func (c *Connector) Poll(ctx context.Context) error {
 	slog.Info("Polling Typeform for responses", "form_id", c.formID)
+
+	// Fetch form details on first poll to get field labels
+	if err := c.fetchFormDetails(); err != nil {
+		// Log error but continue - we can still process responses without labels
+		slog.Warn("Continuing without field labels", "error", err)
+	}
 
 	// Get only completed responses from Typeform
 	completed := true
@@ -56,6 +126,10 @@ func (c *Connector) Poll(ctx context.Context) error {
 
 	slog.Info("Retrieved responses from Typeform", "count", len(responses.Items), "total", responses.TotalItems)
 
+	// Get cached data
+	fieldLabels := c.getFieldLabels()
+	formTitle := c.getFormTitle()
+
 	// Process each response
 	for _, response := range responses.Items {
 		// Skip responses that weren't actually submitted
@@ -70,8 +144,8 @@ func (c *Connector) Poll(ctx context.Context) error {
 			continue
 		}
 
-		// Transform Typeform response to feedback records
-		feedbackRecords := TransformResponseToFeedbackRecords(response, c.formID)
+		// Transform Typeform response to feedback records with field labels
+		feedbackRecords := TransformResponseToFeedbackRecords(response, c.formID, formTitle, fieldLabels)
 
 		// Create feedback records using the service
 		for _, recordReq := range feedbackRecords {

@@ -11,22 +11,32 @@ import (
 // TransformResponseToFeedbackRecords converts a Formbricks response to Hub feedback records
 // Each question/answer pair in the response becomes a separate feedback record
 // Used by the polling connector
-func TransformResponseToFeedbackRecords(response fb.Response) []*models.CreateFeedbackRecordRequest {
+// fieldLabels maps question IDs to question headlines for human-readable labels
+func TransformResponseToFeedbackRecords(response fb.Response, surveyName string, fieldLabels map[string]string) []*models.CreateFeedbackRecordRequest {
 	var records []*models.CreateFeedbackRecordRequest
 
 	// Build metadata from response
 	metadata := buildMetadata(response)
 	metadataJSON, _ := json.Marshal(metadata)
 
+	// Determine source name - use survey name if available
+	sourceName := "Formbricks Survey"
+	if surveyName != "" {
+		sourceName = surveyName
+	}
+
 	// Transform each question/answer pair in response.Data to a feedback record
 	for fieldID, value := range response.Data {
+		// Look up field label from cached survey data
+		fieldLabel := getFieldLabel(fieldLabels, fieldID)
+
 		record := &models.CreateFeedbackRecordRequest{
 			CollectedAt:    &response.CreatedAt,
 			SourceType:     "formbricks",
 			SourceID:       &response.SurveyID,
-			SourceName:     stringPtr("Formbricks Survey"),
+			SourceName:     stringPtr(sourceName),
 			FieldID:        fieldID,
-			FieldLabel:     stringPtr(fieldID), // Could be enhanced with question labels if available
+			FieldLabel:     stringPtr(fieldLabel),
 			FieldType:      inferFieldType(value),
 			Metadata:       metadataJSON,
 			Language:       response.Language,
@@ -41,6 +51,21 @@ func TransformResponseToFeedbackRecords(response fb.Response) []*models.CreateFe
 	}
 
 	return records
+}
+
+// getFieldLabel looks up the field label from the cached field labels map
+// Falls back to field ID if label not found
+func getFieldLabel(fieldLabels map[string]string, fieldID string) string {
+	if fieldLabels == nil {
+		return fieldID
+	}
+
+	if label, ok := fieldLabels[fieldID]; ok && label != "" {
+		return label
+	}
+
+	// Fallback to field ID
+	return fieldID
 }
 
 // TransformWebhookToFeedbackRecords converts a Formbricks webhook event to Hub feedback records

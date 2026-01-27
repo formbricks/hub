@@ -52,6 +52,65 @@ type Survey struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// SurveyDetails represents the survey structure from the Management API (v1)
+type SurveyDetails struct {
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Type      string        `json:"type"`
+	Status    string        `json:"status"`
+	Questions []Question    `json:"questions"` // Legacy - may be empty
+	Blocks    []SurveyBlock `json:"blocks"`    // New structure - questions are in blocks[].elements[]
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
+}
+
+// SurveyBlock represents a block containing survey elements
+type SurveyBlock struct {
+	ID       string     `json:"id"`
+	Name     string     `json:"name"`
+	Elements []Question `json:"elements"`
+}
+
+// GetAllQuestions returns all questions, preferring blocks[].elements[] over legacy questions array
+// If blocks contain elements, use those. Otherwise fall back to legacy questions array.
+func (s *SurveyDetails) GetAllQuestions() []Question {
+	// First, try to get questions from blocks (new structure)
+	var blockQuestions []Question
+	for _, block := range s.Blocks {
+		blockQuestions = append(blockQuestions, block.Elements...)
+	}
+
+	// If blocks have elements, use those
+	if len(blockQuestions) > 0 {
+		return blockQuestions
+	}
+
+	// Otherwise, fall back to legacy questions array
+	return s.Questions
+}
+
+// Question represents a question/element in a survey
+type Question struct {
+	ID        string           `json:"id"`
+	Type      string           `json:"type"`
+	Headline  LocalizedText    `json:"headline"`
+	Subheader LocalizedText    `json:"subheader,omitempty"`
+	Required  bool             `json:"required"`
+	Choices   []QuestionChoice `json:"choices,omitempty"`
+}
+
+// LocalizedText represents text with localization support
+// Formbricks uses {"default": "text"} format for localized strings
+type LocalizedText struct {
+	Default string `json:"default"`
+}
+
+// QuestionChoice represents a choice option in a multiple choice question
+type QuestionChoice struct {
+	ID    string        `json:"id"`
+	Label LocalizedText `json:"label"`
+}
+
 // Meta contains metadata about the response
 type Meta struct {
 	URL       string    `json:"url"`

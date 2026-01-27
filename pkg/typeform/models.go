@@ -2,6 +2,28 @@ package typeform
 
 import "time"
 
+// Form represents a Typeform form definition
+type Form struct {
+	ID       string      `json:"id"`
+	Title    string      `json:"title"`
+	Language string      `json:"language"`
+	Fields   []FormField `json:"fields"`
+}
+
+// FormField represents a field/question in a form
+type FormField struct {
+	ID         string            `json:"id"`
+	Title      string            `json:"title"`
+	Ref        string            `json:"ref,omitempty"`
+	Type       string            `json:"type"`
+	Properties FormFieldProperties `json:"properties,omitempty"`
+}
+
+// FormFieldProperties contains additional field properties
+type FormFieldProperties struct {
+	Description string `json:"description,omitempty"`
+}
+
 // ResponsesResponse represents the API response for getting responses
 type ResponsesResponse struct {
 	TotalItems int        `json:"total_items"`

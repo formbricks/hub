@@ -11,7 +11,8 @@ import (
 
 // TransformResponseToFeedbackRecords converts a Typeform response to Hub feedback records
 // Each answer in the response becomes a separate feedback record
-func TransformResponseToFeedbackRecords(response tf.Response, formID string) []*models.CreateFeedbackRecordRequest {
+// fieldLabels maps field IDs/refs to question titles for human-readable labels
+func TransformResponseToFeedbackRecords(response tf.Response, formID string, formTitle string, fieldLabels map[string]string) []*models.CreateFeedbackRecordRequest {
 	var records []*models.CreateFeedbackRecordRequest
 
 	// Build metadata from response
@@ -19,6 +20,12 @@ func TransformResponseToFeedbackRecords(response tf.Response, formID string) []*
 	metadataJSON, _ := json.Marshal(metadata)
 
 	responseID := response.GetID()
+
+	// Determine source name - use form title if available
+	sourceName := "Typeform"
+	if formTitle != "" {
+		sourceName = formTitle
+	}
 
 	// Transform each answer to a feedback record
 	for _, answer := range response.Answers {
@@ -28,13 +35,16 @@ func TransformResponseToFeedbackRecords(response tf.Response, formID string) []*
 			fieldID = answer.Field.Ref
 		}
 
+		// Look up field label from cached form data
+		fieldLabel := getFieldLabel(fieldLabels, answer.Field.ID, answer.Field.Ref)
+
 		record := &models.CreateFeedbackRecordRequest{
 			CollectedAt:    &response.SubmittedAt,
 			SourceType:     "typeform",
 			SourceID:       &formID,
-			SourceName:     stringPtr("Typeform"),
+			SourceName:     stringPtr(sourceName),
 			FieldID:        fieldID,
-			FieldLabel:     stringPtr(answer.Field.ID), // Field ID as label (could be enhanced with question text if available)
+			FieldLabel:     stringPtr(fieldLabel),
 			FieldType:      mapFieldType(answer.Field.Type, answer.Type),
 			Metadata:       metadataJSON,
 			ResponseID:     &responseID,
@@ -47,6 +57,29 @@ func TransformResponseToFeedbackRecords(response tf.Response, formID string) []*
 	}
 
 	return records
+}
+
+// getFieldLabel looks up the field label from the cached field labels map
+// Falls back to field ID if label not found
+func getFieldLabel(fieldLabels map[string]string, fieldID string, fieldRef string) string {
+	if fieldLabels == nil {
+		return fieldID
+	}
+
+	// Try to find by ID first
+	if label, ok := fieldLabels[fieldID]; ok && label != "" {
+		return label
+	}
+
+	// Try to find by ref
+	if fieldRef != "" {
+		if label, ok := fieldLabels[fieldRef]; ok && label != "" {
+			return label
+		}
+	}
+
+	// Fallback to field ID
+	return fieldID
 }
 
 // buildMetadata constructs metadata from Typeform response
