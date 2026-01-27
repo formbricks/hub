@@ -43,9 +43,25 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize repository, service, and handler layers
+	// Initialize message publisher manager
+	messageManager := service.NewMessagePublisherManager()
+
+	// Initialize webhooks repository and service
+	webhooksRepo := repository.NewWebhooksRepository(db)
+	webhooksService := service.NewWebhooksService(webhooksRepo)
+	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
+
+	// Register webhook provider
+	webhookDeliveryService := service.NewWebhookDeliveryService(webhooksRepo)
+	messageManager.RegisterProvider(webhookDeliveryService)
+
+	// Register email provider (placeholder for demonstration)
+	emailDeliveryService := service.NewEmailDeliveryService()
+	messageManager.RegisterProvider(emailDeliveryService)
+
+	// Initialize feedback records repository, service, and handler
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
@@ -76,6 +92,12 @@ func main() {
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
+	// Webhook management endpoints
+	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
+	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
+	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/webhooks/{id}", webhooksHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/webhooks/{id}", webhooksHandler.Delete)
 
 	// Apply middleware to protected endpoints
 	var protectedHandler http.Handler = protectedMux

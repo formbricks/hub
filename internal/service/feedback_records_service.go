@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
@@ -21,17 +23,39 @@ type FeedbackRecordsRepository interface {
 
 // FeedbackRecordsService handles business logic for feedback records
 type FeedbackRecordsService struct {
-	repo FeedbackRecordsRepository
+	repo      FeedbackRecordsRepository
+	publisher MessagePublisher
 }
 
 // NewFeedbackRecordsService creates a new feedback records service
-func NewFeedbackRecordsService(repo FeedbackRecordsRepository) *FeedbackRecordsService {
-	return &FeedbackRecordsService{repo: repo}
+func NewFeedbackRecordsService(repo FeedbackRecordsRepository, publisher MessagePublisher) *FeedbackRecordsService {
+	return &FeedbackRecordsService{
+		repo:      repo,
+		publisher: publisher,
+	}
 }
 
 // CreateFeedbackRecord creates a new feedback record
 func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
-	return s.repo.Create(ctx, req)
+	record, err := s.repo.Create(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Publish event asynchronously
+	go func() {
+		event := Event{
+			Type:      "feedback_record.created",
+			Timestamp: time.Now().Unix(),
+			Data:      *record,
+		}
+		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
+			// Error is already logged by MessagePublisherManager, but log here for visibility
+			slog.Debug("Failed to publish feedback record created event", "error", err)
+		}
+	}()
+
+	return record, nil
 }
 
 // GetFeedbackRecord retrieves a single feedback record by ID
@@ -66,12 +90,87 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filter
 
 // UpdateFeedbackRecord updates an existing feedback record
 func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
-	return s.repo.Update(ctx, id, req)
+	// Track changed fields
+	changedFields := s.getChangedFields(req)
+
+	record, err := s.repo.Update(ctx, id, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Publish event asynchronously
+	go func() {
+		event := Event{
+			Type:          "feedback_record.updated",
+			Timestamp:     time.Now().Unix(),
+			Data:          *record,
+			ChangedFields: changedFields,
+		}
+		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
+			// Error is already logged by MessagePublisherManager, but log here for visibility
+			slog.Debug("Failed to publish feedback record updated event", "error", err)
+		}
+	}()
+
+	return record, nil
+}
+
+// getChangedFields extracts which fields were changed from the update request
+func (s *FeedbackRecordsService) getChangedFields(req *models.UpdateFeedbackRecordRequest) []string {
+	var fields []string
+
+	if req.ValueText != nil {
+		fields = append(fields, "value_text")
+	}
+	if req.ValueNumber != nil {
+		fields = append(fields, "value_number")
+	}
+	if req.ValueBoolean != nil {
+		fields = append(fields, "value_boolean")
+	}
+	if req.ValueDate != nil {
+		fields = append(fields, "value_date")
+	}
+	if req.Metadata != nil {
+		fields = append(fields, "metadata")
+	}
+	if req.Language != nil {
+		fields = append(fields, "language")
+	}
+	if req.UserIdentifier != nil {
+		fields = append(fields, "user_identifier")
+	}
+
+	return fields
 }
 
 // DeleteFeedbackRecord deletes a feedback record by ID
 func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error {
-	return s.repo.Delete(ctx, id)
+	// Get record before deletion for webhook payload
+	record, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// Delete the record
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+
+	// Publish event asynchronously
+	go func() {
+		event := Event{
+			Type:      "feedback_record.deleted",
+			Timestamp: time.Now().Unix(),
+			Data:      *record,
+		}
+		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
+			// Error is already logged by MessagePublisherManager, but log here for visibility
+			slog.Debug("Failed to publish feedback record deleted event", "error", err)
+		}
+	}()
+
+	return nil
 }
 
 // BulkDeleteFeedbackRecords deletes all feedback records matching user_identifier and optional tenant_id

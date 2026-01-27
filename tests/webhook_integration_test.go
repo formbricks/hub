@@ -84,7 +84,9 @@ func setupWebhookTestServer(t *testing.T) (*httptest.Server, *service.FeedbackRe
 
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	// Create message publisher manager for tests (no providers registered)
+	messageManager := service.NewMessagePublisherManager()
+	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
