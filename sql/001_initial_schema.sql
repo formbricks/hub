@@ -4,6 +4,11 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- Create ENUM types
+CREATE TYPE field_type_enum AS ENUM (
+    'text', 'categorical', 'nps', 'csat', 'ces', 'rating', 'number', 'boolean', 'date'
+);
+
 -- Feedback records table
 CREATE TABLE feedback_records (
   id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -18,7 +23,7 @@ CREATE TABLE feedback_records (
 
   field_id VARCHAR(255) NOT NULL,
   field_label VARCHAR,
-  field_type VARCHAR NOT NULL,
+  field_type field_type_enum NOT NULL,
 
   value_text TEXT,
   value_number DOUBLE PRECISION,

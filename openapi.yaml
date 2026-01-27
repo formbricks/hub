@@ -80,6 +80,16 @@ paths:
                   schema:
                     type: string
                     description: Filter by field type. NULL bytes not allowed.
+                    enum:
+                        - text
+                        - categorical
+                        - nps
+                        - csat
+                        - ces
+                        - rating
+                        - number
+                        - boolean
+                        - date
                     pattern: '^[^\x00]*$'
                 - name: user_identifier
                   in: query
@@ -695,6 +705,16 @@ components:
                 field_type:
                     type: string
                     description: Type of field
+                    enum:
+                        - text
+                        - categorical
+                        - nps
+                        - csat
+                        - ces
+                        - rating
+                        - number
+                        - boolean
+                        - date
                 id:
                     type: string
                     format: uuid

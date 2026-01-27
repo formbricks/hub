@@ -12,6 +12,7 @@ help:
 	@echo "  make test-all     - Run all tests (unit + integration)"
 	@echo "  make tests-coverage - Run tests with coverage report"
 	@echo "  make init-db      - Initialize database schema"
+	@echo "  make migrate      - Run migration on existing database"
 	@echo "  make fmt          - Format code with gofumpt"
 	@echo "  make fmt-check    - Check if code is formatted"
 	@echo "  make lint         - Run linter"
@@ -92,6 +93,25 @@ init-db:
 	fi
 	@echo "Database schema initialized successfully"
 
+# Run migration on existing database
+migrate:
+	@echo "Running migration on existing database..."
+	@if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		if [ -z "$$DATABASE_URL" ]; then \
+			echo "Error: DATABASE_URL not found in .env file"; \
+			exit 1; \
+		fi && \
+		psql "$$DATABASE_URL" -f sql/002_convert_to_enums.sql; \
+	else \
+		if [ -z "$$DATABASE_URL" ]; then \
+			echo "Error: DATABASE_URL environment variable is not set"; \
+			echo "Please set it or create a .env file with DATABASE_URL"; \
+			exit 1; \
+		fi && \
+		psql "$$DATABASE_URL" -f sql/002_convert_to_enums.sql; \
+	fi
+	@echo "Migration completed successfully"
 
 # Start Docker containers
 docker-up:
