@@ -22,10 +22,10 @@ import (
 )
 
 const (
-	testWebhookAPIKey       = "test-webhook-key-12345"
-	contentTypeHeader       = "Content-Type"
-	contentTypeJSON         = "application/json"
-	formbricksWebhookPath   = "/webhooks/formbricks?apiKey="
+	testWebhookAPIKey     = "test-webhook-key-12345"
+	contentTypeHeader     = "Content-Type"
+	contentTypeJSON       = "application/json"
+	formbricksWebhookPath = "/webhooks/formbricks?apiKey="
 )
 
 // Sample Formbricks webhook payload (responseCreated event with data)

@@ -59,6 +59,11 @@ func RespondInternalServerError(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusInternalServerError, "Internal Server Error", detail)
 }
 
+// RespondUnprocessableEntity writes a 422 Unprocessable Entity error response
+func RespondUnprocessableEntity(w http.ResponseWriter, detail string) {
+	RespondError(w, http.StatusUnprocessableEntity, "Validation Error", detail)
+}
+
 // RespondJSON writes a JSON response directly without wrapping
 func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")

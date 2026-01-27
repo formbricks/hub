@@ -20,8 +20,8 @@ type Connector struct {
 	feedbackService *service.FeedbackRecordsService
 
 	// Cached field labels (fieldID/ref -> title)
-	fieldLabels     map[string]string
-	fieldLabelsMu   sync.RWMutex
+	fieldLabels        map[string]string
+	fieldLabelsMu      sync.RWMutex
 	fieldLabelsFetched bool
 }
 

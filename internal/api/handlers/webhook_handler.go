@@ -79,7 +79,14 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		response.RespondBadRequest(w, "Failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			slog.Warn("Failed to close request body",
+				"connector", connectorName,
+				"error", err,
+			)
+		}
+	}()
 
 	slog.Debug("Received webhook request",
 		"connector", connectorName,

@@ -12,10 +12,10 @@ type Form struct {
 
 // FormField represents a field/question in a form
 type FormField struct {
-	ID         string            `json:"id"`
-	Title      string            `json:"title"`
-	Ref        string            `json:"ref,omitempty"`
-	Type       string            `json:"type"`
+	ID         string              `json:"id"`
+	Title      string              `json:"title"`
+	Ref        string              `json:"ref,omitempty"`
+	Type       string              `json:"type"`
 	Properties FormFieldProperties `json:"properties,omitempty"`
 }
 
@@ -70,19 +70,19 @@ type Metadata struct {
 
 // Answer represents a single answer to a question
 type Answer struct {
-	Field       Field       `json:"field"`
-	Type        string      `json:"type"` // text, number, boolean, choice, choices, email, url, file_url, date, payment, phone_number, multi_format
-	Text        string      `json:"text,omitempty"`
-	Number      *float64    `json:"number,omitempty"`
-	Boolean     *bool       `json:"boolean,omitempty"`
-	Email       string      `json:"email,omitempty"`
-	URL         string      `json:"url,omitempty"`
-	FileURL     string      `json:"file_url,omitempty"`
-	Date        *time.Time  `json:"date,omitempty"`
-	Choice      *Choice     `json:"choice,omitempty"`
-	Choices     *Choices    `json:"choices,omitempty"`
-	Payment     *Payment    `json:"payment,omitempty"`
-	PhoneNumber string      `json:"phone_number,omitempty"`
+	Field       Field        `json:"field"`
+	Type        string       `json:"type"` // text, number, boolean, choice, choices, email, url, file_url, date, payment, phone_number, multi_format
+	Text        string       `json:"text,omitempty"`
+	Number      *float64     `json:"number,omitempty"`
+	Boolean     *bool        `json:"boolean,omitempty"`
+	Email       string       `json:"email,omitempty"`
+	URL         string       `json:"url,omitempty"`
+	FileURL     string       `json:"file_url,omitempty"`
+	Date        *time.Time   `json:"date,omitempty"`
+	Choice      *Choice      `json:"choice,omitempty"`
+	Choices     *Choices     `json:"choices,omitempty"`
+	Payment     *Payment     `json:"payment,omitempty"`
+	PhoneNumber string       `json:"phone_number,omitempty"`
 	MultiFormat *MultiFormat `json:"multi_format,omitempty"`
 }
 
@@ -107,10 +107,10 @@ type Choices struct {
 
 // Payment represents a payment answer
 type Payment struct {
-	Amount    string `json:"amount"`
-	Last4     string `json:"last4"`
-	Name      string `json:"name"`
-	Success   bool   `json:"success"`
+	Amount  string `json:"amount"`
+	Last4   string `json:"last4"`
+	Name    string `json:"name"`
+	Success bool   `json:"success"`
 }
 
 // MultiFormat represents audio/video answers

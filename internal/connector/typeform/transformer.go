@@ -39,15 +39,15 @@ func TransformResponseToFeedbackRecords(response tf.Response, formID string, for
 		fieldLabel := getFieldLabel(fieldLabels, answer.Field.ID, answer.Field.Ref)
 
 		record := &models.CreateFeedbackRecordRequest{
-			CollectedAt:    &response.SubmittedAt,
-			SourceType:     "typeform",
-			SourceID:       &formID,
-			SourceName:     stringPtr(sourceName),
-			FieldID:        fieldID,
-			FieldLabel:     stringPtr(fieldLabel),
-			FieldType:      mapFieldType(answer.Field.Type, answer.Type),
-			Metadata:       metadataJSON,
-			ResponseID:     &responseID,
+			CollectedAt: &response.SubmittedAt,
+			SourceType:  "typeform",
+			SourceID:    &formID,
+			SourceName:  stringPtr(sourceName),
+			FieldID:     fieldID,
+			FieldLabel:  stringPtr(fieldLabel),
+			FieldType:   mapFieldType(answer.Field.Type, answer.Type),
+			Metadata:    metadataJSON,
+			ResponseID:  &responseID,
 		}
 
 		// Set value based on answer type

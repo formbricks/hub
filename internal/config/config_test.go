@@ -214,3 +214,127 @@ func TestLoadAlwaysReturnsNilError(t *testing.T) {
 		t.Error("Load() config = nil, want non-nil config")
 	}
 }
+
+func TestLoadConnectorInstanceLimits(t *testing.T) {
+	tests := []struct {
+		name              string
+		maxPolling        string
+		maxWebhook        string
+		maxOutput         string
+		maxEnrichment     string
+		wantMaxPolling    int
+		wantMaxWebhook    int
+		wantMaxOutput     int
+		wantMaxEnrichment int
+	}{
+		{
+			name:              "returns default values when not set",
+			maxPolling:        "",
+			maxWebhook:        "",
+			maxOutput:         "",
+			maxEnrichment:     "",
+			wantMaxPolling:    10,
+			wantMaxWebhook:    10,
+			wantMaxOutput:     10,
+			wantMaxEnrichment: 10,
+		},
+		{
+			name:              "returns custom values when set",
+			maxPolling:        "20",
+			maxWebhook:        "15",
+			maxOutput:         "5",
+			maxEnrichment:     "25",
+			wantMaxPolling:    20,
+			wantMaxWebhook:    15,
+			wantMaxOutput:     5,
+			wantMaxEnrichment: 25,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("API_KEY", "test-api-key")
+			if tt.maxPolling != "" {
+				t.Setenv("MAX_POLLING_CONNECTOR_INSTANCES", tt.maxPolling)
+			}
+			if tt.maxWebhook != "" {
+				t.Setenv("MAX_WEBHOOK_CONNECTOR_INSTANCES", tt.maxWebhook)
+			}
+			if tt.maxOutput != "" {
+				t.Setenv("MAX_OUTPUT_CONNECTOR_INSTANCES", tt.maxOutput)
+			}
+			if tt.maxEnrichment != "" {
+				t.Setenv("MAX_ENRICHMENT_CONNECTOR_INSTANCES", tt.maxEnrichment)
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Errorf("Load() error = %v, want nil", err)
+				return
+			}
+
+			if cfg.MaxPollingConnectorInstances != tt.wantMaxPolling {
+				t.Errorf("Load() MaxPollingConnectorInstances = %v, want %v", cfg.MaxPollingConnectorInstances, tt.wantMaxPolling)
+			}
+			if cfg.MaxWebhookConnectorInstances != tt.wantMaxWebhook {
+				t.Errorf("Load() MaxWebhookConnectorInstances = %v, want %v", cfg.MaxWebhookConnectorInstances, tt.wantMaxWebhook)
+			}
+			if cfg.MaxOutputConnectorInstances != tt.wantMaxOutput {
+				t.Errorf("Load() MaxOutputConnectorInstances = %v, want %v", cfg.MaxOutputConnectorInstances, tt.wantMaxOutput)
+			}
+			if cfg.MaxEnrichmentConnectorInstances != tt.wantMaxEnrichment {
+				t.Errorf("Load() MaxEnrichmentConnectorInstances = %v, want %v", cfg.MaxEnrichmentConnectorInstances, tt.wantMaxEnrichment)
+			}
+		})
+	}
+}
+
+func TestLoadRateLimiting(t *testing.T) {
+	tests := []struct {
+		name                string
+		minDelay            string
+		maxPollsPerHour     string
+		wantMinDelay        string
+		wantMaxPollsPerHour int
+	}{
+		{
+			name:                "returns default values when not set",
+			minDelay:            "",
+			maxPollsPerHour:     "",
+			wantMinDelay:        "1m0s",
+			wantMaxPollsPerHour: 60,
+		},
+		{
+			name:                "returns custom values when set",
+			minDelay:            "5m",
+			maxPollsPerHour:     "120",
+			wantMinDelay:        "5m0s",
+			wantMaxPollsPerHour: 120,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("API_KEY", "test-api-key")
+			if tt.minDelay != "" {
+				t.Setenv("POLLING_CONNECTOR_MIN_DELAY", tt.minDelay)
+			}
+			if tt.maxPollsPerHour != "" {
+				t.Setenv("POLLING_CONNECTOR_MAX_POLLS_PER_HOUR", tt.maxPollsPerHour)
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Errorf("Load() error = %v, want nil", err)
+				return
+			}
+
+			if cfg.PollingConnectorMinDelay.String() != tt.wantMinDelay {
+				t.Errorf("Load() PollingConnectorMinDelay = %v, want %v", cfg.PollingConnectorMinDelay, tt.wantMinDelay)
+			}
+			if cfg.PollingConnectorMaxPollsPerHour != tt.wantMaxPollsPerHour {
+				t.Errorf("Load() PollingConnectorMaxPollsPerHour = %v, want %v", cfg.PollingConnectorMaxPollsPerHour, tt.wantMaxPollsPerHour)
+			}
+		})
+	}
+}
