@@ -88,13 +88,20 @@ paths:
                     type: string
                     description: Filter by user identifier. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
-                - name: topic_id
+                - name: theme_id
                   in: query
-                  description: Filter by classified topic ID. Returns feedback records that have been classified into this topic via AI enrichment.
+                  description: Filter by classified theme ID (level 1). Returns feedback records classified into this theme or any of its subtopics.
                   schema:
                     type: string
                     format: uuid
-                    description: Filter by classified topic ID
+                    description: Filter by classified theme ID
+                - name: topic_id
+                  in: query
+                  description: Filter by classified subtopic ID (level 2). Returns feedback records that have been classified into this specific subtopic via AI enrichment.
+                  schema:
+                    type: string
+                    format: uuid
+                    description: Filter by classified subtopic ID
                 - name: since
                   in: query
                   description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
@@ -1446,16 +1453,20 @@ components:
                     type: string
                     description: Text response. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                theme_id:
+                    type: string
+                    format: uuid
+                    description: ID of the theme (level 1 topic) this feedback was classified into. Set when confidence >= 0.30. Null if not yet classified or no matching theme found.
                 topic_id:
                     type: string
                     format: uuid
-                    description: ID of the topic this feedback was classified into (via AI enrichment). Null if not yet classified or no matching topic found.
+                    description: ID of the subtopic (level 2 topic) this feedback was classified into. Only set when confidence >= 0.40. Null if classified to theme only or not yet classified.
                 classification_confidence:
                     type: number
                     format: double
                     minimum: 0
                     maximum: 1
-                    description: Confidence score (0-1) of the AI topic classification. Higher values indicate more confident classification.
+                    description: Confidence score (0-1) of the AI topic classification. Higher values indicate more confident classification. Theme threshold is 0.30, subtopic threshold is 0.40.
             required:
                 - id
                 - collected_at

@@ -21,7 +21,7 @@ type TopicsRepository interface {
 	ExistsByTitleAndParent(ctx context.Context, title string, parentID *uuid.UUID, tenantID *string) (bool, error)
 	ExistsByTitleAndParentExcluding(ctx context.Context, title string, parentID *uuid.UUID, tenantID *string, excludeID uuid.UUID) (bool, error)
 	UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error
-	FindSimilarTopic(ctx context.Context, embedding []float32, tenantID *string, minSimilarity float64) (*models.TopicMatch, error)
+	FindSimilarTopic(ctx context.Context, embedding []float32, tenantID *string, level *int, minSimilarity float64) (*models.TopicMatch, error)
 }
 
 // TopicsService handles business logic for topics

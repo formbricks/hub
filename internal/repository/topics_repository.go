@@ -323,20 +323,21 @@ func (r *TopicsRepository) UpdateEmbedding(ctx context.Context, id uuid.UUID, em
 
 // FindSimilarTopic finds the most similar topic to the given embedding vector.
 // Returns nil if no topics with embeddings exist or similarity is below threshold.
-// The similarity threshold is 0.5 (cosine similarity).
-func (r *TopicsRepository) FindSimilarTopic(ctx context.Context, embedding []float32, tenantID *string, minSimilarity float64) (*models.TopicMatch, error) {
+// If level is provided, only searches topics at that level.
+func (r *TopicsRepository) FindSimilarTopic(ctx context.Context, embedding []float32, tenantID *string, level *int, minSimilarity float64) (*models.TopicMatch, error) {
 	query := `
-		SELECT id, title, 1 - (embedding <=> $1::vector) as similarity
+		SELECT id, title, level, parent_id, 1 - (embedding <=> $1::vector) as similarity
 		FROM topics
 		WHERE embedding IS NOT NULL
 		  AND ($2::varchar IS NULL OR tenant_id = $2)
+		  AND ($3::int IS NULL OR level = $3)
 		ORDER BY similarity DESC
 		LIMIT 1
 	`
 
 	var match models.TopicMatch
-	err := r.db.QueryRow(ctx, query, pgvector.NewVector(embedding), tenantID).Scan(
-		&match.TopicID, &match.Title, &match.Similarity,
+	err := r.db.QueryRow(ctx, query, pgvector.NewVector(embedding), tenantID, level).Scan(
+		&match.TopicID, &match.Title, &match.Level, &match.ParentID, &match.Similarity,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {

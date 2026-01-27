@@ -51,7 +51,9 @@ type ListTopicsResponse struct {
 
 // TopicMatch represents a topic matched by vector similarity search
 type TopicMatch struct {
-	TopicID    uuid.UUID `json:"topic_id"`
-	Title      string    `json:"title"`
-	Similarity float64   `json:"similarity"`
+	TopicID    uuid.UUID  `json:"topic_id"`
+	Title      string     `json:"title"`
+	Level      int        `json:"level"`
+	ParentID   *uuid.UUID `json:"parent_id,omitempty"`
+	Similarity float64    `json:"similarity"`
 }
