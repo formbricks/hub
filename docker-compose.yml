@@ -1,5 +1,8 @@
+# Development infrastructure only - databases and tools
+# Run services locally with: make run (Go API), poetry run uvicorn (Python)
+
 services:
-  # PostgreSQL database with pgvector extension for Hub
+  # PostgreSQL database with pgvector extension
   postgres:
     image: pgvector/pgvector:pg18
     container_name: formbricks_postgres
@@ -20,7 +23,7 @@ services:
       postgres
       -c shared_preload_libraries=vector
 
-  # pgAdmin for database visualization
+  # pgAdmin for database visualization (optional, access at localhost:5050)
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: formbricks_pgadmin
@@ -35,54 +38,6 @@ services:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
       - postgres
-
-  # Hub API - Go API server
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: formbricks_hub_api
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/test_db
-      API_KEY: ${API_KEY}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      TAXONOMY_SERVICE_URL: http://taxonomy-generator:8001
-      TAXONOMY_SCHEDULER_ENABLED: 'true'
-      LOG_LEVEL: info
-    ports:
-      - '8080:8080'
-    depends_on:
-      postgres:
-        condition: service_healthy
-      taxonomy-generator:
-        condition: service_healthy
-    healthcheck:
-      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:8080/health']
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  # Taxonomy Generator - Python microservice for UMAP/HDBSCAN clustering
-  taxonomy-generator:
-    build:
-      context: ./services/taxonomy-generator
-      dockerfile: Dockerfile
-    container_name: formbricks_taxonomy_generator
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/test_db
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      LOG_LEVEL: INFO
-    ports:
-      - '8001:8001'
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ['CMD', 'python', '-c', "import httpx; httpx.get('http://localhost:8001/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
 volumes:
   postgres_data:
