@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/formbricks/hub/internal/embeddings"
+	"github.com/formbricks/hub/internal/jobs"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 )
@@ -26,18 +27,20 @@ type KnowledgeRecordsRepository interface {
 type KnowledgeRecordsService struct {
 	repo            KnowledgeRecordsRepository
 	embeddingClient embeddings.Client // nil if embeddings are disabled
+	jobInserter     jobs.JobInserter  // nil if River is disabled (falls back to goroutines)
 }
 
-// NewKnowledgeRecordsService creates a new knowledge records service
+// NewKnowledgeRecordsService creates a new knowledge records service without embeddings
 func NewKnowledgeRecordsService(repo KnowledgeRecordsRepository) *KnowledgeRecordsService {
 	return &KnowledgeRecordsService{repo: repo}
 }
 
-// NewKnowledgeRecordsServiceWithEmbeddings creates a service with embedding support
-func NewKnowledgeRecordsServiceWithEmbeddings(repo KnowledgeRecordsRepository, embeddingClient embeddings.Client) *KnowledgeRecordsService {
+// NewKnowledgeRecordsServiceWithEmbeddings creates a service with embedding support via River job queue
+func NewKnowledgeRecordsServiceWithEmbeddings(repo KnowledgeRecordsRepository, embeddingClient embeddings.Client, jobInserter jobs.JobInserter) *KnowledgeRecordsService {
 	return &KnowledgeRecordsService{
 		repo:            repo,
 		embeddingClient: embeddingClient,
+		jobInserter:     jobInserter,
 	}
 }
 
@@ -49,18 +52,44 @@ func (s *KnowledgeRecordsService) CreateKnowledgeRecord(ctx context.Context, req
 	}
 
 	// Generate embedding asynchronously if client is configured
-	if s.embeddingClient != nil {
-		go s.generateEmbedding(record.ID, req.Content)
+	if s.embeddingClient != nil && req.Content != "" {
+		s.enqueueEmbeddingJob(ctx, record.ID, req.Content)
 	}
 
 	return record, nil
 }
 
-// generateEmbedding generates and stores embedding for a knowledge record
-func (s *KnowledgeRecordsService) generateEmbedding(id uuid.UUID, content string) {
+// enqueueEmbeddingJob enqueues an embedding job or falls back to sync generation
+func (s *KnowledgeRecordsService) enqueueEmbeddingJob(ctx context.Context, id uuid.UUID, content string) {
+	// If job inserter is available, use River job queue
+	if s.jobInserter != nil {
+		err := s.jobInserter.InsertEmbeddingJob(ctx, jobs.EmbeddingJobArgs{
+			RecordID:   id,
+			RecordType: jobs.RecordTypeKnowledge,
+			Text:       content,
+		})
+		if err != nil {
+			slog.Error("failed to enqueue embedding job",
+				"record_type", "knowledge_record",
+				"id", id,
+				"error", err,
+			)
+			// Don't fail the request - embedding can be backfilled later
+		}
+		return
+	}
+
+	// Fallback to sync generation in a goroutine (legacy behavior for tests or when River is disabled)
+	if s.embeddingClient != nil {
+		go s.generateEmbeddingSync(id, content)
+	}
+}
+
+// generateEmbeddingSync generates and stores embedding synchronously (used as fallback)
+func (s *KnowledgeRecordsService) generateEmbeddingSync(id uuid.UUID, content string) {
 	ctx := context.Background()
 
-	slog.Debug("generating embedding for knowledge record", "id", id, "content_length", len(content))
+	slog.Debug("generating embedding for knowledge record (sync)", "id", id, "content_length", len(content))
 
 	embedding, err := s.embeddingClient.GetEmbedding(ctx, content)
 	if err != nil {
@@ -114,8 +143,8 @@ func (s *KnowledgeRecordsService) UpdateKnowledgeRecord(ctx context.Context, id 
 	}
 
 	// Regenerate embedding if content was updated and client is configured
-	if req.Content != nil && s.embeddingClient != nil {
-		go s.generateEmbedding(id, *req.Content)
+	if req.Content != nil && *req.Content != "" && s.embeddingClient != nil {
+		s.enqueueEmbeddingJob(ctx, id, *req.Content)
 	}
 
 	return record, nil

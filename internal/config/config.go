@@ -15,6 +15,12 @@ type Config struct {
 	APIKey       string
 	LogLevel     string
 	OpenAIAPIKey string // Optional: for AI enrichment features
+
+	// River job queue settings
+	RiverEnabled       bool    // RIVER_ENABLED - enable River job queue (default: true if OpenAI key set)
+	RiverWorkers       int     // RIVER_WORKERS - concurrent embedding workers (default: 10)
+	RiverMaxRetries    int     // RIVER_MAX_RETRIES - max retry attempts (default: 5)
+	EmbeddingRateLimit float64 // EMBEDDING_RATE_LIMIT - OpenAI requests per second (default: 50)
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -38,6 +44,32 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return value
 }
 
+// getEnvAsFloat retrieves an environment variable as a float64 or returns a default value
+func getEnvAsFloat(key string, defaultValue float64) float64 {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := strconv.ParseFloat(valueStr, 64)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+// getEnvAsBool retrieves an environment variable as a bool or returns a default value
+func getEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := strconv.ParseBool(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
 // Load reads configuration from environment variables and returns a Config struct.
 // It automatically loads .env file if it exists.
 // Returns default values for any missing environment variables.
@@ -51,12 +83,24 @@ func Load() (*Config, error) {
 		return nil, errors.New("API_KEY environment variable is required but not set")
 	}
 
+	openAIKey := os.Getenv("OPENAI_API_KEY")
+
+	// River is enabled by default when OpenAI key is set, unless explicitly disabled
+	riverEnabledDefault := openAIKey != ""
+	riverEnabled := getEnvAsBool("RIVER_ENABLED", riverEnabledDefault)
+
 	cfg := &Config{
 		DatabaseURL:  getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:         getEnv("PORT", "8080"),
 		APIKey:       apiKey,
 		LogLevel:     getEnv("LOG_LEVEL", "info"),
-		OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"), // Optional: empty if not configured
+		OpenAIAPIKey: openAIKey,
+
+		// River job queue configuration
+		RiverEnabled:       riverEnabled,
+		RiverWorkers:       getEnvAsInt("RIVER_WORKERS", 10),
+		RiverMaxRetries:    getEnvAsInt("RIVER_MAX_RETRIES", 5),
+		EmbeddingRateLimit: getEnvAsFloat("EMBEDDING_RATE_LIMIT", 50),
 	}
 
 	return cfg, nil

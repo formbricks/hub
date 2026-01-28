@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks backfill-embeddings
 
 # Default target - show help
 help:
@@ -23,6 +23,7 @@ help:
 	@echo "  make docker-clean - Stop Docker containers and remove volumes"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make schemathesis - Run Schemathesis API tests (requires API server running)"
+	@echo "  make backfill-embeddings - Backfill embeddings for existing records"
 
 # Run all tests (integration tests in tests/ directory)
 tests:
@@ -49,7 +50,19 @@ tests-coverage:
 build:
 	@echo "Building API server..."
 	go build -o bin/api cmd/api/main.go
-	@echo "Binary created: bin/api"
+	go build -o bin/backfill cmd/backfill/main.go
+	@echo "Binaries created: bin/api, bin/backfill"
+
+# Backfill embeddings for existing records
+# This enqueues River jobs for all records missing embeddings
+backfill-embeddings:
+	@echo "Backfilling embeddings for existing records..."
+	@if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		go run cmd/backfill/main.go; \
+	else \
+		go run cmd/backfill/main.go; \
+	fi
 
 # Run the API server
 run:

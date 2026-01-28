@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/formbricks/hub/internal/embeddings"
+	"github.com/formbricks/hub/internal/jobs"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 )
@@ -28,18 +29,20 @@ type FeedbackRecordsRepository interface {
 type FeedbackRecordsService struct {
 	repo            FeedbackRecordsRepository
 	embeddingClient embeddings.Client // nil if embeddings are disabled
+	jobInserter     jobs.JobInserter  // nil if River is disabled (falls back to goroutines)
 }
 
-// NewFeedbackRecordsService creates a new feedback records service
+// NewFeedbackRecordsService creates a new feedback records service without embeddings
 func NewFeedbackRecordsService(repo FeedbackRecordsRepository) *FeedbackRecordsService {
 	return &FeedbackRecordsService{repo: repo}
 }
 
-// NewFeedbackRecordsServiceWithEmbeddings creates a service with embedding support
-func NewFeedbackRecordsServiceWithEmbeddings(repo FeedbackRecordsRepository, embeddingClient embeddings.Client) *FeedbackRecordsService {
+// NewFeedbackRecordsServiceWithEmbeddings creates a service with embedding support via River job queue
+func NewFeedbackRecordsServiceWithEmbeddings(repo FeedbackRecordsRepository, embeddingClient embeddings.Client, jobInserter jobs.JobInserter) *FeedbackRecordsService {
 	return &FeedbackRecordsService{
 		repo:            repo,
 		embeddingClient: embeddingClient,
+		jobInserter:     jobInserter,
 	}
 }
 
@@ -50,19 +53,59 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 		return nil, err
 	}
 
-	// Generate embedding for text feedback asynchronously if client is configured
-	if s.embeddingClient != nil && req.FieldType == "text" && req.ValueText != nil && *req.ValueText != "" {
-		go s.generateEmbedding(record.ID, *req.ValueText)
+	// Generate embedding for text feedback asynchronously
+	if s.shouldGenerateEmbedding(req.FieldType, req.ValueText) {
+		s.enqueueEmbeddingJob(ctx, record.ID, *req.ValueText)
 	}
 
 	return record, nil
 }
 
-// generateEmbedding generates and stores embedding for a feedback record
-func (s *FeedbackRecordsService) generateEmbedding(id uuid.UUID, text string) {
+// shouldGenerateEmbedding checks if embedding should be generated for the given field
+func (s *FeedbackRecordsService) shouldGenerateEmbedding(fieldType string, valueText *string) bool {
+	if s.embeddingClient == nil {
+		return false
+	}
+	if fieldType != "text" {
+		return false
+	}
+	if valueText == nil || *valueText == "" {
+		return false
+	}
+	return true
+}
+
+// enqueueEmbeddingJob enqueues an embedding job or falls back to sync generation
+func (s *FeedbackRecordsService) enqueueEmbeddingJob(ctx context.Context, id uuid.UUID, text string) {
+	// If job inserter is available, use River job queue
+	if s.jobInserter != nil {
+		err := s.jobInserter.InsertEmbeddingJob(ctx, jobs.EmbeddingJobArgs{
+			RecordID:   id,
+			RecordType: jobs.RecordTypeFeedback,
+			Text:       text,
+		})
+		if err != nil {
+			slog.Error("failed to enqueue embedding job",
+				"record_type", "feedback_record",
+				"id", id,
+				"error", err,
+			)
+			// Don't fail the request - embedding can be backfilled later
+		}
+		return
+	}
+
+	// Fallback to sync generation in a goroutine (legacy behavior for tests or when River is disabled)
+	if s.embeddingClient != nil {
+		go s.generateEmbeddingSync(id, text)
+	}
+}
+
+// generateEmbeddingSync generates and stores embedding synchronously (used as fallback)
+func (s *FeedbackRecordsService) generateEmbeddingSync(id uuid.UUID, text string) {
 	ctx := context.Background()
 
-	slog.Debug("generating embedding for feedback", "id", id, "text_length", len(text))
+	slog.Debug("generating embedding for feedback (sync)", "id", id, "text_length", len(text))
 
 	embedding, err := s.embeddingClient.GetEmbedding(ctx, text)
 	if err != nil {
@@ -175,11 +218,9 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 		return nil, err
 	}
 
-	// Regenerate embedding if text was updated and client is configured
-	if s.embeddingClient != nil && req.ValueText != nil && *req.ValueText != "" {
-		if record.FieldType == "text" {
-			go s.generateEmbedding(id, *req.ValueText)
-		}
+	// Regenerate embedding if text was updated
+	if record.FieldType == "text" && s.shouldGenerateEmbedding(record.FieldType, req.ValueText) {
+		s.enqueueEmbeddingJob(ctx, id, *req.ValueText)
 	}
 
 	return record, nil

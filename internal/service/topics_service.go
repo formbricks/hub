@@ -6,6 +6,7 @@ import (
 
 	"github.com/formbricks/hub/internal/embeddings"
 	apperrors "github.com/formbricks/hub/internal/errors"
+	"github.com/formbricks/hub/internal/jobs"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 )
@@ -29,18 +30,20 @@ type TopicsRepository interface {
 type TopicsService struct {
 	repo            TopicsRepository
 	embeddingClient embeddings.Client // nil if embeddings are disabled
+	jobInserter     jobs.JobInserter  // nil if River is disabled (falls back to goroutines)
 }
 
-// NewTopicsService creates a new topics service
+// NewTopicsService creates a new topics service without embeddings
 func NewTopicsService(repo TopicsRepository) *TopicsService {
 	return &TopicsService{repo: repo}
 }
 
-// NewTopicsServiceWithEmbeddings creates a service with embedding support
-func NewTopicsServiceWithEmbeddings(repo TopicsRepository, embeddingClient embeddings.Client) *TopicsService {
+// NewTopicsServiceWithEmbeddings creates a service with embedding support via River job queue
+func NewTopicsServiceWithEmbeddings(repo TopicsRepository, embeddingClient embeddings.Client, jobInserter jobs.JobInserter) *TopicsService {
 	return &TopicsService{
 		repo:            repo,
 		embeddingClient: embeddingClient,
+		jobInserter:     jobInserter,
 	}
 }
 
@@ -91,20 +94,46 @@ func (s *TopicsService) CreateTopic(ctx context.Context, req *models.CreateTopic
 	}
 
 	// Generate embedding asynchronously if client is configured
-	// Use hierarchical path (e.g., "Performance > API") for better context
+	// Build hierarchy path synchronously (it's fast, just 1-2 DB reads) then enqueue job
 	if s.embeddingClient != nil {
 		hierarchyPath := s.buildHierarchyPath(ctx, req.Title, req.ParentID)
-		go s.generateEmbedding(topic.ID, hierarchyPath)
+		s.enqueueEmbeddingJob(ctx, topic.ID, hierarchyPath)
 	}
 
 	return topic, nil
 }
 
-// generateEmbedding generates and stores embedding for a topic using its hierarchical path
-func (s *TopicsService) generateEmbedding(id uuid.UUID, hierarchyPath string) {
+// enqueueEmbeddingJob enqueues an embedding job or falls back to sync generation
+func (s *TopicsService) enqueueEmbeddingJob(ctx context.Context, id uuid.UUID, hierarchyPath string) {
+	// If job inserter is available, use River job queue
+	if s.jobInserter != nil {
+		err := s.jobInserter.InsertEmbeddingJob(ctx, jobs.EmbeddingJobArgs{
+			RecordID:   id,
+			RecordType: jobs.RecordTypeTopic,
+			Text:       hierarchyPath,
+		})
+		if err != nil {
+			slog.Error("failed to enqueue embedding job",
+				"record_type", "topic",
+				"id", id,
+				"error", err,
+			)
+			// Don't fail the request - embedding can be backfilled later
+		}
+		return
+	}
+
+	// Fallback to sync generation in a goroutine (legacy behavior for tests or when River is disabled)
+	if s.embeddingClient != nil {
+		go s.generateEmbeddingSync(id, hierarchyPath)
+	}
+}
+
+// generateEmbeddingSync generates and stores embedding synchronously (used as fallback)
+func (s *TopicsService) generateEmbeddingSync(id uuid.UUID, hierarchyPath string) {
 	ctx := context.Background()
 
-	slog.Debug("generating embedding for topic", "id", id, "path", hierarchyPath)
+	slog.Debug("generating embedding for topic (sync)", "id", id, "path", hierarchyPath)
 
 	embedding, err := s.embeddingClient.GetEmbedding(ctx, hierarchyPath)
 	if err != nil {
@@ -206,10 +235,10 @@ func (s *TopicsService) UpdateTopic(ctx context.Context, id uuid.UUID, req *mode
 	}
 
 	// Regenerate embedding if title was updated and client is configured
-	// Use hierarchical path (e.g., "Performance > API") for better context
+	// Build hierarchy path synchronously then enqueue job
 	if req.Title != nil && s.embeddingClient != nil {
 		hierarchyPath := s.buildHierarchyPath(ctx, topic.Title, topic.ParentID)
-		go s.generateEmbedding(id, hierarchyPath)
+		s.enqueueEmbeddingJob(ctx, id, hierarchyPath)
 	}
 
 	return topic, nil

@@ -14,9 +14,15 @@ import (
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/embeddings"
+	"github.com/formbricks/hub/internal/jobs"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/pkg/database"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"golang.org/x/time/rate"
 )
 
 func main() {
@@ -49,32 +55,51 @@ func main() {
 		slog.Info("AI enrichment disabled (OPENAI_API_KEY not set)")
 	}
 
-	// Initialize repository, service, and handler layers
-	// Topics repo is initialized first as it's used for feedback classification
+	// Initialize repositories
 	topicsRepo := repository.NewTopicsRepository(db)
+	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	knowledgeRecordsRepo := repository.NewKnowledgeRecordsRepository(db)
+
+	// Initialize River job queue if enabled and embedding client is configured
+	var riverClient *river.Client[pgx.Tx]
+	var jobInserter jobs.JobInserter
+	if cfg.RiverEnabled && embeddingClient != nil {
+		var err error
+		riverClient, err = initRiver(ctx, db, cfg, embeddingClient, feedbackRecordsRepo, topicsRepo, knowledgeRecordsRepo)
+		if err != nil {
+			slog.Error("Failed to initialize River job queue", "error", err)
+			os.Exit(1)
+		}
+		jobInserter = jobs.NewRiverJobInserter(riverClient)
+		slog.Info("River job queue enabled",
+			"workers", cfg.RiverWorkers,
+			"max_retries", cfg.RiverMaxRetries,
+			"rate_limit", cfg.EmbeddingRateLimit,
+		)
+	} else if cfg.OpenAIAPIKey != "" && !cfg.RiverEnabled {
+		slog.Info("River job queue disabled (RIVER_ENABLED=false), using legacy goroutines")
+	}
+
+	// Initialize services with optional job inserter
 	var topicsService *service.TopicsService
 	if embeddingClient != nil {
-		topicsService = service.NewTopicsServiceWithEmbeddings(topicsRepo, embeddingClient)
+		topicsService = service.NewTopicsServiceWithEmbeddings(topicsRepo, embeddingClient, jobInserter)
 	} else {
 		topicsService = service.NewTopicsService(topicsRepo)
 	}
 	topicsHandler := handlers.NewTopicsHandler(topicsService)
 
-	// Feedback records service with optional embedding support
-	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	var feedbackRecordsService *service.FeedbackRecordsService
 	if embeddingClient != nil {
-		// Enable embedding generation (topic similarity search is handled via optimized SQL query)
-		feedbackRecordsService = service.NewFeedbackRecordsServiceWithEmbeddings(feedbackRecordsRepo, embeddingClient)
+		feedbackRecordsService = service.NewFeedbackRecordsServiceWithEmbeddings(feedbackRecordsRepo, embeddingClient, jobInserter)
 	} else {
 		feedbackRecordsService = service.NewFeedbackRecordsService(feedbackRecordsRepo)
 	}
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 
-	knowledgeRecordsRepo := repository.NewKnowledgeRecordsRepository(db)
 	var knowledgeRecordsService *service.KnowledgeRecordsService
 	if embeddingClient != nil {
-		knowledgeRecordsService = service.NewKnowledgeRecordsServiceWithEmbeddings(knowledgeRecordsRepo, embeddingClient)
+		knowledgeRecordsService = service.NewKnowledgeRecordsServiceWithEmbeddings(knowledgeRecordsRepo, embeddingClient, jobInserter)
 	} else {
 		knowledgeRecordsService = service.NewKnowledgeRecordsService(knowledgeRecordsRepo)
 	}
@@ -152,12 +177,21 @@ func main() {
 
 	slog.Info("Shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	// 1. Stop accepting new HTTP requests
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
-		os.Exit(1)
+	}
+
+	// 2. Stop River (waits for in-flight jobs to complete)
+	if riverClient != nil {
+		slog.Info("Stopping River job queue...")
+		if err := riverClient.Stop(shutdownCtx); err != nil {
+			slog.Error("River forced to shutdown", "error", err)
+		}
+		slog.Info("River job queue stopped")
 	}
 
 	slog.Info("Server exited")
@@ -185,4 +219,52 @@ func setupLogging(level string) {
 
 	handler := slog.NewTextHandler(os.Stdout, opts)
 	slog.SetDefault(slog.New(handler))
+}
+
+// initRiver initializes the River job queue client and workers
+func initRiver(
+	ctx context.Context,
+	db *pgxpool.Pool,
+	cfg *config.Config,
+	embeddingClient embeddings.Client,
+	feedbackRepo *repository.FeedbackRecordsRepository,
+	topicsRepo *repository.TopicsRepository,
+	knowledgeRepo *repository.KnowledgeRecordsRepository,
+) (*river.Client[pgx.Tx], error) {
+	// Create rate limiter for OpenAI API calls
+	rateLimiter := rate.NewLimiter(rate.Limit(cfg.EmbeddingRateLimit), 1)
+
+	// Create embedding worker with dependencies
+	embeddingWorker := jobs.NewEmbeddingWorker(jobs.EmbeddingWorkerDeps{
+		EmbeddingClient:  embeddingClient,
+		FeedbackUpdater:  jobs.NewFeedbackRecordsUpdater(feedbackRepo),
+		TopicUpdater:     jobs.NewTopicsUpdater(topicsRepo),
+		KnowledgeUpdater: jobs.NewKnowledgeRecordsUpdater(knowledgeRepo),
+		RateLimiter:      rateLimiter,
+	})
+
+	// Register workers
+	workers := river.NewWorkers()
+	river.AddWorker(workers, embeddingWorker)
+
+	// Create River client
+	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
+		Queues: map[string]river.QueueConfig{
+			river.QueueDefault: {MaxWorkers: cfg.RiverWorkers},
+		},
+		Workers:      workers,
+		ErrorHandler: &jobs.ErrorHandler{},
+		JobTimeout:   60 * time.Second, // Timeout for individual jobs
+		MaxAttempts:  cfg.RiverMaxRetries,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Start River (begins processing jobs)
+	if err := riverClient.Start(ctx); err != nil {
+		return nil, err
+	}
+
+	return riverClient, nil
 }
