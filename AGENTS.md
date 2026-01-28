@@ -2,9 +2,10 @@
 
 ## Project Structure & Module Organization
 - `cmd/api/` holds the API server entrypoint (`main.go`).
-- `internal/` contains core application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, and `config`.
+- `internal/` contains core application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, `worker`, and `config`.
 - `pkg/` provides shared utilities (currently `pkg/database`).
 - `sql/` stores SQL schema files (e.g., `sql/001_initial_schema.sql`).
+- `services/` contains microservices (e.g., `services/taxonomy-generator/` Python service).
 - `tests/` contains integration tests.
 
 ## Build, Test, and Development Commands
@@ -36,3 +37,20 @@
 ## Security & Configuration Tips
 - Configure `API_KEY` and `DATABASE_URL` via `.env` or environment variables.
 - Do not commit `.env` or secrets; use `.env.example` as the base.
+
+## Taxonomy Service Architecture
+The taxonomy feature uses a Python microservice for ML clustering:
+
+- **Go API** triggers jobs via HTTP to the taxonomy-generator service
+- **Python service** writes results directly to Postgres (topics table, feedback_records.topic_id)
+- **TaxonomyScheduler** (`internal/worker/`) polls for scheduled jobs and tracks completion
+- Config: `TAXONOMY_SERVICE_URL`, `TAXONOMY_SCHEDULER_ENABLED`, `TAXONOMY_POLL_INTERVAL`
+
+To run the taxonomy service:
+```bash
+cd services/taxonomy-generator
+pip install -r requirements.txt
+uvicorn src.main:app --port 8001
+```
+
+Key endpoints: `POST /v1/taxonomy/{tenant_id}/generate`, `GET /v1/taxonomy/{tenant_id}/status`
