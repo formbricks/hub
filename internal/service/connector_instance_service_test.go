@@ -134,6 +134,10 @@ func TestConnectorInstanceService_CreateConnectorInstance(t *testing.T) {
 	})
 
 	t.Run("fails when limit exceeded", func(t *testing.T) {
+		// Reset mock to clear expectations from previous test case
+		mockRepo.ExpectedCalls = nil
+		mockRepo.Calls = nil
+
 		configJSON := json.RawMessage(`{"api_key": "test-key"}`)
 		req := &models.CreateConnectorInstanceRequest{
 			Name:       "formbricks",
