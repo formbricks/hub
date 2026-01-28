@@ -17,6 +17,7 @@ import (
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/pkg/database"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,6 +36,9 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	// Initialize database connection
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	require.NoError(t, err, "Failed to connect to database")
+
+	// Clean up database before each test
+	CleanupTestData(t)
 
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
@@ -960,9 +964,27 @@ func TestCreateTopicWithLevel(t *testing.T) {
 	})
 
 	t.Run("Create Level 2 topic", func(t *testing.T) {
+		// First create a parent topic
+		parentBody := map[string]interface{}{
+			"title":     "Parent for Level 2",
+			"level":     1,
+			"tenant_id": "level-test-tenant",
+		}
+		pBody, _ := json.Marshal(parentBody)
+		pReq, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(pBody))
+		pReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+		pReq.Header.Set("Content-Type", "application/json")
+		pResp, err := client.Do(pReq)
+		require.NoError(t, err)
+		defer func() { _ = pResp.Body.Close() }()
+		var parent models.Topic
+		err = decodeData(pResp, &parent)
+		require.NoError(t, err)
+
 		reqBody := map[string]interface{}{
 			"title":     "Level 2 Test Topic",
 			"level":     2,
+			"parent_id": parent.ID,
 			"tenant_id": "level-test-tenant",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -983,6 +1005,8 @@ func TestCreateTopicWithLevel(t *testing.T) {
 
 		assert.Equal(t, "Level 2 Test Topic", result.Title)
 		assert.Equal(t, 2, result.Level)
+		assert.NotNil(t, result.ParentID)
+		assert.Equal(t, parent.ID, *result.ParentID)
 	})
 
 	t.Run("Create topic with invalid level returns 400", func(t *testing.T) {
@@ -1051,9 +1075,27 @@ func TestTopicTitleUniqueness(t *testing.T) {
 
 	t.Run("Create same title at different level succeeds", func(t *testing.T) {
 		// Create Level 2 topic with same title as first Level 1 topic
+		// Need a parent for the Level 2 topic
+		parentReq := map[string]interface{}{
+			"title":     "Another Parent",
+			"level":     1,
+			"tenant_id": "uniqueness-test-tenant",
+		}
+		pBody, _ := json.Marshal(parentReq)
+		pReq, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(pBody))
+		pReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+		pReq.Header.Set("Content-Type", "application/json")
+		pResp, err := client.Do(pReq)
+		require.NoError(t, err)
+		defer func() { _ = pResp.Body.Close() }()
+		var parent models.Topic
+		err = decodeData(pResp, &parent)
+		require.NoError(t, err)
+
 		level2Req := map[string]interface{}{
 			"title":     "Unique Title L1", // Same title as first topic, but different level
 			"level":     2,
+			"parent_id": parent.ID,
 			"tenant_id": "uniqueness-test-tenant",
 		}
 		body, _ := json.Marshal(level2Req)
@@ -1368,25 +1410,58 @@ func TestDeleteTopicIndependently(t *testing.T) {
 	err = decodeData(level2Resp, &level2Topic)
 	require.NoError(t, err)
 
-	t.Run("Delete Level 1 topic does not affect Level 2 topics", func(t *testing.T) {
-		// Delete Level 1 topic
-		req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/topics/%s", server.URL, level1Topic.ID), nil)
+	t.Run("Delete Level 1 topic deletes its Level 2 children", func(t *testing.T) {
+		// Create Level 1 topic
+		level1Req := map[string]interface{}{
+			"title":     "Unique L1 to Delete " + uuid.New().String(),
+			"level":     1,
+			"tenant_id": "delete-test-tenant",
+		}
+		body, _ := json.Marshal(level1Req)
+		req, _ := http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+		level1Resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = level1Resp.Body.Close() }()
+		assert.Equal(t, http.StatusCreated, level1Resp.StatusCode)
+		var level1Topic models.Topic
+		err = decodeData(level1Resp, &level1Topic)
+		require.NoError(t, err)
+		assert.NotEqual(t, uuid.Nil, level1Topic.ID)
 
+		// Create Level 2 topic
+		level2Req := map[string]interface{}{
+			"title":     "Level 2 Child",
+			"level":     2,
+			"parent_id": level1Topic.ID,
+			"tenant_id": "delete-test-tenant",
+		}
+		body, _ = json.Marshal(level2Req)
+		req, _ = http.NewRequest("POST", server.URL+"/v1/topics", bytes.NewBuffer(body))
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+		level2Resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = level2Resp.Body.Close() }()
+		var level2Topic models.Topic
+		err = decodeData(level2Resp, &level2Topic)
+		require.NoError(t, err)
+
+		// Delete Level 1 topic
+		req, _ = http.NewRequest("DELETE", fmt.Sprintf("%s/v1/topics/%s", server.URL, level1Topic.ID), nil)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
-
 		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 
-		// Verify Level 2 topic still exists (no cascade)
+		// Verify Level 2 topic is also deleted (cascade)
 		req, _ = http.NewRequest("GET", fmt.Sprintf("%s/v1/topics/%s", server.URL, level2Topic.ID), nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
-
 		resp, err = client.Do(req)
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 }
