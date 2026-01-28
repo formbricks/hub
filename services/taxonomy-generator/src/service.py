@@ -41,7 +41,7 @@ class TaxonomyService:
         3. Cluster with HDBSCAN
         4. Label clusters with GPT-4o
         5. Save topics to database
-        6. Optionally generate Level 2 topics for dense clusters
+        6. Recursively generate sub-topics up to max_levels
 
         Args:
             tenant_id: Tenant ID to generate taxonomy for
@@ -54,7 +54,12 @@ class TaxonomyService:
         job_id = uuid4()
         started_at = datetime.utcnow()
 
-        logger.info("Starting taxonomy generation", tenant_id=tenant_id, job_id=str(job_id))
+        logger.info(
+            "Starting taxonomy generation",
+            tenant_id=tenant_id,
+            job_id=str(job_id),
+            max_levels=config.max_levels,
+        )
 
         try:
             # 1. Clear existing topics for this tenant
@@ -81,96 +86,27 @@ class TaxonomyService:
                     completed_at=datetime.utcnow(),
                 )
 
-            # 3. UMAP dimensionality reduction
-            reducer = UMAPReducer(
-                n_components=config.umap_n_components,
-                n_neighbors=config.umap_n_neighbors,
-                min_dist=config.umap_min_dist,
+            # 3. Generate topics recursively starting at level 1
+            topics = await self._cluster_recursive(
+                tenant_id=tenant_id,
+                record_ids=record_ids,
+                embeddings=embeddings,
+                texts=texts,
+                parent_id=None,
+                parent_title=None,
+                ancestor_titles=[],
+                current_level=1,
+                config=config,
             )
-            reduced_embeddings = reducer.fit_transform(embeddings)
-
-            # 4. HDBSCAN clustering
-            clusterer = HDBSCANClusterer(
-                min_cluster_size=config.hdbscan_min_cluster_size,
-                min_samples=config.hdbscan_min_samples,
-            )
-            clustering_result = clusterer.fit_predict(reduced_embeddings, record_ids, texts)
-
-            # 5. Label each cluster and save as Level 1 topic
-            topics: list[TopicResult] = []
-
-            for cluster in clustering_result.clusters:
-                # Get representative samples
-                closest = clusterer.get_closest_to_centroid(
-                    cluster, reduced_embeddings, n=settings.centroid_sample_size
-                )
-                representative_texts = [text for _, text, _ in closest]
-
-                # Generate label with GPT-4o
-                label = await self.labeler.label_cluster(
-                    representative_texts=representative_texts,
-                    cluster_size=cluster.size,
-                )
-
-                # Generate embedding for the topic title
-                topic_embedding = await self.labeler.generate_embedding(label.title)
-
-                # Save to database
-                topic_id = await save_topic(
-                    tenant_id=tenant_id,
-                    title=label.title,
-                    description=label.description,
-                    level=1,
-                    parent_id=None,
-                    embedding=np.array(topic_embedding, dtype=np.float32),
-                )
-
-                # Update feedback records with topic classification
-                for member_id in cluster.member_ids:
-                    # Find the distance for this member (approximate confidence)
-                    confidence = 1.0 - min(cluster.avg_distance_to_centroid, 1.0)
-                    await update_feedback_topic(member_id, topic_id, confidence)
-
-                topics.append(
-                    TopicResult(
-                        id=topic_id,
-                        title=label.title,
-                        description=label.description,
-                        level=1,
-                        parent_id=None,
-                        cluster_size=cluster.size,
-                        avg_distance_to_centroid=cluster.avg_distance_to_centroid,
-                    )
-                )
-
-                logger.info(
-                    "Created Level 1 topic",
-                    topic_id=str(topic_id),
-                    title=label.title,
-                    cluster_size=cluster.size,
-                )
-
-                # 6. Optionally generate Level 2 topics for dense clusters
-                if config.generate_level2 and cluster.size >= config.level2_min_cluster_size:
-                    level2_topics = await self._generate_level2_topics(
-                        tenant_id=tenant_id,
-                        parent_topic_id=topic_id,
-                        parent_title=label.title,
-                        cluster=cluster,
-                        embeddings=embeddings,  # Original high-dim embeddings
-                        texts=texts,
-                        config=config,
-                    )
-                    topics.extend(level2_topics)
 
             result = ClusterResult(
                 tenant_id=tenant_id,
                 job_id=job_id,
                 status=ClusteringJobStatus.COMPLETED,
                 total_records=len(record_ids),
-                clustered_records=len(record_ids) - len(clustering_result.noise_ids),
-                noise_records=len(clustering_result.noise_ids),
-                num_clusters=len(clustering_result.clusters),
+                clustered_records=len(record_ids),  # Updated by recursive process
+                noise_records=0,
+                num_clusters=len([t for t in topics if t.level == 1]),
                 topics=topics,
                 started_at=started_at,
                 completed_at=datetime.utcnow(),
@@ -181,6 +117,10 @@ class TaxonomyService:
                 tenant_id=tenant_id,
                 job_id=str(job_id),
                 num_topics=len(topics),
+                level_counts={
+                    level: len([t for t in topics if t.level == level])
+                    for level in range(1, config.max_levels + 1)
+                },
                 duration_seconds=(datetime.utcnow() - started_at).total_seconds(),
             )
 
@@ -207,67 +147,118 @@ class TaxonomyService:
                 error_message=str(e),
             )
 
-    async def _generate_level2_topics(
+    async def _cluster_recursive(
         self,
         tenant_id: str,
-        parent_topic_id: UUID,
-        parent_title: str,
-        cluster: "Cluster",  # type: ignore[name-defined]
+        record_ids: list[str],
         embeddings: np.ndarray,
         texts: list[str],
+        parent_id: UUID | None,
+        parent_title: str | None,
+        ancestor_titles: list[str],
+        current_level: int,
         config: ClusterConfig,
     ) -> list[TopicResult]:
         """
-        Generate Level 2 sub-topics for a dense cluster.
+        Recursively cluster feedback into hierarchical topics.
 
-        Re-runs UMAP + HDBSCAN on just the cluster members.
+        Args:
+            tenant_id: Tenant ID
+            record_ids: List of feedback record IDs
+            embeddings: Original high-dimensional embeddings
+            texts: Feedback text content
+            parent_id: Parent topic ID (None for Level 1)
+            parent_title: Parent topic title (None for Level 1)
+            ancestor_titles: List of ancestor titles from root to parent
+            current_level: Current level being generated (1-based)
+            config: Clustering configuration
+
+        Returns:
+            List of generated topics at this level and all child levels
         """
-        logger.info(
-            "Generating Level 2 topics",
-            parent_title=parent_title,
-            cluster_size=cluster.size,
-        )
-
-        # Extract just this cluster's embeddings
-        cluster_embeddings = embeddings[cluster.member_indices]
-        cluster_texts = cluster.member_texts
-        cluster_ids = cluster.member_ids
-
-        # Need at least min_cluster_size * 2 for meaningful subdivision
-        if len(cluster_ids) < (config.hdbscan_min_cluster_size or 50) * 2:
+        # Stop if we've reached max depth or not enough data
+        if current_level > config.max_levels:
             return []
 
-        # Re-run UMAP on this subset
+        if len(record_ids) < 5:
+            return []
+
+        logger.info(
+            f"Clustering at level {current_level}",
+            parent_title=parent_title,
+            num_records=len(record_ids),
+        )
+
+        # Get level-specific HDBSCAN settings
+        min_cluster_size = config.get_hdbscan_min_cluster_size_for_level(current_level)
+        min_samples = max(min_cluster_size // 5, 3)
+
+        # Adjust UMAP parameters for smaller datasets at deeper levels
+        n_neighbors = min(
+            config.umap_n_neighbors or 15,
+            max(len(record_ids) - 1, 2),
+        )
+        n_components = min(
+            config.umap_n_components or 10,
+            max(5, 12 - current_level * 2),  # Fewer dims at deeper levels
+        )
+
+        # UMAP dimensionality reduction
         reducer = UMAPReducer(
-            n_components=min(config.umap_n_components or 10, 5),  # Fewer dims for Level 2
-            n_neighbors=min(config.umap_n_neighbors or 15, len(cluster_ids) - 1),
+            n_components=n_components,
+            n_neighbors=n_neighbors,
+            min_dist=config.umap_min_dist or 0.1,
         )
-        reduced = reducer.fit_transform(cluster_embeddings)
 
-        # Re-run HDBSCAN with smaller min_cluster_size
-        sub_clusterer = HDBSCANClusterer(
-            min_cluster_size=max((config.hdbscan_min_cluster_size or 50) // 2, 10),
-            min_samples=max((config.hdbscan_min_samples or 10) // 2, 5),
+        try:
+            reduced_embeddings = reducer.fit_transform(embeddings)
+        except Exception as e:
+            logger.warning(
+                f"UMAP failed at level {current_level}",
+                error=str(e),
+                num_records=len(record_ids),
+            )
+            return []
+
+        # HDBSCAN clustering
+        clusterer = HDBSCANClusterer(
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
         )
-        sub_result = sub_clusterer.fit_predict(reduced, cluster_ids, cluster_texts)
 
-        level2_topics: list[TopicResult] = []
+        try:
+            clustering_result = clusterer.fit_predict(reduced_embeddings, record_ids, texts)
+        except Exception as e:
+            logger.warning(
+                f"HDBSCAN failed at level {current_level}",
+                error=str(e),
+                num_records=len(record_ids),
+            )
+            return []
 
-        for sub_cluster in sub_result.clusters:
-            # Get representative samples
-            closest = sub_clusterer.get_closest_to_centroid(
-                sub_cluster, reduced, n=settings.centroid_sample_size
+        if len(clustering_result.clusters) == 0:
+            logger.info(f"No clusters found at level {current_level}")
+            return []
+
+        topics: list[TopicResult] = []
+
+        for cluster in clustering_result.clusters:
+            # Get representative samples for labeling
+            closest = clusterer.get_closest_to_centroid(
+                cluster, reduced_embeddings, n=settings.centroid_sample_size
             )
             representative_texts = [text for _, text, _ in closest]
 
-            # Generate label
+            # Generate label with GPT-4o
             label = await self.labeler.label_cluster(
                 representative_texts=representative_texts,
-                cluster_size=sub_cluster.size,
+                cluster_size=cluster.size,
                 parent_title=parent_title,
+                level=current_level,
+                ancestor_titles=ancestor_titles if ancestor_titles else None,
             )
 
-            # Generate embedding
+            # Generate embedding for the topic title
             topic_embedding = await self.labeler.generate_embedding(label.title)
 
             # Save to database
@@ -275,34 +266,60 @@ class TaxonomyService:
                 tenant_id=tenant_id,
                 title=label.title,
                 description=label.description,
-                level=2,
-                parent_id=parent_topic_id,
+                level=current_level,
+                parent_id=parent_id,
                 embedding=np.array(topic_embedding, dtype=np.float32),
             )
 
-            # Update feedback records
-            for member_id in sub_cluster.member_ids:
-                confidence = 1.0 - min(sub_cluster.avg_distance_to_centroid, 1.0)
+            # Update feedback records with topic classification
+            for member_id in cluster.member_ids:
+                confidence = 1.0 - min(cluster.avg_distance_to_centroid, 1.0)
                 await update_feedback_topic(member_id, topic_id, confidence)
 
-            level2_topics.append(
-                TopicResult(
-                    id=topic_id,
-                    title=label.title,
-                    description=label.description,
-                    level=2,
-                    parent_id=parent_topic_id,
-                    cluster_size=sub_cluster.size,
-                    avg_distance_to_centroid=sub_cluster.avg_distance_to_centroid,
-                )
+            topic_result = TopicResult(
+                id=topic_id,
+                title=label.title,
+                description=label.description,
+                level=current_level,
+                parent_id=parent_id,
+                cluster_size=cluster.size,
+                avg_distance_to_centroid=cluster.avg_distance_to_centroid,
             )
+            topics.append(topic_result)
 
             logger.info(
-                "Created Level 2 topic",
+                f"Created Level {current_level} topic",
                 topic_id=str(topic_id),
                 title=label.title,
                 parent_title=parent_title,
-                cluster_size=sub_cluster.size,
+                cluster_size=cluster.size,
             )
 
-        return level2_topics
+            # Recursively create child topics if cluster is large enough
+            min_size_for_children = config.get_min_cluster_size_for_level(current_level)
+            if (
+                current_level < config.max_levels
+                and cluster.size >= min_size_for_children
+            ):
+                # Extract this cluster's data for sub-clustering
+                cluster_embeddings = embeddings[cluster.member_indices]
+                cluster_texts = cluster.member_texts
+                cluster_ids = cluster.member_ids
+
+                # Build ancestor chain for context
+                new_ancestors = ancestor_titles + [parent_title] if parent_title else []
+
+                child_topics = await self._cluster_recursive(
+                    tenant_id=tenant_id,
+                    record_ids=cluster_ids,
+                    embeddings=cluster_embeddings,
+                    texts=cluster_texts,
+                    parent_id=topic_id,
+                    parent_title=label.title,
+                    ancestor_titles=new_ancestors,
+                    current_level=current_level + 1,
+                    config=config,
+                )
+                topics.extend(child_topics)
+
+        return topics

@@ -29,11 +29,41 @@ class ClusterConfig(BaseModel):
     # Limit on embeddings to process
     max_embeddings: int | None = Field(None, ge=100, le=500000)
 
-    # Whether to generate Level 2 topics for dense clusters
-    generate_level2: bool = True
+    # Maximum depth of taxonomy hierarchy (1-4)
+    max_levels: int = Field(default=4, ge=1, le=10)
 
-    # Minimum cluster size to consider for Level 2 subdivision
+    # Minimum cluster sizes per level for subdivision
+    # Key: level number, Value: minimum cluster size to create sub-topics
+    level_min_cluster_sizes: dict[int, int] = Field(
+        default_factory=lambda: {
+            1: 100,  # Level 1: need 100+ items to create L2 children
+            2: 50,   # Level 2: need 50+ items to create L3 children
+            3: 25,   # Level 3: need 25+ items to create L4 children
+            4: 15,   # Level 4: terminal level (no children)
+        }
+    )
+
+    # HDBSCAN min_cluster_size per level (smaller clusters at deeper levels)
+    level_hdbscan_min_cluster_sizes: dict[int, int] = Field(
+        default_factory=lambda: {
+            1: 50,   # Level 1: larger clusters
+            2: 25,   # Level 2: medium clusters
+            3: 15,   # Level 3: smaller clusters
+            4: 10,   # Level 4: smallest clusters
+        }
+    )
+
+    # DEPRECATED: kept for backwards compatibility
+    generate_level2: bool = True
     level2_min_cluster_size: int = 50
+
+    def get_min_cluster_size_for_level(self, level: int) -> int:
+        """Get the minimum cluster size required to subdivide at this level."""
+        return self.level_min_cluster_sizes.get(level, 25)
+
+    def get_hdbscan_min_cluster_size_for_level(self, level: int) -> int:
+        """Get the HDBSCAN min_cluster_size for clustering at this level."""
+        return self.level_hdbscan_min_cluster_sizes.get(level, 10)
 
 
 class ClusteringJobStatus(str, Enum):

@@ -37,6 +37,8 @@ class OpenAILabeler:
         representative_texts: list[str],
         cluster_size: int,
         parent_title: str | None = None,
+        level: int = 1,
+        ancestor_titles: list[str] | None = None,
     ) -> TopicLabel:
         """
         Generate a title and description for a cluster.
@@ -44,17 +46,43 @@ class OpenAILabeler:
         Args:
             representative_texts: 10 texts closest to centroid
             cluster_size: Total number of items in cluster
-            parent_title: If generating Level 2, the parent topic title
+            parent_title: If generating sub-level, the parent topic title
+            level: The level being generated (1, 2, 3, 4, etc.)
+            ancestor_titles: List of all ancestor titles from root to parent
 
         Returns:
             TopicLabel with title and description
         """
-        # Build the prompt
-        if parent_title:
-            context = f"""You are categorizing user feedback within the broader category "{parent_title}".
-This is a sub-category (Level 2) topic."""
+        # Build level-specific context
+        level_descriptions = {
+            1: "broad categories",
+            2: "sub-categories",
+            3: "specific themes",
+            4: "detailed sub-themes",
+            5: "granular topics",
+        }
+        level_desc = level_descriptions.get(level, f"level {level} topics")
+
+        if level == 1:
+            context = f"""You are categorizing user feedback into {level_desc} (Level 1 topics).
+These are the broadest groupings of feedback themes."""
         else:
-            context = """You are categorizing user feedback into broad categories (Level 1 topics)."""
+            # Build hierarchy context
+            if ancestor_titles:
+                hierarchy = " > ".join(ancestor_titles + [parent_title or ""])
+                context = f"""You are categorizing user feedback within the hierarchy: {hierarchy}
+This is a Level {level} topic ({level_desc}), which should be more specific than its parent "{parent_title}"."""
+            else:
+                context = f"""You are categorizing user feedback within the category "{parent_title}".
+This is a Level {level} topic ({level_desc})."""
+
+        # Adjust title length guidance based on level
+        if level == 1:
+            title_guidance = "2-4 word title for this broad category"
+        elif level == 2:
+            title_guidance = "2-3 word title for this sub-category"
+        else:
+            title_guidance = "2-4 word specific title for this theme"
 
         prompt = f"""{context}
 
@@ -64,8 +92,10 @@ Feedback items:
 {chr(10).join(f'- {text[:500]}' for text in representative_texts)}
 
 Based on the common theme in these items, provide:
-1. A concise 2-3 word title for this category
+1. A concise {title_guidance}
 2. A single sentence description (max 100 characters)
+
+Important: The title should be distinct from the parent category and capture what makes this sub-group unique.
 
 Respond ONLY with valid JSON in this exact format:
 {{"title": "Example Title", "description": "Brief description of what this category contains."}}"""
@@ -94,6 +124,7 @@ Respond ONLY with valid JSON in this exact format:
                 "Generated cluster label",
                 title=label.title,
                 cluster_size=cluster_size,
+                level=level,
             )
 
             return label

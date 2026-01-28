@@ -103,17 +103,25 @@ var defaultTopics = []struct {
 	},
 }
 
-// CSV column indices (0-based)
+// CSV column indices for normalized format (0-based)
+// Format: collected_at;field_id;field_label;field_type;language;metadata;response_id;source_id;source_name;source_type;tenant_id;user_identifier;value_boolean;value_date;value_number;value_text
 const (
-	colResponseID     = 1  // Response ID
-	colTimestamp      = 2  // Timestamp
-	colCountry        = 11 // Country code
-	colHelpedSolve    = 16 // "How we helped solve your problems"
-	colHelpBetter     = 17 // "How we can help better"
-	colMissingFeature = 18 // "ONE feature you are missing"
-	colNPSScore       = 28 // NPS score (1-10)
-	colNPSReason      = 29 // "Why did you choose this number"
-	colEmail          = 31 // Email (user identifier)
+	colCollectedAt    = 0
+	colFieldID        = 1
+	colFieldLabel     = 2
+	colFieldType      = 3
+	colLanguage       = 4
+	colMetadata       = 5
+	colResponseID     = 6
+	colSourceID       = 7
+	colSourceName     = 8
+	colSourceType     = 9
+	colTenantID       = 10
+	colUserIdentifier = 11
+	colValueBoolean   = 12
+	colValueDate      = 13
+	colValueNumber    = 14
+	colValueText      = 15
 )
 
 func main() {
@@ -263,6 +271,7 @@ func processCSV(cfg Config) Stats {
 	defer func() { _ = file.Close() }()
 
 	reader := csv.NewReader(file)
+	reader.Comma = ';'          // Use semicolon as delimiter
 	reader.FieldsPerRecord = -1 // Allow variable field counts
 	reader.LazyQuotes = true    // Handle quotes more leniently
 
@@ -324,88 +333,92 @@ func processCSV(cfg Config) Stats {
 }
 
 func extractFeedbackFromRow(row []string, cfg Config) []FeedbackRequest {
-	var records []FeedbackRequest
+	// Normalized CSV format: each row is one feedback record
+	// Format: collected_at;field_id;field_label;field_type;language;metadata;response_id;source_id;source_name;source_type;tenant_id;user_identifier;value_boolean;value_date;value_number;value_text
 
-	// Get common fields
-	responseID := safeGet(row, colResponseID)
-	timestamp := safeGet(row, colTimestamp)
-	email := safeGet(row, colEmail)
-	country := safeGet(row, colCountry)
+	// Get required fields
+	fieldID := strings.TrimSpace(safeGet(row, colFieldID))
+	fieldType := strings.TrimSpace(safeGet(row, colFieldType))
+	sourceType := strings.TrimSpace(safeGet(row, colSourceType))
+	valueText := strings.TrimSpace(safeGet(row, colValueText))
 
-	// Create metadata with country info
-	var metadata json.RawMessage
-	if country != "" {
-		metadata, _ = json.Marshal(map[string]string{"country": country})
+	// Skip if no text content (we only process text feedback for taxonomy)
+	if valueText == "" {
+		return nil
+	}
+
+	// Skip if missing required fields
+	if fieldID == "" || fieldType == "" || sourceType == "" {
+		return nil
+	}
+
+	// Get optional fields
+	collectedAtRaw := strings.TrimSpace(safeGet(row, colCollectedAt))
+	fieldLabel := strings.TrimSpace(safeGet(row, colFieldLabel))
+	language := strings.TrimSpace(safeGet(row, colLanguage))
+	metadataRaw := strings.TrimSpace(safeGet(row, colMetadata))
+	responseID := strings.TrimSpace(safeGet(row, colResponseID))
+	sourceID := strings.TrimSpace(safeGet(row, colSourceID))
+	sourceName := strings.TrimSpace(safeGet(row, colSourceName))
+	tenantID := strings.TrimSpace(safeGet(row, colTenantID))
+	userIdentifier := strings.TrimSpace(safeGet(row, colUserIdentifier))
+	valueNumberRaw := strings.TrimSpace(safeGet(row, colValueNumber))
+
+	// Use tenant_id from CSV if not overridden by CLI
+	if cfg.TenantID != "" {
+		tenantID = cfg.TenantID
 	}
 
 	// Parse timestamp for collected_at
 	var collectedAt *string
-	if timestamp != "" {
+	if collectedAtRaw != "" {
 		// Parse "2026-01-23 07:08:21" format and convert to RFC3339
-		if t, err := time.Parse("2006-01-02 15:04:05", timestamp); err == nil {
+		if t, err := time.Parse("2006-01-02 15:04:05", collectedAtRaw); err == nil {
 			formatted := t.Format(time.RFC3339)
 			collectedAt = &formatted
+		} else {
+			// Try RFC3339 format directly
+			if _, err := time.Parse(time.RFC3339, collectedAtRaw); err == nil {
+				collectedAt = &collectedAtRaw
+			}
 		}
 	}
 
-	// Field definitions: (column index, field_id, field_label)
-	textFields := []struct {
-		col   int
-		id    string
-		label string
-	}{
-		{colHelpedSolve, "helped_solve", "How we helped solve your problems"},
-		{colHelpBetter, "help_better", "How we can help better"},
-		{colMissingFeature, "missing_feature", "ONE feature you are missing"},
-		{colNPSReason, "nps_reason", "Why did you choose this NPS score"},
-	}
-
-	for _, field := range textFields {
-		text := strings.TrimSpace(safeGet(row, field.col))
-		if text == "" {
-			continue
-		}
-
-		label := field.label
-		records = append(records, FeedbackRequest{
-			CollectedAt:    collectedAt,
-			SourceType:     "survey",
-			SourceID:       strPtr("enterprise_dream_survey"),
-			SourceName:     strPtr("Enterprise Dream Survey"),
-			FieldID:        field.id,
-			FieldLabel:     &label,
-			FieldType:      "text",
-			ValueText:      &text,
-			Metadata:       metadata,
-			UserIdentifier: nilIfEmpty(email),
-			TenantID:       nilIfEmpty(cfg.TenantID),
-			ResponseID:     nilIfEmpty(responseID),
-		})
-	}
-
-	// Handle NPS score as number field
-	npsScore := strings.TrimSpace(safeGet(row, colNPSScore))
-	if npsScore != "" {
-		if score, err := strconv.ParseFloat(npsScore, 64); err == nil {
-			label := "NPS Score"
-			records = append(records, FeedbackRequest{
-				CollectedAt:    collectedAt,
-				SourceType:     "survey",
-				SourceID:       strPtr("enterprise_dream_survey"),
-				SourceName:     strPtr("Enterprise Dream Survey"),
-				FieldID:        "nps_score",
-				FieldLabel:     &label,
-				FieldType:      "number",
-				ValueNumber:    &score,
-				Metadata:       metadata,
-				UserIdentifier: nilIfEmpty(email),
-				TenantID:       nilIfEmpty(cfg.TenantID),
-				ResponseID:     nilIfEmpty(responseID),
-			})
+	// Parse metadata JSON
+	var metadata json.RawMessage
+	if metadataRaw != "" {
+		// Validate it's valid JSON
+		if json.Valid([]byte(metadataRaw)) {
+			metadata = json.RawMessage(metadataRaw)
 		}
 	}
 
-	return records
+	// Parse value_number if present
+	var valueNumber *float64
+	if valueNumberRaw != "" {
+		if num, err := strconv.ParseFloat(valueNumberRaw, 64); err == nil {
+			valueNumber = &num
+		}
+	}
+
+	req := FeedbackRequest{
+		CollectedAt:    collectedAt,
+		SourceType:     sourceType,
+		SourceID:       nilIfEmpty(sourceID),
+		SourceName:     nilIfEmpty(sourceName),
+		FieldID:        fieldID,
+		FieldLabel:     nilIfEmpty(fieldLabel),
+		FieldType:      fieldType,
+		ValueText:      nilIfEmpty(valueText),
+		ValueNumber:    valueNumber,
+		Metadata:       metadata,
+		Language:       nilIfEmpty(language),
+		UserIdentifier: nilIfEmpty(userIdentifier),
+		TenantID:       nilIfEmpty(tenantID),
+		ResponseID:     nilIfEmpty(responseID),
+	}
+
+	return []FeedbackRequest{req}
 }
 
 func postFeedback(client *http.Client, cfg Config, feedback FeedbackRequest) error {
