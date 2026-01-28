@@ -20,6 +20,11 @@ type Config struct {
 	// Classification retry worker settings
 	ClassificationRetryInterval  time.Duration // How often to retry classification (default: 5m)
 	ClassificationRetryBatchSize int           // Records per batch (default: 100)
+
+	// Taxonomy service settings
+	TaxonomyServiceURL       string        // URL of the taxonomy-generator Python microservice
+	TaxonomySchedulerEnabled bool          // Enable periodic taxonomy scheduler
+	TaxonomyPollInterval     time.Duration // How often to check for due jobs (default: 1m)
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -79,6 +84,11 @@ func Load() (*Config, error) {
 		// Classification retry worker settings
 		ClassificationRetryInterval:  getEnvAsDuration("CLASSIFICATION_RETRY_INTERVAL", 5*time.Minute),
 		ClassificationRetryBatchSize: getEnvAsInt("CLASSIFICATION_RETRY_BATCH_SIZE", 100),
+
+		// Taxonomy service settings
+		TaxonomyServiceURL:       getEnv("TAXONOMY_SERVICE_URL", "http://localhost:8001"),
+		TaxonomySchedulerEnabled: getEnv("TAXONOMY_SCHEDULER_ENABLED", "true") == "true",
+		TaxonomyPollInterval:     getEnvAsDuration("TAXONOMY_POLL_INTERVAL", 1*time.Minute),
 	}
 
 	return cfg, nil
