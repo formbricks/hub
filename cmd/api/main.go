@@ -16,6 +16,7 @@ import (
 	"github.com/formbricks/hub/internal/embeddings"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/internal/worker"
 	"github.com/formbricks/hub/pkg/database"
 )
 
@@ -145,10 +146,26 @@ func main() {
 		}
 	}()
 
+	// Start classification retry worker if embeddings are enabled
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+
+	if embeddingClient != nil {
+		classificationWorker := worker.NewClassificationWorker(
+			feedbackRecordsService,
+			cfg.ClassificationRetryInterval,
+			cfg.ClassificationRetryBatchSize,
+		)
+		go classificationWorker.Start(workerCtx)
+	}
+
 	// Wait for interrupt signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+
+	// Stop background workers
+	workerCancel()
 
 	slog.Info("Shutting down server...")
 

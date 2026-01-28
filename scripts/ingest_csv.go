@@ -237,7 +237,7 @@ func createTopic(client *http.Client, cfg Config, title string, level int, paren
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -260,7 +260,7 @@ func processCSV(cfg Config) Stats {
 		fmt.Printf("Error opening file: %v\n", err)
 		os.Exit(1)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	reader := csv.NewReader(file)
 	reader.FieldsPerRecord = -1 // Allow variable field counts
@@ -426,7 +426,7 @@ func postFeedback(client *http.Client, cfg Config, feedback FeedbackRequest) err
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

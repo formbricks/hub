@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -15,6 +16,10 @@ type Config struct {
 	APIKey       string
 	LogLevel     string
 	OpenAIAPIKey string // Optional: for AI enrichment features
+
+	// Classification retry worker settings
+	ClassificationRetryInterval  time.Duration // How often to retry classification (default: 5m)
+	ClassificationRetryBatchSize int           // Records per batch (default: 100)
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -32,6 +37,19 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+// getEnvAsDuration retrieves an environment variable as a duration or returns a default value
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := time.ParseDuration(valueStr)
 	if err != nil {
 		return defaultValue
 	}
@@ -57,6 +75,10 @@ func Load() (*Config, error) {
 		APIKey:       apiKey,
 		LogLevel:     getEnv("LOG_LEVEL", "info"),
 		OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"), // Optional: empty if not configured
+
+		// Classification retry worker settings
+		ClassificationRetryInterval:  getEnvAsDuration("CLASSIFICATION_RETRY_INTERVAL", 5*time.Minute),
+		ClassificationRetryBatchSize: getEnvAsInt("CLASSIFICATION_RETRY_BATCH_SIZE", 100),
 	}
 
 	return cfg, nil

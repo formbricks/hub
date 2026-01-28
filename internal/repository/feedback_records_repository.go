@@ -410,3 +410,64 @@ func (r *FeedbackRecordsRepository) UpdateEnrichment(ctx context.Context, id uui
 
 	return nil
 }
+
+// ListUnclassifiedWithEmbeddings returns feedback records that have embeddings but no topic classification.
+// Used by the classification retry worker to find records that need re-classification.
+func (r *FeedbackRecordsRepository) ListUnclassifiedWithEmbeddings(ctx context.Context, limit int) ([]models.UnclassifiedRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+		SELECT id, tenant_id, embedding
+		FROM feedback_records
+		WHERE embedding IS NOT NULL AND topic_id IS NULL
+		ORDER BY created_at ASC
+		LIMIT $1
+	`
+
+	rows, err := r.db.Query(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list unclassified records: %w", err)
+	}
+	defer rows.Close()
+
+	records := []models.UnclassifiedRecord{}
+	for rows.Next() {
+		var record models.UnclassifiedRecord
+		var embedding pgvector.Vector
+		err := rows.Scan(&record.ID, &record.TenantID, &embedding)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan unclassified record: %w", err)
+		}
+		record.Embedding = embedding.Slice()
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating unclassified records: %w", err)
+	}
+
+	return records, nil
+}
+
+// UpdateClassification updates only the classification fields for a feedback record.
+// Used by the classification retry worker.
+func (r *FeedbackRecordsRepository) UpdateClassification(ctx context.Context, id uuid.UUID, topicID uuid.UUID, confidence float64) error {
+	query := `
+		UPDATE feedback_records
+		SET topic_id = $1, classification_confidence = $2, updated_at = $3
+		WHERE id = $4
+	`
+
+	result, err := r.db.Exec(ctx, query, topicID, confidence, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update classification: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperrors.NewNotFoundError("feedback record", "feedback record not found")
+	}
+
+	return nil
+}

@@ -33,6 +33,8 @@ type FeedbackRecordsRepository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
 	UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error
+	ListUnclassifiedWithEmbeddings(ctx context.Context, limit int) ([]models.UnclassifiedRecord, error)
+	UpdateClassification(ctx context.Context, id uuid.UUID, topicID uuid.UUID, confidence float64) error
 }
 
 // TopicClassifier defines the interface for topic classification via vector similarity
@@ -79,18 +81,25 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 
 	// Generate embedding for text feedback asynchronously if client is configured
 	if s.embeddingClient != nil && req.FieldType == "text" && req.ValueText != nil && *req.ValueText != "" {
-		go s.enrichRecord(record.ID, *req.ValueText, req.TenantID)
+		go s.enrichRecord(record.ID, *req.ValueText, req.FieldLabel, req.TenantID)
 	}
 
 	return record, nil
 }
 
-// enrichRecord generates embedding, classifies against Level 2 topics, and enriches the feedback record
-func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string, tenantID *string) {
+// enrichRecord generates embedding, classifies against Level 2 topics, and enriches the feedback record.
+// If fieldLabel (question) is provided, it combines "Question: <label>\nAnswer: <text>" for richer semantic context.
+func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string, fieldLabel *string, tenantID *string) {
 	ctx := context.Background()
 
+	// Build embedding input: combine question context with answer if available
+	embeddingInput := text
+	if fieldLabel != nil && *fieldLabel != "" {
+		embeddingInput = fmt.Sprintf("Question: %s\nAnswer: %s", *fieldLabel, text)
+	}
+
 	// 1. Generate embedding
-	embedding, err := s.embeddingClient.GetEmbedding(ctx, text)
+	embedding, err := s.embeddingClient.GetEmbedding(ctx, embeddingInput)
 	if err != nil {
 		slog.Error("failed to generate embedding", "record_type", "feedback_record", "id", id, "error", err)
 		return
@@ -174,7 +183,7 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 	if s.embeddingClient != nil && req.ValueText != nil && *req.ValueText != "" {
 		// Check if this is a text field (the record has the field_type)
 		if record.FieldType == "text" {
-			go s.enrichRecord(id, *req.ValueText, record.TenantID)
+			go s.enrichRecord(id, *req.ValueText, record.FieldLabel, record.TenantID)
 		}
 	}
 
@@ -193,4 +202,63 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 	}
 
 	return s.repo.BulkDelete(ctx, userIdentifier, tenantID)
+}
+
+// RetryClassification attempts to classify feedback records that have embeddings but no topic_id.
+// This is used by the background worker to fix records that were created before topics had embeddings.
+// Returns the number of records that were successfully classified.
+func (s *FeedbackRecordsService) RetryClassification(ctx context.Context, batchSize int) (int, error) {
+	if s.topicClassifier == nil {
+		return 0, fmt.Errorf("topic classifier not configured")
+	}
+
+	// Fetch unclassified records with embeddings
+	records, err := s.repo.ListUnclassifiedWithEmbeddings(ctx, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list unclassified records: %w", err)
+	}
+
+	if len(records) == 0 {
+		return 0, nil
+	}
+
+	classified := 0
+	level2 := Level2
+
+	for _, record := range records {
+		// Find the most similar Level 2 topic
+		match, err := s.topicClassifier.FindSimilarTopic(ctx, record.Embedding, record.TenantID, &level2, ClassificationThreshold)
+		if err != nil {
+			slog.Error("failed to find similar topic during retry",
+				"id", record.ID,
+				"error", err,
+			)
+			continue
+		}
+
+		if match == nil {
+			// No matching topic found above threshold
+			continue
+		}
+
+		// Update the classification
+		if err := s.repo.UpdateClassification(ctx, record.ID, match.TopicID, match.Similarity); err != nil {
+			slog.Error("failed to update classification during retry",
+				"id", record.ID,
+				"topic_id", match.TopicID,
+				"error", err,
+			)
+			continue
+		}
+
+		classified++
+		slog.Debug("retry classification succeeded",
+			"id", record.ID,
+			"topic_id", match.TopicID,
+			"topic_title", match.Title,
+			"confidence", match.Similarity,
+		)
+	}
+
+	return classified, nil
 }

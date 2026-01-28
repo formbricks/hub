@@ -118,3 +118,11 @@ type EmbeddingRecord struct {
 	Text      string
 	Embedding []float32
 }
+
+// UnclassifiedRecord represents a feedback record that has an embedding but no topic classification.
+// Used by the classification retry worker.
+type UnclassifiedRecord struct {
+	ID        uuid.UUID
+	TenantID  *string
+	Embedding []float32
+}
