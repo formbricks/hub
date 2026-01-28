@@ -743,15 +743,6 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
-                            examples:
-                                not_found:
-                                    summary: Record not found
-                                    value:
-                                        type: "about:blank"
-                                        title: "Not Found"
-                                        status: 404
-                                        detail: "Knowledge record with ID '019abc12-3456-7def-8901-234567890abc' not found"
-                                        instance: "/v1/knowledge-records/019abc12-3456-7def-8901-234567890abc"
         patch:
             tags:
                 - Knowledge Records
@@ -855,24 +846,18 @@ paths:
             tags:
                 - Topics
             summary: List topics with filters
-            description: Lists topics with optional filters and pagination. Use level and parent_id filters to navigate the hierarchy.
+            description: Lists topics with optional filters and pagination. Use level filter to get Level 1 or Level 2 topics. Level 2 topics have a parent_id linking to their Level 1 parent (use GET /topics/{id}/children to get children of a Level 1 topic).
             operationId: list-topics
             parameters:
                 - name: level
                   in: query
-                  description: Filter by hierarchy level (1 = top level, 2+ = nested)
+                  description: Filter by hierarchy level (1 = Level 1 topics, 2 = Level 2 topics)
                   schema:
                     type: integer
-                    description: Filter by hierarchy level (1 = top level, 2+ = nested)
+                    description: Filter by hierarchy level (1 = Level 1 topics, 2 = Level 2 topics)
                     format: int64
                     minimum: 1
-                - name: parent_id
-                  in: query
-                  description: Filter by parent topic ID. Use to get children of a specific topic.
-                  schema:
-                    type: string
-                    description: Filter by parent topic ID (UUID)
-                    format: uuid
+                    maximum: 2
                 - name: title
                   in: query
                   description: Filter by exact title match. NULL bytes not allowed.
@@ -922,35 +907,31 @@ paths:
                                             - id: "019def12-3456-7abc-8901-234567890def"
                                               title: "Performance"
                                               level: 1
-                                              parent_id: null
                                               tenant_id: "org-123"
                                               created_at: "2024-01-15T10:30:00Z"
                                               updated_at: "2024-01-15T10:30:00Z"
                                             - id: "019ghi12-3456-7abc-8901-234567890ghi"
                                               title: "Feature Requests"
                                               level: 1
-                                              parent_id: null
                                               tenant_id: "org-123"
                                               created_at: "2024-01-15T10:35:00Z"
                                               updated_at: "2024-01-15T10:35:00Z"
                                         total: 2
                                         limit: 100
                                         offset: 0
-                                children:
-                                    summary: Child topics of Performance
+                                level2:
+                                    summary: Level 2 topics
                                     value:
                                         data:
                                             - id: "019jkl12-3456-7abc-8901-234567890jkl"
                                               title: "Dashboard slow"
                                               level: 2
-                                              parent_id: "019def12-3456-7abc-8901-234567890def"
                                               tenant_id: "org-123"
                                               created_at: "2024-01-15T11:00:00Z"
                                               updated_at: "2024-01-15T11:00:00Z"
                                             - id: "019mno12-3456-7abc-8901-234567890mno"
                                               title: "API response time"
                                               level: 2
-                                              parent_id: "019def12-3456-7abc-8901-234567890def"
                                               tenant_id: "org-123"
                                               created_at: "2024-01-15T11:05:00Z"
                                               updated_at: "2024-01-15T11:05:00Z"
@@ -967,7 +948,7 @@ paths:
             tags:
                 - Topics
             summary: Create a new topic
-            description: Creates a new topic. The level is auto-calculated based on parent hierarchy. Titles must be unique within the same parent and tenant.
+            description: Creates a new topic with the specified level. Titles must be unique within the same level and tenant.
             operationId: create-topic
             requestBody:
                 content:
@@ -975,16 +956,17 @@ paths:
                         schema:
                             $ref: '#/components/schemas/CreateTopicInputBody'
                         examples:
-                            top_level:
-                                summary: Create top-level topic
+                            level1:
+                                summary: Create Level 1 topic
                                 value:
                                     title: "Performance"
+                                    level: 1
                                     tenant_id: "org-123"
-                            child:
-                                summary: Create child topic
+                            level2:
+                                summary: Create Level 2 topic
                                 value:
                                     title: "Dashboard slow"
-                                    parent_id: "019def12-3456-7abc-8901-234567890def"
+                                    level: 2
                                     tenant_id: "org-123"
                 required: true
             responses:
@@ -995,23 +977,21 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/TopicData'
                             examples:
-                                top_level:
-                                    summary: Created top-level topic
+                                level1:
+                                    summary: Created Level 1 topic
                                     value:
                                         id: "019def12-3456-7abc-8901-234567890def"
                                         title: "Performance"
                                         level: 1
-                                        parent_id: null
                                         tenant_id: "org-123"
                                         created_at: "2024-01-15T10:30:00Z"
                                         updated_at: "2024-01-15T10:30:00Z"
-                                child:
-                                    summary: Created child topic
+                                level2:
+                                    summary: Created Level 2 topic
                                     value:
                                         id: "019jkl12-3456-7abc-8901-234567890jkl"
                                         title: "Dashboard slow"
                                         level: 2
-                                        parent_id: "019def12-3456-7abc-8901-234567890def"
                                         tenant_id: "org-123"
                                         created_at: "2024-01-15T11:00:00Z"
                                         updated_at: "2024-01-15T11:00:00Z"
@@ -1092,7 +1072,6 @@ paths:
                                         id: "019def12-3456-7abc-8901-234567890def"
                                         title: "Performance"
                                         level: 1
-                                        parent_id: null
                                         tenant_id: "org-123"
                                         created_at: "2024-01-15T10:30:00Z"
                                         updated_at: "2024-01-15T10:30:00Z"
@@ -1115,7 +1094,7 @@ paths:
             tags:
                 - Topics
             summary: Update a topic
-            description: Updates the title of a topic. Note that parent_id cannot be changed after creation.
+            description: Updates the title of a topic. Note that level cannot be changed after creation.
             operationId: update-topic
             parameters:
                 - name: id
@@ -1151,7 +1130,6 @@ paths:
                                         id: "019def12-3456-7abc-8901-234567890def"
                                         title: "App Performance"
                                         level: 1
-                                        parent_id: null
                                         tenant_id: "org-123"
                                         created_at: "2024-01-15T10:30:00Z"
                                         updated_at: "2024-01-15T12:00:00Z"
@@ -1211,6 +1189,84 @@ paths:
                                         status: 404
                                         detail: "Topic with ID '019def12-3456-7abc-8901-234567890def' not found"
                                         instance: "/v1/topics/019def12-3456-7abc-8901-234567890def"
+    /v1/topics/{id}/children:
+        get:
+            tags:
+                - Topics
+            summary: Get child Level 2 topics
+            description: Returns Level 2 topics that are children of the given Level 1 topic (via parent_id relationship).
+            operationId: get-child-topics
+            parameters:
+                - name: id
+                  in: path
+                  description: Level 1 Topic ID (UUID)
+                  required: true
+                  schema:
+                    type: string
+                    format: uuid
+                - name: tenant_id
+                  in: query
+                  description: Filter by tenant ID
+                  schema:
+                    type: string
+                - name: limit
+                  in: query
+                  description: Maximum number of results (default 100)
+                  schema:
+                    type: integer
+                    default: 100
+                    minimum: 1
+                    maximum: 1000
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    data:
+                                        type: array
+                                        items:
+                                            $ref: '#/components/schemas/TopicData'
+                            examples:
+                                child_topics:
+                                    summary: Level 2 topics under Performance
+                                    value:
+                                        data:
+                                            - id: "019jkl12-3456-7abc-8901-234567890jkl"
+                                              title: "Dashboard Performance"
+                                              level: 2
+                                              parent_id: "019abc12-3456-7abc-8901-234567890abc"
+                                              created_at: "2024-01-15T10:30:00Z"
+                                              updated_at: "2024-01-15T10:30:00Z"
+                                            - id: "019mno12-3456-7abc-8901-234567890mno"
+                                              title: "API Response Time"
+                                              level: 2
+                                              parent_id: "019abc12-3456-7abc-8901-234567890abc"
+                                              created_at: "2024-01-15T10:30:00Z"
+                                              updated_at: "2024-01-15T10:30:00Z"
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                not_found:
+                                    summary: Topic not found
+                                    value:
+                                        type: "about:blank"
+                                        title: "Not Found"
+                                        status: 404
+                                        detail: "Topic not found"
+                                not_level1:
+                                    summary: Topic is not Level 1
+                                    value:
+                                        type: "about:blank"
+                                        title: "Bad Request"
+                                        status: 400
+                                        detail: "topic must be a Level 1 topic"
 components:
     securitySchemes:
         ApiKeyAuth:
@@ -1651,7 +1707,7 @@ components:
         TopicData:
             type: object
             additionalProperties: false
-            description: A topic for hierarchical taxonomy classification
+            description: A topic for taxonomy classification. Level 1 topics are broad categories, Level 2 topics are specific subtopics linked via parent_id.
             properties:
                 id:
                     type: string
@@ -1663,14 +1719,15 @@ components:
                     maxLength: 255
                 level:
                     type: integer
-                    description: Hierarchy level (1 = top level, 2+ = nested). Auto-calculated by server.
+                    description: Hierarchy level (1 = Level 1 topic, 2 = Level 2 topic)
                     format: int64
                     minimum: 1
+                    maximum: 2
                 parent_id:
                     type: string
                     format: uuid
                     nullable: true
-                    description: Parent topic ID (null for top-level topics)
+                    description: Parent Level 1 topic ID. NULL for Level 1 topics, required for Level 2 topics.
                 tenant_id:
                     type: string
                     description: Tenant/organization identifier for multi-tenancy
@@ -1692,11 +1749,11 @@ components:
         CreateTopicInputBody:
             type: object
             additionalProperties: false
-            description: Request body for creating a new topic. Note that level is auto-calculated by the server based on parent hierarchy.
+            description: Request body for creating a new topic. Level 2 topics require a parent_id.
             properties:
                 title:
                     type: string
-                    description: Name of the topic. Must be unique within the same parent and tenant. NULL bytes not allowed.
+                    description: Name of the topic. Must be unique within the same level and tenant. NULL bytes not allowed.
                     examples:
                         - Performance
                         - Dashboard
@@ -1704,11 +1761,17 @@ components:
                     minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
+                level:
+                    type: integer
+                    description: Hierarchy level (1 = Level 1 topic, 2 = Level 2 topic)
+                    format: int64
+                    minimum: 1
+                    maximum: 2
                 parent_id:
                     type: string
                     format: uuid
                     nullable: true
-                    description: Parent topic ID. Omit or set to null for top-level topics.
+                    description: Parent Level 1 topic ID. Required for Level 2 topics, must be NULL for Level 1 topics.
                 tenant_id:
                     type: string
                     description: Tenant/organization identifier for multi-tenancy. NULL bytes not allowed.
@@ -1718,14 +1781,15 @@ components:
                     pattern: '^[^\x00]*$'
             required:
                 - title
+                - level
         UpdateTopicInputBody:
             type: object
             additionalProperties: false
-            description: Request body for updating a topic. Note that parent_id cannot be changed after creation.
+            description: Request body for updating a topic. Note that level cannot be changed after creation.
             properties:
                 title:
                     type: string
-                    description: Updated name of the topic. Must be unique within the same parent and tenant. NULL bytes not allowed.
+                    description: Updated name of the topic. Must be unique within the same level and tenant. NULL bytes not allowed.
                     minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'

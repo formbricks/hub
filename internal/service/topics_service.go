@@ -18,10 +18,11 @@ type TopicsRepository interface {
 	Count(ctx context.Context, filters *models.ListTopicsFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateTopicRequest) (*models.Topic, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	ExistsByTitleAndParent(ctx context.Context, title string, parentID *uuid.UUID, tenantID *string) (bool, error)
-	ExistsByTitleAndParentExcluding(ctx context.Context, title string, parentID *uuid.UUID, tenantID *string, excludeID uuid.UUID) (bool, error)
+	ExistsByTitleAndLevel(ctx context.Context, title string, level int, tenantID *string) (bool, error)
+	ExistsByTitleAndLevelExcluding(ctx context.Context, title string, level int, tenantID *string, excludeID uuid.UUID) (bool, error)
 	UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error
 	FindSimilarTopic(ctx context.Context, embedding []float32, tenantID *string, level *int, minSimilarity float64) (*models.TopicMatch, error)
+	GetChildTopics(ctx context.Context, parentID uuid.UUID, tenantID *string, limit int) ([]models.Topic, error)
 }
 
 // TopicsService handles business logic for topics
@@ -50,34 +51,40 @@ func (s *TopicsService) CreateTopic(ctx context.Context, req *models.CreateTopic
 		req.TenantID = nil
 	}
 
-	// If parent_id provided, validate it exists and check cross-tenant
+	// Validate level
+	if req.Level < 1 || req.Level > 2 {
+		return nil, apperrors.NewValidationError("level", "level must be 1 or 2")
+	}
+
+	// Validate parent_id based on level
+	if req.Level == 1 && req.ParentID != nil {
+		return nil, apperrors.NewValidationError("parent_id", "Level 1 topics cannot have a parent")
+	}
+	if req.Level == 2 && req.ParentID == nil {
+		return nil, apperrors.NewValidationError("parent_id", "Level 2 topics must have a parent_id")
+	}
+
+	// If Level 2, validate that parent exists and is Level 1
 	if req.ParentID != nil {
 		parent, err := s.repo.GetByID(ctx, *req.ParentID)
 		if err != nil {
-			return nil, err // Will be NotFoundError if parent doesn't exist
+			return nil, apperrors.NewValidationError("parent_id", "parent topic not found")
 		}
-
-		// Validate cross-tenant: parent.tenant_id must match request.tenant_id
-		// Both can be nil (no tenant), but must match
-		parentTenantID := parent.TenantID
-		reqTenantID := req.TenantID
-
-		// Check if they match (both nil, or both equal strings)
-		if !tenantIDsMatch(parentTenantID, reqTenantID) {
-			return nil, apperrors.NewValidationError("parent_id", "parent topic belongs to a different tenant")
+		if parent.Level != 1 {
+			return nil, apperrors.NewValidationError("parent_id", "parent must be a Level 1 topic")
 		}
 	}
 
-	// Check title uniqueness within parent + tenant
-	exists, err := s.repo.ExistsByTitleAndParent(ctx, req.Title, req.ParentID, req.TenantID)
+	// Check title uniqueness within level + tenant
+	exists, err := s.repo.ExistsByTitleAndLevel(ctx, req.Title, req.Level, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, apperrors.NewConflictError("topic", "topic with this title already exists under the same parent")
+		return nil, apperrors.NewConflictError("topic", "topic with this title already exists at this level")
 	}
 
-	// Create topic (level is calculated in repository)
+	// Create topic
 	topic, err := s.repo.Create(ctx, req)
 	if err != nil {
 		return nil, err
@@ -177,19 +184,19 @@ func (s *TopicsService) ListTopics(ctx context.Context, filters *models.ListTopi
 func (s *TopicsService) UpdateTopic(ctx context.Context, id uuid.UUID, req *models.UpdateTopicRequest) (*models.Topic, error) {
 	// If title is being updated, check uniqueness (excluding current topic)
 	if req.Title != nil {
-		// First, fetch the existing topic to get parent_id and tenant_id
+		// First, fetch the existing topic to get level and tenant_id
 		existing, err := s.repo.GetByID(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 
-		// Check if the new title conflicts with another topic under the same parent
-		exists, err := s.repo.ExistsByTitleAndParentExcluding(ctx, *req.Title, existing.ParentID, existing.TenantID, id)
+		// Check if the new title conflicts with another topic at the same level
+		exists, err := s.repo.ExistsByTitleAndLevelExcluding(ctx, *req.Title, existing.Level, existing.TenantID, id)
 		if err != nil {
 			return nil, err
 		}
 		if exists {
-			return nil, apperrors.NewConflictError("topic", "topic with this title already exists under the same parent")
+			return nil, apperrors.NewConflictError("topic", "topic with this title already exists at this level")
 		}
 	}
 
@@ -213,13 +220,17 @@ func (s *TopicsService) DeleteTopic(ctx context.Context, id uuid.UUID) error {
 	return s.repo.Delete(ctx, id)
 }
 
-// tenantIDsMatch compares two tenant IDs, handling nil values
-func tenantIDsMatch(a, b *string) bool {
-	if a == nil && b == nil {
-		return true
+// GetChildTopics retrieves Level 2 topics that are children of a Level 1 topic
+func (s *TopicsService) GetChildTopics(ctx context.Context, parentID uuid.UUID, tenantID *string, limit int) ([]models.Topic, error) {
+	// Validate that the parent topic exists and is Level 1
+	topic, err := s.repo.GetByID(ctx, parentID)
+	if err != nil {
+		return nil, err
 	}
-	if a == nil || b == nil {
-		return false
+
+	if topic.Level != 1 {
+		return nil, apperrors.NewValidationError("id", "parent must be a Level 1 topic")
 	}
-	return *a == *b
+
+	return s.repo.GetChildTopics(ctx, parentID, tenantID, limit)
 }

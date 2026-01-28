@@ -52,6 +52,7 @@ type FeedbackRequest struct {
 // TopicRequest matches the CreateTopicRequest model
 type TopicRequest struct {
 	Title    string  `json:"title"`
+	Level    int     `json:"level"`
 	ParentID *string `json:"parent_id,omitempty"`
 	TenantID *string `json:"tenant_id,omitempty"`
 }
@@ -186,25 +187,25 @@ func createTopics(cfg Config) int {
 	count := 0
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	for _, theme := range defaultTopics {
-		// Create parent topic
-		parentID, err := createTopic(client, cfg, theme.Title, nil)
+	for _, level1Topic := range defaultTopics {
+		// Create Level 1 topic
+		level1ID, err := createTopic(client, cfg, level1Topic.Title, 1, nil)
 		if err != nil {
-			fmt.Printf("   ⚠ Failed to create topic '%s': %v\n", theme.Title, err)
+			fmt.Printf("   ⚠ Failed to create Level 1 topic '%s': %v\n", level1Topic.Title, err)
 			continue
 		}
 		count++
-		fmt.Printf("   + %s\n", theme.Title)
+		fmt.Printf("   + %s (id: %s)\n", level1Topic.Title, level1ID)
 
-		// Create child topics
-		for _, child := range theme.Children {
-			_, err := createTopic(client, cfg, child, &parentID)
+		// Create Level 2 topics with parent_id
+		for _, level2Title := range level1Topic.Children {
+			_, err := createTopic(client, cfg, level2Title, 2, &level1ID)
 			if err != nil {
-				fmt.Printf("   ⚠ Failed to create subtopic '%s': %v\n", child, err)
+				fmt.Printf("   ⚠ Failed to create Level 2 topic '%s': %v\n", level2Title, err)
 				continue
 			}
 			count++
-			fmt.Printf("     └─ %s\n", child)
+			fmt.Printf("     └─ %s\n", level2Title)
 		}
 
 		time.Sleep(time.Duration(cfg.DelayMS) * time.Millisecond)
@@ -213,9 +214,10 @@ func createTopics(cfg Config) int {
 	return count
 }
 
-func createTopic(client *http.Client, cfg Config, title string, parentID *string) (string, error) {
+func createTopic(client *http.Client, cfg Config, title string, level int, parentID *string) (string, error) {
 	req := TopicRequest{
 		Title:    title,
+		Level:    level,
 		ParentID: parentID,
 	}
 	if cfg.TenantID != "" {

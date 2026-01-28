@@ -108,6 +108,7 @@ func main() {
 
 	protectedMux.HandleFunc("POST /v1/topics", topicsHandler.Create)
 	protectedMux.HandleFunc("GET /v1/topics", topicsHandler.List)
+	protectedMux.HandleFunc("GET /v1/topics/{id}/children", topicsHandler.GetChildren)
 	protectedMux.HandleFunc("GET /v1/topics/{id}", topicsHandler.Get)
 	protectedMux.HandleFunc("PATCH /v1/topics/{id}", topicsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/topics/{id}", topicsHandler.Delete)
