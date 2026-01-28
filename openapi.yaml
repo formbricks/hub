@@ -520,6 +520,13 @@ paths:
                                     signing_key: "my-secret-signing-key"
                                     enabled: true
                                     tenant_id: "org-123"
+                            with_event_types:
+                                summary: Webhook with event type filtering
+                                value:
+                                    url: "https://example.com/webhooks/feedback"
+                                    event_types:
+                                        - "feedback_record.created"
+                                        - "feedback_record.updated"
                 required: true
             responses:
                 "201":
@@ -537,6 +544,9 @@ paths:
                                         signing_key: "whsec_abc123xyz"
                                         enabled: true
                                         tenant_id: "org-123"
+                                        event_types:
+                                            - "feedback_record.created"
+                                            - "feedback_record.updated"
                                         created_at: "2024-01-15T10:30:00Z"
                                         updated_at: "2024-01-15T10:30:00Z"
                     links:
@@ -626,6 +636,8 @@ paths:
                                               signing_key: "whsec_abc123xyz"
                                               enabled: true
                                               tenant_id: "org-123"
+                                              event_types:
+                                                  - "feedback_record.created"
                                               created_at: "2024-01-15T10:30:00Z"
                                               updated_at: "2024-01-15T10:30:00Z"
                                         total: 1
@@ -678,6 +690,10 @@ paths:
                                         signing_key: "whsec_abc123xyz"
                                         enabled: true
                                         tenant_id: "org-123"
+                                        event_types:
+                                            - "feedback_record.created"
+                                            - "feedback_record.updated"
+                                            - "feedback_record.deleted"
                                         created_at: "2024-01-15T10:30:00Z"
                                         updated_at: "2024-01-15T10:30:00Z"
                 default:
@@ -728,6 +744,12 @@ paths:
                                 summary: Update signing key
                                 value:
                                     signing_key: "new-secret-key"
+                            update_event_types:
+                                summary: Update event types
+                                value:
+                                    event_types:
+                                        - "webhook.created"
+                                        - "webhook.updated"
                             update_multiple:
                                 summary: Update multiple fields
                                 value:
@@ -1160,6 +1182,19 @@ components:
                     type: string
                     description: Tenant/organization identifier for multi-tenancy. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                event_types:
+                    type: array
+                    items:
+                        type: string
+                        maxLength: 64
+                    description: |
+                        Array of event types this webhook should receive.
+                        If null or empty, the webhook receives all events (backward compatibility).
+                        Valid event types: feedback_record.created, feedback_record.updated, feedback_record.deleted,
+                        webhook.created, webhook.updated, webhook.deleted.
+                    example:
+                        - "feedback_record.created"
+                        - "feedback_record.updated"
                 created_at:
                     type: string
                     description: When this webhook was created
@@ -1198,6 +1233,19 @@ components:
                     description: Tenant/organization identifier for multi-tenancy. NULL bytes not allowed.
                     maxLength: 255
                     pattern: '^[^\x00]*$'
+                event_types:
+                    type: array
+                    items:
+                        type: string
+                        maxLength: 64
+                    description: |
+                        Array of event types this webhook should receive.
+                        If not provided or empty, the webhook receives all events (backward compatibility).
+                        Valid event types: feedback_record.created, feedback_record.updated, feedback_record.deleted,
+                        webhook.created, webhook.updated, webhook.deleted.
+                    example:
+                        - "feedback_record.created"
+                        - "feedback_record.updated"
             required:
                 - url
         UpdateWebhookInputBody:
@@ -1219,6 +1267,21 @@ components:
                 enabled:
                     type: boolean
                     description: Update whether the webhook is enabled
+                event_types:
+                    type: array
+                    nullable: true
+                    items:
+                        type: string
+                        maxLength: 64
+                    description: |
+                        Update array of event types this webhook should receive.
+                        If null, clears the event_types filter (webhook receives all events).
+                        If empty array, sets to empty (webhook receives all events).
+                        Valid event types: feedback_record.created, feedback_record.updated, feedback_record.deleted,
+                        webhook.created, webhook.updated, webhook.deleted.
+                    example:
+                        - "feedback_record.created"
+                        - "webhook.created"
         ListWebhooksOutputBody:
             type: object
             additionalProperties: false

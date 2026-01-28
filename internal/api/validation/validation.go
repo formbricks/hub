@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/formbricks/hub/internal/api/response"
+	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/go-playground/form/v4"
 	"github.com/go-playground/validator/v10"
 )
@@ -34,6 +35,11 @@ func init() {
 	}
 	if err := validate.RegisterValidation("no_null_bytes", validateNoNullBytes); err != nil {
 		slog.Error("Failed to register no_null_bytes validator", "error", err)
+	}
+	// Optional: Register event_types validator for []string fields (e.g., query params)
+	// Note: Fields using []datatypes.EventType validate during UnmarshalJSON
+	if err := validate.RegisterValidation("event_types", validateEventTypes); err != nil {
+		slog.Error("Failed to register event_types validator", "error", err)
 	}
 
 	// Register custom type converters for form decoding
@@ -98,6 +104,9 @@ func formatFieldError(fieldError validator.FieldError) string {
 		return fmt.Sprintf("%s must be in RFC3339 format (ISO 8601)", field)
 	case "no_null_bytes":
 		return fmt.Sprintf("%s must not contain NULL bytes", field)
+	case "event_types":
+		validTypes := datatypes.GetAllEventTypes()
+		return fmt.Sprintf("%s must contain valid event types. Valid types: %s", field, strings.Join(validTypes, ", "))
 	default:
 		return fmt.Sprintf("%s is invalid", field)
 	}
@@ -193,4 +202,54 @@ func validateNoNullBytes(fl validator.FieldLevel) bool {
 
 	value := field.String()
 	return !strings.Contains(value, "\x00")
+}
+
+// validateEventTypes validates that all strings in the event_types array are valid event types.
+// Handles both []string and *[]string types.
+// Note: This is only needed for fields that use []string. Fields using []datatypes.EventType
+// validate during UnmarshalJSON.
+func validateEventTypes(fl validator.FieldLevel) bool {
+	field := fl.Field()
+
+	// Handle pointer types
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			return true // nil pointer is valid (handled by omitempty)
+		}
+		field = field.Elem()
+	}
+
+	// Must be a slice
+	if field.Kind() != reflect.Slice {
+		return true // Not a slice, skip validation
+	}
+
+	// Check each element
+	seen := make(map[string]bool)
+	for i := 0; i < field.Len(); i++ {
+		elem := field.Index(i)
+		if elem.Kind() != reflect.String {
+			return false // Non-string element
+		}
+
+		eventType := elem.String()
+
+		// Check length (database constraint: VARCHAR(64))
+		if len(eventType) > 64 {
+			return false
+		}
+
+		// Check if valid event type
+		if !datatypes.IsValidEventType(eventType) {
+			return false
+		}
+
+		// Check for duplicates
+		if seen[eventType] {
+			return false
+		}
+		seen[eventType] = true
+	}
+
+	return true
 }

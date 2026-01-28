@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/formbricks/hub/internal/datatypes"
 	apperrors "github.com/formbricks/hub/internal/errors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
@@ -30,23 +31,45 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 		enabled = *req.Enabled
 	}
 
+	// Convert []datatypes.EventType to []string for database
+	var eventTypes []string
+	if len(req.EventTypes) > 0 {
+		eventTypes = make([]string, len(req.EventTypes))
+		for i, et := range req.EventTypes {
+			eventTypes[i] = et.String()
+		}
+	}
+
 	query := `
 		INSERT INTO webhooks (
-			url, signing_key, enabled, tenant_id
+			url, signing_key, enabled, tenant_id, event_types
 		)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
 	`
 
 	var webhook models.Webhook
+	var dbEventTypes []string
 	err := r.db.QueryRow(ctx, query,
-		req.URL, req.SigningKey, enabled, req.TenantID,
+		req.URL, req.SigningKey, enabled, req.TenantID, eventTypes,
 	).Scan(
 		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt,
+		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create webhook: %w", err)
+	}
+
+	// Convert []string to []datatypes.EventType
+	if dbEventTypes != nil {
+		webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
+		for _, s := range dbEventTypes {
+			et, ok := datatypes.ParseEventType(s)
+			if !ok {
+				return nil, fmt.Errorf("invalid event type in database: %s", s)
+			}
+			webhook.EventTypes = append(webhook.EventTypes, et)
+		}
 	}
 
 	return &webhook, nil
@@ -55,21 +78,34 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 // GetByID retrieves a single webhook by ID
 func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
 	query := `
-		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at
+		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
 		FROM webhooks
 		WHERE id = $1
 	`
 
 	var webhook models.Webhook
+	var dbEventTypes []string
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt,
+		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, apperrors.NewNotFoundError("webhook", "webhook not found")
 		}
 		return nil, fmt.Errorf("failed to get webhook: %w", err)
+	}
+
+	// Convert []string to []datatypes.EventType
+	if dbEventTypes != nil {
+		webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
+		for _, s := range dbEventTypes {
+			et, ok := datatypes.ParseEventType(s)
+			if !ok {
+				return nil, fmt.Errorf("invalid event type in database: %s", s)
+			}
+			webhook.EventTypes = append(webhook.EventTypes, et)
+		}
 	}
 
 	return &webhook, nil
@@ -191,6 +227,19 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		argCount++
 	}
 
+	if req.EventTypes != nil {
+		// Convert []datatypes.EventType to []string for database
+		eventTypes := make([]string, len(*req.EventTypes))
+		for i, et := range *req.EventTypes {
+			eventTypes[i] = et.String()
+		}
+		updates = append(updates, fmt.Sprintf("event_types = $%d", argCount))
+		args = append(args, eventTypes)
+		argCount++
+	}
+	// Note: nil pointer means "don't update event_types" (field omitted in JSON)
+	// To clear event_types, send an empty array [] instead of null
+
 	if len(updates) == 0 {
 		return r.GetByID(ctx, id)
 	}
@@ -205,19 +254,32 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		UPDATE webhooks
 		SET %s
 		WHERE id = $%d
-		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at
+		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
 	`, strings.Join(updates, ", "), argCount)
 
 	var webhook models.Webhook
+	var dbEventTypes []string
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt,
+		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, apperrors.NewNotFoundError("webhook", "webhook not found")
 		}
 		return nil, fmt.Errorf("failed to update webhook: %w", err)
+	}
+
+	// Convert []string to []datatypes.EventType
+	if dbEventTypes != nil {
+		webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
+		for _, s := range dbEventTypes {
+			et, ok := datatypes.ParseEventType(s)
+			if !ok {
+				return nil, fmt.Errorf("invalid event type in database: %s", s)
+			}
+			webhook.EventTypes = append(webhook.EventTypes, et)
+		}
 	}
 
 	return &webhook, nil
@@ -245,4 +307,57 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 		Enabled: func() *bool { b := true; return &b }(),
 	}
 	return r.List(ctx, filters)
+}
+
+// ListEnabledForEventType retrieves enabled webhooks that should receive a specific event type.
+// Uses GIN index for efficient array containment queries.
+// Returns webhooks where:
+//   - enabled = true
+//   - event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]
+func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
+	query := `
+		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
+		FROM webhooks
+		WHERE enabled = true
+		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1])
+	`
+
+	rows, err := r.db.Query(ctx, query, eventType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list enabled webhooks for event type: %w", err)
+	}
+	defer rows.Close()
+
+	webhooks := []models.Webhook{}
+	for rows.Next() {
+		var webhook models.Webhook
+		var dbEventTypes []string
+		err := rows.Scan(
+			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
+			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan webhook: %w", err)
+		}
+
+		// Convert []string to []datatypes.EventType
+		if dbEventTypes != nil {
+			webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
+			for _, s := range dbEventTypes {
+				et, ok := datatypes.ParseEventType(s)
+				if !ok {
+					return nil, fmt.Errorf("invalid event type in database: %s", s)
+				}
+				webhook.EventTypes = append(webhook.EventTypes, et)
+			}
+		}
+
+		webhooks = append(webhooks, webhook)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating webhooks: %w", err)
+	}
+
+	return webhooks, nil
 }

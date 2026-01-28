@@ -26,6 +26,11 @@ type Config struct {
 	// Rate limiting
 	PollingConnectorMinDelay        time.Duration
 	PollingConnectorMaxPollsPerHour int
+
+	// Webhook cache configuration
+	WebhookCacheEnabled bool
+	WebhookCacheSize    int
+	WebhookCacheTTL     time.Duration
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -56,6 +61,19 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 		return defaultValue
 	}
 	value, err := time.ParseDuration(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+// getEnvAsBool retrieves an environment variable as a boolean or returns a default value
+func getEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := strconv.ParseBool(valueStr)
 	if err != nil {
 		return defaultValue
 	}
@@ -98,6 +116,19 @@ func Load() (*Config, error) {
 		return nil, errors.New("POLLING_CONNECTOR_MAX_POLLS_PER_HOUR must be a non-negative integer")
 	}
 
+	// Load webhook cache configuration
+	webhookCacheEnabled := getEnvAsBool("WEBHOOK_CACHE_ENABLED", false)
+	webhookCacheSize := getEnvAsInt("WEBHOOK_CACHE_SIZE", 100)
+	webhookCacheTTL := getEnvAsDuration("WEBHOOK_CACHE_TTL", 5*time.Minute)
+
+	// Validate cache configuration
+	if webhookCacheSize <= 0 {
+		return nil, errors.New("WEBHOOK_CACHE_SIZE must be a positive integer")
+	}
+	if webhookCacheTTL <= 0 {
+		return nil, errors.New("WEBHOOK_CACHE_TTL must be a positive duration")
+	}
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
@@ -111,6 +142,10 @@ func Load() (*Config, error) {
 
 		PollingConnectorMinDelay:        minDelay,
 		PollingConnectorMaxPollsPerHour: maxPollsPerHour,
+
+		WebhookCacheEnabled: webhookCacheEnabled,
+		WebhookCacheSize:    webhookCacheSize,
+		WebhookCacheTTL:     webhookCacheTTL,
 	}
 
 	slog.Info("Loaded connector instance limits",
@@ -122,6 +157,11 @@ func Load() (*Config, error) {
 	slog.Info("Loaded rate limiting configuration",
 		"min_delay", minDelay,
 		"max_polls_per_hour", maxPollsPerHour,
+	)
+	slog.Info("Loaded webhook cache configuration",
+		"enabled", webhookCacheEnabled,
+		"size", webhookCacheSize,
+		"ttl", webhookCacheTTL,
 	)
 
 	return cfg, nil

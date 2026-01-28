@@ -3,14 +3,16 @@ package service
 import (
 	"context"
 	"log/slog"
+
+	"github.com/formbricks/hub/internal/datatypes"
 )
 
-// Event represents a feedback record event
+// Event represents an event that can be published to message providers (webhooks, email, etc.)
 type Event struct {
-	Type          string      // "feedback_record.created", "feedback_record.updated", "feedback_record.deleted"
-	Timestamp     int64       // Unix timestamp
-	Data          interface{} // FeedbackRecord
-	ChangedFields []string    // Only for updates
+	Type          datatypes.EventType // Event type enum (e.g., FeedbackRecordCreated, WebhookCreated)
+	Timestamp     int64               // Unix timestamp
+	Data          interface{}         // Event data (FeedbackRecord, Webhook, etc.)
+	ChangedFields []string            // Only for updates
 }
 
 // MessagePublisher defines the interface for publishing events

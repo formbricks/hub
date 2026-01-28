@@ -48,11 +48,16 @@ func main() {
 
 	// Initialize webhooks repository and service
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
-	// Register webhook provider
-	webhookDeliveryService := service.NewWebhookDeliveryService(webhooksRepo)
+	// Initialize webhook delivery service with configurable caching
+	webhookCacheConfig := &service.WebhookCacheConfig{
+		Enabled: cfg.WebhookCacheEnabled,
+		Size:    cfg.WebhookCacheSize,
+		TTL:     cfg.WebhookCacheTTL,
+	}
+	webhookDeliveryService := service.NewWebhookDeliveryService(webhooksRepo, webhookCacheConfig)
 	messageManager.RegisterProvider(webhookDeliveryService)
 
 	// Register email provider (placeholder for demonstration)

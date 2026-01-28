@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 )
@@ -45,7 +46,7 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 	// Publish event asynchronously
 	go func() {
 		event := Event{
-			Type:      "feedback_record.created",
+			Type:      datatypes.FeedbackRecordCreated,
 			Timestamp: time.Now().Unix(),
 			Data:      *record,
 		}
@@ -101,7 +102,7 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 	// Publish event asynchronously
 	go func() {
 		event := Event{
-			Type:          "feedback_record.updated",
+			Type:          datatypes.FeedbackRecordUpdated,
 			Timestamp:     time.Now().Unix(),
 			Data:          *record,
 			ChangedFields: changedFields,
@@ -160,7 +161,7 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 	// Publish event asynchronously
 	go func() {
 		event := Event{
-			Type:      "feedback_record.deleted",
+			Type:      datatypes.FeedbackRecordDeleted,
 			Timestamp: time.Now().Unix(),
 			Data:      *record,
 		}

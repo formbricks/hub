@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"log/slog"
+	"time"
 
+	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 )
@@ -18,16 +21,21 @@ type WebhooksRepository interface {
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListEnabled(ctx context.Context) ([]models.Webhook, error)
+	ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error)
 }
 
 // WebhooksService handles business logic for webhooks
 type WebhooksService struct {
-	repo WebhooksRepository
+	repo      WebhooksRepository
+	publisher MessagePublisher
 }
 
 // NewWebhooksService creates a new webhooks service
-func NewWebhooksService(repo WebhooksRepository) *WebhooksService {
-	return &WebhooksService{repo: repo}
+func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher) *WebhooksService {
+	return &WebhooksService{
+		repo:      repo,
+		publisher: publisher,
+	}
 }
 
 // CreateWebhook creates a new webhook
@@ -40,7 +48,29 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 		}
 		req.SigningKey = key
 	}
-	return s.repo.Create(ctx, req)
+
+	webhook, err := s.repo.Create(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Publish event asynchronously
+	go func() {
+		event := Event{
+			Type:      datatypes.WebhookCreated,
+			Timestamp: time.Now().Unix(),
+			Data:      *webhook,
+		}
+		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
+			// Error is already logged by MessagePublisherManager, but log here for visibility
+			slog.Debug("Failed to publish webhook created event",
+				"webhook_id", webhook.ID,
+				"error", err,
+			)
+		}
+	}()
+
+	return webhook, nil
 }
 
 // generateSigningKey generates a cryptographically secure signing key
@@ -87,10 +117,80 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 
 // UpdateWebhook updates an existing webhook
 func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
-	return s.repo.Update(ctx, id, req)
+	// Track changed fields
+	changedFields := s.getChangedFields(req)
+
+	webhook, err := s.repo.Update(ctx, id, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Publish event asynchronously
+	go func() {
+		event := Event{
+			Type:          datatypes.WebhookUpdated,
+			Timestamp:     time.Now().Unix(),
+			Data:          *webhook,
+			ChangedFields: changedFields,
+		}
+		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
+			// Error is already logged by MessagePublisherManager, but log here for visibility
+			slog.Debug("Failed to publish webhook updated event",
+				"webhook_id", webhook.ID,
+				"error", err,
+			)
+		}
+	}()
+
+	return webhook, nil
+}
+
+// getChangedFields extracts which fields were changed from the update request
+func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []string {
+	var fields []string
+	if req.URL != nil {
+		fields = append(fields, "url")
+	}
+	if req.SigningKey != nil {
+		fields = append(fields, "signing_key")
+	}
+	if req.Enabled != nil {
+		fields = append(fields, "enabled")
+	}
+	if req.EventTypes != nil {
+		fields = append(fields, "event_types")
+	}
+	return fields
 }
 
 // DeleteWebhook deletes a webhook by ID
 func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
-	return s.repo.Delete(ctx, id)
+	// Get webhook before deletion for event payload
+	webhook, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// Delete the webhook
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+
+	// Publish event asynchronously
+	go func() {
+		event := Event{
+			Type:      datatypes.WebhookDeleted,
+			Timestamp: time.Now().Unix(),
+			Data:      *webhook,
+		}
+		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
+			// Error is already logged by MessagePublisherManager, but log here for visibility
+			slog.Debug("Failed to publish webhook deleted event",
+				"webhook_id", webhook.ID,
+				"error", err,
+			)
+		}
+	}()
+
+	return nil
 }
