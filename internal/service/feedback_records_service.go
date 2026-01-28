@@ -20,7 +20,9 @@ type FeedbackRecordsRepository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
 	UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error
-	// ListBySimilarityWithDescendants finds feedback similar to a topic AND all its descendants
+	// ListByTopicWithDescendants finds feedback assigned to a topic or its descendants (direct lookup)
+	ListByTopicWithDescendants(ctx context.Context, topicID uuid.UUID, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, int64, error)
+	// ListBySimilarityWithDescendants finds feedback similar to a topic AND all its descendants (vector search)
 	ListBySimilarityWithDescendants(ctx context.Context, topicID uuid.UUID, levelThresholds map[int]float64, defaultThreshold float64, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, int64, error)
 }
 
@@ -95,9 +97,9 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filter
 		filters.Limit = 100
 	}
 
-	// If topic_id filter is provided, use vector similarity search with descendants
+	// If topic_id filter is provided, use direct lookup (or similarity if explicitly requested)
 	if filters.TopicID != nil {
-		return s.listByTopicSimilarity(ctx, *filters.TopicID, filters)
+		return s.listByTopic(ctx, *filters.TopicID, filters)
 	}
 
 	// Standard listing without vector search
@@ -119,8 +121,36 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filter
 	}, nil
 }
 
+// listByTopic retrieves feedback records assigned to a topic or its descendants.
+// Uses direct topic_id lookup (fast, pre-computed during taxonomy generation).
+// Falls back to similarity search if UseSimilarity filter is set.
+func (s *FeedbackRecordsService) listByTopic(ctx context.Context, topicID uuid.UUID, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
+	// Check if similarity search is explicitly requested
+	if filters.UseSimilarity {
+		return s.listByTopicSimilarity(ctx, topicID, filters)
+	}
+
+	// Default: Use direct topic_id lookup (faster, uses pre-computed assignments)
+	slog.Debug("using direct topic_id lookup",
+		"topic_id", topicID,
+	)
+
+	records, total, err := s.repo.ListByTopicWithDescendants(ctx, topicID, filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list feedback by topic: %w", err)
+	}
+
+	return &models.ListFeedbackRecordsResponse{
+		Data:   records,
+		Total:  total,
+		Limit:  filters.Limit,
+		Offset: filters.Offset,
+	}, nil
+}
+
 // listByTopicSimilarity retrieves feedback records similar to a topic AND all its descendants.
 // Uses optimized single-query approach with level-based thresholds.
+// This is slower but can find matches for unclassified feedback.
 func (s *FeedbackRecordsService) listByTopicSimilarity(ctx context.Context, topicID uuid.UUID, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
 	// Determine thresholds to use
 	var levelThresholds map[int]float64

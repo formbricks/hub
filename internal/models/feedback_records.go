@@ -80,13 +80,18 @@ type ListFeedbackRecordsFilters struct {
 	Limit          int        `form:"limit" validate:"omitempty,min=1,max=1000"`
 	Offset         int        `form:"offset" validate:"omitempty,min=0"`
 
-	// TopicID triggers vector similarity search instead of simple filtering
-	// When set, returns feedback records whose embeddings are similar to the topic's embedding
+	// TopicID filters feedback records by topic assignment
+	// By default, uses direct topic_id lookup (fast, pre-computed)
+	// Set UseSimilarity=true to use vector similarity search instead
 	TopicID *uuid.UUID `form:"topic_id" validate:"omitempty"`
 
-	// MinSimilarity overrides the default threshold when filtering by topic_id
+	// UseSimilarity when true, uses vector similarity search instead of direct topic_id lookup
+	// This is slower but can find matches for unclassified feedback
+	UseSimilarity bool `form:"use_similarity"`
+
+	// MinSimilarity overrides the default threshold when using similarity search
 	// Value between 0 and 1 (e.g., 0.5 = 50% similarity minimum)
-	// If not set, uses automatic thresholds based on topic level
+	// Only used when UseSimilarity=true. If not set, uses automatic thresholds based on topic level
 	MinSimilarity *float64 `form:"min_similarity" validate:"omitempty,min=0,max=1"`
 }
 

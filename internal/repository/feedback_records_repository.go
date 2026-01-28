@@ -548,6 +548,124 @@ func (r *FeedbackRecordsRepository) ListBySimilarityWithDescendants(
 	return records, totalCount, nil
 }
 
+// ListByTopicWithDescendants retrieves feedback records assigned to a topic or its descendants.
+// Uses the pre-computed topic_id column set during taxonomy generation.
+// This is faster than similarity search and provides accurate cluster-based results.
+func (r *FeedbackRecordsRepository) ListByTopicWithDescendants(
+	ctx context.Context,
+	topicID uuid.UUID,
+	filters *models.ListFeedbackRecordsFilters,
+) ([]models.FeedbackRecord, int64, error) {
+	// Build additional filter conditions
+	filterConditions, filterArgs, _ := buildSimilarityFilterConditions(filters, 3)
+
+	// Build query with recursive CTE to get topic and all descendants
+	// Then match feedback records by topic_id column
+	query := fmt.Sprintf(`
+		WITH RECURSIVE topic_tree AS (
+			-- Base: target topic
+			SELECT id
+			FROM topics
+			WHERE id = $1
+			
+			UNION ALL
+			
+			-- Recursive: all descendants
+			SELECT t.id
+			FROM topics t
+			INNER JOIN topic_tree tt ON t.parent_id = tt.id
+		)
+		SELECT 
+			fr.id, fr.collected_at, fr.created_at, fr.updated_at,
+			fr.source_type, fr.source_id, fr.source_name,
+			fr.field_id, fr.field_label, fr.field_type,
+			fr.value_text, fr.value_number, fr.value_boolean, fr.value_date,
+			fr.metadata, fr.language, fr.user_identifier, fr.tenant_id, fr.response_id,
+			fr.classification_confidence,
+			COUNT(*) OVER() as total_count
+		FROM feedback_records fr
+		WHERE fr.topic_id IN (SELECT id FROM topic_tree)
+		%s
+		ORDER BY fr.collected_at DESC
+		LIMIT $1 OFFSET $2
+	`, filterConditions)
+
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := filters.Offset
+
+	// Note: We use topicID in the CTE, limit/offset as $1/$2 in the outer query
+	// Need to rebuild query with correct parameter ordering
+	query = fmt.Sprintf(`
+		WITH RECURSIVE topic_tree AS (
+			SELECT id
+			FROM topics
+			WHERE id = $1
+			
+			UNION ALL
+			
+			SELECT t.id
+			FROM topics t
+			INNER JOIN topic_tree tt ON t.parent_id = tt.id
+		)
+		SELECT 
+			fr.id, fr.collected_at, fr.created_at, fr.updated_at,
+			fr.source_type, fr.source_id, fr.source_name,
+			fr.field_id, fr.field_label, fr.field_type,
+			fr.value_text, fr.value_number, fr.value_boolean, fr.value_date,
+			fr.metadata, fr.language, fr.user_identifier, fr.tenant_id, fr.response_id,
+			fr.classification_confidence,
+			COUNT(*) OVER() as total_count
+		FROM feedback_records fr
+		WHERE fr.topic_id IN (SELECT id FROM topic_tree)
+		%s
+		ORDER BY fr.collected_at DESC
+		LIMIT $2 OFFSET $3
+	`, filterConditions)
+
+	args := []interface{}{topicID, limit, offset}
+	args = append(args, filterArgs...)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list feedback records by topic: %w", err)
+	}
+	defer rows.Close()
+
+	records := []models.FeedbackRecord{}
+	var totalCount int64
+
+	for rows.Next() {
+		var record models.FeedbackRecord
+		var confidence *float64
+		var count int64
+
+		err := rows.Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
+			&confidence, &count,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan feedback record: %w", err)
+		}
+
+		record.Similarity = confidence // Reuse similarity field for confidence
+		records = append(records, record)
+		totalCount = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating feedback records: %w", err)
+	}
+
+	return records, totalCount, nil
+}
+
 // buildSimilarityFilterConditions builds WHERE clause conditions for similarity queries.
 // Returns the conditions string (with AND prefix for each), the args slice, and the next arg index.
 // startArg is the first parameter index to use.
