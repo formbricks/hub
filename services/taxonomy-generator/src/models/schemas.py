@@ -33,7 +33,7 @@ class ClusterConfig(BaseModel):
     generate_level2: bool = True
 
     # Minimum cluster size to consider for Level 2 subdivision
-    level2_min_cluster_size: int = 500
+    level2_min_cluster_size: int = 50
 
 
 class ClusteringJobStatus(str, Enum):
