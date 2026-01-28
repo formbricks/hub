@@ -17,6 +17,7 @@ import (
 	"github.com/formbricks/hub/internal/jobs"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/internal/worker"
 	"github.com/formbricks/hub/pkg/database"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -138,6 +139,20 @@ func main() {
 	protectedMux.HandleFunc("PATCH /v1/topics/{id}", topicsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/topics/{id}", topicsHandler.Delete)
 
+	// Taxonomy generation endpoints (calls Python microservice)
+	taxonomyClient := service.NewTaxonomyClient(cfg.TaxonomyServiceURL)
+	clusteringJobsRepo := repository.NewClusteringJobsRepository(db)
+	taxonomyHandler := handlers.NewTaxonomyHandlerWithSchedule(taxonomyClient, clusteringJobsRepo)
+	protectedMux.HandleFunc("POST /v1/taxonomy/{tenant_id}/generate", taxonomyHandler.Generate)
+	protectedMux.HandleFunc("POST /v1/taxonomy/{tenant_id}/generate/sync", taxonomyHandler.GenerateSync)
+	protectedMux.HandleFunc("GET /v1/taxonomy/{tenant_id}/status", taxonomyHandler.Status)
+	protectedMux.HandleFunc("GET /v1/taxonomy/health", taxonomyHandler.Health)
+	// Schedule management
+	protectedMux.HandleFunc("POST /v1/taxonomy/{tenant_id}/schedule", taxonomyHandler.CreateSchedule)
+	protectedMux.HandleFunc("GET /v1/taxonomy/{tenant_id}/schedule", taxonomyHandler.GetSchedule)
+	protectedMux.HandleFunc("DELETE /v1/taxonomy/{tenant_id}/schedule", taxonomyHandler.DeleteSchedule)
+	protectedMux.HandleFunc("GET /v1/taxonomy/schedules", taxonomyHandler.ListSchedules)
+
 	// Apply middleware to protected endpoints
 	// Order matters: CORS must wrap Auth so OPTIONS preflight requests bypass authentication
 	var protectedHandler http.Handler = protectedMux
@@ -169,6 +184,20 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	// Start taxonomy scheduler if enabled
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+
+	if cfg.TaxonomySchedulerEnabled {
+		taxonomyScheduler := worker.NewTaxonomyScheduler(
+			clusteringJobsRepo,
+			taxonomyClient,
+			cfg.TaxonomyPollInterval,
+			5, // batch size
+		)
+		go taxonomyScheduler.Start(workerCtx)
+	}
 
 	// Wait for interrupt signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)

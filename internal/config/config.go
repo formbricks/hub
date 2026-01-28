@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -21,6 +22,11 @@ type Config struct {
 	RiverWorkers       int     // RIVER_WORKERS - concurrent embedding workers (default: 10)
 	RiverMaxRetries    int     // RIVER_MAX_RETRIES - max retry attempts (default: 5)
 	EmbeddingRateLimit float64 // EMBEDDING_RATE_LIMIT - OpenAI requests per second (default: 50)
+
+	// Taxonomy service settings
+	TaxonomyServiceURL       string        // URL of the taxonomy-generator Python microservice
+	TaxonomySchedulerEnabled bool          // Enable periodic taxonomy scheduler
+	TaxonomyPollInterval     time.Duration // How often to check for due jobs (default: 1m)
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -70,6 +76,19 @@ func getEnvAsBool(key string, defaultValue bool) bool {
 	return value
 }
 
+// getEnvAsDuration retrieves an environment variable as a duration or returns a default value
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := time.ParseDuration(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
 // Load reads configuration from environment variables and returns a Config struct.
 // It automatically loads .env file if it exists.
 // Returns default values for any missing environment variables.
@@ -101,6 +120,11 @@ func Load() (*Config, error) {
 		RiverWorkers:       getEnvAsInt("RIVER_WORKERS", 10),
 		RiverMaxRetries:    getEnvAsInt("RIVER_MAX_RETRIES", 5),
 		EmbeddingRateLimit: getEnvAsFloat("EMBEDDING_RATE_LIMIT", 50),
+
+		// Taxonomy service settings
+		TaxonomyServiceURL:       getEnv("TAXONOMY_SERVICE_URL", "http://localhost:8001"),
+		TaxonomySchedulerEnabled: getEnv("TAXONOMY_SCHEDULER_ENABLED", "false") == "true",
+		TaxonomyPollInterval:     getEnvAsDuration("TAXONOMY_POLL_INTERVAL", 1*time.Minute),
 	}
 
 	return cfg, nil
