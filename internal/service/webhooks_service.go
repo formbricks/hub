@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
@@ -30,7 +32,27 @@ func NewWebhooksService(repo WebhooksRepository) *WebhooksService {
 
 // CreateWebhook creates a new webhook
 func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+	// Auto-generate signing key if not provided
+	if req.SigningKey == "" {
+		key, err := generateSigningKey()
+		if err != nil {
+			return nil, err
+		}
+		req.SigningKey = key
+	}
 	return s.repo.Create(ctx, req)
+}
+
+// generateSigningKey generates a cryptographically secure signing key
+// in the format expected by Standard Webhooks: "whsec_" + base64(32 random bytes)
+func generateSigningKey() (string, error) {
+	// Generate 32 random bytes
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return "", err
+	}
+	// Encode as base64 and prefix with "whsec_"
+	return "whsec_" + base64.StdEncoding.EncodeToString(key), nil
 }
 
 // GetWebhook retrieves a single webhook by ID
