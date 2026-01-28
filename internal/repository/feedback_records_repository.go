@@ -577,3 +577,210 @@ func (r *FeedbackRecordsRepository) CountBySimilarity(ctx context.Context, topic
 
 	return count, nil
 }
+
+// ListBySimilarityWithDescendants finds feedback similar to a topic AND all its descendants.
+// Uses a single optimized query with recursive CTE for efficiency.
+// Returns the matching records and total count in one database round-trip.
+func (r *FeedbackRecordsRepository) ListBySimilarityWithDescendants(
+	ctx context.Context,
+	topicID uuid.UUID,
+	levelThresholds map[int]float64,
+	defaultThreshold float64,
+	filters *models.ListFeedbackRecordsFilters,
+) ([]models.FeedbackRecord, int64, error) {
+	// Extract threshold values for each level (1-5), using default for missing levels
+	getThreshold := func(level int) float64 {
+		if t, ok := levelThresholds[level]; ok {
+			return t
+		}
+		return defaultThreshold
+	}
+
+	// Build additional filter conditions
+	filterConditions, filterArgs, nextArg := buildSimilarityFilterConditions(filters, 10)
+
+	// Build the optimized query with recursive CTE
+	// This query:
+	// 1. Gets target topic + all descendants via recursive CTE
+	// 2. Computes similarity for each (topic, feedback) pair
+	// 3. Applies level-appropriate threshold using CASE
+	// 4. Keeps best match per feedback record using DISTINCT ON
+	// 5. Returns total count via window function
+	query := fmt.Sprintf(`
+		WITH RECURSIVE topic_tree AS (
+			-- Base: target topic
+			SELECT id, level, embedding
+			FROM topics
+			WHERE id = $1 AND embedding IS NOT NULL
+			
+			UNION ALL
+			
+			-- Recursive: descendants with embeddings
+			SELECT t.id, t.level, t.embedding
+			FROM topics t
+			INNER JOIN topic_tree tt ON t.parent_id = tt.id
+			WHERE t.embedding IS NOT NULL
+		),
+		all_matches AS (
+			-- Find feedback similar to ANY topic in tree
+			SELECT 
+				fr.id, fr.collected_at, fr.created_at, fr.updated_at,
+				fr.source_type, fr.source_id, fr.source_name,
+				fr.field_id, fr.field_label, fr.field_type,
+				fr.value_text, fr.value_number, fr.value_boolean, fr.value_date,
+				fr.metadata, fr.language, fr.user_identifier, fr.tenant_id, fr.response_id,
+				1 - (fr.embedding <=> tt.embedding) as similarity
+			FROM feedback_records fr
+			CROSS JOIN topic_tree tt
+			WHERE fr.embedding IS NOT NULL
+			  AND 1 - (fr.embedding <=> tt.embedding) >= 
+				  CASE tt.level
+					  WHEN 1 THEN $2
+					  WHEN 2 THEN $3
+					  WHEN 3 THEN $4
+					  WHEN 4 THEN $5
+					  WHEN 5 THEN $6
+					  ELSE $7
+				  END
+			  %s
+		),
+		deduplicated AS (
+			-- Keep only the highest similarity per feedback record
+			SELECT DISTINCT ON (id)
+				id, collected_at, created_at, updated_at,
+				source_type, source_id, source_name,
+				field_id, field_label, field_type,
+				value_text, value_number, value_boolean, value_date,
+				metadata, language, user_identifier, tenant_id, response_id,
+				similarity
+			FROM all_matches
+			ORDER BY id, similarity DESC
+		)
+		SELECT 
+			id, collected_at, created_at, updated_at,
+			source_type, source_id, source_name,
+			field_id, field_label, field_type,
+			value_text, value_number, value_boolean, value_date,
+			metadata, language, user_identifier, tenant_id, response_id,
+			similarity,
+			COUNT(*) OVER() as total_count
+		FROM deduplicated
+		ORDER BY similarity DESC
+		LIMIT $8 OFFSET $9
+	`, filterConditions)
+
+	// Build args: topicID, thresholds (1-5), default, limit, offset, then filter args
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := filters.Offset
+
+	args := []interface{}{
+		topicID,
+		getThreshold(1),
+		getThreshold(2),
+		getThreshold(3),
+		getThreshold(4),
+		getThreshold(5),
+		defaultThreshold,
+		limit,
+		offset,
+	}
+	args = append(args, filterArgs...)
+	_ = nextArg // unused but returned by helper
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list feedback records by similarity with descendants: %w", err)
+	}
+	defer rows.Close()
+
+	records := []models.FeedbackRecord{}
+	var totalCount int64
+
+	for rows.Next() {
+		var record models.FeedbackRecord
+		var similarity float64
+		var count int64
+
+		err := rows.Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.ResponseID,
+			&similarity, &count,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan feedback record: %w", err)
+		}
+
+		record.Similarity = &similarity
+		records = append(records, record)
+		totalCount = count // Same for all rows due to window function
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating feedback records: %w", err)
+	}
+
+	return records, totalCount, nil
+}
+
+// buildSimilarityFilterConditions builds WHERE clause conditions for similarity queries.
+// Returns the conditions string (with AND prefix for each), the args slice, and the next arg index.
+// startArg is the first parameter index to use.
+func buildSimilarityFilterConditions(filters *models.ListFeedbackRecordsFilters, startArg int) (string, []interface{}, int) {
+	var conditions []string
+	var args []interface{}
+	argCount := startArg
+
+	if filters.TenantID != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.tenant_id = $%d", argCount))
+		args = append(args, *filters.TenantID)
+		argCount++
+	}
+	if filters.ResponseID != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.response_id = $%d", argCount))
+		args = append(args, *filters.ResponseID)
+		argCount++
+	}
+	if filters.SourceType != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.source_type = $%d", argCount))
+		args = append(args, *filters.SourceType)
+		argCount++
+	}
+	if filters.SourceID != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.source_id = $%d", argCount))
+		args = append(args, *filters.SourceID)
+		argCount++
+	}
+	if filters.FieldID != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.field_id = $%d", argCount))
+		args = append(args, *filters.FieldID)
+		argCount++
+	}
+	if filters.FieldType != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.field_type = $%d", argCount))
+		args = append(args, *filters.FieldType)
+		argCount++
+	}
+	if filters.UserIdentifier != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.user_identifier = $%d", argCount))
+		args = append(args, *filters.UserIdentifier)
+		argCount++
+	}
+	if filters.Since != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.collected_at >= $%d", argCount))
+		args = append(args, *filters.Since)
+		argCount++
+	}
+	if filters.Until != nil {
+		conditions = append(conditions, fmt.Sprintf("AND fr.collected_at <= $%d", argCount))
+		args = append(args, *filters.Until)
+		argCount++
+	}
+
+	return strings.Join(conditions, " "), args, argCount
+}

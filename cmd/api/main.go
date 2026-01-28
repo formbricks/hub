@@ -60,12 +60,12 @@ func main() {
 	}
 	topicsHandler := handlers.NewTopicsHandler(topicsService)
 
-	// Feedback records service uses topics repo for similarity search
+	// Feedback records service with optional embedding support
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	var feedbackRecordsService *service.FeedbackRecordsService
 	if embeddingClient != nil {
-		// Enable embedding generation and topic-based similarity search
-		feedbackRecordsService = service.NewFeedbackRecordsServiceWithEmbeddings(feedbackRecordsRepo, embeddingClient, topicsRepo)
+		// Enable embedding generation (topic similarity search is handled via optimized SQL query)
+		feedbackRecordsService = service.NewFeedbackRecordsServiceWithEmbeddings(feedbackRecordsRepo, embeddingClient)
 	} else {
 		feedbackRecordsService = service.NewFeedbackRecordsService(feedbackRecordsRepo)
 	}

@@ -10,17 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Similarity thresholds based on topic level
-const (
-	// ThemeThreshold is the minimum similarity for theme (level 1) topics
-	// Themes are broader, so we accept lower similarity
-	ThemeThreshold = 0.35
-
-	// SubtopicThreshold is the minimum similarity for subtopic (level 2+) topics
-	// Subtopics are specific, so we require higher confidence
-	SubtopicThreshold = 0.50
-)
-
 // FeedbackRecordsRepository defines the interface for feedback records data access.
 type FeedbackRecordsRepository interface {
 	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
@@ -31,21 +20,14 @@ type FeedbackRecordsRepository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
 	UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error
-	ListBySimilarity(ctx context.Context, topicEmbedding []float32, minSimilarity float64, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error)
-	CountBySimilarity(ctx context.Context, topicEmbedding []float32, minSimilarity float64, filters *models.ListFeedbackRecordsFilters) (int64, error)
-}
-
-// TopicLookup defines the interface for looking up topic information (for vector search)
-type TopicLookup interface {
-	GetByID(ctx context.Context, id uuid.UUID) (*models.Topic, error)
-	GetEmbedding(ctx context.Context, id uuid.UUID) ([]float32, error)
+	// ListBySimilarityWithDescendants finds feedback similar to a topic AND all its descendants
+	ListBySimilarityWithDescendants(ctx context.Context, topicID uuid.UUID, levelThresholds map[int]float64, defaultThreshold float64, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, int64, error)
 }
 
 // FeedbackRecordsService handles business logic for feedback records
 type FeedbackRecordsService struct {
 	repo            FeedbackRecordsRepository
 	embeddingClient embeddings.Client // nil if embeddings are disabled
-	topicLookup     TopicLookup       // nil if topic-based filtering is disabled
 }
 
 // NewFeedbackRecordsService creates a new feedback records service
@@ -54,11 +36,10 @@ func NewFeedbackRecordsService(repo FeedbackRecordsRepository) *FeedbackRecordsS
 }
 
 // NewFeedbackRecordsServiceWithEmbeddings creates a service with embedding support
-func NewFeedbackRecordsServiceWithEmbeddings(repo FeedbackRecordsRepository, embeddingClient embeddings.Client, topicLookup TopicLookup) *FeedbackRecordsService {
+func NewFeedbackRecordsServiceWithEmbeddings(repo FeedbackRecordsRepository, embeddingClient embeddings.Client) *FeedbackRecordsService {
 	return &FeedbackRecordsService{
 		repo:            repo,
 		embeddingClient: embeddingClient,
-		topicLookup:     topicLookup,
 	}
 }
 
@@ -107,14 +88,14 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 }
 
 // ListFeedbackRecords retrieves a list of feedback records with optional filters
-// If TopicID filter is provided and topic lookup is configured, uses vector similarity search
+// If TopicID filter is provided, uses vector similarity search with hierarchical aggregation
 func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
 	// Set default limit if not provided
 	if filters.Limit <= 0 {
 		filters.Limit = 100
 	}
 
-	// If topic_id filter is provided, use vector similarity search
+	// If topic_id filter is provided, use vector similarity search with descendants
 	if filters.TopicID != nil {
 		return s.listByTopicSimilarity(ctx, *filters.TopicID, filters)
 	}
@@ -138,62 +119,45 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filter
 	}, nil
 }
 
-// listByTopicSimilarity retrieves feedback records similar to a topic's embedding
+// listByTopicSimilarity retrieves feedback records similar to a topic AND all its descendants.
+// Uses optimized single-query approach with level-based thresholds.
 func (s *FeedbackRecordsService) listByTopicSimilarity(ctx context.Context, topicID uuid.UUID, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
-	if s.topicLookup == nil {
-		return nil, fmt.Errorf("topic-based filtering is not enabled")
-	}
-
-	// Get the topic to determine its level and embedding
-	topic, err := s.topicLookup.GetByID(ctx, topicID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get topic: %w", err)
-	}
-
-	// Get the topic's embedding
-	topicEmbedding, err := s.topicLookup.GetEmbedding(ctx, topicID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get topic embedding: %w", err)
-	}
-
-	if topicEmbedding == nil {
-		slog.Warn("topic has no embedding, cannot perform similarity search", "topic_id", topicID)
-		// Return empty results
-		return &models.ListFeedbackRecordsResponse{
-			Data:   []models.FeedbackRecord{},
-			Total:  0,
-			Limit:  filters.Limit,
-			Offset: filters.Offset,
-		}, nil
-	}
-
-	// Determine threshold: use custom if provided, otherwise based on topic level
-	var minSimilarity float64
+	// Determine thresholds to use
+	var levelThresholds map[int]float64
 	if filters.MinSimilarity != nil {
-		minSimilarity = *filters.MinSimilarity
-	} else if topic.Level == 1 {
-		minSimilarity = ThemeThreshold
+		// Custom threshold overrides level-based thresholds
+		// Apply same threshold to all levels
+		threshold := *filters.MinSimilarity
+		levelThresholds = map[int]float64{
+			1: threshold,
+			2: threshold,
+			3: threshold,
+			4: threshold,
+			5: threshold,
+		}
+		slog.Debug("using custom similarity threshold for all levels",
+			"topic_id", topicID,
+			"threshold", threshold,
+		)
 	} else {
-		minSimilarity = SubtopicThreshold
+		// Use level-based thresholds from models
+		levelThresholds = models.LevelThresholds
+		slog.Debug("using level-based similarity thresholds",
+			"topic_id", topicID,
+			"thresholds", levelThresholds,
+		)
 	}
 
-	slog.Debug("performing similarity search",
-		"topic_id", topicID,
-		"topic_title", topic.Title,
-		"topic_level", topic.Level,
-		"min_similarity", minSimilarity,
-		"custom_threshold", filters.MinSimilarity != nil,
+	// Perform optimized similarity search with descendants
+	records, total, err := s.repo.ListBySimilarityWithDescendants(
+		ctx,
+		topicID,
+		levelThresholds,
+		models.DefaultThreshold,
+		filters,
 	)
-
-	// Perform similarity search
-	records, err := s.repo.ListBySimilarity(ctx, topicEmbedding, minSimilarity, filters)
 	if err != nil {
-		return nil, err
-	}
-
-	total, err := s.repo.CountBySimilarity(ctx, topicEmbedding, minSimilarity, filters)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to search feedback by topic similarity: %w", err)
 	}
 
 	return &models.ListFeedbackRecordsResponse{
