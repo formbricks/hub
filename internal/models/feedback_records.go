@@ -29,11 +29,9 @@ type FeedbackRecord struct {
 	TenantID       *string         `json:"tenant_id,omitempty"`
 	ResponseID     *string         `json:"response_id,omitempty"`
 
-	// AI enrichment fields (embedding-based)
-	// TopicID is the classified Level 2 topic ID
-	TopicID *uuid.UUID `json:"topic_id,omitempty"`
-	// ClassificationConfidence is the similarity score of the best match
-	ClassificationConfidence *float64 `json:"classification_confidence,omitempty"`
+	// Similarity is populated at query time when filtering by topic_id
+	// It represents the cosine similarity between this feedback's embedding and the topic's embedding
+	Similarity *float64 `json:"similarity,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record
@@ -77,11 +75,19 @@ type ListFeedbackRecordsFilters struct {
 	FieldID        *string    `form:"field_id" validate:"omitempty,no_null_bytes"`
 	FieldType      *string    `form:"field_type" validate:"omitempty,no_null_bytes"`
 	UserIdentifier *string    `form:"user_identifier" validate:"omitempty,no_null_bytes"`
-	TopicID        *uuid.UUID `form:"topic_id" validate:"omitempty"`
 	Since          *time.Time `form:"since" validate:"omitempty"`
 	Until          *time.Time `form:"until" validate:"omitempty"`
 	Limit          int        `form:"limit" validate:"omitempty,min=1,max=1000"`
 	Offset         int        `form:"offset" validate:"omitempty,min=0"`
+
+	// TopicID triggers vector similarity search instead of simple filtering
+	// When set, returns feedback records whose embeddings are similar to the topic's embedding
+	TopicID *uuid.UUID `form:"topic_id" validate:"omitempty"`
+
+	// MinSimilarity overrides the default threshold when filtering by topic_id
+	// Value between 0 and 1 (e.g., 0.5 = 50% similarity minimum)
+	// If not set, uses automatic thresholds based on topic level
+	MinSimilarity *float64 `form:"min_similarity" validate:"omitempty,min=0,max=1"`
 }
 
 // ListFeedbackRecordsResponse represents the response for listing feedback records
@@ -107,22 +113,5 @@ type BulkDeleteResponse struct {
 // UpdateFeedbackEnrichmentRequest represents internal request to update AI-enriched fields
 // Used by the service layer, not exposed via API
 type UpdateFeedbackEnrichmentRequest struct {
-	Embedding                []float32
-	TopicID                  *uuid.UUID // Classified Level 2 topic ID
-	ClassificationConfidence *float64
-}
-
-// EmbeddingRecord represents a feedback record with its embedding for clustering.
-type EmbeddingRecord struct {
-	ID        uuid.UUID
-	Text      string
-	Embedding []float32
-}
-
-// UnclassifiedRecord represents a feedback record that has an embedding but no topic classification.
-// Used by the classification retry worker.
-type UnclassifiedRecord struct {
-	ID        uuid.UUID
-	TenantID  *string
 	Embedding []float32
 }

@@ -60,6 +60,8 @@ func (s *KnowledgeRecordsService) CreateKnowledgeRecord(ctx context.Context, req
 func (s *KnowledgeRecordsService) generateEmbedding(id uuid.UUID, content string) {
 	ctx := context.Background()
 
+	slog.Debug("generating embedding for knowledge record", "id", id, "content_length", len(content))
+
 	embedding, err := s.embeddingClient.GetEmbedding(ctx, content)
 	if err != nil {
 		slog.Error("failed to generate embedding", "record_type", "knowledge_record", "id", id, "error", err)
@@ -68,7 +70,10 @@ func (s *KnowledgeRecordsService) generateEmbedding(id uuid.UUID, content string
 
 	if err := s.repo.UpdateEmbedding(ctx, id, embedding); err != nil {
 		slog.Error("failed to store embedding", "record_type", "knowledge_record", "id", id, "error", err)
+		return
 	}
+
+	slog.Info("embedding generated successfully", "record_type", "knowledge_record", "id", id)
 }
 
 // GetKnowledgeRecord retrieves a single knowledge record by ID

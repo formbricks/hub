@@ -17,10 +17,6 @@ type Config struct {
 	LogLevel     string
 	OpenAIAPIKey string // Optional: for AI enrichment features
 
-	// Classification retry worker settings
-	ClassificationRetryInterval  time.Duration // How often to retry classification (default: 5m)
-	ClassificationRetryBatchSize int           // Records per batch (default: 100)
-
 	// Taxonomy service settings
 	TaxonomyServiceURL       string        // URL of the taxonomy-generator Python microservice
 	TaxonomySchedulerEnabled bool          // Enable periodic taxonomy scheduler
@@ -81,13 +77,9 @@ func Load() (*Config, error) {
 		LogLevel:     getEnv("LOG_LEVEL", "info"),
 		OpenAIAPIKey: os.Getenv("OPENAI_API_KEY"), // Optional: empty if not configured
 
-		// Classification retry worker settings
-		ClassificationRetryInterval:  getEnvAsDuration("CLASSIFICATION_RETRY_INTERVAL", 5*time.Minute),
-		ClassificationRetryBatchSize: getEnvAsInt("CLASSIFICATION_RETRY_BATCH_SIZE", 100),
-
 		// Taxonomy service settings
 		TaxonomyServiceURL:       getEnv("TAXONOMY_SERVICE_URL", "http://localhost:8001"),
-		TaxonomySchedulerEnabled: getEnv("TAXONOMY_SCHEDULER_ENABLED", "true") == "true",
+		TaxonomySchedulerEnabled: getEnv("TAXONOMY_SCHEDULER_ENABLED", "false") == "true",
 		TaxonomyPollInterval:     getEnvAsDuration("TAXONOMY_POLL_INTERVAL", 1*time.Minute),
 	}
 

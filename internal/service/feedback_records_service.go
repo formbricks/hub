@@ -10,19 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Classification threshold for Level 2 topic assignment
-const (
-	// ClassificationThreshold is the minimum similarity for topic classification
-	// Feedback is only classified to Level 2 topics
-	ClassificationThreshold = 0.30
-)
-
-// Topic levels
-const (
-	Level1 = 1 // Level 1 topics (broad categories)
-	Level2 = 2 // Level 2 topics (specific subtopics)
-)
-
 // FeedbackRecordsRepository defines the interface for feedback records data access.
 type FeedbackRecordsRepository interface {
 	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
@@ -33,21 +20,14 @@ type FeedbackRecordsRepository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
 	UpdateEnrichment(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackEnrichmentRequest) error
-	ListUnclassifiedWithEmbeddings(ctx context.Context, limit int) ([]models.UnclassifiedRecord, error)
-	UpdateClassification(ctx context.Context, id uuid.UUID, topicID uuid.UUID, confidence float64) error
-}
-
-// TopicClassifier defines the interface for topic classification via vector similarity
-type TopicClassifier interface {
-	// FindSimilarTopic finds the most similar topic. If level is nil, searches all levels.
-	FindSimilarTopic(ctx context.Context, embedding []float32, tenantID *string, level *int, minSimilarity float64) (*models.TopicMatch, error)
+	// ListBySimilarityWithDescendants finds feedback similar to a topic AND all its descendants
+	ListBySimilarityWithDescendants(ctx context.Context, topicID uuid.UUID, levelThresholds map[int]float64, defaultThreshold float64, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, int64, error)
 }
 
 // FeedbackRecordsService handles business logic for feedback records
 type FeedbackRecordsService struct {
 	repo            FeedbackRecordsRepository
 	embeddingClient embeddings.Client // nil if embeddings are disabled
-	topicClassifier TopicClassifier   // nil if classification is disabled
 }
 
 // NewFeedbackRecordsService creates a new feedback records service
@@ -63,15 +43,6 @@ func NewFeedbackRecordsServiceWithEmbeddings(repo FeedbackRecordsRepository, emb
 	}
 }
 
-// NewFeedbackRecordsServiceWithClassification creates a service with embedding and classification support
-func NewFeedbackRecordsServiceWithClassification(repo FeedbackRecordsRepository, embeddingClient embeddings.Client, topicClassifier TopicClassifier) *FeedbackRecordsService {
-	return &FeedbackRecordsService{
-		repo:            repo,
-		embeddingClient: embeddingClient,
-		topicClassifier: topicClassifier,
-	}
-}
-
 // CreateFeedbackRecord creates a new feedback record
 func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
 	record, err := s.repo.Create(ctx, req)
@@ -81,25 +52,19 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 
 	// Generate embedding for text feedback asynchronously if client is configured
 	if s.embeddingClient != nil && req.FieldType == "text" && req.ValueText != nil && *req.ValueText != "" {
-		go s.enrichRecord(record.ID, *req.ValueText, req.FieldLabel, req.TenantID)
+		go s.generateEmbedding(record.ID, *req.ValueText)
 	}
 
 	return record, nil
 }
 
-// enrichRecord generates embedding, classifies against Level 2 topics, and enriches the feedback record.
-// If fieldLabel (question) is provided, it combines "Question: <label>\nAnswer: <text>" for richer semantic context.
-func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string, fieldLabel *string, tenantID *string) {
+// generateEmbedding generates and stores embedding for a feedback record
+func (s *FeedbackRecordsService) generateEmbedding(id uuid.UUID, text string) {
 	ctx := context.Background()
 
-	// Build embedding input: combine question context with answer if available
-	embeddingInput := text
-	if fieldLabel != nil && *fieldLabel != "" {
-		embeddingInput = fmt.Sprintf("Question: %s\nAnswer: %s", *fieldLabel, text)
-	}
+	slog.Debug("generating embedding for feedback", "id", id, "text_length", len(text))
 
-	// 1. Generate embedding
-	embedding, err := s.embeddingClient.GetEmbedding(ctx, embeddingInput)
+	embedding, err := s.embeddingClient.GetEmbedding(ctx, text)
 	if err != nil {
 		slog.Error("failed to generate embedding", "record_type", "feedback_record", "id", id, "error", err)
 		return
@@ -109,37 +74,12 @@ func (s *FeedbackRecordsService) enrichRecord(id uuid.UUID, text string, fieldLa
 		Embedding: embedding,
 	}
 
-	// 2. Classify to Level 2 topic only if classifier is available
-	if s.topicClassifier != nil {
-		s.classifyToLevel2(ctx, id, embedding, tenantID, enrichReq)
-	}
-
-	// 3. Store enrichment data
 	if err := s.repo.UpdateEnrichment(ctx, id, enrichReq); err != nil {
-		slog.Error("failed to store enrichment", "record_type", "feedback_record", "id", id, "error", err)
-	}
-}
-
-// classifyToLevel2 attempts to classify feedback to a Level 2 topic
-// Level 1 association is determined dynamically via embedding similarity (not stored)
-func (s *FeedbackRecordsService) classifyToLevel2(ctx context.Context, id uuid.UUID, embedding []float32, tenantID *string, enrichReq *models.UpdateFeedbackEnrichmentRequest) {
-	level2 := Level2
-	match, err := s.topicClassifier.FindSimilarTopic(ctx, embedding, tenantID, &level2, ClassificationThreshold)
-	if err != nil {
-		slog.Error("failed to classify against Level 2 topics", "id", id, "error", err)
+		slog.Error("failed to store embedding", "record_type", "feedback_record", "id", id, "error", err)
 		return
 	}
 
-	if match != nil {
-		enrichReq.TopicID = &match.TopicID
-		enrichReq.ClassificationConfidence = &match.Similarity
-		slog.Debug("classified feedback to Level 2 topic",
-			"id", id,
-			"topic_id", match.TopicID,
-			"topic_title", match.Title,
-			"confidence", match.Similarity,
-		)
-	}
+	slog.Info("embedding generated successfully", "record_type", "feedback_record", "id", id)
 }
 
 // GetFeedbackRecord retrieves a single feedback record by ID
@@ -148,12 +88,19 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 }
 
 // ListFeedbackRecords retrieves a list of feedback records with optional filters
+// If TopicID filter is provided, uses vector similarity search with hierarchical aggregation
 func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
-	// Set default limit if not provided (validation ensures it's within bounds if provided)
+	// Set default limit if not provided
 	if filters.Limit <= 0 {
-		filters.Limit = 100 // Default limit
+		filters.Limit = 100
 	}
 
+	// If topic_id filter is provided, use vector similarity search with descendants
+	if filters.TopicID != nil {
+		return s.listByTopicSimilarity(ctx, *filters.TopicID, filters)
+	}
+
+	// Standard listing without vector search
 	records, err := s.repo.List(ctx, filters)
 	if err != nil {
 		return nil, err
@@ -162,6 +109,55 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filter
 	total, err := s.repo.Count(ctx, filters)
 	if err != nil {
 		return nil, err
+	}
+
+	return &models.ListFeedbackRecordsResponse{
+		Data:   records,
+		Total:  total,
+		Limit:  filters.Limit,
+		Offset: filters.Offset,
+	}, nil
+}
+
+// listByTopicSimilarity retrieves feedback records similar to a topic AND all its descendants.
+// Uses optimized single-query approach with level-based thresholds.
+func (s *FeedbackRecordsService) listByTopicSimilarity(ctx context.Context, topicID uuid.UUID, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
+	// Determine thresholds to use
+	var levelThresholds map[int]float64
+	if filters.MinSimilarity != nil {
+		// Custom threshold overrides level-based thresholds
+		// Apply same threshold to all levels
+		threshold := *filters.MinSimilarity
+		levelThresholds = map[int]float64{
+			1: threshold,
+			2: threshold,
+			3: threshold,
+			4: threshold,
+			5: threshold,
+		}
+		slog.Debug("using custom similarity threshold for all levels",
+			"topic_id", topicID,
+			"threshold", threshold,
+		)
+	} else {
+		// Use level-based thresholds from models
+		levelThresholds = models.LevelThresholds
+		slog.Debug("using level-based similarity thresholds",
+			"topic_id", topicID,
+			"thresholds", levelThresholds,
+		)
+	}
+
+	// Perform optimized similarity search with descendants
+	records, total, err := s.repo.ListBySimilarityWithDescendants(
+		ctx,
+		topicID,
+		levelThresholds,
+		models.DefaultThreshold,
+		filters,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search feedback by topic similarity: %w", err)
 	}
 
 	return &models.ListFeedbackRecordsResponse{
@@ -181,9 +177,8 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 
 	// Regenerate embedding if text was updated and client is configured
 	if s.embeddingClient != nil && req.ValueText != nil && *req.ValueText != "" {
-		// Check if this is a text field (the record has the field_type)
 		if record.FieldType == "text" {
-			go s.enrichRecord(id, *req.ValueText, record.FieldLabel, record.TenantID)
+			go s.generateEmbedding(id, *req.ValueText)
 		}
 	}
 
@@ -202,63 +197,4 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 	}
 
 	return s.repo.BulkDelete(ctx, userIdentifier, tenantID)
-}
-
-// RetryClassification attempts to classify feedback records that have embeddings but no topic_id.
-// This is used by the background worker to fix records that were created before topics had embeddings.
-// Returns the number of records that were successfully classified.
-func (s *FeedbackRecordsService) RetryClassification(ctx context.Context, batchSize int) (int, error) {
-	if s.topicClassifier == nil {
-		return 0, fmt.Errorf("topic classifier not configured")
-	}
-
-	// Fetch unclassified records with embeddings
-	records, err := s.repo.ListUnclassifiedWithEmbeddings(ctx, batchSize)
-	if err != nil {
-		return 0, fmt.Errorf("failed to list unclassified records: %w", err)
-	}
-
-	if len(records) == 0 {
-		return 0, nil
-	}
-
-	classified := 0
-	level2 := Level2
-
-	for _, record := range records {
-		// Find the most similar Level 2 topic
-		match, err := s.topicClassifier.FindSimilarTopic(ctx, record.Embedding, record.TenantID, &level2, ClassificationThreshold)
-		if err != nil {
-			slog.Error("failed to find similar topic during retry",
-				"id", record.ID,
-				"error", err,
-			)
-			continue
-		}
-
-		if match == nil {
-			// No matching topic found above threshold
-			continue
-		}
-
-		// Update the classification
-		if err := s.repo.UpdateClassification(ctx, record.ID, match.TopicID, match.Similarity); err != nil {
-			slog.Error("failed to update classification during retry",
-				"id", record.ID,
-				"topic_id", match.TopicID,
-				"error", err,
-			)
-			continue
-		}
-
-		classified++
-		slog.Debug("retry classification succeeded",
-			"id", record.ID,
-			"topic_id", match.TopicID,
-			"topic_title", match.Title,
-			"confidence", match.Similarity,
-		)
-	}
-
-	return classified, nil
 }

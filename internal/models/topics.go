@@ -65,3 +65,25 @@ type SimilarTopic struct {
 	Title      string    `json:"title"`
 	Similarity float64   `json:"similarity"`
 }
+
+// LevelThresholds maps topic hierarchy levels to minimum similarity thresholds.
+// Higher levels (more specific topics) require higher similarity for matches.
+// These values can be tuned based on production feedback.
+var LevelThresholds = map[int]float64{
+	1: 0.30, // Level 1: broadest topics (e.g., "Performance")
+	2: 0.40, // Level 2: (e.g., "Performance > API")
+	3: 0.50, // Level 3: (e.g., "Performance > API > Latency")
+	4: 0.60, // Level 4: more specific
+	5: 0.70, // Level 5: most specific
+}
+
+// DefaultThreshold is used for levels not in the map (fallback)
+const DefaultThreshold = 0.50
+
+// SimilarityThresholdForLevel returns the minimum similarity threshold for a given topic level.
+func SimilarityThresholdForLevel(level int) float64 {
+	if threshold, ok := LevelThresholds[level]; ok {
+		return threshold
+	}
+	return DefaultThreshold
+}

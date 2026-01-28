@@ -61,12 +61,12 @@ func main() {
 	}
 	topicsHandler := handlers.NewTopicsHandler(topicsService)
 
-	// Feedback records service uses topics repo for classification
+	// Feedback records service with optional embedding support
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	var feedbackRecordsService *service.FeedbackRecordsService
 	if embeddingClient != nil {
-		// Enable both embedding and classification
-		feedbackRecordsService = service.NewFeedbackRecordsServiceWithClassification(feedbackRecordsRepo, embeddingClient, topicsRepo)
+		// Enable embedding generation (topic similarity search is handled via optimized SQL query)
+		feedbackRecordsService = service.NewFeedbackRecordsServiceWithEmbeddings(feedbackRecordsRepo, embeddingClient)
 	} else {
 		feedbackRecordsService = service.NewFeedbackRecordsService(feedbackRecordsRepo)
 	}
@@ -160,20 +160,10 @@ func main() {
 		}
 	}()
 
-	// Start classification retry worker if embeddings are enabled
+	// Start taxonomy scheduler if enabled
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 
-	if embeddingClient != nil {
-		classificationWorker := worker.NewClassificationWorker(
-			feedbackRecordsService,
-			cfg.ClassificationRetryInterval,
-			cfg.ClassificationRetryBatchSize,
-		)
-		go classificationWorker.Start(workerCtx)
-	}
-
-	// Start taxonomy scheduler if enabled
 	if cfg.TaxonomySchedulerEnabled {
 		taxonomyScheduler := worker.NewTaxonomyScheduler(
 			clusteringJobsRepo,
@@ -188,9 +178,6 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-
-	// Stop background workers
-	workerCancel()
 
 	slog.Info("Shutting down server...")
 

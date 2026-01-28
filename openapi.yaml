@@ -90,11 +90,33 @@ paths:
                     pattern: '^[^\x00]*$'
                 - name: topic_id
                   in: query
-                  description: Filter by classified Level 2 topic ID. Returns feedback records that have been classified into this specific Level 2 topic via AI enrichment.
+                  description: |
+                    Filter by topic similarity. Returns feedback records whose embeddings are similar 
+                    to this topic AND all its descendant topics (hierarchical aggregation). Results are 
+                    deduplicated (keeping highest similarity) and sorted by relevance. Each record includes 
+                    a similarity score. Similarity thresholds vary by topic level:
+                    - Level 1: 0.30 (broadest, most inclusive)
+                    - Level 2: 0.40
+                    - Level 3: 0.50
+                    - Level 4: 0.60
+                    - Level 5: 0.70 (most specific, most selective)
+                    Use min_similarity parameter to override with a custom threshold.
                   schema:
                     type: string
                     format: uuid
-                    description: Filter by classified Level 2 topic ID
+                    description: Topic ID for similarity-based filtering
+                - name: min_similarity
+                  in: query
+                  description: |
+                    Override the automatic level-based similarity threshold when filtering by topic_id. 
+                    Value between 0 and 1 (e.g., 0.5 = 50% similarity minimum). When set, applies the 
+                    same threshold to all topic levels instead of using level-specific thresholds.
+                  schema:
+                    type: number
+                    format: double
+                    minimum: 0
+                    maximum: 1
+                    description: Custom similarity threshold (0-1)
                 - name: since
                   in: query
                   description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
@@ -155,8 +177,6 @@ paths:
                                               source_name: "Q1 NPS Survey"
                                               user_identifier: "user-abc-123"
                                               tenant_id: "org-123"
-                                              topic_id: "019bfba0-373f-7123-ae5e-00b641be401c"
-                                              classification_confidence: 0.87
                                         total: 1
                                         limit: 100
                                         offset: 0
@@ -723,15 +743,6 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
-                            examples:
-                                not_found:
-                                    summary: Record not found
-                                    value:
-                                        type: "about:blank"
-                                        title: "Not Found"
-                                        status: 404
-                                        detail: "Knowledge record with ID '019abc12-3456-7def-8901-234567890abc' not found"
-                                        instance: "/v1/knowledge-records/019abc12-3456-7def-8901-234567890abc"
         patch:
             tags:
                 - Knowledge Records
@@ -1511,16 +1522,16 @@ components:
                     type: string
                     description: Text response. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
-                topic_id:
-                    type: string
-                    format: uuid
-                    description: ID of the Level 2 topic this feedback was classified into. Set when confidence >= 0.30. Null if not yet classified or no matching topic found.
-                classification_confidence:
+                similarity:
                     type: number
                     format: double
                     minimum: 0
                     maximum: 1
-                    description: Confidence score (0-1) of the AI topic classification. Higher values indicate more confident classification. Threshold is 0.30.
+                    description: |
+                      Cosine similarity score (0-1) indicating how closely this feedback matches the 
+                      queried topic. Only present when filtering by topic_id. Higher values indicate 
+                      stronger semantic similarity. Results are filtered by level-appropriate thresholds 
+                      and sorted by similarity descending.
             required:
                 - id
                 - collected_at
