@@ -30,14 +30,12 @@ CREATE TABLE feedback_records (
   user_identifier VARCHAR(255),
 
   -- Multi-tenancy fields
-  tenant_id VARCHAR(255),
-  response_id VARCHAR(255)
+  tenant_id VARCHAR(255)
 );
 
 -- Indexes
 -- Multi-tenancy indexes
 CREATE INDEX idx_feedback_records_tenant_id ON feedback_records(tenant_id);
-CREATE INDEX idx_feedback_records_response_id ON feedback_records(response_id);
 
 -- Single-column indexes for common filter operations
 -- Required for analytics performance
