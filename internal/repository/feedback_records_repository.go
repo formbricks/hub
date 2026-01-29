@@ -33,14 +33,14 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 	query := `
 		INSERT INTO feedback_records (
 			collected_at, source_type, source_id, source_name,
-			field_id, field_label, field_type,
+			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
-			field_id, field_label, field_type,
+			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id
 	`
@@ -48,13 +48,13 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 	var record models.FeedbackRecord
 	err := r.db.QueryRow(ctx, query,
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
-		req.FieldID, req.FieldLabel, req.FieldType,
+		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
 		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
 		req.Metadata, req.Language, req.UserIdentifier, req.TenantID,
 	).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType,
+		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
 	)
@@ -70,7 +70,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
-			field_id, field_label, field_type,
+			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id
 		FROM feedback_records
@@ -81,7 +81,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType,
+		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
 	)
@@ -126,6 +126,12 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, 
 		argCount++
 	}
 
+	if filters.FieldGroupID != nil {
+		conditions = append(conditions, fmt.Sprintf("field_group_id = $%d", argCount))
+		args = append(args, *filters.FieldGroupID)
+		argCount++
+	}
+
 	if filters.FieldType != nil {
 		conditions = append(conditions, fmt.Sprintf("field_type = $%d", argCount))
 		args = append(args, *filters.FieldType)
@@ -162,7 +168,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
-			field_id, field_label, field_type,
+			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id
 		FROM feedback_records
@@ -197,7 +203,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 		err := rows.Scan(
 			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType,
+			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
 		)
@@ -295,7 +301,7 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 		WHERE id = $%d
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
-			field_id, field_label, field_type,
+			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_identifier, tenant_id
 	`, strings.Join(updates, ", "), argCount)
@@ -315,7 +321,7 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType,
+		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
 	)

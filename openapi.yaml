@@ -67,6 +67,13 @@ paths:
                   schema:
                     type: string
                     pattern: '^[^\x00]*$'
+                - name: field_group_id
+                  in: query
+                  description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 - name: field_type
                   in: query
                   description: Filter by field type. NULL bytes not allowed.
@@ -226,6 +233,41 @@ paths:
                                     user_identifier: "user-abc-123"
                                     tenant_id: "org-123"
                                     language: "en"
+                            ranking:
+                                summary: Ranking question item
+                                value:
+                                    source_type: "survey"
+                                    field_id: "feature_priority__reports"
+                                    field_type: "number"
+                                    field_label: "Reports"
+                                    field_group_id: "feature_priority"
+                                    field_group_label: "Rank these features by importance"
+                                    value_number: 1
+                                    response_id: "resp-abc-123"
+                                    source_id: "survey-123"
+                                    source_name: "Feature Priority Survey"
+                                    user_identifier: "user-abc-123"
+                                    tenant_id: "org-123"
+                                    metadata:
+                                        question_type: "ranking"
+                                        total_items: 3
+                            matrix:
+                                summary: Matrix rating item
+                                value:
+                                    source_type: "survey"
+                                    field_id: "feature_satisfaction__ease_of_use"
+                                    field_type: "rating"
+                                    field_label: "Ease of Use"
+                                    field_group_id: "feature_satisfaction"
+                                    field_group_label: "Rate your satisfaction with each feature"
+                                    value_number: 4
+                                    response_id: "resp-abc-123"
+                                    source_id: "survey-123"
+                                    source_name: "Feature Satisfaction Survey"
+                                    user_identifier: "user-abc-123"
+                                    tenant_id: "org-123"
+                                    metadata:
+                                        question_type: "matrix"
                 required: true
             responses:
                 "201":
@@ -519,6 +561,18 @@ components:
                     description: The actual question text
                     examples:
                         - How satisfied are you?
+                field_group_id:
+                    type: string
+                    description: Stable identifier grouping related fields (for ranking, matrix, grid questions). NULL bytes not allowed.
+                    examples:
+                        - feature_priority
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                field_group_label:
+                    type: string
+                    description: Human-readable question text for the group
+                    examples:
+                        - Rank these features by importance
                 field_type:
                     type: string
                     description: 'Field type: text (enrichable), categorical, nps, csat, ces, rating, number, boolean, date'
@@ -672,6 +726,12 @@ components:
                 field_label:
                     type: string
                     description: The actual question text
+                field_group_id:
+                    type: string
+                    description: Stable identifier grouping related fields (for ranking, matrix, grid questions)
+                field_group_label:
+                    type: string
+                    description: Human-readable question text for the group
                 field_type:
                     type: string
                     description: Type of field
