@@ -29,7 +29,6 @@ type FeedbackRecord struct {
 	Language        *string         `json:"language,omitempty"`
 	UserIdentifier  *string         `json:"user_identifier,omitempty"`
 	TenantID        *string         `json:"tenant_id,omitempty"`
-	ResponseID      *string         `json:"response_id,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record
@@ -51,7 +50,6 @@ type CreateFeedbackRecordRequest struct {
 	Language        *string         `json:"language,omitempty" validate:"omitempty,no_null_bytes,max=10"`
 	UserIdentifier  *string         `json:"user_identifier,omitempty"`
 	TenantID        *string         `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
-	ResponseID      *string         `json:"response_id,omitempty" validate:"omitempty,max=255"`
 }
 
 // UpdateFeedbackRecordRequest represents the request to update a feedback record
@@ -69,7 +67,6 @@ type UpdateFeedbackRecordRequest struct {
 // ListFeedbackRecordsFilters represents filters for listing feedback records
 type ListFeedbackRecordsFilters struct {
 	TenantID       *string    `form:"tenant_id" validate:"omitempty,no_null_bytes"`
-	ResponseID     *string    `form:"response_id" validate:"omitempty,no_null_bytes"`
 	SourceType     *string    `form:"source_type" validate:"omitempty,no_null_bytes"`
 	SourceID       *string    `form:"source_id" validate:"omitempty,no_null_bytes"`
 	FieldID        *string    `form:"field_id" validate:"omitempty,no_null_bytes"`
