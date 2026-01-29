@@ -10,13 +10,14 @@ import (
 // Level 1 topics are broad categories, Level 2 topics are specific subtopics
 // Level 2 topics have an explicit parent_id linking to their Level 1 parent
 type Topic struct {
-	ID        uuid.UUID  `json:"id"`
-	Title     string     `json:"title"`
-	Level     int        `json:"level"`
-	ParentID  *uuid.UUID `json:"parent_id,omitempty"`
-	TenantID  *string    `json:"tenant_id,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID            uuid.UUID  `json:"id"`
+	Title         string     `json:"title"`
+	Level         int        `json:"level"`
+	ParentID      *uuid.UUID `json:"parent_id,omitempty"`
+	TenantID      *string    `json:"tenant_id,omitempty"`
+	FeedbackCount *int64     `json:"feedback_count,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // CreateTopicRequest represents the request to create a topic

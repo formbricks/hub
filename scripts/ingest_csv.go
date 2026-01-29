@@ -456,10 +456,6 @@ func safeGet(row []string, index int) string {
 	return ""
 }
 
-func strPtr(s string) *string {
-	return &s
-}
-
 func nilIfEmpty(s string) *string {
 	if s == "" {
 		return nil

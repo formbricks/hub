@@ -1,10 +1,15 @@
 """UMAP dimensionality reduction for embeddings."""
 
+import warnings
+
 import numpy as np
 import structlog
 import umap
 
 from src.config import settings
+
+# Suppress UMAP warning about n_jobs when random_state is set (expected behavior)
+warnings.filterwarnings("ignore", message="n_jobs value .* overridden to 1 by setting random_state")
 
 logger = structlog.get_logger()
 

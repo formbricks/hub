@@ -30,26 +30,30 @@ class ClusterConfig(BaseModel):
     max_embeddings: int | None = Field(None, ge=100, le=500000)
 
     # Maximum depth of taxonomy hierarchy (1-4)
-    max_levels: int = Field(default=4, ge=1, le=10)
+    # For datasets <10k records, 3 levels is usually sufficient
+    max_levels: int = Field(default=3, ge=1, le=10)
 
     # Minimum cluster sizes per level for subdivision
-    # Key: level number, Value: minimum cluster size to create sub-topics
+    # Key: level number, Value: minimum cluster size to attempt creating sub-topics
+    # Lower values = more topics get children, higher values = only large topics subdivide
     level_min_cluster_sizes: dict[int, int] = Field(
         default_factory=lambda: {
-            1: 100,  # Level 1: need 100+ items to create L2 children
-            2: 50,   # Level 2: need 50+ items to create L3 children
-            3: 25,   # Level 3: need 25+ items to create L4 children
-            4: 15,   # Level 4: terminal level (no children)
+            1: 40,   # Level 1: need 40+ items to create L2 children
+            2: 20,   # Level 2: need 20+ items to create L3 children
+            3: 10,   # Level 3: need 10+ items to create L4 children
+            4: 10,   # Level 4: terminal level (no children)
         }
     )
 
     # HDBSCAN min_cluster_size per level (smaller clusters at deeper levels)
+    # This controls the minimum points HDBSCAN needs to form a cluster
+    # Lower values = more smaller clusters, higher values = fewer larger clusters
     level_hdbscan_min_cluster_sizes: dict[int, int] = Field(
         default_factory=lambda: {
-            1: 50,   # Level 1: larger clusters
-            2: 25,   # Level 2: medium clusters
-            3: 15,   # Level 3: smaller clusters
-            4: 10,   # Level 4: smallest clusters
+            1: 30,   # Level 1: need 30+ similar items to form a topic
+            2: 15,   # Level 2: need 15+ similar items
+            3: 8,    # Level 3: need 8+ similar items
+            4: 5,    # Level 4: need 5+ similar items
         }
     )
 
