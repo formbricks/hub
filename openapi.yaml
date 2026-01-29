@@ -47,13 +47,6 @@ paths:
                     type: string
                     description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
-                - name: response_id
-                  in: query
-                  description: Filter by response ID (get all answers from one submission). NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Filter by response ID (get all answers from one submission). NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
                 - name: source_type
                   in: query
                   description: Filter by source type. NULL bytes not allowed.
@@ -143,7 +136,6 @@ paths:
                                               field_type: "rating"
                                               field_label: "How satisfied are you?"
                                               value_number: 9
-                                              response_id: "resp-abc-123"
                                               source_id: "survey-123"
                                               source_name: "Q1 NPS Survey"
                                               user_identifier: "user-abc-123"
@@ -190,7 +182,6 @@ paths:
                                     field_type: "rating"
                                     field_label: "How satisfied are you?"
                                     value_number: 9
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
@@ -204,7 +195,6 @@ paths:
                                     field_type: "text"
                                     field_label: "What can we improve?"
                                     value_text: "Great service! Keep it up."
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
@@ -218,7 +208,6 @@ paths:
                                     field_type: "nps"
                                     field_label: "How likely are you to recommend us?"
                                     value_number: 8
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "NPS Survey"
                                     user_identifier: "user-abc-123"
@@ -232,7 +221,6 @@ paths:
                                     field_type: "boolean"
                                     field_label: "Would you use our service again?"
                                     value_boolean: true
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
@@ -259,7 +247,6 @@ paths:
                                         field_type: "rating"
                                         field_label: "How satisfied are you?"
                                         value_number: 9
-                                        response_id: "resp-abc-123"
                                         source_id: "survey-123"
                                         source_name: "Q1 NPS Survey"
                                         user_identifier: "user-abc-123"
@@ -453,7 +440,6 @@ paths:
                                         field_type: "rating"
                                         field_label: "How satisfied are you?"
                                         value_number: 10
-                                        response_id: "resp-abc-123"
                                         source_id: "survey-123"
                                         source_name: "Q1 NPS Survey"
                                         user_identifier: "user-abc-123"
@@ -561,12 +547,6 @@ components:
                     type: object
                     description: User agent, device, location, referrer, tags, etc. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
                     additionalProperties: {}
-                response_id:
-                    type: string
-                    description: Groups multiple answers from a single submission/session
-                    examples:
-                        - resp-abc-123
-                    maxLength: 255
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID
@@ -707,9 +687,6 @@ components:
                     type: object
                     description: Additional context
                     additionalProperties: {}
-                response_id:
-                    type: string
-                    description: Groups answers from a single submission
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID
