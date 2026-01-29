@@ -25,11 +25,12 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 ### Current Features
 
 - ✅ **RESTful API** for feedback record CRUD operations
-- ✅ **PostgreSQL** for data persistence with optimized schema
+- ✅ **PostgreSQL** with pgvector for data persistence and vector search
+- ✅ **AI-Powered Taxonomy** - automatic topic clustering with UMAP, HDBSCAN, and GPT-4o
+- ✅ **Embedding Generation** - async embedding generation via River job queue
 - ✅ **API Key Authentication** via environment variable
 - ✅ **Clean Architecture** with repository, service, and handler layers
-- ✅ **Docker Compose** for local development
-- ✅ **Database Schema** initialization
+- ✅ **Docker Compose** for local development and production
 - ✅ **Swagger/OpenAPI** documentation
 - ✅ **Health Check** endpoints
 
@@ -47,7 +48,8 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 ```
 .
 ├── cmd/
-│   └── api/              # API server entrypoint
+│   ├── api/              # API server entrypoint
+│   └── backfill/         # CLI tool for backfilling embeddings
 ├── internal/
 │   ├── api/
 │   │   ├── handlers/     # HTTP request handlers
@@ -55,12 +57,16 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 │   ├── service/          # Business logic layer
 │   ├── repository/       # Data access layer
 │   ├── models/           # Domain models and DTOs
+│   ├── worker/           # Background workers (taxonomy scheduler)
+│   ├── jobs/             # River job queue workers
 │   └── config/           # Configuration management
 ├── pkg/
 │   └── database/         # Database utilities and connection pooling
+├── services/
+│   └── taxonomy-generator/  # Python microservice for ML clustering
 ├── sql/                  # SQL schema files
-├── tests/               # Integration tests
-└── docs/                # API documentation (Swagger)
+├── tests/                # Integration tests
+└── docs/                 # API documentation (Swagger)
 ```
 
 ## Getting Started
@@ -199,15 +205,25 @@ Authorization: Bearer <api-key>
 ### Available Make Commands
 
 ```bash
-make help         # Show all available commands
-make dev-setup    # Set up development environment (docker, deps, tools, schema)
-make build        # Build all binaries
-make run          # Run the API server
-make tests        # Run all tests
-make init-db      # Initialize database schema
-make docker-up    # Start Docker containers
-make docker-down  # Stop Docker containers
-make clean        # Clean build artifacts
+make help           # Show all available commands
+
+# Development
+make dev-setup      # Set up dev environment (postgres, deps, tools, schema, hooks)
+make run            # Run Go API server locally (port 8080)
+make taxonomy-dev   # Run Python taxonomy service locally (port 8001)
+make docker-up      # Start dev infrastructure (postgres, pgadmin)
+make docker-down    # Stop dev infrastructure
+
+# Production
+make prod-up        # Start full containerized stack
+make prod-down      # Stop full stack
+make prod-logs      # View production logs
+
+# Build & Test
+make build          # Build all binaries
+make test-unit      # Fast unit tests (no database)
+make tests          # Integration tests (requires database)
+make test-all       # Run all tests
 ```
 
 ### Running Tests
@@ -217,6 +233,20 @@ make test-unit    # Fast unit tests (no database)
 make tests        # Integration tests (requires database)
 make test-all     # Run all tests
 ```
+
+### Running with Taxonomy Service
+
+For full AI-powered topic clustering, run both services:
+
+```bash
+# Terminal 1: Go API
+make run
+
+# Terminal 2: Python taxonomy service
+make taxonomy-dev
+```
+
+The taxonomy service requires `OPENAI_API_KEY` in `services/taxonomy-generator/.env`.
 
 ### Git Hooks
 

@@ -1,6 +1,7 @@
 .vscode
 .cursor
 bin/
+api
 .env
 *.out
 *.html

@@ -12,6 +12,7 @@ import (
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/go-playground/form/v4"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 )
 
 var (
@@ -48,6 +49,18 @@ func init() {
 		}
 		return &t, nil
 	}, (*time.Time)(nil))
+
+	// Handle *uuid.UUID (pointer type used for topic_id filters)
+	decoder.RegisterCustomTypeFunc(func(vals []string) (interface{}, error) {
+		if len(vals) == 0 || vals[0] == "" {
+			return (*uuid.UUID)(nil), nil
+		}
+		id, err := uuid.Parse(vals[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid UUID format: %w", err)
+		}
+		return &id, nil
+	}, (*uuid.UUID)(nil))
 }
 
 // ValidateStruct validates a struct using go-playground/validator

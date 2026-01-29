@@ -28,6 +28,10 @@ type FeedbackRecord struct {
 	UserIdentifier *string         `json:"user_identifier,omitempty"`
 	TenantID       *string         `json:"tenant_id,omitempty"`
 	ResponseID     *string         `json:"response_id,omitempty"`
+
+	// Similarity is populated at query time when filtering by topic_id
+	// It represents the cosine similarity between this feedback's embedding and the topic's embedding
+	Similarity *float64 `json:"similarity,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record
@@ -75,6 +79,20 @@ type ListFeedbackRecordsFilters struct {
 	Until          *time.Time `form:"until" validate:"omitempty"`
 	Limit          int        `form:"limit" validate:"omitempty,min=1,max=1000"`
 	Offset         int        `form:"offset" validate:"omitempty,min=0"`
+
+	// TopicID filters feedback records by topic assignment
+	// By default, uses direct topic_id lookup (fast, pre-computed)
+	// Set UseSimilarity=true to use vector similarity search instead
+	TopicID *uuid.UUID `form:"topic_id" validate:"omitempty"`
+
+	// UseSimilarity when true, uses vector similarity search instead of direct topic_id lookup
+	// This is slower but can find matches for unclassified feedback
+	UseSimilarity bool `form:"use_similarity"`
+
+	// MinSimilarity overrides the default threshold when using similarity search
+	// Value between 0 and 1 (e.g., 0.5 = 50% similarity minimum)
+	// Only used when UseSimilarity=true. If not set, uses automatic thresholds based on topic level
+	MinSimilarity *float64 `form:"min_similarity" validate:"omitempty,min=0,max=1"`
 }
 
 // ListFeedbackRecordsResponse represents the response for listing feedback records
@@ -95,4 +113,10 @@ type BulkDeleteFilters struct {
 type BulkDeleteResponse struct {
 	DeletedCount int64  `json:"deleted_count"`
 	Message      string `json:"message"`
+}
+
+// UpdateFeedbackEnrichmentRequest represents internal request to update AI-enriched fields
+// Used by the service layer, not exposed via API
+type UpdateFeedbackEnrichmentRequest struct {
+	Embedding []float32
 }

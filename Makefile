@@ -1,28 +1,42 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks backfill-embeddings prod-up prod-down prod-logs taxonomy-dev
 
 # Default target - show help
 help:
 	@echo "Available targets:"
-	@echo "  make help         - Show this help message"
-	@echo "  make dev-setup    - Set up development environment (docker, deps, tools, schema, hooks)"
-	@echo "  make build        - Build the API server"
-	@echo "  make run          - Run the API server"
+	@echo ""
+	@echo "Development:"
+	@echo "  make dev-setup    - Set up dev environment (postgres, deps, tools, schema, hooks)"
+	@echo "  make run          - Run Go API server locally"
+	@echo "  make taxonomy-dev - Run Python taxonomy service locally"
+	@echo "  make docker-up    - Start dev infrastructure (postgres, pgadmin)"
+	@echo "  make docker-down  - Stop dev infrastructure"
+	@echo "  make docker-clean - Stop and remove volumes"
+	@echo ""
+	@echo "Production:"
+	@echo "  make prod-up      - Start full stack (postgres, api, taxonomy-generator)"
+	@echo "  make prod-down    - Stop full stack"
+	@echo "  make prod-logs    - View logs from production stack"
+	@echo ""
+	@echo "Build & Test:"
+	@echo "  make build        - Build API binaries"
 	@echo "  make test-unit    - Run unit tests (fast, no database)"
 	@echo "  make tests        - Run integration tests"
 	@echo "  make test-all     - Run all tests (unit + integration)"
 	@echo "  make tests-coverage - Run tests with coverage report"
-	@echo "  make init-db      - Initialize database schema"
+	@echo "  make schemathesis - Run Schemathesis API tests"
+	@echo ""
+	@echo "Code Quality:"
 	@echo "  make fmt          - Format code with gofumpt"
 	@echo "  make fmt-check    - Check if code is formatted"
 	@echo "  make lint         - Run linter"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  make init-db      - Initialize database schema"
+	@echo "  make backfill-embeddings - Backfill embeddings for existing records"
 	@echo "  make deps         - Install Go dependencies"
-	@echo "  make install-tools - Install development tools (gofumpt, golangci-lint)"
+	@echo "  make install-tools - Install dev tools (gofumpt, golangci-lint)"
 	@echo "  make install-hooks - Install git hooks"
-	@echo "  make docker-up    - Start Docker containers"
-	@echo "  make docker-down  - Stop Docker containers"
-	@echo "  make docker-clean - Stop Docker containers and remove volumes"
 	@echo "  make clean        - Clean build artifacts"
-	@echo "  make schemathesis - Run Schemathesis API tests (requires API server running)"
 
 # Run all tests (integration tests in tests/ directory)
 tests:
@@ -49,7 +63,19 @@ tests-coverage:
 build:
 	@echo "Building API server..."
 	go build -o bin/api cmd/api/main.go
-	@echo "Binary created: bin/api"
+	go build -o bin/backfill cmd/backfill/main.go
+	@echo "Binaries created: bin/api, bin/backfill"
+
+# Backfill embeddings for existing records
+# This enqueues River jobs for all records missing embeddings
+backfill-embeddings:
+	@echo "Backfilling embeddings for existing records..."
+	@if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		go run cmd/backfill/main.go; \
+	else \
+		go run cmd/backfill/main.go; \
+	fi
 
 # Run the API server
 run:
@@ -81,25 +107,34 @@ init-db:
 			echo "Error: DATABASE_URL not found in .env file"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
+		for f in sql/*.sql; do \
+			echo "Applying $$f..."; \
+			psql "$$DATABASE_URL" -f "$$f"; \
+		done; \
 	else \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL environment variable is not set"; \
 			echo "Please set it or create a .env file with DATABASE_URL"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
+		for f in sql/*.sql; do \
+			echo "Applying $$f..."; \
+			psql "$$DATABASE_URL" -f "$$f"; \
+		done; \
 	fi
 	@echo "Database schema initialized successfully"
 
 
-# Start Docker containers
+# Start dev infrastructure (postgres, pgadmin)
 docker-up:
-	@echo "Starting Docker containers..."
+	@echo "Starting dev infrastructure (postgres, pgadmin)..."
 	docker compose up -d
-	@echo "Waiting for services to be ready..."
+	@echo "Waiting for postgres to be ready..."
 	@sleep 3
 	@docker compose ps
+	@echo ""
+	@echo "Postgres: localhost:5432"
+	@echo "pgAdmin:  localhost:5050 (admin@formbricks.com / admin)"
 
 # Stop Docker containers
 docker-down:
@@ -176,9 +211,51 @@ install-hooks:
 
 # Run everything needed for development
 dev-setup: docker-up deps install-tools init-db install-hooks
+	@echo ""
 	@echo "Development environment ready!"
-	@echo "Set API_KEY environment variable for authentication"
-	@echo "Run 'make run' to start the API server"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  Terminal 1: make run          # Go API on :8080"
+	@echo "  Terminal 2: make taxonomy-dev # Python service on :8001 (optional)"
+
+# Run Python taxonomy service locally (uses venv + pip, requires Python 3.11+)
+# Prefers python3.11 if available, falls back to python3
+TAXONOMY_PYTHON := $(shell command -v python3.11 2>/dev/null || command -v python3 2>/dev/null)
+
+taxonomy-dev:
+	@echo "Starting taxonomy-generator service..."
+	@$(TAXONOMY_PYTHON) -c "import sys; exit(0 if sys.version_info >= (3, 11) else 1)" 2>/dev/null || \
+		{ echo "Error: Python 3.11+ required. Install with: brew install python@3.11"; exit 1; }
+	@cd services/taxonomy-generator && \
+	if [ ! -f .env ]; then \
+		echo "Creating .env from .env.example..."; \
+		cp .env.example .env; \
+		echo "⚠️  Edit services/taxonomy-generator/.env to set OPENAI_API_KEY"; \
+	fi && \
+	if [ ! -d .venv ]; then \
+		echo "Creating virtual environment..."; \
+		$(TAXONOMY_PYTHON) -m venv .venv; \
+	fi && \
+	. .venv/bin/activate && \
+	pip install -q -r requirements.txt && \
+	uvicorn src.main:app --reload --port 8001
+
+# Production: start full stack
+prod-up:
+	@echo "Starting production stack..."
+	docker compose -f docker-compose.prod.yml up -d --build
+	@echo "Waiting for services..."
+	@sleep 5
+	@docker compose -f docker-compose.prod.yml ps
+
+# Production: stop full stack
+prod-down:
+	@echo "Stopping production stack..."
+	docker compose -f docker-compose.prod.yml down
+
+# Production: view logs
+prod-logs:
+	docker compose -f docker-compose.prod.yml logs -f
 
 # Run Schemathesis API tests (all phases for thorough local testing)
 # Phases: examples (schema examples), coverage (boundary values), stateful (API sequences), fuzzing (random)

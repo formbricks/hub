@@ -71,3 +71,38 @@ func NewValidationError(field, message string) *ValidationError {
 		Message: message,
 	}
 }
+
+// ErrConflict represents a conflict error
+// This should be used when a resource already exists or conflicts with another
+var ErrConflict = &ConflictError{}
+
+// ConflictError is a sentinel error for resource conflicts (e.g., duplicate entries)
+type ConflictError struct {
+	Resource string
+	Message  string
+}
+
+// Error implements the error interface
+func (e *ConflictError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Resource != "" {
+		return fmt.Sprintf("%s already exists", e.Resource)
+	}
+	return "resource conflict"
+}
+
+// Is implements the error interface for error comparison
+func (e *ConflictError) Is(target error) bool {
+	_, ok := target.(*ConflictError)
+	return ok
+}
+
+// NewConflictError creates a new ConflictError with a custom message
+func NewConflictError(resource, message string) *ConflictError {
+	return &ConflictError{
+		Resource: resource,
+		Message:  message,
+	}
+}
