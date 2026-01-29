@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -393,6 +394,30 @@ func (r *FeedbackRecordsRepository) UpdateEnrichment(ctx context.Context, id uui
 
 	if result.RowsAffected() == 0 {
 		return apperrors.NewNotFoundError("feedback record", "feedback record not found")
+	}
+
+	return nil
+}
+
+// AssignTopic updates the topic assignment for a feedback record.
+// Only assigns if topic_id is currently NULL (preserves manual overrides).
+// This is used for real-time topic assignment after embedding generation.
+func (r *FeedbackRecordsRepository) AssignTopic(ctx context.Context, id uuid.UUID, topicID uuid.UUID, confidence float64) error {
+	query := `
+		UPDATE feedback_records
+		SET topic_id = $1, classification_confidence = $2, updated_at = $3
+		WHERE id = $4 AND topic_id IS NULL
+	`
+
+	result, err := r.db.Exec(ctx, query, topicID, confidence, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to assign topic to feedback record: %w", err)
+	}
+
+	// RowsAffected = 0 means either record not found OR topic already assigned
+	// Both cases are acceptable - we don't want to overwrite manual corrections
+	if result.RowsAffected() == 0 {
+		slog.Debug("topic assignment skipped (already assigned or not found)", "record_id", id, "topic_id", topicID)
 	}
 
 	return nil

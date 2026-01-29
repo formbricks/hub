@@ -53,15 +53,25 @@ func (r *TopicsRepository) Create(ctx context.Context, req *models.CreateTopicRe
 
 // GetByID retrieves a single topic by ID
 func (r *TopicsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Topic, error) {
+	// Use recursive CTE to count feedback in entire subtree (this topic + all descendants)
 	query := `
-		SELECT id, title, level, parent_id, tenant_id, created_at, updated_at
-		FROM topics
-		WHERE id = $1
+		SELECT t.id, t.title, t.level, t.parent_id, t.tenant_id, t.created_at, t.updated_at,
+		       (
+		         WITH RECURSIVE subtree AS (
+		           SELECT id FROM topics WHERE id = t.id
+		           UNION ALL
+		           SELECT c.id FROM topics c INNER JOIN subtree s ON c.parent_id = s.id
+		         )
+		         SELECT COUNT(*) FROM feedback_records WHERE topic_id IN (SELECT id FROM subtree)
+		       ) as feedback_count
+		FROM topics t
+		WHERE t.id = $1
 	`
 
 	var topic models.Topic
+	var feedbackCount int64
 	err := r.db.QueryRow(ctx, query, id).Scan(
-		&topic.ID, &topic.Title, &topic.Level, &topic.ParentID, &topic.TenantID, &topic.CreatedAt, &topic.UpdatedAt,
+		&topic.ID, &topic.Title, &topic.Level, &topic.ParentID, &topic.TenantID, &topic.CreatedAt, &topic.UpdatedAt, &feedbackCount,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -69,36 +79,47 @@ func (r *TopicsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.T
 		}
 		return nil, fmt.Errorf("failed to get topic: %w", err)
 	}
+	topic.FeedbackCount = &feedbackCount
 
 	return &topic, nil
 }
 
 // buildTopicsFilterConditions builds WHERE clause conditions and arguments from filters
 func buildTopicsFilterConditions(filters *models.ListTopicsFilters) (string, []interface{}) {
+	return buildTopicsFilterConditionsWithAlias(filters, "")
+}
+
+// buildTopicsFilterConditionsWithAlias builds WHERE clause conditions with an optional table alias
+func buildTopicsFilterConditionsWithAlias(filters *models.ListTopicsFilters, alias string) (string, []interface{}) {
 	var conditions []string
 	var args []interface{}
 	argCount := 1
 
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+
 	if filters.Level != nil {
-		conditions = append(conditions, fmt.Sprintf("level = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("%slevel = $%d", prefix, argCount))
 		args = append(args, *filters.Level)
 		argCount++
 	}
 
 	if filters.ParentID != nil {
-		conditions = append(conditions, fmt.Sprintf("parent_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("%sparent_id = $%d", prefix, argCount))
 		args = append(args, *filters.ParentID)
 		argCount++
 	}
 
 	if filters.Title != nil {
-		conditions = append(conditions, fmt.Sprintf("title = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("%stitle = $%d", prefix, argCount))
 		args = append(args, *filters.Title)
 		argCount++
 	}
 
 	if filters.TenantID != nil {
-		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("%stenant_id = $%d", prefix, argCount))
 		args = append(args, *filters.TenantID)
 	}
 
@@ -112,16 +133,25 @@ func buildTopicsFilterConditions(filters *models.ListTopicsFilters) (string, []i
 
 // List retrieves topics with optional filters
 func (r *TopicsRepository) List(ctx context.Context, filters *models.ListTopicsFilters) ([]models.Topic, error) {
+	// Use recursive CTE to count feedback in entire subtree (this topic + all descendants)
 	query := `
-		SELECT id, title, level, parent_id, tenant_id, created_at, updated_at
-		FROM topics
+		SELECT t.id, t.title, t.level, t.parent_id, t.tenant_id, t.created_at, t.updated_at,
+		       (
+		         WITH RECURSIVE subtree AS (
+		           SELECT id FROM topics WHERE id = t.id
+		           UNION ALL
+		           SELECT c.id FROM topics c INNER JOIN subtree s ON c.parent_id = s.id
+		         )
+		         SELECT COUNT(*) FROM feedback_records WHERE topic_id IN (SELECT id FROM subtree)
+		       ) as feedback_count
+		FROM topics t
 	`
 
-	whereClause, args := buildTopicsFilterConditions(filters)
+	whereClause, args := buildTopicsFilterConditionsWithAlias(filters, "t")
 	query += whereClause
 	argCount := len(args) + 1
 
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY t.created_at DESC"
 
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argCount)
@@ -143,12 +173,14 @@ func (r *TopicsRepository) List(ctx context.Context, filters *models.ListTopicsF
 	topics := []models.Topic{} // Initialize as empty slice, not nil
 	for rows.Next() {
 		var topic models.Topic
+		var feedbackCount int64
 		err := rows.Scan(
-			&topic.ID, &topic.Title, &topic.Level, &topic.ParentID, &topic.TenantID, &topic.CreatedAt, &topic.UpdatedAt,
+			&topic.ID, &topic.Title, &topic.Level, &topic.ParentID, &topic.TenantID, &topic.CreatedAt, &topic.UpdatedAt, &feedbackCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan topic: %w", err)
 		}
+		topic.FeedbackCount = &feedbackCount
 		topics = append(topics, topic)
 	}
 
@@ -355,18 +387,64 @@ func (r *TopicsRepository) FindSimilarTopic(ctx context.Context, embedding []flo
 	return &match, nil
 }
 
+// FindMostSpecificTopic finds the best matching leaf topic, falling back to parents.
+// Returns the most specific (highest level) topic above the similarity threshold.
+// This is used for real-time topic assignment after embedding generation.
+func (r *TopicsRepository) FindMostSpecificTopic(ctx context.Context, embedding []float32, tenantID *string, minSimilarity float64) (*models.TopicMatch, error) {
+	// Query finds topics above threshold, ordered by level DESC (most specific first), then similarity
+	query := `
+		SELECT id, title, level, 1 - (embedding <=> $1::vector) as similarity
+		FROM topics
+		WHERE embedding IS NOT NULL
+		  AND ($2::varchar IS NULL OR tenant_id = $2)
+		  AND 1 - (embedding <=> $1::vector) >= $3
+		ORDER BY level DESC, similarity DESC
+		LIMIT 1
+	`
+
+	var match models.TopicMatch
+	err := r.db.QueryRow(ctx, query, pgvector.NewVector(embedding), tenantID, minSimilarity).Scan(
+		&match.TopicID, &match.Title, &match.Level, &match.Similarity,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			slog.Debug("no topics above threshold for assignment", "min_similarity", minSimilarity)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find most specific topic: %w", err)
+	}
+
+	slog.Debug("most specific topic match found",
+		"topic_id", match.TopicID,
+		"topic_title", match.Title,
+		"level", match.Level,
+		"similarity", match.Similarity,
+	)
+
+	return &match, nil
+}
+
 // GetChildTopics retrieves Level 2 topics that are children of a given Level 1 topic
 func (r *TopicsRepository) GetChildTopics(ctx context.Context, parentID uuid.UUID, tenantID *string, limit int) ([]models.Topic, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
+	// Use recursive CTE to count feedback in entire subtree (this topic + all descendants)
 	query := `
-		SELECT id, title, level, parent_id, tenant_id, created_at, updated_at
-		FROM topics
-		WHERE parent_id = $1
-		  AND ($2::varchar IS NULL OR tenant_id = $2)
-		ORDER BY title ASC
+		SELECT t.id, t.title, t.level, t.parent_id, t.tenant_id, t.created_at, t.updated_at,
+		       (
+		         WITH RECURSIVE subtree AS (
+		           SELECT id FROM topics WHERE id = t.id
+		           UNION ALL
+		           SELECT c.id FROM topics c INNER JOIN subtree s ON c.parent_id = s.id
+		         )
+		         SELECT COUNT(*) FROM feedback_records WHERE topic_id IN (SELECT id FROM subtree)
+		       ) as feedback_count
+		FROM topics t
+		WHERE t.parent_id = $1
+		  AND ($2::varchar IS NULL OR t.tenant_id = $2)
+		ORDER BY t.title ASC
 		LIMIT $3
 	`
 
@@ -379,9 +457,11 @@ func (r *TopicsRepository) GetChildTopics(ctx context.Context, parentID uuid.UUI
 	topics := []models.Topic{}
 	for rows.Next() {
 		var topic models.Topic
-		if err := rows.Scan(&topic.ID, &topic.Title, &topic.Level, &topic.ParentID, &topic.TenantID, &topic.CreatedAt, &topic.UpdatedAt); err != nil {
+		var feedbackCount int64
+		if err := rows.Scan(&topic.ID, &topic.Title, &topic.Level, &topic.ParentID, &topic.TenantID, &topic.CreatedAt, &topic.UpdatedAt, &feedbackCount); err != nil {
 			return nil, fmt.Errorf("failed to scan child topic: %w", err)
 		}
+		topic.FeedbackCount = &feedbackCount
 		topics = append(topics, topic)
 	}
 

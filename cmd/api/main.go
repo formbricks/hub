@@ -168,11 +168,13 @@ func main() {
 	handler := middleware.Logging(mainMux)
 
 	// Create HTTP server
+	// WriteTimeout is set high to support long-running sync endpoints like /taxonomy/.../generate/sync
+	// For production, consider using async endpoints with polling instead
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      handler,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 10 * time.Minute,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -270,6 +272,9 @@ func initRiver(
 		TopicUpdater:     jobs.NewTopicsUpdater(topicsRepo),
 		KnowledgeUpdater: jobs.NewKnowledgeRecordsUpdater(knowledgeRepo),
 		RateLimiter:      rateLimiter,
+		// Topic assignment for real-time feedback classification
+		TopicMatcher:     topicsRepo,
+		FeedbackAssigner: feedbackRepo,
 	})
 
 	// Register workers

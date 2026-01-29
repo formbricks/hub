@@ -7,6 +7,7 @@ import (
 
 	"github.com/formbricks/hub/internal/embeddings"
 	apperrors "github.com/formbricks/hub/internal/errors"
+	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"golang.org/x/time/rate"
@@ -18,6 +19,20 @@ type EmbeddingUpdater interface {
 	UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error
 }
 
+// TopicMatcher is an interface for finding similar topics for embedding-based assignment.
+type TopicMatcher interface {
+	FindMostSpecificTopic(ctx context.Context, embedding []float32, tenantID *string, minSimilarity float64) (*models.TopicMatch, error)
+}
+
+// FeedbackAssigner is an interface for assigning topics to feedback records.
+type FeedbackAssigner interface {
+	AssignTopic(ctx context.Context, id uuid.UUID, topicID uuid.UUID, confidence float64) error
+}
+
+// DefaultMinSimilarity is the default threshold for topic assignment.
+// Feedback must be at least this similar to a topic centroid to be assigned.
+const DefaultMinSimilarity = 0.35
+
 // EmbeddingWorkerDeps holds the dependencies for the embedding worker.
 type EmbeddingWorkerDeps struct {
 	EmbeddingClient  embeddings.Client
@@ -25,6 +40,9 @@ type EmbeddingWorkerDeps struct {
 	TopicUpdater     EmbeddingUpdater
 	KnowledgeUpdater EmbeddingUpdater
 	RateLimiter      *rate.Limiter
+	// Optional: for real-time topic assignment after embedding generation
+	TopicMatcher     TopicMatcher
+	FeedbackAssigner FeedbackAssigner
 }
 
 // EmbeddingWorker processes embedding generation jobs.
@@ -109,6 +127,11 @@ func (w *EmbeddingWorker) Work(ctx context.Context, job *river.Job[EmbeddingJobA
 		"record_id", args.RecordID,
 	)
 
+	// For feedback records, attempt real-time topic assignment
+	if args.RecordType == RecordTypeFeedback && w.deps.TopicMatcher != nil && w.deps.FeedbackAssigner != nil {
+		w.assignTopicToFeedback(ctx, args.RecordID, embedding, args.TenantID)
+	}
+
 	return nil
 }
 
@@ -124,4 +147,42 @@ func (w *EmbeddingWorker) getUpdater(recordType string) EmbeddingUpdater {
 	default:
 		return nil
 	}
+}
+
+// assignTopicToFeedback attempts to assign a topic to a feedback record based on embedding similarity.
+// This is called after embedding generation succeeds for feedback records.
+// Failures are logged but don't fail the job - embedding was already saved successfully.
+func (w *EmbeddingWorker) assignTopicToFeedback(ctx context.Context, recordID uuid.UUID, embedding []float32, tenantID *string) {
+	match, err := w.deps.TopicMatcher.FindMostSpecificTopic(ctx, embedding, tenantID, DefaultMinSimilarity)
+	if err != nil {
+		slog.Warn("topic matching failed",
+			"record_id", recordID,
+			"error", err,
+		)
+		return // Don't fail the job - embedding was successful
+	}
+
+	if match == nil {
+		slog.Debug("no matching topic found",
+			"record_id", recordID,
+			"min_similarity", DefaultMinSimilarity,
+		)
+		return // No topics exist yet or none above threshold
+	}
+
+	if err := w.deps.FeedbackAssigner.AssignTopic(ctx, recordID, match.TopicID, match.Similarity); err != nil {
+		slog.Warn("topic assignment failed",
+			"record_id", recordID,
+			"topic_id", match.TopicID,
+			"error", err,
+		)
+		return // Don't fail - embedding was successful, assignment can be retried
+	}
+
+	slog.Info("topic assigned to feedback",
+		"record_id", recordID,
+		"topic_id", match.TopicID,
+		"topic_title", match.Title,
+		"confidence", match.Similarity,
+	)
 }

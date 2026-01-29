@@ -57,7 +57,7 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 
 	// Generate embedding for text feedback asynchronously
 	if s.shouldGenerateEmbedding(req.FieldType, req.ValueText) {
-		s.enqueueEmbeddingJob(ctx, record.ID, *req.ValueText)
+		s.enqueueEmbeddingJob(ctx, record.ID, *req.ValueText, record.TenantID)
 	}
 
 	return record, nil
@@ -78,13 +78,14 @@ func (s *FeedbackRecordsService) shouldGenerateEmbedding(fieldType string, value
 }
 
 // enqueueEmbeddingJob enqueues an embedding job or falls back to sync generation
-func (s *FeedbackRecordsService) enqueueEmbeddingJob(ctx context.Context, id uuid.UUID, text string) {
+func (s *FeedbackRecordsService) enqueueEmbeddingJob(ctx context.Context, id uuid.UUID, text string, tenantID *string) {
 	// If job inserter is available, use River job queue
 	if s.jobInserter != nil {
 		err := s.jobInserter.InsertEmbeddingJob(ctx, jobs.EmbeddingJobArgs{
 			RecordID:   id,
 			RecordType: jobs.RecordTypeFeedback,
 			Text:       text,
+			TenantID:   tenantID,
 		})
 		if err != nil {
 			slog.Error("failed to enqueue embedding job",
@@ -250,7 +251,7 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 
 	// Regenerate embedding if text was updated
 	if record.FieldType == "text" && s.shouldGenerateEmbedding(record.FieldType, req.ValueText) {
-		s.enqueueEmbeddingJob(ctx, id, *req.ValueText)
+		s.enqueueEmbeddingJob(ctx, id, *req.ValueText, record.TenantID)
 	}
 
 	return record, nil

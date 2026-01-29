@@ -15,6 +15,10 @@ type EmbeddingJobArgs struct {
 	// Text is the content to generate embeddings for
 	// For topics, this is the hierarchical path (e.g., "Performance > API")
 	Text string `json:"text"`
+
+	// TenantID is used for tenant-isolated topic assignment after embedding generation
+	// Only used for feedback_record type
+	TenantID *string `json:"tenant_id,omitempty"`
 }
 
 // Kind returns the job type identifier for River
