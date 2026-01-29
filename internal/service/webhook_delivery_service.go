@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
@@ -26,8 +27,8 @@ type WebhookCacheConfig struct {
 type WebhookDeliveryService struct {
 	repo         WebhooksRepository
 	httpClient   *http.Client
-	cache        *expirable.LRU[string, []models.Webhook]
-	cacheKeys    map[string]bool
+	cache        *expirable.LRU[datatypes.EventType, []models.Webhook]
+	cacheKeys    map[datatypes.EventType]bool
 	cacheKeysMu  sync.RWMutex
 	cacheEnabled bool
 }
@@ -37,13 +38,13 @@ func NewWebhookDeliveryService(repo WebhooksRepository, cacheConfig *WebhookCach
 	service := &WebhookDeliveryService{
 		repo:         repo,
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
-		cacheKeys:    make(map[string]bool),
+		cacheKeys:    make(map[datatypes.EventType]bool),
 		cacheEnabled: cacheConfig != nil && cacheConfig.Enabled,
 	}
 
 	// Create cache only if enabled
 	if service.cacheEnabled {
-		service.cache = expirable.NewLRU[string, []models.Webhook](
+		service.cache = expirable.NewLRU[datatypes.EventType, []models.Webhook](
 			cacheConfig.Size,
 			nil, // onEvicted callback
 			cacheConfig.TTL,
@@ -57,9 +58,9 @@ func NewWebhookDeliveryService(repo WebhooksRepository, cacheConfig *WebhookCach
 func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) error {
 	// Use database-level filtering instead of fetching all and filtering in Go
 	// This leverages the GIN index on event_types for efficient queries
-	eventTypeStr := event.Type.String()
-	webhooks, err := s.getWebhooksForEventType(ctx, eventTypeStr)
+	webhooks, err := s.getWebhooksForEventType(ctx, event.Type)
 	if err != nil {
+		eventTypeStr := event.Type.String()
 		slog.Error("Failed to list enabled webhooks for event type",
 			"event_type", eventTypeStr,
 			"error", err,
@@ -75,7 +76,7 @@ func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) 
 	payload, err := s.eventToPayload(event)
 	if err != nil {
 		slog.Error("Failed to convert event to payload",
-			"event_type", eventTypeStr,
+			"event_type", event.Type.String(),
 			"error", err,
 		)
 		return fmt.Errorf("failed to convert event to payload: %w", err)
@@ -85,7 +86,7 @@ func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) 
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("Failed to marshal webhook payload",
-			"event_type", eventTypeStr,
+			"event_type", event.Type.String(),
 			"error", err,
 		)
 		return fmt.Errorf("failed to marshal payload: %w", err)
@@ -99,7 +100,7 @@ func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) 
 				slog.Warn("Failed to send webhook",
 					"webhook_id", w.ID,
 					"url", w.URL,
-					"event_type", eventTypeStr,
+					"event_type", event.Type.String(),
 					"error", err,
 				)
 			}
@@ -110,7 +111,7 @@ func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) 
 }
 
 // getWebhooksForEventType gets webhooks from cache or database
-func (s *WebhookDeliveryService) getWebhooksForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
+func (s *WebhookDeliveryService) getWebhooksForEventType(ctx context.Context, eventType datatypes.EventType) ([]models.Webhook, error) {
 	// Check cache first (if enabled)
 	if s.cacheEnabled {
 		if cached, ok := s.cache.Get(eventType); ok {
@@ -119,10 +120,12 @@ func (s *WebhookDeliveryService) getWebhooksForEventType(ctx context.Context, ev
 	}
 
 	// Cache miss or disabled - fetch from database
-	webhooks, err := s.repo.ListEnabledForEventType(ctx, eventType)
+	// Convert EventType enum to string for database query
+	eventTypeStr := eventType.String()
+	webhooks, err := s.repo.ListEnabledForEventType(ctx, eventTypeStr)
 	if err != nil {
 		slog.Error("Failed to list enabled webhooks for event type",
-			"event_type", eventType,
+			"event_type", eventTypeStr,
 			"error", err,
 		)
 		return nil, err
@@ -154,7 +157,7 @@ func (s *WebhookDeliveryService) InvalidateCache() {
 	for key := range s.cacheKeys {
 		s.cache.Remove(key)
 	}
-	s.cacheKeys = make(map[string]bool)
+	s.cacheKeys = make(map[datatypes.EventType]bool)
 }
 
 // PublishEvents publishes multiple events (currently sends individually, future: batch)

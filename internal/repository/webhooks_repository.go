@@ -313,13 +313,13 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 // Uses GIN index for efficient array containment queries.
 // Returns webhooks where:
 //   - enabled = true
-//   - event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]
+//   - event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[]
 func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
 		FROM webhooks
 		WHERE enabled = true
-		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1])
+		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
 	`
 
 	rows, err := r.db.Query(ctx, query, eventType)

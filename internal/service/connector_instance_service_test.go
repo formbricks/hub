@@ -202,6 +202,10 @@ func TestConnectorInstanceService_StartConnectorInstance(t *testing.T) {
 	})
 
 	t.Run("fails when limit exceeded", func(t *testing.T) {
+		// Reset mock to clear expectations from previous test case
+		mockRepo.ExpectedCalls = nil
+		mockRepo.Calls = nil
+
 		instanceID := uuid.New()
 		instance := &models.ConnectorInstance{
 			ID:      instanceID,

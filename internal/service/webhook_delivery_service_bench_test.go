@@ -65,7 +65,7 @@ func BenchmarkGetWebhooks_NoCache(b *testing.B) {
 	service := NewWebhookDeliveryService(repo, cacheConfig)
 
 	ctx := context.Background()
-	eventType := "feedback_record.created"
+	eventType := datatypes.FeedbackRecordCreated
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -94,7 +94,7 @@ func BenchmarkGetWebhooks_WithCache(b *testing.B) {
 	service := NewWebhookDeliveryService(repo, cacheConfig)
 
 	ctx := context.Background()
-	eventType := "feedback_record.created"
+	eventType := datatypes.FeedbackRecordCreated
 
 	// Warm up cache
 	_, _ = service.getWebhooksForEventType(ctx, eventType)
@@ -130,12 +130,12 @@ func BenchmarkGetWebhooks_MixedEventTypes(b *testing.B) {
 	service := NewWebhookDeliveryService(repo, cacheConfig)
 
 	ctx := context.Background()
-	eventTypes := []string{
-		"feedback_record.created",
-		"feedback_record.updated",
-		"feedback_record.deleted",
-		"webhook.created",
-		"webhook.updated",
+	eventTypes := []datatypes.EventType{
+		datatypes.FeedbackRecordCreated,
+		datatypes.FeedbackRecordUpdated,
+		datatypes.FeedbackRecordDeleted,
+		datatypes.WebhookCreated,
+		datatypes.WebhookUpdated,
 	}
 
 	b.ResetTimer()
@@ -166,7 +166,7 @@ func BenchmarkGetWebhooks_CacheExpiration(b *testing.B) {
 	service := NewWebhookDeliveryService(repo, cacheConfig)
 
 	ctx := context.Background()
-	eventType := "feedback_record.created"
+	eventType := datatypes.FeedbackRecordCreated
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -188,13 +188,13 @@ func BenchmarkGetWebhooks_CacheExpiration(b *testing.B) {
 // BenchmarkGetWebhooks_DifferentCacheSizes tests performance with different cache sizes
 func BenchmarkGetWebhooks_DifferentCacheSizes(b *testing.B) {
 	sizes := []int{10, 50, 100, 200, 500}
-	eventTypes := []string{
-		"feedback_record.created",
-		"feedback_record.updated",
-		"feedback_record.deleted",
-		"webhook.created",
-		"webhook.updated",
-		"webhook.deleted",
+	eventTypes := []datatypes.EventType{
+		datatypes.FeedbackRecordCreated,
+		datatypes.FeedbackRecordUpdated,
+		datatypes.FeedbackRecordDeleted,
+		datatypes.WebhookCreated,
+		datatypes.WebhookUpdated,
+		datatypes.WebhookDeleted,
 	}
 
 	for _, size := range sizes {
@@ -259,7 +259,7 @@ func BenchmarkGetWebhooks_DifferentTTLs(b *testing.B) {
 			service := NewWebhookDeliveryService(repo, cacheConfig)
 
 			ctx := context.Background()
-			eventType := "feedback_record.created"
+			eventType := datatypes.FeedbackRecordCreated
 
 			// Warm up cache
 			_, _ = service.getWebhooksForEventType(ctx, eventType)
@@ -305,19 +305,19 @@ func BenchmarkGetWebhooks_RealisticLoad(b *testing.B) {
 	// - 2% webhook.updated (very low frequency)
 	// - 0.1% webhook.deleted (rare)
 	eventDistribution := []struct {
-		eventType string
+		eventType datatypes.EventType
 		weight    int
 	}{
-		{"feedback_record.created", 700},
-		{"feedback_record.updated", 200},
-		{"feedback_record.deleted", 50},
-		{"webhook.created", 30},
-		{"webhook.updated", 20},
-		{"webhook.deleted", 1},
+		{datatypes.FeedbackRecordCreated, 700},
+		{datatypes.FeedbackRecordUpdated, 200},
+		{datatypes.FeedbackRecordDeleted, 50},
+		{datatypes.WebhookCreated, 30},
+		{datatypes.WebhookUpdated, 20},
+		{datatypes.WebhookDeleted, 1},
 	}
 
 	// Build weighted event list
-	var weightedEvents []string
+	var weightedEvents []datatypes.EventType
 	for _, dist := range eventDistribution {
 		for i := 0; i < dist.weight; i++ {
 			weightedEvents = append(weightedEvents, dist.eventType)
