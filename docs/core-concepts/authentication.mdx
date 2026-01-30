@@ -52,7 +52,7 @@ These endpoints require authentication:
 - `GET /v1/feedback-records/{id}` - Get feedback record
 - `PATCH /v1/feedback-records/{id}` - Update feedback record
 - `DELETE /v1/feedback-records/{id}` - Delete feedback record
-- `DELETE /v1/feedback-records/bulk` - Bulk delete feedback records
+- `DELETE /v1/feedback-records?user_identifier=<id>` - Bulk delete feedback records by user
 
 **Always public** (no auth required):
 
