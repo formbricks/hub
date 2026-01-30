@@ -1,0 +1,212 @@
+---
+title: "Environment Variables"
+description: "Complete reference for configuring Formbricks Hub via environment variables."
+---
+
+## Required Variables
+
+### `API_KEY`
+
+API key for authentication. All API requests (except `/health` and `/docs`) require the `Authorization: Bearer <token>` header.
+
+**Example:**
+
+```bash
+API_KEY=your-secret-api-key-here
+```
+
+**Default:** None (required)
+
+**Usage:**
+
+```bash
+curl -H "Authorization: Bearer your-secret-key-here" \
+  http://localhost:8080/v1/feedback-records
+```
+
+[Learn more about authentication →](/core-concepts/authentication)
+
+---
+
+## Database Configuration
+
+### `DATABASE_URL`
+
+PostgreSQL connection string.
+
+**Format:**
+
+```
+postgres://[user]:[password]@[host]:[port]/[database]?[params]
+```
+
+**Examples:**
+
+```bash
+# Local development
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/hub_dev?sslmode=disable
+
+# Production with SSL
+DATABASE_URL=postgres://user:pass@db.example.com:5432/hub_prod?sslmode=require
+```
+
+**Default:** `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable`
+
+---
+
+## Server Configuration
+
+### `PORT`
+
+Port for the HTTP server.
+
+**Examples:**
+
+```bash
+PORT=8080  # Default
+PORT=3000  # Custom port
+```
+
+**Default:** `8080`
+
+---
+
+## Logging
+
+### `LOG_LEVEL`
+
+Logging verbosity level.
+
+**Options:**
+
+- `debug` - Detailed debugging information
+- `info` - General informational messages (recommended)
+- `warn` - Warning messages only
+- `error` - Error messages only
+
+**Examples:**
+
+```bash
+LOG_LEVEL=debug  # Development
+LOG_LEVEL=info   # Production (recommended)
+LOG_LEVEL=warn   # Quiet production
+```
+
+**Default:** `info`
+
+---
+
+## Complete Example: Development
+
+```bash
+# .env
+
+# Authentication (required)
+API_KEY=dev-secret-key
+
+# Database
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/hub_dev?sslmode=disable
+
+# Server
+PORT=8080
+
+# Logging
+LOG_LEVEL=debug
+```
+
+## Complete Example: Production
+
+```bash
+# Production environment variables
+
+# Authentication (required)
+API_KEY=your-cryptographically-secure-key-here
+
+# Database
+DATABASE_URL=postgres://prod_user:secure_password@db.production.com:5432/hub_prod?sslmode=require
+
+# Server
+PORT=8080
+
+# Logging
+LOG_LEVEL=info
+```
+
+## Loading Environment Variables
+
+### Using `.env` File
+
+```bash
+# Copy example
+cp .env.example .env
+
+# Edit with your values
+vim .env
+
+# Start the server (variables are automatically loaded)
+make dev
+```
+
+### Using Docker
+
+```bash
+docker run -d \
+  -e API_KEY="your-key" \
+  -e DATABASE_URL="postgres://..." \
+  formbricks/hub:latest
+```
+
+### Using Docker Compose
+
+```yaml
+services:
+  hub:
+    image: formbricks/hub:latest
+    environment:
+      API_KEY: ${API_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      LOG_LEVEL: info
+    env_file:
+      - .env.production
+```
+
+## Troubleshooting
+
+### "API_KEY environment variable is required" Error
+
+**Problem:** Missing `API_KEY` environment variable.
+
+**Solution:** Set the variable in your `.env` file:
+
+```bash
+API_KEY=your-secret-api-key-here
+```
+
+### "Cannot connect to database" Error
+
+**Problem:** Database connection details are incorrect or database is not running.
+
+**Solutions:**
+
+1. Check PostgreSQL is running: `docker compose ps`
+2. Verify connection string format
+3. Test connection manually:
+   ```bash
+   psql "postgres://postgres:postgres@localhost:5432/hub_dev?sslmode=disable"
+   ```
+
+### API Key Not Working
+
+**Problem:** Getting 401 errors despite setting `Authorization` header.
+
+**Solutions:**
+
+1. Verify `API_KEY` is set: `grep API_KEY .env`
+2. Check header format is correct: `Authorization: Bearer <your-key>`
+3. Ensure key matches exactly (no extra spaces)
+
+## Next Steps
+
+- [Authentication Guide](/core-concepts/authentication) - Secure your API
+- [API Reference](/api-reference) - Explore endpoints
+- [Architecture](/reference/architecture) - System design and components
