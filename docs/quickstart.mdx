@@ -120,10 +120,31 @@ This will:
 
 - Pull the latest Formbricks Hub image from GitHub Container Registry
 - Start PostgreSQL with persistent storage
-- Run database migrations automatically
 - Start the Hub API on port 8080
 
-#### 4. Verify Installation
+#### 4. Initialize the Database Schema
+
+The database schema must be initialized before first use:
+
+```bash
+# Wait for PostgreSQL to be ready
+docker compose exec postgres pg_isready -U formbricks -d hub
+
+# Apply the schema
+docker compose exec postgres psql -U formbricks -d hub -f /dev/stdin < sql/001_initial_schema.sql
+```
+
+Or if you have `psql` installed locally:
+
+```bash
+psql "postgres://formbricks:your_postgres_password@localhost:5432/hub?sslmode=disable" -f sql/001_initial_schema.sql
+```
+
+<Info>
+  You only need to run this once when setting up the database for the first time.
+</Info>
+
+#### 5. Verify Installation
 
 Check that both services are healthy:
 
@@ -164,6 +185,14 @@ docker run -d \
   -e LOG_LEVEL="info" \
   ghcr.io/formbricks/hub:latest
 ```
+
+<Warning>
+  Make sure to initialize the database schema before starting the API. Download and run the schema file from the [GitHub repository](https://github.com/formbricks/hub/blob/main/sql/001_initial_schema.sql):
+
+  ```bash
+  psql "postgresql://user:password@host:5432/hub" -f sql/001_initial_schema.sql
+  ```
+</Warning>
 
 ## Making Your First API Call
 
