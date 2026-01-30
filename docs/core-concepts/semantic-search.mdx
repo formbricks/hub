@@ -1,0 +1,55 @@
+---
+title: "Semantic Search"
+description: "Find feedback using natural language queries. Search by meaning, not just keywords."
+---
+
+<Info>
+  Semantic Search is planned for a future release. This page outlines what's coming.
+</Info>
+
+## What's Coming
+
+Semantic search will let you find feedback using natural language queries. Unlike keyword search, it understands:
+
+- **Synonyms**: "expensive" matches "costly", "pricey", "too much money"
+- **Intent**: "hard to use" matches "confusing interface", "complicated UX"
+- **Context**: "checkout issues" matches "payment failed", "cart problems", "order won't submit"
+
+### Example
+
+**Your query:** "mobile app crashes"
+
+**Matches found:**
+- "The iOS app keeps freezing and shutting down" (88% match)
+- "Android version crashes on startup" (86% match)
+- "App is unstable, crashes frequently" (84% match)
+
+## Planned Capabilities
+
+- **Find similar feedback** - "Show me all checkout issues" finds related problems even with different wording
+- **Query in plain English** - Ask questions like a human, get relevant answers
+- **Discover patterns** - Find themes across thousands of responses instantly
+- **Support workflows** - "Find feedback like this support ticket" for faster resolution
+- **Analyze themes** - Group similar feedback without manual tagging
+
+## How It Will Work
+
+1. When text feedback is created, Hub generates a vector embedding
+2. Embeddings capture the semantic meaning of the text
+3. Search queries are converted to embeddings
+4. Nearest neighbor search finds semantically similar feedback
+5. Results ranked by similarity score (0.0 to 1.0)
+
+This will be powered by OpenAI's embedding models and pgvector for fast vector search in PostgreSQL.
+
+## Stay Updated
+
+Watch for updates on Semantic Search:
+
+- **GitHub**: [formbricks/hub](https://github.com/formbricks/hub) - Watch for releases
+- **Discussions**: [Share ideas](https://github.com/formbricks/hub/discussions) - Tell us what features you need
+
+## Next Steps
+
+- [Data Model](/core-concepts/data-model) - Understand the feedback record structure
+- [API Reference](/api-reference) - Explore current endpoints

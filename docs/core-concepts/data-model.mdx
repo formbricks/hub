@@ -1,0 +1,618 @@
+---
+title: "Data Model"
+description: "Hub uses a simple, powerful data model optimized for analytics. Each record represents a single piece of feedback, making it incredibly easy to query, aggregate, and visualize your feedback data."
+---
+
+## How It Works
+
+Every piece of feedback—whether it's an NPS score, a text comment, or a multiple-choice selection—is stored as an individual record. This "one row per response" approach unlocks powerful capabilities:
+
+- **Query with standard SQL** - No complex JSON parsing or unnesting required
+- **Connect any BI tool** - Works seamlessly with Apache Superset, Power BI, Tableau, Looker
+- **Combine data sources** - Mix surveys, reviews, support tickets in a single query
+- **Analyze trends over time** - Built-in time-series indexing for fast date-based queries
+- **Group related fields** - Link ranking/matrix question items with field groups
+
+### Example: Survey Response
+
+When a user completes a survey with an NPS score and a comment, Hub creates two records:
+
+```json
+// Record 1: NPS score
+{
+  "source_id": "nps-2024",
+  "field_id": "nps_score",
+  "field_type": "nps",
+  "value_number": 9
+}
+
+// Record 2: Comment
+{
+  "source_id": "nps-2024",
+  "field_id": "feedback_comment",
+  "field_type": "text",
+  "value_text": "Great service!"
+}
+```
+
+This structure makes it trivial to calculate your NPS score or analyze feedback trends across any source.
+
+## Core Entity: FeedbackRecord
+
+The `FeedbackRecord` entity stores individual feedback data points.
+
+### Complete Field Reference
+
+#### Core Identification
+
+| Field              | Type      | Required | Description                                                  |
+| ------------------ | --------- | -------- | ------------------------------------------------------------ |
+| **`id`**           | UUIDv7    | Auto     | Time-ordered primary key for efficient indexing              |
+| **`collected_at`** | Timestamp | ✅        | When the feedback was originally collected (defaults to now) |
+| **`created_at`**   | Timestamp | Auto     | When the record was created in the Hub                       |
+| **`updated_at`**   | Timestamp | Auto     | When the record was last updated                             |
+
+#### Multi-Tenancy
+
+| Field       | Type   | Required | Description                                                 |
+| ----------- | ------ | -------- | ----------------------------------------------------------- |
+| `tenant_id` | String | Optional | Tenant/organization identifier for multi-tenant deployments |
+
+#### Source Tracking
+
+| Field             | Type   | Required | Description                                          |
+| ----------------- | ------ | -------- | ---------------------------------------------------- |
+| **`source_type`** | String | ✅        | Type of source (e.g., "survey", "review", "support") |
+| `source_id`       | String | Optional | Reference to survey/form/ticket/review ID            |
+| `source_name`     | String | Optional | Human-readable source name for display               |
+
+#### Question/Field Identification
+
+| Field               | Type   | Required | Description                                                       |
+| ------------------- | ------ | -------- | ----------------------------------------------------------------- |
+| **`field_id`**      | String | ✅        | Unique question/field identifier (stable across submissions)      |
+| `field_label`       | String | Optional | Question text or field label for display                          |
+| **`field_type`**    | Enum   | ✅        | Data type (see [Field Types](#field-types) below)                 |
+| `field_group_id`    | String | Optional | Groups related fields (for ranking, matrix, grid questions)       |
+| `field_group_label` | String | Optional | Human-readable label for the field group                          |
+
+<Info>
+  Use `field_group_id` to link related items from composite questions like rankings or matrix ratings. This enables:
+
+  * Querying all items in a ranking: `WHERE field_group_id = 'feature_priority'`
+  * Calculating average ratings across matrix rows
+  * BI-friendly analytics without JSON parsing
+</Info>
+
+#### Response Values
+
+| Field           | Type      | Required | Description                                             |
+| --------------- | --------- | -------- | ------------------------------------------------------- |
+| `value_text`    | String    | Optional | Text responses (feedback, comments, open-ended answers) |
+| `value_number`  | Float64   | Optional | Numeric responses (ratings, scores, NPS, CSAT)          |
+| `value_boolean` | Boolean   | Optional | Yes/no responses                                        |
+| `value_date`    | Timestamp | Optional | Date/datetime responses                                 |
+
+#### Context & Metadata
+
+| Field             | Type   | Required | Description                                                  |
+| ----------------- | ------ | -------- | ------------------------------------------------------------ |
+| `metadata`        | JSONB  | Optional | Flexible context (device, location, campaign, custom fields) |
+| `language`        | String | Optional | ISO 639-1 language code (e.g., "en", "de", "fr")             |
+| `user_identifier` | String | Optional | Anonymous user ID for tracking (hashed, never PII)           |
+
+### Field Types
+
+The `field_type` field uses **validated enums** to categorize responses and determine which `value_*` field to use. Hub enforces these 9 standardized types optimized for analytics:
+
+| Type              | Description                        | Value Field     | Analytics Use                                    |
+| ----------------- | ---------------------------------- | --------------- | ------------------------------------------------ |
+| **`text`**        | Open-ended qualitative feedback    | `value_text`    | Word clouds, keyword analysis, theme extraction  |
+| **`categorical`** | Pre-defined discrete options       | `value_text`    | Frequency distribution, most popular choices     |
+| **`nps`**         | Net Promoter Score (0-10)          | `value_number`  | NPS calculation, promoter/detractor segmentation |
+| **`csat`**        | Customer Satisfaction (1-5 or 1-7) | `value_number`  | Average satisfaction, benchmarking               |
+| **`ces`**         | Customer Effort Score (1-7)        | `value_number`  | Effort analysis, ease-of-use tracking            |
+| **`rating`**      | Generic rating scale               | `value_number`  | Average rating, distribution, star ratings       |
+| **`number`**      | Quantitative measurements          | `value_number`  | Sum, average, min/max, aggregations              |
+| **`boolean`**     | Binary yes/no responses            | `value_boolean` | True/false counts, percentages                   |
+| **`date`**        | Temporal values                    | `value_date`    | Time-series analysis, date filtering             |
+
+<Info>
+  These types cover 95% of feedback management use cases while keeping the model simple. They map directly to common analytics patterns:
+
+  * **Qualitative**: `text` → Theme and keyword analysis
+  * **Quantitative**: `nps`, `csat`, `ces`, `rating`, `number` → Statistical aggregations
+  * **Categorical**: `categorical` → Frequency and distribution analysis
+  * **Binary/Temporal**: `boolean`, `date` → Filtering and segmentation
+</Info>
+
+### Source Types
+
+The `source_type` field identifies where the feedback data originated:
+
+| Type             | Description             | Typical Use                        |
+| ---------------- | ----------------------- | ---------------------------------- |
+| `survey`         | Survey responses        | General surveys                    |
+| `nps_campaign`   | NPS campaigns           | Net Promoter Score tracking        |
+| `review`         | Product/service reviews | App Store, Google Play, Trustpilot |
+| `feedback_form`  | General feedback        | Contact forms, feedback widgets    |
+| `support`        | Support tickets         | Zendesk, Intercom satisfaction     |
+| `social`         | Social media            | Twitter mentions, Reddit posts     |
+| `interview`      | User interviews         | Qualitative research               |
+| `usability_test` | UX testing              | Task completion feedback           |
+
+<Info>
+  Source types are free-form strings. Define your own like `app_store_review`, `zendesk_csat`, or `slack_pulse` to match your data sources.
+</Info>
+
+## Example Records
+
+### NPS Response
+
+```json
+{
+  "source_type": "survey",
+  "source_id": "q1-2025-nps",
+  "source_name": "Q1 2025 Customer NPS",
+  "field_id": "nps_score",
+  "field_label": "How likely are you to recommend us?",
+  "field_type": "nps",
+  "value_number": 9,
+  "metadata": {
+    "campaign_id": "email-blast-001",
+    "customer_segment": "enterprise",
+    "country": "US"
+  },
+  "user_identifier": "user-abc-123",
+  "collected_at": "2025-01-15T10:30:00Z"
+}
+```
+
+### Text Response
+
+```json
+{
+  "source_type": "survey",
+  "source_id": "onboarding-survey-v2",
+  "field_id": "q3_improvements",
+  "field_label": "What could we improve?",
+  "field_type": "text",
+  "value_text": "The dashboard is confusing for new users, but the support team was very helpful!",
+  "language": "en",
+  "metadata": {
+    "device": "mobile",
+    "app_version": "2.1.4"
+  },
+  "user_identifier": "user-xyz-789",
+  "collected_at": "2025-01-15T10:32:15Z"
+}
+```
+
+### Ranking Question (Field Grouping)
+
+A ranking question where users order features by importance creates multiple rows with shared `field_group_id`:
+
+```json
+// Row 1: First ranked item
+{
+  "source_type": "survey",
+  "source_id": "product-feedback-2025",
+  "field_id": "feature_priority__reports",
+  "field_label": "Reports",
+  "field_type": "number",
+  "field_group_id": "feature_priority",
+  "field_group_label": "Rank these features by importance",
+  "value_number": 1,
+  "metadata": { "question_type": "ranking", "total_items": 3 },
+  "user_identifier": "user-abc-123",
+  "collected_at": "2025-01-12T14:22:00Z"
+}
+
+// Row 2: Second ranked item
+{
+  "source_type": "survey",
+  "source_id": "product-feedback-2025",
+  "field_id": "feature_priority__dashboards",
+  "field_label": "Dashboards",
+  "field_type": "number",
+  "field_group_id": "feature_priority",
+  "field_group_label": "Rank these features by importance",
+  "value_number": 2,
+  "metadata": { "question_type": "ranking", "total_items": 3 },
+  "user_identifier": "user-abc-123",
+  "collected_at": "2025-01-12T14:22:00Z"
+}
+
+// Row 3: Third ranked item
+{
+  "source_type": "survey",
+  "source_id": "product-feedback-2025",
+  "field_id": "feature_priority__alerts",
+  "field_label": "Alerts",
+  "field_type": "number",
+  "field_group_id": "feature_priority",
+  "field_group_label": "Rank these features by importance",
+  "value_number": 3,
+  "metadata": { "question_type": "ranking", "total_items": 3 },
+  "user_identifier": "user-abc-123",
+  "collected_at": "2025-01-12T14:22:00Z"
+}
+```
+
+<Info>
+  This structure enables powerful ranking analytics:
+
+  ```sql
+  -- Average rank per feature
+  SELECT field_label, AVG(value_number) as avg_rank
+  FROM feedback_records
+  WHERE field_group_id = 'feature_priority'
+  GROUP BY field_label
+  ORDER BY avg_rank;
+
+  -- Weighted Borda score (3 items: rank 1 = 3 points, rank 2 = 2, rank 3 = 1)
+  SELECT field_label, SUM(4 - value_number) as score
+  FROM feedback_records
+  WHERE field_group_id = 'feature_priority'
+  GROUP BY field_label
+  ORDER BY score DESC;
+  ```
+</Info>
+
+### Matrix Rating Question
+
+A matrix question with multiple row items creates rows with shared `field_group_id`:
+
+```json
+// Row 1: First matrix item
+{
+  "source_type": "survey",
+  "source_id": "satisfaction-survey",
+  "field_id": "feature_satisfaction__ease_of_use",
+  "field_label": "Ease of Use",
+  "field_type": "rating",
+  "field_group_id": "feature_satisfaction",
+  "field_group_label": "Rate your satisfaction with each feature",
+  "value_number": 4,
+  "metadata": { "question_type": "matrix" },
+  "user_identifier": "user-xyz-789",
+  "collected_at": "2025-01-12T14:25:00Z"
+}
+
+// Row 2: Second matrix item
+{
+  "source_type": "survey",
+  "source_id": "satisfaction-survey",
+  "field_id": "feature_satisfaction__performance",
+  "field_label": "Performance",
+  "field_type": "rating",
+  "field_group_id": "feature_satisfaction",
+  "field_group_label": "Rate your satisfaction with each feature",
+  "value_number": 5,
+  "metadata": { "question_type": "matrix" },
+  "user_identifier": "user-xyz-789",
+  "collected_at": "2025-01-12T14:25:00Z"
+}
+```
+
+### Multiple Choice Response (Multiple Rows)
+
+When a user selects multiple options, each choice becomes a **separate row**:
+
+```json
+// User selected "Dashboards", "Reports", and "Alerts"
+
+// Row 1
+{
+  "source_type": "survey",
+  "source_id": "product-feedback-2025",
+  "field_id": "features_used",
+  "field_label": "Which features do you use?",
+  "field_type": "categorical",
+  "value_text": "Dashboards",
+  "user_identifier": "user-qwe-456",
+  "collected_at": "2025-01-12T14:22:00Z"
+}
+
+// Row 2
+{
+  "source_type": "survey",
+  "source_id": "product-feedback-2025",
+  "field_id": "features_used",
+  "field_label": "Which features do you use?",
+  "field_type": "categorical",
+  "value_text": "Reports",
+  "user_identifier": "user-qwe-456",
+  "collected_at": "2025-01-12T14:22:00Z"
+}
+
+// Row 3
+{
+  "source_type": "survey",
+  "source_id": "product-feedback-2025",
+  "field_id": "features_used",
+  "field_label": "Which features do you use?",
+  "field_type": "categorical",
+  "value_text": "Alerts",
+  "user_identifier": "user-qwe-456",
+  "collected_at": "2025-01-12T14:22:00Z"
+}
+```
+
+<Info>
+  This "one row per selection" approach makes it trivial to count how many users selected each feature:
+
+  ```sql
+  SELECT value_text, COUNT(*) as user_count
+  FROM feedback_records
+  WHERE field_id = 'features_used'
+  GROUP BY value_text;
+  ```
+</Info>
+
+## Database Indexes
+
+Hub automatically creates indexes for optimal query performance:
+
+* **`tenant_id`** - Multi-tenant filtering
+* **`source_type`** - Filter by feedback source (survey, review, support)
+* **`source_id`** - Query specific surveys/forms
+* **`collected_at`** - Time-series queries and trending
+* **`field_type`** - Filter by question type
+* **`field_id`** - Group related questions across responses
+* **`field_group_id`** - Filter grouped fields (ranking, matrix questions)
+* **`value_number`** - Numeric aggregations (averages, sums, counts)
+* **`user_identifier`** - User-level journey analysis
+
+<Info>
+  All indexes are created automatically via database migrations. The combination of UUIDv7 primary keys and strategic indexes ensures fast queries even with millions of records.
+</Info>
+
+## UUIDv7 Primary Keys
+
+Hub uses **UUIDv7** for primary keys, combining the benefits of UUIDs with time-ordered sorting:
+
+**What you get:**
+
+* **Chronological sorting** - IDs sort by creation time automatically
+* **Fast database performance** - Better B-tree indexing than random UUIDs
+* **Globally unique** - No collision risk across distributed systems
+* **Horizontally scalable** - No need for central ID generation
+
+**Example UUIDv7:**
+
+```
+01932c8a-8b9e-7000-8000-000000000001
+└─ timestamp ─┘ └── random ──┘
+```
+
+The timestamp prefix means newer records naturally have larger IDs, improving both query performance and ordering.
+
+## JSONB Metadata
+
+Hub uses PostgreSQL's `JSONB` type for flexible contextual data storage in the `metadata` field. This allows you to attach any custom attributes to your feedback records without schema changes.
+
+### Common Metadata Patterns
+
+```json
+{
+  "metadata": {
+    // Device & Platform
+    "device": "mobile",
+    "os": "iOS 17.2",
+    "browser": "Safari 17",
+    "screen_size": "390x844",
+
+    // Location
+    "country": "US",
+    "region": "California",
+    "timezone": "America/Los_Angeles",
+
+    // Campaign & Attribution
+    "campaign_id": "email-001",
+    "referrer": "email_campaign",
+    "utm_source": "newsletter",
+    "utm_campaign": "product_launch",
+
+    // Customer Context
+    "customer_tier": "enterprise",
+    "industry": "healthcare",
+    "team_size": "50-200",
+    "plan": "pro",
+
+    // Question Type Context
+    "question_type": "ranking",
+    "total_items": 5,
+
+    // Custom Fields
+    "feature_flags": ["new_ui", "ai_features"],
+    "session_duration": 1847,
+    "pages_viewed": 12
+  }
+}
+```
+
+### Querying JSONB
+
+PostgreSQL provides powerful operators for querying JSONB fields:
+
+```sql
+-- Extract a specific key
+SELECT metadata->>'country' as country
+FROM feedback_records
+WHERE source_type = 'survey';
+
+-- Filter by nested value
+SELECT * FROM feedback_records
+WHERE metadata->'device' @> '"mobile"';
+
+-- Check if key exists
+SELECT * FROM feedback_records
+WHERE metadata ? 'campaign_id';
+
+-- Filter by numeric value
+SELECT * FROM feedback_records
+WHERE (metadata->>'session_duration')::int > 300;
+
+-- Find all ranking questions
+SELECT DISTINCT field_group_id, field_group_label
+FROM feedback_records
+WHERE metadata->>'question_type' = 'ranking';
+```
+
+<Info>
+  Use snake_case naming and consistent key names across your metadata to make queries easier:
+
+  * ✅ `"customer_tier"` (consistent)
+  * ❌ `"customerTier"`, `"tier"`, `"customer-tier"` (inconsistent)
+</Info>
+
+[Learn more in PostgreSQL JSONB docs →](https://www.postgresql.org/docs/current/functions-json.html)
+
+## Best Practices
+
+### 1. Use Validated Field Types
+
+Always use one of the 9 standardized field types. The API will reject invalid types:
+
+✅ **Good:**
+
+```json
+{
+  "field_type": "text",
+  "field_type": "categorical",
+  "field_type": "nps",
+  "field_type": "ces"
+}
+```
+
+❌ **Will Fail:**
+
+```json
+{
+  "field_type": "openText",
+  "field_type": "multiple_choice",
+  "field_type": "custom_scale"
+}
+```
+
+### 2. Match Field Types to Value Columns
+
+Only populate the appropriate `value_*` field based on `field_type`:
+
+| Field Type                               | Correct Value Column | Example                  |
+| ---------------------------------------- | -------------------- | ------------------------ |
+| `text`, `categorical`                    | `value_text`         | `"Great product!"`       |
+| `nps`, `csat`, `ces`, `rating`, `number` | `value_number`       | `9`                      |
+| `boolean`                                | `value_boolean`      | `true`                   |
+| `date`                                   | `value_date`         | `"2025-01-15T10:00:00Z"` |
+
+✅ **Good:**
+
+```json
+{
+  "field_type": "nps",
+  "value_number": 9
+}
+```
+
+❌ **Avoid:**
+
+```json
+{
+  "field_type": "nps",
+  "value_text": "9"
+}
+```
+
+### 3. Use Consistent Field IDs
+
+Keep field IDs stable across time for longitudinal analysis:
+
+✅ **Good:**
+
+```json
+{
+  "field_id": "nps_score",
+  "field_id": "improvement_feedback"
+}
+```
+
+❌ **Avoid:**
+
+```json
+{
+  "field_id": "nps_q1_2025",
+  "field_id": "question_1"
+}
+```
+
+### 4. Use Field Groups for Composite Questions
+
+For ranking, matrix, and grid questions, use `field_group_id` to link related items:
+
+```json
+{
+  "field_group_id": "feature_priority",
+  "field_group_label": "Rank these features by importance",
+  "field_id": "feature_priority__reports",
+  "field_label": "Reports",
+  "field_type": "number",
+  "value_number": 1,
+  "metadata": { "question_type": "ranking" }
+}
+```
+
+Use the `{group}__{item}` naming pattern for field IDs to make queries intuitive.
+
+### 5. Multi-Select as Multiple Rows
+
+For questions where users can select multiple options, create one row per selection:
+
+```json
+// Question: "Which features do you use?" (user selected 3 options)
+// Create 3 rows with the same source_id, field_id, but different value_text
+{"field_type": "categorical", "value_text": "Dashboards"},
+{"field_type": "categorical", "value_text": "Reports"},
+{"field_type": "categorical", "value_text": "Alerts"}
+```
+
+### 6. Anonymous User Identifiers
+
+For privacy, use anonymous hashed IDs instead of PII:
+
+✅ **Good:**
+
+```json
+{
+  "user_identifier": "sha256:abc123def456"
+}
+```
+
+❌ **Avoid:**
+
+```json
+{
+  "user_identifier": "john@example.com"
+}
+```
+
+### 7. Rich Metadata for Segmentation
+
+Use `metadata` for contextual attributes that enable deeper analysis:
+
+```json
+{
+  "metadata": {
+    "customer_tier": "enterprise",
+    "plan": "pro",
+    "feature_flags": ["new_ui"],
+    "account_age_days": 450
+  }
+}
+```
+
+## Next Steps
+
+* [Authentication](/core-concepts/authentication) - Secure your API
+* [Webhooks](/core-concepts/webhooks) - React to new data
