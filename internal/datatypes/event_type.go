@@ -5,21 +5,12 @@ package datatypes
 type EventType uint16
 
 const (
-	// FeedbackRecordCreated represents the "feedback_record.created" event
 	FeedbackRecordCreated EventType = iota
-	// FeedbackRecordUpdated represents the "feedback_record.updated" event
 	FeedbackRecordUpdated
-	// FeedbackRecordDeleted represents the "feedback_record.deleted" event
 	FeedbackRecordDeleted
-	// WebhookCreated represents the "webhook.created" event
 	WebhookCreated
-	// WebhookUpdated represents the "webhook.updated" event
 	WebhookUpdated
-	// WebhookDeleted represents the "webhook.deleted" event
 	WebhookDeleted
-	// Future: Add new event types here
-	// ConnectorStarted
-	// UserCreated
 )
 
 // eventTypeMap maps string representations to EventType enums.
@@ -31,9 +22,6 @@ var eventTypeMap = map[string]EventType{
 	"webhook.created":         WebhookCreated,
 	"webhook.updated":         WebhookUpdated,
 	"webhook.deleted":         WebhookDeleted,
-	// Future: Add new mappings here
-	// "connector.started": ConnectorStarted,
-	// "user.created": UserCreated,
 }
 
 // reverseEventTypeMap maps EventType enums to string representations.
