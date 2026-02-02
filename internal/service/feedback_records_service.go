@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
@@ -43,9 +42,8 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 	}
 
 	s.publisher.PublishEvent(context.Background(), Event{
-		Type:      datatypes.FeedbackRecordCreated,
-		Timestamp: time.Now().Unix(),
-		Data:      *record,
+		Type: datatypes.FeedbackRecordCreated,
+		Data: *record,
 	})
 
 	return record, nil
@@ -92,7 +90,6 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 
 	s.publisher.PublishEvent(context.Background(), Event{
 		Type:          datatypes.FeedbackRecordUpdated,
-		Timestamp:     time.Now().Unix(),
 		Data:          *record,
 		ChangedFields: changedFields,
 	})
@@ -142,9 +139,8 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 	}
 
 	s.publisher.PublishEvent(context.Background(), Event{
-		Type:      datatypes.FeedbackRecordDeleted,
-		Timestamp: time.Now().Unix(),
-		Data:      *record,
+		Type: datatypes.FeedbackRecordDeleted,
+		Data: *record,
 	})
 
 	return nil

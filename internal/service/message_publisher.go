@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/formbricks/hub/internal/datatypes"
 )
@@ -39,6 +40,7 @@ func (m *MessagePublisherManager) RegisterProvider(provider MessagePublisher) {
 
 // PublishEvent sends event to all registered providers
 func (m *MessagePublisherManager) PublishEvent(ctx context.Context, event Event) {
+	event.Timestamp = time.Now().Unix()
 	// Send to all providers in parallel (goroutines)
 	// Collect errors but don't fail if one provider fails
 	for _, provider := range m.providers {
