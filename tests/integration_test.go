@@ -21,12 +21,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// defaultTestDatabaseURL is the default Postgres URL used by docker-compose (postgres/postgres/test_db).
+// Setting it here before config.Load() ensures tests do not use a different DATABASE_URL from .env,
+// which would cause "password authentication failed" when .env points at another database.
+const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+
 // setupTestServer creates a test HTTP server with all routes configured
 func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	ctx := context.Background()
 
-	// Set test API key in environment for authentication (must be set before loading config)
+	// Set test env before loading config so config.Load() uses test values and is not affected by .env.
 	t.Setenv("API_KEY", testAPIKey)
+	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -214,7 +220,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		assert.NotEmpty(t, result.ID)
 		assert.Equal(t, "formbricks", result.SourceType)
 		assert.Equal(t, "feedback", result.FieldID)
-		assert.Equal(t, "text", result.FieldType)
+		assert.Equal(t, models.FieldTypeText, result.FieldType)
 		assert.NotNil(t, result.ValueText)
 		assert.Equal(t, "Great product!", *result.ValueText)
 	})
