@@ -41,7 +41,7 @@ func main() {
 
 	// Initialize message publisher manager and register providers
 	messageManager := service.NewMessagePublisherManager()
-	messageManager.RegisterProvider(service.NewEmailDeliveryService())
+	// messageManager.RegisterProvider(service.NewSampleService())
 
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)

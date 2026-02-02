@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/formbricks/hub/internal/datatypes"
@@ -43,17 +42,11 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 		return nil, err
 	}
 
-	// Publish event asynchronously
-	go func() {
-		event := Event{
-			Type:      datatypes.FeedbackRecordCreated,
-			Timestamp: time.Now().Unix(),
-			Data:      *record,
-		}
-		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
-			slog.Debug("Failed to publish feedback record created event", "error", err)
-		}
-	}()
+	s.publisher.PublishEvent(context.Background(), Event{
+		Type:      datatypes.FeedbackRecordCreated,
+		Timestamp: time.Now().Unix(),
+		Data:      *record,
+	})
 
 	return record, nil
 }
@@ -97,18 +90,12 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 		return nil, err
 	}
 
-	// Publish event asynchronously
-	go func() {
-		event := Event{
-			Type:          datatypes.FeedbackRecordUpdated,
-			Timestamp:     time.Now().Unix(),
-			Data:          *record,
-			ChangedFields: changedFields,
-		}
-		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
-			slog.Debug("Failed to publish feedback record updated event", "error", err)
-		}
-	}()
+	s.publisher.PublishEvent(context.Background(), Event{
+		Type:          datatypes.FeedbackRecordUpdated,
+		Timestamp:     time.Now().Unix(),
+		Data:          *record,
+		ChangedFields: changedFields,
+	})
 
 	return record, nil
 }
@@ -154,17 +141,11 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 		return err
 	}
 
-	// Publish event asynchronously
-	go func() {
-		event := Event{
-			Type:      datatypes.FeedbackRecordDeleted,
-			Timestamp: time.Now().Unix(),
-			Data:      *record,
-		}
-		if err := s.publisher.PublishEvent(context.Background(), event); err != nil {
-			slog.Debug("Failed to publish feedback record deleted event", "error", err)
-		}
-	}()
+	s.publisher.PublishEvent(context.Background(), Event{
+		Type:      datatypes.FeedbackRecordDeleted,
+		Timestamp: time.Now().Unix(),
+		Data:      *record,
+	})
 
 	return nil
 }

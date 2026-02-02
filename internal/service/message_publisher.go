@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/formbricks/hub/internal/datatypes"
 )
@@ -18,7 +17,7 @@ type Event struct {
 // MessagePublisher defines the interface for publishing events
 type MessagePublisher interface {
 	// PublishEvent publishes a single event immediately
-	PublishEvent(ctx context.Context, event Event) error
+	PublishEvent(ctx context.Context, event Event)
 }
 
 // MessagePublisherManager coordinates multiple message providers
@@ -39,15 +38,10 @@ func (m *MessagePublisherManager) RegisterProvider(provider MessagePublisher) {
 }
 
 // PublishEvent sends event to all registered providers
-func (m *MessagePublisherManager) PublishEvent(ctx context.Context, event Event) error {
+func (m *MessagePublisherManager) PublishEvent(ctx context.Context, event Event) {
 	// Send to all providers in parallel (goroutines)
 	// Collect errors but don't fail if one provider fails
 	for _, provider := range m.providers {
-		go func(p MessagePublisher) {
-			if err := p.PublishEvent(ctx, event); err != nil {
-				slog.Warn("Failed to publish event to provider", "error", err)
-			}
-		}(provider)
+		go provider.PublishEvent(ctx, event)
 	}
-	return nil
 }
