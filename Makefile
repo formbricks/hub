@@ -92,7 +92,6 @@ init-db:
 	fi
 	@echo "Database schema initialized successfully"
 
-
 # Start Docker containers
 docker-up:
 	@echo "Starting Docker containers..."
