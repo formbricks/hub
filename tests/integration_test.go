@@ -39,6 +39,11 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	// Initialize message publisher manager for tests (no providers required)
 	messageManager := service.NewMessagePublisherManager()
 
+	// Webhooks
+	webhooksRepo := repository.NewWebhooksRepository(db)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, nil)
+	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
+
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
@@ -59,6 +64,11 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
+	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
+	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
+	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/webhooks/{id}", webhooksHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/webhooks/{id}", webhooksHandler.Delete)
 
 	var protectedHandler http.Handler = protectedMux
 	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
@@ -513,4 +523,103 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
+}
+
+// TestWebhooksCRUD tests webhook create, get, list, update, delete
+func TestWebhooksCRUD(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+
+	// Create webhook (no signing key = auto-generated)
+	createBody := map[string]interface{}{
+		"url":         "https://example.com/webhook",
+		"event_types": []string{"feedback_record.created", "feedback_record.updated"},
+	}
+	body, _ := json.Marshal(createBody)
+	req, _ := http.NewRequest("POST", server.URL+"/v1/webhooks", bytes.NewBuffer(body))
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	createResp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = createResp.Body.Close() }()
+
+	assert.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	var created models.Webhook
+	err = decodeData(createResp, &created)
+	require.NoError(t, err)
+	assert.NotEqual(t, "", created.ID.String())
+	assert.Equal(t, "https://example.com/webhook", created.URL)
+	assert.True(t, len(created.SigningKey) > 0)
+	assert.True(t, created.Enabled)
+	assert.Len(t, created.EventTypes, 2)
+
+	// Get webhook
+	getReq, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), nil)
+	getReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	getResp, err := client.Do(getReq)
+	require.NoError(t, err)
+	defer func() { _ = getResp.Body.Close() }()
+
+	assert.Equal(t, http.StatusOK, getResp.StatusCode)
+	var got models.Webhook
+	err = decodeData(getResp, &got)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, got.ID)
+	assert.Equal(t, created.URL, got.URL)
+
+	// List webhooks
+	listReq, _ := http.NewRequest("GET", server.URL+"/v1/webhooks", nil)
+	listReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	listResp, err := client.Do(listReq)
+	require.NoError(t, err)
+	defer func() { _ = listResp.Body.Close() }()
+
+	assert.Equal(t, http.StatusOK, listResp.StatusCode)
+	var listResult models.ListWebhooksResponse
+	err = decodeData(listResp, &listResult)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, listResult.Total, int64(1))
+	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	// Update webhook
+	updateBody := map[string]interface{}{
+		"url":     "https://example.com/webhook-v2",
+		"enabled": false,
+	}
+	updateJSON, _ := json.Marshal(updateBody)
+	updateReq, _ := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(updateJSON))
+	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp, err := client.Do(updateReq)
+	require.NoError(t, err)
+	defer func() { _ = updateResp.Body.Close() }()
+
+	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
+	var updated models.Webhook
+	err = decodeData(updateResp, &updated)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/webhook-v2", updated.URL)
+	assert.False(t, updated.Enabled)
+
+	// Delete webhook
+	deleteReq, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	deleteResp, err := client.Do(deleteReq)
+	require.NoError(t, err)
+	defer func() { _ = deleteResp.Body.Close() }()
+
+	assert.Equal(t, http.StatusNoContent, deleteResp.StatusCode)
+
+	// Verify deleted
+	getAfterReq, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), nil)
+	getAfterReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	getAfterResp, err := client.Do(getAfterReq)
+	require.NoError(t, err)
+	defer func() { _ = getAfterResp.Body.Close() }()
+
+	assert.Equal(t, http.StatusNotFound, getAfterResp.StatusCode)
 }

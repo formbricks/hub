@@ -1,5 +1,7 @@
 package datatypes
 
+import "fmt"
+
 // EventType represents a webhook event type as an enum.
 // Use String() to get the string representation for API/database.
 type EventType uint16
@@ -68,4 +70,41 @@ func GetAllEventTypes() []string {
 func IsValidEventType(eventType string) bool {
 	_, ok := eventTypeMap[eventType]
 	return ok
+}
+
+// ParseEventTypes converts a slice of strings to []EventType.
+// Returns an error if any string is invalid, exceeds 64 chars, or is duplicated.
+func ParseEventTypes(ss []string) ([]EventType, error) {
+	if len(ss) == 0 {
+		return nil, nil
+	}
+	out := make([]EventType, 0, len(ss))
+	seen := make(map[string]bool, len(ss))
+	for _, s := range ss {
+		if len(s) > 64 {
+			return nil, fmt.Errorf("event type exceeds 64 characters: %s", s)
+		}
+		if !IsValidEventType(s) {
+			return nil, fmt.Errorf("invalid event type: %s", s)
+		}
+		if seen[s] {
+			return nil, fmt.Errorf("duplicate event type: %s", s)
+		}
+		seen[s] = true
+		et, _ := ParseEventType(s)
+		out = append(out, et)
+	}
+	return out, nil
+}
+
+// EventTypeStrings returns the string slice for a []EventType (for JSON marshaling).
+func EventTypeStrings(types []EventType) []string {
+	if len(types) == 0 {
+		return nil
+	}
+	out := make([]string, len(types))
+	for i, et := range types {
+		out[i] = et.String()
+	}
+	return out
 }

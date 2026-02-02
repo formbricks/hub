@@ -41,7 +41,19 @@ func main() {
 
 	// Initialize message publisher manager and register providers
 	messageManager := service.NewMessagePublisherManager()
-	// messageManager.RegisterProvider(service.NewSampleService())
+
+	// Webhooks: repository, delivery service (MessagePublisher), and CRUD service
+	webhooksRepo := repository.NewWebhooksRepository(db)
+	webhookCacheConfig := &service.WebhookCacheConfig{
+		Enabled: cfg.WebhookCacheEnabled,
+		Size:    cfg.WebhookCacheSize,
+		TTL:     cfg.WebhookCacheTTL,
+	}
+	webhookDeliveryService := service.NewWebhookDeliveryService(webhooksRepo, webhookCacheConfig)
+	messageManager.RegisterProvider(webhookDeliveryService)
+
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, webhookDeliveryService)
+	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
@@ -65,6 +77,11 @@ func main() {
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
+	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
+	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
+	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/webhooks/{id}", webhooksHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/webhooks/{id}", webhooksHandler.Delete)
 
 	// Apply middleware to protected endpoints
 	var protectedHandler http.Handler = protectedMux
