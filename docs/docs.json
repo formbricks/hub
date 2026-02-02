@@ -20,14 +20,7 @@
       },
       {
         "group": "Core Concepts",
-        "pages": [
-          "core-concepts/data-model",
-          "core-concepts/authentication",
-          "core-concepts/webhooks",
-          "core-concepts/connectors",
-          "core-concepts/ai-enrichment",
-          "core-concepts/semantic-search"
-        ]
+        "pages": ["core-concepts/data-model", "core-concepts/authentication"]
       },
       {
         "group": "Reference",
