@@ -47,13 +47,6 @@ paths:
                     type: string
                     description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
-                - name: response_id
-                  in: query
-                  description: Filter by response ID (get all answers from one submission). NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Filter by response ID (get all answers from one submission). NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
                 - name: source_type
                   in: query
                   description: Filter by source type. NULL bytes not allowed.
@@ -73,6 +66,13 @@ paths:
                   description: Filter by field ID. NULL bytes not allowed.
                   schema:
                     type: string
+                    pattern: '^[^\x00]*$'
+                - name: field_group_id
+                  in: query
+                  description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
                 - name: field_type
                   in: query
@@ -153,7 +153,6 @@ paths:
                                               field_type: "rating"
                                               field_label: "How satisfied are you?"
                                               value_number: 9
-                                              response_id: "resp-abc-123"
                                               source_id: "survey-123"
                                               source_name: "Q1 NPS Survey"
                                               user_identifier: "user-abc-123"
@@ -200,7 +199,6 @@ paths:
                                     field_type: "rating"
                                     field_label: "How satisfied are you?"
                                     value_number: 9
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
@@ -214,7 +212,6 @@ paths:
                                     field_type: "text"
                                     field_label: "What can we improve?"
                                     value_text: "Great service! Keep it up."
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
@@ -228,7 +225,6 @@ paths:
                                     field_type: "nps"
                                     field_label: "How likely are you to recommend us?"
                                     value_number: 8
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "NPS Survey"
                                     user_identifier: "user-abc-123"
@@ -242,12 +238,46 @@ paths:
                                     field_type: "boolean"
                                     field_label: "Would you use our service again?"
                                     value_boolean: true
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
                                     tenant_id: "org-123"
                                     language: "en"
+                            ranking:
+                                summary: Ranking question item
+                                value:
+                                    source_type: "survey"
+                                    field_id: "feature_priority__reports"
+                                    field_type: "number"
+                                    field_label: "Reports"
+                                    field_group_id: "feature_priority"
+                                    field_group_label: "Rank these features by importance"
+                                    value_number: 1
+                                    response_id: "resp-abc-123"
+                                    source_id: "survey-123"
+                                    source_name: "Feature Priority Survey"
+                                    user_identifier: "user-abc-123"
+                                    tenant_id: "org-123"
+                                    metadata:
+                                        question_type: "ranking"
+                                        total_items: 3
+                            matrix:
+                                summary: Matrix rating item
+                                value:
+                                    source_type: "survey"
+                                    field_id: "feature_satisfaction__ease_of_use"
+                                    field_type: "rating"
+                                    field_label: "Ease of Use"
+                                    field_group_id: "feature_satisfaction"
+                                    field_group_label: "Rate your satisfaction with each feature"
+                                    value_number: 4
+                                    response_id: "resp-abc-123"
+                                    source_id: "survey-123"
+                                    source_name: "Feature Satisfaction Survey"
+                                    user_identifier: "user-abc-123"
+                                    tenant_id: "org-123"
+                                    metadata:
+                                        question_type: "matrix"
                 required: true
             responses:
                 "201":
@@ -269,7 +299,6 @@ paths:
                                         field_type: "rating"
                                         field_label: "How satisfied are you?"
                                         value_number: 9
-                                        response_id: "resp-abc-123"
                                         source_id: "survey-123"
                                         source_name: "Q1 NPS Survey"
                                         user_identifier: "user-abc-123"
@@ -463,7 +492,6 @@ paths:
                                         field_type: "rating"
                                         field_label: "How satisfied are you?"
                                         value_number: 10
-                                        response_id: "resp-abc-123"
                                         source_id: "survey-123"
                                         source_name: "Q1 NPS Survey"
                                         user_identifier: "user-abc-123"
@@ -543,6 +571,18 @@ components:
                     description: The actual question text
                     examples:
                         - How satisfied are you?
+                field_group_id:
+                    type: string
+                    description: Stable identifier grouping related fields (for ranking, matrix, grid questions). NULL bytes not allowed.
+                    examples:
+                        - feature_priority
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                field_group_label:
+                    type: string
+                    description: Human-readable question text for the group
+                    examples:
+                        - Rank these features by importance
                 field_type:
                     type: string
                     description: 'Field type: text (enrichable), categorical, nps, csat, ces, rating, number, boolean, date'
@@ -571,12 +611,6 @@ components:
                     type: object
                     description: User agent, device, location, referrer, tags, etc. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
                     additionalProperties: {}
-                response_id:
-                    type: string
-                    description: Groups multiple answers from a single submission/session
-                    examples:
-                        - resp-abc-123
-                    maxLength: 255
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID
@@ -702,6 +736,12 @@ components:
                 field_label:
                     type: string
                     description: The actual question text
+                field_group_id:
+                    type: string
+                    description: Stable identifier grouping related fields (for ranking, matrix, grid questions)
+                field_group_label:
+                    type: string
+                    description: Human-readable question text for the group
                 field_type:
                     type: string
                     description: Type of field
@@ -727,9 +767,6 @@ components:
                     type: object
                     description: Additional context
                     additionalProperties: {}
-                response_id:
-                    type: string
-                    description: Groups answers from a single submission
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID

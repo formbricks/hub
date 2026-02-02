@@ -25,6 +25,10 @@ CREATE TABLE feedback_records (
   field_label VARCHAR,
   field_type field_type_enum NOT NULL,
 
+  -- Field grouping for composite questions (ranking, matrix, grid)
+  field_group_id VARCHAR(255),
+  field_group_label VARCHAR,
+
   value_text TEXT,
   value_number DOUBLE PRECISION,
   value_boolean BOOLEAN,
@@ -35,14 +39,12 @@ CREATE TABLE feedback_records (
   user_identifier VARCHAR(255),
 
   -- Multi-tenancy fields
-  tenant_id VARCHAR(255),
-  response_id VARCHAR(255)
+  tenant_id VARCHAR(255)
 );
 
 -- Indexes
 -- Multi-tenancy indexes
 CREATE INDEX idx_feedback_records_tenant_id ON feedback_records(tenant_id);
-CREATE INDEX idx_feedback_records_response_id ON feedback_records(response_id);
 
 -- Single-column indexes for common filter operations
 -- Required for analytics performance
@@ -51,6 +53,7 @@ CREATE INDEX idx_feedback_records_source_id ON feedback_records(source_id);
 CREATE INDEX idx_feedback_records_collected_at ON feedback_records(collected_at);
 CREATE INDEX idx_feedback_records_field_type ON feedback_records(field_type);
 CREATE INDEX idx_feedback_records_field_id ON feedback_records(field_id);
+CREATE INDEX idx_feedback_records_field_group_id ON feedback_records(field_group_id);
 CREATE INDEX idx_feedback_records_value_number ON feedback_records(value_number);
 CREATE INDEX idx_feedback_records_user_identifier ON feedback_records(user_identifier);
 
