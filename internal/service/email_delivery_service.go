@@ -24,13 +24,3 @@ func (e *EmailDeliveryService) PublishEvent(ctx context.Context, event Event) er
 	)
 	return nil
 }
-
-// PublishEvents publishes multiple events (placeholder - just logs)
-func (e *EmailDeliveryService) PublishEvents(ctx context.Context, events []Event) error {
-	for _, event := range events {
-		if err := e.PublishEvent(ctx, event); err != nil {
-			return err
-		}
-	}
-	return nil
-}

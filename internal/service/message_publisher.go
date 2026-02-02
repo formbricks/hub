@@ -19,9 +19,6 @@ type Event struct {
 type MessagePublisher interface {
 	// PublishEvent publishes a single event immediately
 	PublishEvent(ctx context.Context, event Event) error
-
-	// PublishEvents publishes multiple events (for future batching)
-	PublishEvents(ctx context.Context, events []Event) error
 }
 
 // MessagePublisherManager coordinates multiple message providers
@@ -49,18 +46,6 @@ func (m *MessagePublisherManager) PublishEvent(ctx context.Context, event Event)
 		go func(p MessagePublisher) {
 			if err := p.PublishEvent(ctx, event); err != nil {
 				slog.Warn("Failed to publish event to provider", "error", err)
-			}
-		}(provider)
-	}
-	return nil
-}
-
-// PublishEvents sends multiple events to all registered providers
-func (m *MessagePublisherManager) PublishEvents(ctx context.Context, events []Event) error {
-	for _, provider := range m.providers {
-		go func(p MessagePublisher) {
-			if err := p.PublishEvents(ctx, events); err != nil {
-				slog.Warn("Failed to publish events to provider", "error", err)
 			}
 		}(provider)
 	}
