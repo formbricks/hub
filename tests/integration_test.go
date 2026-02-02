@@ -36,9 +36,12 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	require.NoError(t, err, "Failed to connect to database")
 
+	// Initialize message publisher manager for tests (no providers required)
+	messageManager := service.NewMessagePublisherManager()
+
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
