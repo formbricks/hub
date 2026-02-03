@@ -1045,10 +1045,13 @@ components:
                     minLength: 1
                     maxLength: 2048
                     format: uri
+                    pattern: '^[^\x00]*$'
                     example: "https://example.com/hub-events"
                 signing_key:
                     type: string
-                    description: Optional. If omitted, a key is auto-generated (whsec_...). Used to sign payloads (Standard Webhooks).
+                    description: Optional. If omitted, a key is auto-generated (whsec_...). Used to sign payloads (Standard Webhooks). When provided, max 255 characters; NULL bytes not allowed.
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
                 enabled:
                     type: boolean
                     description: Whether the webhook is active (default true)
@@ -1102,11 +1105,13 @@ components:
                     minLength: 1
                     maxLength: 2048
                     format: uri
+                    pattern: '^[^\x00]*$'
                 signing_key:
                     type: string
                     description: New signing key. NULL bytes not allowed.
                     minLength: 1
                     maxLength: 255
+                    pattern: '^[^\x00]*$'
                 enabled:
                     type: boolean
                     description: Enable or disable the webhook
