@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/formbricks/hub/internal/api/response"
+	"github.com/formbricks/hub/internal/models"
 	"github.com/go-playground/form/v4"
 	"github.com/go-playground/validator/v10"
 )
@@ -48,6 +49,18 @@ func init() {
 		}
 		return &t, nil
 	}, (*time.Time)(nil))
+
+	// Handle *models.FieldType (pointer type used in filters)
+	decoder.RegisterCustomTypeFunc(func(vals []string) (interface{}, error) {
+		if len(vals) == 0 || vals[0] == "" {
+			return (*models.FieldType)(nil), nil
+		}
+		ft, err := models.ParseFieldType(vals[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid field type: %w", err)
+		}
+		return &ft, nil
+	}, (*models.FieldType)(nil))
 }
 
 // ValidateStruct validates a struct using go-playground/validator
@@ -157,20 +170,23 @@ func ValidateAndDecodeQueryParams(r *http.Request, dst interface{}) error {
 }
 
 // validateFieldType is a custom validator for field_type enum
+// It validates both string and FieldType types
 func validateFieldType(fl validator.FieldLevel) bool {
-	value := fl.Field().String()
-	validTypes := map[string]bool{
-		"text":        true,
-		"categorical": true,
-		"nps":         true,
-		"csat":        true,
-		"ces":         true,
-		"rating":      true,
-		"number":      true,
-		"boolean":     true,
-		"date":        true,
+	field := fl.Field()
+
+	// Handle FieldType enum type directly
+	if field.Type() == reflect.TypeOf(models.FieldType("")) {
+		ft := models.FieldType(field.String())
+		return ft.IsValid()
 	}
-	return validTypes[value]
+
+	// Handle string type (from JSON/query params)
+	if field.Kind() == reflect.String {
+		_, err := models.ParseFieldType(field.String())
+		return err == nil
+	}
+
+	return false
 }
 
 // validateNoNullBytes checks that a string field does not contain NULL bytes
