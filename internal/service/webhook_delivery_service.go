@@ -12,6 +12,7 @@ import (
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 )
@@ -35,9 +36,14 @@ type WebhookDeliveryService struct {
 
 // NewWebhookDeliveryService creates a new webhook delivery service
 func NewWebhookDeliveryService(repo WebhooksRepository, cacheConfig *WebhookCacheConfig) *WebhookDeliveryService {
+	retryClient := retryablehttp.NewClient()
+	retryClient.HTTPClient.Timeout = 10 * time.Second
+	retryClient.RetryMax = 3
+	retryClient.Logger = nil // disable retryablehttp's default logger; we log at delivery layer
+
 	service := &WebhookDeliveryService{
 		repo:         repo,
-		httpClient:   &http.Client{Timeout: 10 * time.Second},
+		httpClient:   retryClient.StandardClient(),
 		cacheKeys:    make(map[datatypes.EventType]bool),
 		cacheEnabled: cacheConfig != nil && cacheConfig.Enabled,
 	}
