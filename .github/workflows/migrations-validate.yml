@@ -1,0 +1,34 @@
+name: Migrations Validate
+
+# Runs goose validate to ensure migration files are well-formed (no database required)
+
+on:
+  pull_request:
+    paths:
+      - 'migrations/**'
+      - '.github/workflows/migrations-validate.yml'
+
+concurrency:
+  group: migrations-validate-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate migrations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.25.6'
+
+      - name: Install goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
+
+      - name: Validate migrations
+        run: make migrate-validate

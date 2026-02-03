@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// defaultTestDatabaseURL is the default Postgres URL used by docker-compose (postgres/postgres/test_db).
+// defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
 // Setting it here before config.Load() ensures tests do not use a different DATABASE_URL from .env,
 // which would cause "password authentication failed" when .env points at another database.
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"

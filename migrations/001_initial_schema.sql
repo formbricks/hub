@@ -1,3 +1,4 @@
+-- +goose up
 -- Initial schema for Formbricks Hub
 
 -- Enable extensions
@@ -64,3 +65,9 @@ CREATE INDEX idx_feedback_records_tenant_user_identifier ON feedback_records(ten
 CREATE INDEX idx_feedback_records_tenant_collected_at ON feedback_records(tenant_id, collected_at);
 CREATE INDEX idx_feedback_records_tenant_source_type ON feedback_records(tenant_id, source_type);
 CREATE INDEX idx_feedback_records_tenant_field_type ON feedback_records(tenant_id, field_type);
+
+-- +goose down
+DROP TABLE IF EXISTS feedback_records;
+DROP TYPE IF EXISTS field_type_enum;
+DROP EXTENSION IF EXISTS vector;
+DROP EXTENSION IF EXISTS "pgcrypto";
