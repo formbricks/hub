@@ -62,7 +62,7 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 	if s.cacheInvalidator != nil {
 		s.cacheInvalidator.InvalidateCache()
 	}
-	s.publisher.PublishEvent(context.Background(), Event{
+	s.publisher.PublishEvent(ctx, Event{
 		Type: datatypes.WebhookCreated,
 		Data: *webhook,
 	})
@@ -121,7 +121,7 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 	if s.cacheInvalidator != nil {
 		s.cacheInvalidator.InvalidateCache()
 	}
-	s.publisher.PublishEvent(context.Background(), Event{
+	s.publisher.PublishEvent(ctx, Event{
 		Type:          datatypes.WebhookUpdated,
 		Data:          *webhook,
 		ChangedFields: changedFields,
@@ -162,7 +162,7 @@ func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error
 	if s.cacheInvalidator != nil {
 		s.cacheInvalidator.InvalidateCache()
 	}
-	s.publisher.PublishEvent(context.Background(), Event{
+	s.publisher.PublishEvent(ctx, Event{
 		Type: datatypes.WebhookDeleted,
 		Data: *webhook,
 	})

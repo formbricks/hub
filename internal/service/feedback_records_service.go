@@ -41,7 +41,7 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 		return nil, err
 	}
 
-	s.publisher.PublishEvent(context.Background(), Event{
+	s.publisher.PublishEvent(ctx, Event{
 		Type: datatypes.FeedbackRecordCreated,
 		Data: *record,
 	})
@@ -88,7 +88,7 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 		return nil, err
 	}
 
-	s.publisher.PublishEvent(context.Background(), Event{
+	s.publisher.PublishEvent(ctx, Event{
 		Type:          datatypes.FeedbackRecordUpdated,
 		Data:          *record,
 		ChangedFields: changedFields,
@@ -138,7 +138,7 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 		return err
 	}
 
-	s.publisher.PublishEvent(context.Background(), Event{
+	s.publisher.PublishEvent(ctx, Event{
 		Type: datatypes.FeedbackRecordDeleted,
 		Data: *record,
 	})
