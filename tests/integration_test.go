@@ -591,10 +591,11 @@ func TestWebhooksCRUD(t *testing.T) {
 	assert.GreaterOrEqual(t, listResult.Total, int64(1))
 	assert.GreaterOrEqual(t, len(listResult.Data), 1)
 
-	// Update webhook
+	// Update webhook (including tenant_id)
 	updateBody := map[string]any{
-		"url":     "https://example.com/webhook-v2",
-		"enabled": false,
+		"url":       "https://example.com/webhook-v2",
+		"enabled":   false,
+		"tenant_id": "org-123",
 	}
 	updateJSON, _ := json.Marshal(updateBody)
 	updateReq, _ := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(updateJSON))
@@ -610,6 +611,23 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "https://example.com/webhook-v2", updated.URL)
 	assert.False(t, updated.Enabled)
+	require.NotNil(t, updated.TenantID)
+	assert.Equal(t, "org-123", *updated.TenantID)
+
+	// PATCH tenant_id to empty string to clear it
+	clearTenantBody := map[string]any{"tenant_id": ""}
+	clearTenantJSON, _ := json.Marshal(clearTenantBody)
+	clearTenantReq, _ := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(clearTenantJSON))
+	clearTenantReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	clearTenantReq.Header.Set("Content-Type", "application/json")
+	clearTenantResp, err := client.Do(clearTenantReq)
+	require.NoError(t, err)
+	defer func() { _ = clearTenantResp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
+	var afterClear models.Webhook
+	err = decodeData(clearTenantResp, &afterClear)
+	require.NoError(t, err)
+	assert.Nil(t, afterClear.TenantID)
 
 	// Delete webhook
 	deleteReq, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), nil)

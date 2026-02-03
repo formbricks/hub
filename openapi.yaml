@@ -1115,6 +1115,12 @@ components:
                 enabled:
                     type: boolean
                     description: Enable or disable the webhook
+                tenant_id:
+                    type: string
+                    nullable: true
+                    description: Tenant/organization identifier. NULL bytes not allowed. Send empty string to clear (store as null).
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
                 event_types:
                     type: array
                     description: New list of event types (use empty array to clear). Each value must be one of WebhookEventType.

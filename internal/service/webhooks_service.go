@@ -142,6 +142,9 @@ func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []s
 	if req.Enabled != nil {
 		fields = append(fields, "enabled")
 	}
+	if req.TenantID != nil {
+		fields = append(fields, "tenant_id")
+	}
 	if req.EventTypes != nil {
 		fields = append(fields, "event_types")
 	}

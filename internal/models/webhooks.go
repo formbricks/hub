@@ -87,6 +87,7 @@ type UpdateWebhookRequest struct {
 	URL        *string                `json:"url,omitempty" validate:"omitempty,no_null_bytes,min=1,max=2048"`
 	SigningKey *string                `json:"signing_key,omitempty" validate:"omitempty,no_null_bytes,min=1,max=255"`
 	Enabled    *bool                  `json:"enabled,omitempty"`
+	TenantID   *string                `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
 	EventTypes *[]datatypes.EventType `json:"event_types,omitempty"`
 }
 

@@ -234,6 +234,19 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		argCount++
 	}
 
+	if req.TenantID != nil {
+		// Empty string clears tenant_id (store as NULL)
+		var val any
+		if *req.TenantID == "" {
+			val = nil
+		} else {
+			val = *req.TenantID
+		}
+		updates = append(updates, fmt.Sprintf("tenant_id = $%d", argCount))
+		args = append(args, val)
+		argCount++
+	}
+
 	if req.EventTypes != nil {
 		eventTypes := make([]string, len(*req.EventTypes))
 		for i, et := range *req.EventTypes {
