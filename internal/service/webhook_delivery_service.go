@@ -254,6 +254,26 @@ func (s *WebhookDeliveryService) sendWebhookWithJSON(ctx context.Context, webhoo
 		}
 	}()
 
+	if resp.StatusCode == http.StatusGone {
+		// Standard Webhooks: sender should disable the endpoint and stop sending (RFC 7231 410 Gone)
+		enabled := false
+		_, err := s.repo.Update(ctx, webhook.ID, &models.UpdateWebhookRequest{Enabled: &enabled})
+		if err != nil {
+			slog.Error("Failed to disable webhook after 410 Gone",
+				"webhook_id", webhook.ID,
+				"url", webhook.URL,
+				"error", err,
+			)
+		} else {
+			slog.Info("Webhook disabled after 410 Gone (endpoint no longer accepts delivery)",
+				"webhook_id", webhook.ID,
+				"url", webhook.URL,
+			)
+		}
+		s.InvalidateCache()
+		return fmt.Errorf("webhook returned 410 Gone (endpoint disabled): %s", webhook.URL)
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned non-2xx status: %d", resp.StatusCode)
 	}
