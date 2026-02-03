@@ -42,9 +42,13 @@ type WebhookDeliveryService struct {
 // NewWebhookDeliveryService creates a new webhook delivery service
 func NewWebhookDeliveryService(repo WebhooksRepository, cacheConfig *WebhookCacheConfig) *WebhookDeliveryService {
 	retryClient := retryablehttp.NewClient()
-	retryClient.HTTPClient.Timeout = 10 * time.Second
+	retryClient.HTTPClient.Timeout = 15 * time.Second
 	retryClient.RetryMax = 3
 	retryClient.Logger = nil // disable retryablehttp's default logger; we log at delivery layer
+	// Do not follow redirects (Standard Webhooks: treat 3xx as failure; consumer should update webhook URL)
+	retryClient.HTTPClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	// Tune connection pool for concurrent delivery
 	if t, ok := retryClient.HTTPClient.Transport.(*http.Transport); ok {
 		t.MaxIdleConns = 100

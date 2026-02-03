@@ -1182,6 +1182,7 @@ components:
                 Payload POSTed to your webhook URL when an event occurs. Sent with Content-Type application/json.
                 Requests include Standard Webhooks headers for verification: webhook-id, webhook-signature, webhook-timestamp.
                 Verify the signature using your webhook's signing_key (see Standard Webhooks spec).
+                Outbound request timeout is 15 seconds (per Standard Webhooks recommendation).
 
                 The webhook-id header is a stable identifier per event: the same value is sent for every delivery attempt (all endpoints and all retries) for that event. Use it as an idempotency key (e.g. store seen IDs for a short window and skip duplicate processing).
             additionalProperties: false
