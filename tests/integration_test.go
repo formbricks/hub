@@ -92,7 +92,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 
 // decodeData decodes JSON responses directly from the response body.
 // The API handlers use RespondJSON which encodes responses directly without wrapping.
-func decodeData(resp *http.Response, v interface{}) error {
+func decodeData(resp *http.Response, v any) error {
 	return json.NewDecoder(resp.Body).Decode(v)
 }
 
@@ -118,7 +118,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 
 	// Test without authentication
 	t.Run("Unauthorized without API key", func(t *testing.T) {
-		reqBody := map[string]interface{}{
+		reqBody := map[string]any{
 			"source_type": "formbricks",
 			"field_id":    "feedback",
 			"field_type":  "text",
@@ -135,7 +135,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		reqBody := map[string]interface{}{
+		reqBody := map[string]any{
 			"source_type": "formbricks",
 			"field_id":    "feedback",
 			"field_type":  "text",
@@ -157,7 +157,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 
 	// Test with empty API key in header
 	t.Run("Unauthorized with empty API key", func(t *testing.T) {
-		reqBody := map[string]interface{}{
+		reqBody := map[string]any{
 			"source_type": "formbricks",
 			"field_id":    "feedback",
 			"field_type":  "text",
@@ -179,7 +179,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 
 	// Test with malformed Authorization header
 	t.Run("Unauthorized with malformed Authorization header", func(t *testing.T) {
-		reqBody := map[string]interface{}{
+		reqBody := map[string]any{
 			"source_type": "formbricks",
 			"field_id":    "feedback",
 			"field_type":  "text",
@@ -201,7 +201,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 
 	// Test with valid authentication
 	t.Run("Success with valid API key", func(t *testing.T) {
-		reqBody := map[string]interface{}{
+		reqBody := map[string]any{
 			"source_type": "formbricks",
 			"field_id":    "feedback",
 			"field_type":  "text",
@@ -234,7 +234,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 
 	// Test with invalid request body
 	t.Run("Bad request with missing required fields", func(t *testing.T) {
-		reqBody := map[string]interface{}{
+		reqBody := map[string]any{
 			"field_id": "feedback",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -271,7 +271,7 @@ func TestListFeedbackRecords(t *testing.T) {
 	})
 
 	// Create a test feedback record first
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"source_type":  "formbricks",
 		"field_id":     "nps_score",
 		"field_type":   "number",
@@ -341,7 +341,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 	})
 
 	// Create a test feedback record
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"source_type":  "formbricks",
 		"field_id":     "rating",
 		"field_type":   "number",
@@ -399,7 +399,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		updateBody := map[string]interface{}{
+		updateBody := map[string]any{
 			"value_text": "Updated comment",
 		}
 		body, _ := json.Marshal(updateBody)
@@ -416,7 +416,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 	})
 
 	// Create a test feedback record
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"source_type": "formbricks",
 		"field_id":    "comment",
 		"field_type":  "text",
@@ -437,7 +437,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 	// Test updating the feedback record
 	t.Run("Update feedback record", func(t *testing.T) {
-		updateBody := map[string]interface{}{
+		updateBody := map[string]any{
 			"value_text": "Updated comment",
 		}
 		body, _ := json.Marshal(updateBody)
@@ -481,7 +481,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 	})
 
 	// Create a test feedback record
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"source_type": "formbricks",
 		"field_id":    "temp",
 		"field_type":  "text",
@@ -533,7 +533,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	client := &http.Client{}
 
 	// Create webhook (no signing key = auto-generated)
-	createBody := map[string]interface{}{
+	createBody := map[string]any{
 		"url":         "https://example.com/webhook",
 		"event_types": []string{"feedback_record.created", "feedback_record.updated"},
 	}
@@ -586,7 +586,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	assert.GreaterOrEqual(t, len(listResult.Data), 1)
 
 	// Update webhook
-	updateBody := map[string]interface{}{
+	updateBody := map[string]any{
 		"url":     "https://example.com/webhook-v2",
 		"enabled": false,
 	}

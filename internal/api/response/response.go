@@ -8,9 +8,9 @@ import (
 
 // ErrorDetail represents a single error detail in RFC 7807 Problem Details
 type ErrorDetail struct {
-	Location string      `json:"location,omitempty"`
-	Message  string      `json:"message,omitempty"`
-	Value    interface{} `json:"value,omitempty"`
+	Location string `json:"location,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Value    any    `json:"value,omitempty"`
 }
 
 // ProblemDetails represents an RFC 7807 Problem Details error response
@@ -60,7 +60,7 @@ func RespondInternalServerError(w http.ResponseWriter, detail string) {
 }
 
 // RespondJSON writes a JSON response directly without wrapping
-func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func RespondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {

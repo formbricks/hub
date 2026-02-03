@@ -20,6 +20,9 @@ type Config struct {
 	WebhookCacheEnabled bool
 	WebhookCacheSize    int
 	WebhookCacheTTL     time.Duration
+
+	// Webhook delivery concurrency cap (max concurrent outbound HTTP calls)
+	WebhookDeliveryMaxConcurrent int
 }
 
 // getEnv retrieves an environment variable or returns a default value
@@ -93,15 +96,21 @@ func Load() (*Config, error) {
 		return nil, errors.New("WEBHOOK_CACHE_TTL must be a positive duration")
 	}
 
+	webhookDeliveryMaxConcurrent := getEnvAsInt("WEBHOOK_DELIVERY_MAX_CONCURRENT", 100)
+	if webhookDeliveryMaxConcurrent <= 0 {
+		return nil, errors.New("WEBHOOK_DELIVERY_MAX_CONCURRENT must be a positive integer")
+	}
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
 		APIKey:      apiKey,
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 
-		WebhookCacheEnabled: webhookCacheEnabled,
-		WebhookCacheSize:    webhookCacheSize,
-		WebhookCacheTTL:     webhookCacheTTL,
+		WebhookCacheEnabled:          webhookCacheEnabled,
+		WebhookCacheSize:             webhookCacheSize,
+		WebhookCacheTTL:              webhookCacheTTL,
+		WebhookDeliveryMaxConcurrent: webhookDeliveryMaxConcurrent,
 	}
 
 	return cfg, nil

@@ -45,9 +45,10 @@ func main() {
 	// Webhooks: repository, delivery service (MessagePublisher), and CRUD service
 	webhooksRepo := repository.NewWebhooksRepository(db)
 	webhookCacheConfig := &service.WebhookCacheConfig{
-		Enabled: cfg.WebhookCacheEnabled,
-		Size:    cfg.WebhookCacheSize,
-		TTL:     cfg.WebhookCacheTTL,
+		Enabled:       cfg.WebhookCacheEnabled,
+		Size:          cfg.WebhookCacheSize,
+		TTL:           cfg.WebhookCacheTTL,
+		MaxConcurrent: cfg.WebhookDeliveryMaxConcurrent,
 	}
 	webhookDeliveryService := service.NewWebhookDeliveryService(webhooksRepo, webhookCacheConfig)
 	messageManager.RegisterProvider(webhookDeliveryService)

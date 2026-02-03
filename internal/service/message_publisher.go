@@ -11,7 +11,7 @@ import (
 type Event struct {
 	Type          datatypes.EventType // Event type enum (e.g., FeedbackRecordCreated, WebhookCreated)
 	Timestamp     int64               // Unix timestamp
-	Data          interface{}         // Event data (FeedbackRecord, Webhook, etc.)
+	Data          any                 // Event data (FeedbackRecord, Webhook, etc.)
 	ChangedFields []string            // Only for updates
 }
 

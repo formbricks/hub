@@ -15,13 +15,15 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
+	"golang.org/x/sync/singleflight"
 )
 
-// WebhookCacheConfig holds configuration for webhook caching
+// WebhookCacheConfig holds configuration for webhook caching and delivery
 type WebhookCacheConfig struct {
-	Enabled bool          // Enable/disable caching
-	Size    int           // Max cache entries
-	TTL     time.Duration // Cache TTL
+	Enabled       bool          // Enable/disable caching
+	Size          int           // Max cache entries
+	TTL           time.Duration // Cache TTL
+	MaxConcurrent int           // Max concurrent outbound HTTP calls (0 = 100)
 }
 
 // WebhookDeliveryService implements MessagePublisher for webhook delivery
@@ -32,6 +34,8 @@ type WebhookDeliveryService struct {
 	cacheKeys    map[datatypes.EventType]bool
 	cacheKeysMu  sync.RWMutex
 	cacheEnabled bool
+	sfGroup      singleflight.Group
+	sem          chan struct{} // semaphore to bound concurrent outbound HTTP calls
 }
 
 // NewWebhookDeliveryService creates a new webhook delivery service
@@ -40,12 +44,23 @@ func NewWebhookDeliveryService(repo WebhooksRepository, cacheConfig *WebhookCach
 	retryClient.HTTPClient.Timeout = 10 * time.Second
 	retryClient.RetryMax = 3
 	retryClient.Logger = nil // disable retryablehttp's default logger; we log at delivery layer
+	// Tune connection pool for concurrent delivery
+	if t, ok := retryClient.HTTPClient.Transport.(*http.Transport); ok {
+		t.MaxIdleConns = 100
+		t.MaxIdleConnsPerHost = 20
+	}
+
+	maxConcurrent := 100
+	if cacheConfig != nil && cacheConfig.MaxConcurrent > 0 {
+		maxConcurrent = cacheConfig.MaxConcurrent
+	}
 
 	service := &WebhookDeliveryService{
 		repo:         repo,
 		httpClient:   retryClient.StandardClient(),
 		cacheKeys:    make(map[datatypes.EventType]bool),
 		cacheEnabled: cacheConfig != nil && cacheConfig.Enabled,
+		sem:          make(chan struct{}, maxConcurrent),
 	}
 
 	// Create cache only if enabled
@@ -94,20 +109,36 @@ func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) 
 	}
 
 	for _, webhook := range webhooks {
+		s.sem <- struct{}{} // acquire (blocks if at cap)
 		go func(w models.Webhook) {
-			if err := s.sendWebhookWithJSON(ctx, w, payloadJSON); err != nil {
+			defer func() { <-s.sem }() // release
+			start := time.Now()
+			err := s.sendWebhookWithJSON(ctx, w, payloadJSON)
+			duration := time.Since(start)
+			if err != nil {
 				slog.Warn("Failed to send webhook",
 					"webhook_id", w.ID,
 					"url", w.URL,
 					"event_type", event.Type.String(),
 					"error", err,
+					"duration_ms", duration.Milliseconds(),
 				)
+				return
 			}
+			slog.Debug("Webhook sent successfully",
+				"webhook_id", w.ID,
+				"url", w.URL,
+				"event_type", event.Type.String(),
+				"duration_ms", duration.Milliseconds(),
+			)
 		}(webhook)
 	}
 }
 
-// getWebhooksForEventType gets webhooks from cache or database
+// deliveryListLimit matches repository cap; used for truncation warning
+const deliveryListLimit = 1000
+
+// getWebhooksForEventType gets webhooks from cache or database (with singleflight on cache miss)
 func (s *WebhookDeliveryService) getWebhooksForEventType(ctx context.Context, eventType datatypes.EventType) ([]models.Webhook, error) {
 	if s.cacheEnabled {
 		if cached, ok := s.cache.Get(eventType); ok {
@@ -116,7 +147,20 @@ func (s *WebhookDeliveryService) getWebhooksForEventType(ctx context.Context, ev
 	}
 
 	eventTypeStr := eventType.String()
-	webhooks, err := s.repo.ListEnabledForEventType(ctx, eventTypeStr)
+	v, err, _ := s.sfGroup.Do(eventTypeStr, func() (any, error) {
+		webhooks, err := s.repo.ListEnabledForEventType(ctx, eventTypeStr)
+		if err != nil {
+			return nil, err
+		}
+		// Cache inside singleflight so only one goroutine writes (cache may not be concurrent-safe)
+		if s.cacheEnabled {
+			s.cache.Add(eventType, webhooks)
+			s.cacheKeysMu.Lock()
+			s.cacheKeys[eventType] = true
+			s.cacheKeysMu.Unlock()
+		}
+		return webhooks, nil
+	})
 	if err != nil {
 		slog.Error("Failed to list enabled webhooks for event type",
 			"event_type", eventTypeStr,
@@ -124,12 +168,13 @@ func (s *WebhookDeliveryService) getWebhooksForEventType(ctx context.Context, ev
 		)
 		return nil, err
 	}
+	webhooks := v.([]models.Webhook)
 
-	if s.cacheEnabled {
-		s.cache.Add(eventType, webhooks)
-		s.cacheKeysMu.Lock()
-		s.cacheKeys[eventType] = true
-		s.cacheKeysMu.Unlock()
+	if len(webhooks) >= deliveryListLimit {
+		slog.Warn("Webhook list may be truncated (reached limit)",
+			"event_type", eventTypeStr,
+			"limit", deliveryListLimit,
+		)
 	}
 
 	return webhooks, nil
@@ -203,12 +248,6 @@ func (s *WebhookDeliveryService) sendWebhookWithJSON(ctx context.Context, webhoo
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned non-2xx status: %d", resp.StatusCode)
 	}
-
-	slog.Debug("Webhook sent successfully",
-		"webhook_id", webhook.ID,
-		"url", webhook.URL,
-		"status_code", resp.StatusCode,
-	)
 
 	return nil
 }

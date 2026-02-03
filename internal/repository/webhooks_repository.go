@@ -109,9 +109,9 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 }
 
 // buildWebhookFilterConditions builds WHERE clause conditions and arguments from filters
-func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (string, []interface{}) {
+func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (string, []any) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 	argCount := 1
 
 	if filters.Enabled != nil {
@@ -213,7 +213,7 @@ func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebh
 // Update updates an existing webhook
 func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	var updates []string
-	var args []interface{}
+	var args []any
 	argCount := 1
 
 	if req.URL != nil {
@@ -312,6 +312,9 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 	return r.List(ctx, filters)
 }
 
+// maxWebhookListLimit caps the number of webhooks returned for delivery to avoid unbounded queries.
+const maxWebhookListLimit = 1000
+
 // ListEnabledForEventType retrieves enabled webhooks that should receive a specific event type
 func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	query := `
@@ -319,6 +322,7 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 		FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
+		LIMIT ` + fmt.Sprintf("%d", maxWebhookListLimit) + `
 	`
 
 	rows, err := r.db.Query(ctx, query, eventType)

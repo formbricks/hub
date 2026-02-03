@@ -97,9 +97,9 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 
 // buildFilterConditions builds WHERE clause conditions and arguments from filters
 // Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice
-func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, []interface{}) {
+func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, []any) {
 	var conditions []string
-	var args []interface{}
+	var args []any
 	argCount := 1
 
 	if filters.TenantID != nil {
@@ -238,9 +238,9 @@ func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.L
 
 // buildUpdateQuery builds an UPDATE query with SET clause and arguments
 // Returns the query string, arguments, and a boolean indicating if any updates were provided
-func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time) (string, []interface{}, bool) {
+func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time) (string, []any, bool) {
 	var updates []string
-	var args []interface{}
+	var args []any
 	argCount := 1
 
 	if req.ValueText != nil {
@@ -354,7 +354,7 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 // BulkDelete deletes all feedback records matching user_identifier and optional tenant_id
 func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error) {
 	query := `DELETE FROM feedback_records WHERE user_identifier = $1`
-	args := []interface{}{userIdentifier}
+	args := []any{userIdentifier}
 	argCount := 2
 
 	if tenantID != nil {
