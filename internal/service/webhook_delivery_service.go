@@ -12,6 +12,7 @@ import (
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/google/uuid"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
@@ -108,15 +109,18 @@ func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) 
 		return
 	}
 
+	messageID := uuid.New().String()
+
 	for _, webhook := range webhooks {
 		s.sem <- struct{}{} // acquire (blocks if at cap)
 		go func(w models.Webhook) {
 			defer func() { <-s.sem }() // release
 			start := time.Now()
-			err := s.sendWebhookWithJSON(ctx, w, payloadJSON)
+			err := s.sendWebhookWithJSON(ctx, w, payloadJSON, messageID)
 			duration := time.Since(start)
 			if err != nil {
 				slog.Warn("Failed to send webhook",
+					"message_id", messageID,
 					"webhook_id", w.ID,
 					"url", w.URL,
 					"event_type", event.Type.String(),
@@ -126,6 +130,7 @@ func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) 
 				return
 			}
 			slog.Debug("Webhook sent successfully",
+				"message_id", messageID,
 				"webhook_id", w.ID,
 				"url", w.URL,
 				"event_type", event.Type.String(),
@@ -210,17 +215,17 @@ func (s *WebhookDeliveryService) eventToPayload(event Event) (*WebhookPayload, e
 	return payload, nil
 }
 
-// sendWebhookWithJSON sends a webhook using pre-marshaled JSON bytes
-func (s *WebhookDeliveryService) sendWebhookWithJSON(ctx context.Context, webhook models.Webhook, payloadJSON []byte) error {
+// sendWebhookWithJSON sends a webhook using pre-marshaled JSON bytes.
+// messageID is a stable identifier for this event (same across all endpoints and retries) for consumer idempotency.
+func (s *WebhookDeliveryService) sendWebhookWithJSON(ctx context.Context, webhook models.Webhook, payloadJSON []byte, messageID string) error {
 	wh, err := standardwebhooks.NewWebhook(webhook.SigningKey)
 	if err != nil {
 		return fmt.Errorf("failed to create webhook signer: %w", err)
 	}
 
-	webhookID := fmt.Sprintf("%s-%d", webhook.ID.String(), time.Now().UnixNano())
 	timestamp := time.Now()
 
-	signature, err := wh.Sign(webhookID, timestamp, payloadJSON)
+	signature, err := wh.Sign(messageID, timestamp, payloadJSON)
 	if err != nil {
 		return fmt.Errorf("failed to sign webhook: %w", err)
 	}
@@ -231,7 +236,7 @@ func (s *WebhookDeliveryService) sendWebhookWithJSON(ctx context.Context, webhoo
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(standardwebhooks.HeaderWebhookID, webhookID)
+	req.Header.Set(standardwebhooks.HeaderWebhookID, messageID)
 	req.Header.Set(standardwebhooks.HeaderWebhookSignature, signature)
 	req.Header.Set(standardwebhooks.HeaderWebhookTimestamp, fmt.Sprintf("%d", timestamp.Unix()))
 
