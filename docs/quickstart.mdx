@@ -1,0 +1,435 @@
+---
+title: "Quick Start Guide"
+description: "Get Formbricks Hub running locally in minutes."
+---
+
+## Prerequisites
+
+- **Docker** and **Docker Compose**: [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- **Text Editor**: For editing the `.env` file
+
+## Installation
+
+### Option 1: Docker Compose (Recommended)
+
+The easiest way to run Formbricks Hub with all dependencies.
+
+#### 1. Download the Configuration
+
+Create a new directory and download the Docker Compose file:
+
+```bash
+mkdir formbricks-hub && cd formbricks-hub
+curl -o compose.yml https://raw.githubusercontent.com/formbricks/hub/main/compose.yml
+```
+
+Or create it manually:
+
+```yaml
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: formbricks_hub_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: formbricks
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-formbricks_dev}
+      POSTGRES_DB: hub
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U formbricks -d hub']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - formbricks_hub
+    command: >
+      postgres
+      -c shared_preload_libraries=vector
+
+  hub:
+    image: ghcr.io/formbricks/hub:latest
+    container_name: formbricks_hub_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_dev}@postgres:5432/hub?sslmode=disable
+      API_KEY: ${API_KEY:-}
+      PORT: ${PORT:-8080}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - '8080:8080'
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:8080/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - formbricks_hub
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  formbricks_hub:
+    driver: bridge
+```
+
+#### 2. Configure Environment Variables
+
+Create a `.env` file in the same directory:
+
+```bash
+# Required: Secure your PostgreSQL database
+POSTGRES_PASSWORD=your_secure_postgres_password_here
+
+# Required: API authentication key
+API_KEY=your_secure_api_key_here
+
+# Optional: Server configuration
+PORT=8080
+LOG_LEVEL=info
+```
+
+<Check>
+  Generate secure passwords and API keys:
+
+  ```bash
+  # For POSTGRES_PASSWORD
+  openssl rand -base64 32
+
+  # For API_KEY
+  openssl rand -base64 32
+  ```
+</Check>
+
+#### 3. Start the Services
+
+```bash
+docker compose up -d
+```
+
+This will:
+
+- Pull the latest Formbricks Hub image from GitHub Container Registry
+- Start PostgreSQL with persistent storage
+- Start the Hub API on port 8080
+
+#### 4. Run Database Migrations
+
+Migrations are managed with [goose](https://github.com/pressly/goose). From the project directory with `DATABASE_URL` set to your Postgres connection string:
+
+```bash
+# Install goose (if not already: make install-tools)
+go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
+
+# Apply migrations
+goose -dir migrations postgres "$DATABASE_URL" up
+```
+
+Or use the Makefile (loads `DATABASE_URL` from `.env`):
+
+```bash
+make init-db
+```
+
+<Info>
+  You only need to run this once when setting up the database for the first time.
+</Info>
+
+#### 5. Verify Installation
+
+Check that both services are healthy:
+
+```bash
+docker compose ps
+```
+
+Expected output:
+
+```
+NAME                        STATUS              PORTS
+formbricks_hub_api        Up (healthy)        0.0.0.0:8080->8080/tcp
+formbricks_hub_postgres   Up (healthy)        0.0.0.0:5432->5432/tcp
+```
+
+Test the health endpoint:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+### Option 2: Docker Run (Minimal)
+
+If you have an existing PostgreSQL instance, run just the Hub API:
+
+```bash
+docker run -d \
+  --name formbricks-hub \
+  -p 8080:8080 \
+  -e DATABASE_URL="postgresql://user:password@host:5432/hub?sslmode=disable" \
+  -e API_KEY="your-secret-key" \
+  -e LOG_LEVEL="info" \
+  ghcr.io/formbricks/hub:latest
+```
+
+<Warning>
+  Make sure to run migrations before starting the API. From the Hub repo with `DATABASE_URL` set: `make init-db` or `goose -dir migrations postgres "$DATABASE_URL" up`.
+</Warning>
+
+## Making Your First API Call
+
+### 1. Create a Feedback Record
+
+```bash
+curl -X POST http://localhost:8080/v1/feedback-records \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_secure_api_key_here" \
+  -d '{
+    "source_type": "survey",
+    "source_id": "my-first-survey",
+    "field_id": "q1",
+    "field_label": "How satisfied are you?",
+    "field_type": "rating",
+    "value_number": 5,
+    "metadata": {
+      "country": "US",
+      "device": "desktop"
+    }
+  }'
+```
+
+<Info>
+  All API requests require the `Authorization: Bearer <token>` header with your configured `API_KEY`.
+</Info>
+
+Expected response:
+
+```json
+{
+  "id": "01932c8a-8b9e-7000-8000-000000000001",
+  "collected_at": "2025-10-20T12:34:56Z",
+  "created_at": "2025-10-20T12:34:56Z",
+  "source_type": "survey",
+  "source_id": "my-first-survey",
+  "field_id": "q1",
+  "field_type": "rating",
+  "value_number": 5,
+  "metadata": {
+    "country": "US",
+    "device": "desktop"
+  }
+}
+```
+
+### 2. Create a Text Feedback Record
+
+```bash
+curl -X POST http://localhost:8080/v1/feedback-records \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_secure_api_key_here" \
+  -d '{
+    "source_type": "survey",
+    "source_id": "my-first-survey",
+    "field_id": "q2",
+    "field_label": "What can we improve?",
+    "field_type": "text",
+    "value_text": "The checkout process could be simplified!"
+  }'
+```
+
+### 3. Query Feedback Records
+
+```bash
+curl "http://localhost:8080/v1/feedback-records?limit=10" \
+  -H "Authorization: Bearer your_secure_api_key_here"
+```
+
+Response:
+
+```json
+{
+  "data": [...],
+  "total": 2,
+  "limit": 10,
+  "offset": 0
+}
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | No | `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable` | PostgreSQL connection string |
+| `API_KEY` | Yes | - | API authentication key |
+| `PORT` | No | `8080` | HTTP server port |
+| `LOG_LEVEL` | No | `info` | Log level (`debug`, `info`, `warn`, `error`) |
+
+[See full environment variable reference →](/reference/environment-variables)
+
+### Database Connection String Format
+
+```
+postgresql://username:password@host:port/database?sslmode=disable
+```
+
+For Docker Compose (services in same network):
+
+```
+postgresql://formbricks:password@postgres:5432/hub?sslmode=disable
+```
+
+For external PostgreSQL:
+
+```
+postgresql://user:pass@db.example.com:5432/hub?sslmode=require
+```
+
+## Managing the Service
+
+### View Logs
+
+```bash
+# All services
+docker compose logs -f
+
+# Just the Hub API
+docker compose logs -f hub
+
+# Just PostgreSQL
+docker compose logs -f postgres
+```
+
+### Stop Services
+
+```bash
+docker compose down
+```
+
+### Stop and Remove Data
+
+<Warning>
+  This will delete all stored feedback records!
+</Warning>
+
+```bash
+docker compose down -v
+```
+
+### Restart Services
+
+```bash
+docker compose restart
+```
+
+### Update to Latest Version
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+## Next Steps
+
+- [Data Model](/core-concepts/data-model) - Understand the feedback record structure
+- [Authentication](/core-concepts/authentication) - Learn about API security
+- [API Reference](/api-reference) - Explore all endpoints
+- [Environment Variables](/reference/environment-variables) - Configure your deployment
+
+## Troubleshooting
+
+### Port Already in Use
+
+If port 8080 or 5432 is occupied:
+
+```bash
+# Change ports in .env
+PORT=8081
+```
+
+Or modify the port mapping in `compose.yml`:
+
+```yaml
+ports:
+  - '8081:8080'  # Host:Container
+```
+
+### Container Fails to Start
+
+Check the logs for errors:
+
+```bash
+docker compose logs hub
+```
+
+Common issues:
+
+- **Database not ready**: Wait for PostgreSQL healthcheck to pass
+- **Invalid API key**: Ensure `API_KEY` is set in `.env`
+- **Database connection failed**: Check `DATABASE_URL` format
+
+### Database Connection Failed
+
+Verify PostgreSQL is running:
+
+```bash
+docker compose ps postgres
+```
+
+If unhealthy, check PostgreSQL logs:
+
+```bash
+docker compose logs postgres
+```
+
+### Health Check Failing
+
+Check if the service is listening:
+
+```bash
+docker exec formbricks_hub_api wget -O- http://localhost:8080/health
+```
+
+### Cannot Pull Docker Image
+
+Ensure you have access to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/formbricks/hub:latest
+```
+
+If authentication is required:
+
+```bash
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+```
+
+### Data Not Persisting
+
+Verify the volume is mounted:
+
+```bash
+docker volume ls | grep postgres_data
+docker volume inspect formbricks-hub_postgres_data
+```
+
+## Getting Help
+
+- **GitHub Discussions**: [Ask questions and share ideas](https://github.com/formbricks/hub/discussions)
+- **GitHub Issues**: [Report bugs or request features](https://github.com/formbricks/hub/issues)
+- **API Reference**: [Interactive documentation](/api-reference)

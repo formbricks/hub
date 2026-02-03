@@ -85,6 +85,16 @@ paths:
                   schema:
                     type: string
                     description: Filter by field type. NULL bytes not allowed.
+                    enum:
+                        - text
+                        - categorical
+                        - nps
+                        - csat
+                        - ces
+                        - rating
+                        - number
+                        - boolean
+                        - date
                     pattern: '^[^\x00]*$'
                 - name: user_identifier
                   in: query
@@ -248,7 +258,6 @@ paths:
                                     field_group_id: "feature_priority"
                                     field_group_label: "Rank these features by importance"
                                     value_number: 1
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "Feature Priority Survey"
                                     user_identifier: "user-abc-123"
@@ -266,7 +275,6 @@ paths:
                                     field_group_id: "feature_satisfaction"
                                     field_group_label: "Rate your satisfaction with each feature"
                                     value_number: 4
-                                    response_id: "resp-abc-123"
                                     source_id: "survey-123"
                                     source_name: "Feature Satisfaction Survey"
                                     user_identifier: "user-abc-123"
@@ -936,6 +944,16 @@ components:
                 field_type:
                     type: string
                     description: Type of field
+                    enum:
+                        - text
+                        - categorical
+                        - nps
+                        - csat
+                        - ces
+                        - rating
+                        - number
+                        - boolean
+                        - date
                 id:
                     type: string
                     format: uuid

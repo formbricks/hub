@@ -6,9 +6,9 @@ This directory contains integration tests for the Formbricks Hub API.
 
 Before running the tests, ensure:
 
-1. PostgreSQL is running (via docker-compose)
-2. Database schema has been initialized
-3. The `API_KEY` environment variable is set (tests will set it automatically)
+1. **PostgreSQL is running** with the default test credentials (e.g. `make docker-up`). The tests use `postgres://postgres:postgres@localhost:5432/test_db` by default. If you see `password authentication failed for user "postgres"`, start the stack with `make docker-up` and run `make init-db`.
+2. **Database schema** has been initialized (`make init-db`).
+3. **API_KEY** is set automatically by the tests; you do not need to set it.
 
 ## Running Tests
 

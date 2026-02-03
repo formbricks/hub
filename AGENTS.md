@@ -4,7 +4,7 @@
 - `cmd/api/` holds the API server entrypoint (`main.go`).
 - `internal/` contains core application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, and `config`.
 - `pkg/` provides shared utilities (currently `pkg/database`).
-- `sql/` stores SQL schema files (e.g., `sql/001_initial_schema.sql`).
+- `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.
 - `tests/` contains integration tests.
 
 ## Build, Test, and Development Commands
@@ -13,7 +13,7 @@
 - `make build`: build the API binary to `bin/api`.
 - `make tests`: run integration tests in `tests/`.
 - `make tests-coverage`: generate `coverage.html`.
-- `make init-db`: initialize database schema using `DATABASE_URL`.
+- `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations. For webhook delivery, run `make river-migrate` after `init-db` to apply River job queue migrations.
 - `make fmt` / `make fmt-check`: format or verify formatting with `gofumpt`.
 - `make lint`: run `golangci-lint` (requires `make install-tools`).
 

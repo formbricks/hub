@@ -58,7 +58,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 │   └── config/           # Configuration management
 ├── pkg/
 │   └── database/         # Database utilities and connection pooling
-├── sql/                  # SQL schema files
+├── migrations/           # SQL migrations (goose)
 ├── tests/               # Integration tests
 └── docs/                # API documentation (Swagger)
 ```
@@ -83,8 +83,8 @@ make dev-setup
 This will:
 - Start PostgreSQL container
 - Install Go dependencies
-- Install development tools (gofumpt, golangci-lint)
-- Initialize database schema
+- Install development tools (gofumpt, golangci-lint, goose)
+- Run database migrations (goose)
 - Install git hooks for code quality
 
 3. Start the API server:
@@ -204,7 +204,9 @@ make dev-setup    # Set up development environment (docker, deps, tools, schema)
 make build        # Build all binaries
 make run          # Run the API server
 make tests        # Run all tests
-make init-db      # Initialize database schema
+make init-db      # Run migrations (goose up)
+make migrate-status   # Show migration status
+make migrate-validate # Validate migration files (no DB)
 make docker-up    # Start Docker containers
 make docker-down  # Stop Docker containers
 make clean        # Clean build artifacts
@@ -240,16 +242,15 @@ To bypass hooks temporarily (use sparingly):
 git commit --no-verify -m "WIP: work in progress"
 ```
 
-### Database Schema
+### Migrations
 
-The database schema is stored in the `sql/` directory.
+Schema is managed with [goose](https://github.com/pressly/goose). Migrations live in `migrations/`.
 
-To initialize the database schema:
-```bash
-make init-db
-```
+- **Apply migrations**: `make init-db` (runs `goose up`; requires `DATABASE_URL` and goose on PATH — install via `make install-tools`).
+- **Check status**: `make migrate-status`.
+- **Validate files** (no DB): `make migrate-validate` (use in CI before applying).
 
-This will execute `sql/001_initial_schema.sql` using `psql`. Make sure you have `DATABASE_URL` set in your environment or `.env` file.
+In production, run migrations as a separate deploy step before deploying new app code (not on app startup). To add a new migration, create a file in `migrations/` with the next version prefix (e.g. `002_add_foo.sql`) and add `-- +goose up` and optionally `-- +goose down` sections; one logical change per file.
 
 ### API Key Authentication
 

@@ -1,8 +1,14 @@
+-- +goose up
 -- Initial schema for Formbricks Hub
 
 -- Enable extensions
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Create ENUM types
+CREATE TYPE field_type_enum AS ENUM (
+    'text', 'categorical', 'nps', 'csat', 'ces', 'rating', 'number', 'boolean', 'date'
+);
 
 -- Feedback records table
 CREATE TABLE feedback_records (
@@ -18,7 +24,7 @@ CREATE TABLE feedback_records (
 
   field_id VARCHAR(255) NOT NULL,
   field_label VARCHAR,
-  field_type VARCHAR NOT NULL,
+  field_type field_type_enum NOT NULL,
 
   -- Field grouping for composite questions (ranking, matrix, grid)
   field_group_id VARCHAR(255),
@@ -59,3 +65,9 @@ CREATE INDEX idx_feedback_records_tenant_user_identifier ON feedback_records(ten
 CREATE INDEX idx_feedback_records_tenant_collected_at ON feedback_records(tenant_id, collected_at);
 CREATE INDEX idx_feedback_records_tenant_source_type ON feedback_records(tenant_id, source_type);
 CREATE INDEX idx_feedback_records_tenant_field_type ON feedback_records(tenant_id, field_type);
+
+-- +goose down
+DROP TABLE IF EXISTS feedback_records;
+DROP TYPE IF EXISTS field_type_enum;
+DROP EXTENSION IF EXISTS vector;
+DROP EXTENSION IF EXISTS "pgcrypto";

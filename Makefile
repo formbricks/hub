@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate
 
 # Default target - show help
 help:
@@ -11,7 +11,10 @@ help:
 	@echo "  make tests        - Run integration tests"
 	@echo "  make test-all     - Run all tests (unit + integration)"
 	@echo "  make tests-coverage - Run tests with coverage report"
-	@echo "  make init-db      - Initialize database schema"
+	@echo "  make init-db      - Initialize database schema (run migrations with goose)"
+	@echo "  make migrate-status  - Show migration status"
+	@echo "  make migrate-validate - Validate migration files (no DB)"
+	@echo "  make river-migrate - Run River job queue migrations (required for webhook delivery)"
 	@echo "  make fmt          - Format code with gofumpt"
 	@echo "  make fmt-check    - Check if code is formatted"
 	@echo "  make lint         - Run linter"
@@ -72,26 +75,54 @@ run:
 	@echo "Starting API server..."
 	go run cmd/api/main.go
 
-# Initialize database schema
+# Initialize database schema (run goose migrations up)
 init-db:
-	@echo "Initializing database schema..."
+	@echo "Running migrations..."
+	@command -v goose >/dev/null 2>&1 || { echo "Error: goose not found. Install with: make install-tools"; exit 1; }
 	@if [ -f .env ]; then \
 		export $$(grep -v '^#' .env | xargs) && \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL not found in .env file"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
+		goose -dir migrations postgres "$$DATABASE_URL" up; \
 	else \
 		if [ -z "$$DATABASE_URL" ]; then \
 			echo "Error: DATABASE_URL environment variable is not set"; \
 			echo "Please set it or create a .env file with DATABASE_URL"; \
 			exit 1; \
 		fi && \
-		psql "$$DATABASE_URL" -f sql/001_initial_schema.sql; \
+		goose -dir migrations postgres "$$DATABASE_URL" up; \
 	fi
-	@echo "Database schema initialized successfully"
+	@echo "Migrations applied successfully"
 
+# Show migration status (requires DATABASE_URL)
+migrate-status:
+	@command -v goose >/dev/null 2>&1 || { echo "Error: goose not found. Install with: make install-tools"; exit 1; }
+	@if [ -f .env ]; then export $$(grep -v '^#' .env | xargs); fi && \
+	if [ -z "$$DATABASE_URL" ]; then \
+		echo "Error: DATABASE_URL not set"; exit 1; \
+	fi && \
+	goose -dir migrations postgres "$$DATABASE_URL" status
+
+# Validate migration files (no database required)
+migrate-validate:
+	@command -v goose >/dev/null 2>&1 || { echo "Error: goose not found. Install with: make install-tools"; exit 1; }
+	@goose -dir migrations validate
+	@echo "Migration files are valid"
+
+# Run River job queue migrations (required for webhook delivery)
+river-migrate:
+	@command -v river >/dev/null 2>&1 || { echo "Error: river CLI not found. Install with: go install github.com/riverqueue/river/cmd/river@latest"; exit 1; }
+	@if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		if [ -z "$$DATABASE_URL" ]; then echo "Error: DATABASE_URL not found in .env"; exit 1; fi && \
+		river migrate-up --database-url "$$DATABASE_URL"; \
+	else \
+		if [ -z "$$DATABASE_URL" ]; then echo "Error: DATABASE_URL not set"; exit 1; fi && \
+		river migrate-up --database-url "$$DATABASE_URL"; \
+	fi
+	@echo "River migrations applied"
 
 # Start Docker containers
 docker-up:
@@ -130,13 +161,15 @@ deps:
 GOFUMPT_VERSION := v0.9.2
 GOLANGCI_LINT_VERSION := v2.8.0
 GOVULNCHECK_VERSION := v1.1.4
+GOOSE_VERSION := v3.26.0
 
 install-tools:
 	@echo "Installing development tools..."
 	go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
-	@echo "Tools installed (gofumpt $(GOFUMPT_VERSION), golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION))"
+	go install github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
+	@echo "Tools installed (gofumpt $(GOFUMPT_VERSION), golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION), goose $(GOOSE_VERSION))"
 
 # Format code
 fmt:
