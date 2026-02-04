@@ -214,3 +214,47 @@ func TestLoadAlwaysReturnsNilError(t *testing.T) {
 		t.Error("Load() config = nil, want non-nil config")
 	}
 }
+
+func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+
+	t.Run("default is 3 when unset", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.WebhookDeliveryMaxAttempts != 3 {
+			t.Errorf("WebhookDeliveryMaxAttempts = %d, want 3", cfg.WebhookDeliveryMaxAttempts)
+		}
+	})
+
+	t.Run("override via WEBHOOK_DELIVERY_MAX_ATTEMPTS", func(t *testing.T) {
+		t.Setenv("WEBHOOK_DELIVERY_MAX_ATTEMPTS", "5")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.WebhookDeliveryMaxAttempts != 5 {
+			t.Errorf("WebhookDeliveryMaxAttempts = %d, want 5", cfg.WebhookDeliveryMaxAttempts)
+		}
+	})
+
+	t.Run("validation error when <= 0", func(t *testing.T) {
+		t.Setenv("WEBHOOK_DELIVERY_MAX_ATTEMPTS", "0")
+		_, err := Load()
+		if err == nil {
+			t.Error("Load() error = nil, want error for WEBHOOK_DELIVERY_MAX_ATTEMPTS <= 0")
+		}
+	})
+
+	t.Run("non-numeric falls back to default", func(t *testing.T) {
+		t.Setenv("WEBHOOK_DELIVERY_MAX_ATTEMPTS", "x")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.WebhookDeliveryMaxAttempts != 3 {
+			t.Errorf("WebhookDeliveryMaxAttempts = %d, want default 3", cfg.WebhookDeliveryMaxAttempts)
+		}
+	})
+}

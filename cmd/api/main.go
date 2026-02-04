@@ -15,7 +15,10 @@ import (
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/internal/workers"
 	"github.com/formbricks/hub/pkg/database"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 )
 
 func main() {
@@ -39,21 +42,38 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize message publisher manager and register providers
+	// Initialize message publisher manager
 	messageManager := service.NewMessagePublisherManager()
 
-	// Webhooks: repository, delivery service (MessagePublisher), and CRUD service
+	// Webhooks: repository, River client, worker, provider, and CRUD service
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhookCacheConfig := &service.WebhookCacheConfig{
-		Enabled:       cfg.WebhookCacheEnabled,
-		Size:          cfg.WebhookCacheSize,
-		TTL:           cfg.WebhookCacheTTL,
-		MaxConcurrent: cfg.WebhookDeliveryMaxConcurrent,
-	}
-	webhookDeliveryService := service.NewWebhookDeliveryService(webhooksRepo, webhookCacheConfig)
-	messageManager.RegisterProvider(webhookDeliveryService)
+	webhookSender := service.NewWebhookSenderImpl(webhooksRepo)
+	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender)
+	riverWorkers := river.NewWorkers()
+	river.AddWorker(riverWorkers, webhookWorker)
 
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, webhookDeliveryService)
+	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
+		Queues: map[string]river.QueueConfig{
+			river.QueueDefault: {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
+		},
+		Workers: riverWorkers,
+	})
+	if err != nil {
+		slog.Error("Failed to create River client", "error", err)
+		os.Exit(1)
+	}
+
+	webhookProvider := service.NewWebhookProvider(riverClient, webhooksRepo, cfg.WebhookDeliveryMaxAttempts)
+	messageManager.RegisterProvider(webhookProvider)
+
+	// Start River in background
+	go func() {
+		if err := riverClient.Start(ctx); err != nil && err != context.Canceled {
+			slog.Error("River client stopped with error", "error", err)
+		}
+	}()
+
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
@@ -128,10 +148,16 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
 		messageManager.Shutdown()
+		if stopErr := riverClient.Stop(ctx); stopErr != nil {
+			slog.Error("River client stop after server shutdown error", "error", stopErr)
+		}
 		os.Exit(1)
 	}
 
 	messageManager.Shutdown()
+	if err := riverClient.Stop(ctx); err != nil {
+		slog.Warn("River client stop", "error", err)
+	}
 
 	slog.Info("Server exited")
 }

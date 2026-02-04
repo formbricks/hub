@@ -76,7 +76,7 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 // GetByID retrieves a single webhook by ID
 func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
 	query := `
-		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
+		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
 		WHERE id = $1
 	`
@@ -86,6 +86,7 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
 		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+		&webhook.DisabledReason, &webhook.DisabledAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -136,7 +137,7 @@ func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (string, 
 // List retrieves webhooks with optional filters
 func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
 	query := `
-		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
+		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
 	`
 
@@ -170,6 +171,7 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 		err := rows.Scan(
 			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
 			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+			&webhook.DisabledReason, &webhook.DisabledAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan webhook: %w", err)
@@ -232,6 +234,10 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		updates = append(updates, fmt.Sprintf("enabled = $%d", argCount))
 		args = append(args, *req.Enabled)
 		argCount++
+		// Re-enabling clears disabled state (read-only fields set by the system)
+		if *req.Enabled {
+			updates = append(updates, "disabled_reason = NULL", "disabled_at = NULL")
+		}
 	}
 
 	if req.TenantID != nil {
@@ -257,6 +263,18 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		argCount++
 	}
 
+	if req.DisabledReason != nil {
+		updates = append(updates, fmt.Sprintf("disabled_reason = $%d", argCount))
+		args = append(args, *req.DisabledReason)
+		argCount++
+	}
+
+	if req.DisabledAt != nil {
+		updates = append(updates, fmt.Sprintf("disabled_at = $%d", argCount))
+		args = append(args, *req.DisabledAt)
+		argCount++
+	}
+
 	if len(updates) == 0 {
 		return r.GetByID(ctx, id)
 	}
@@ -271,7 +289,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		UPDATE webhooks
 		SET %s
 		WHERE id = $%d
-		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
+		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 	`, strings.Join(updates, ", "), argCount)
 
 	var webhook models.Webhook
@@ -279,6 +297,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
 		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+		&webhook.DisabledReason, &webhook.DisabledAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -331,7 +350,7 @@ const maxWebhookListLimit = 1000
 // ListEnabledForEventType retrieves enabled webhooks that should receive a specific event type
 func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	query := `
-		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
+		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
@@ -351,6 +370,7 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 		err := rows.Scan(
 			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
 			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+			&webhook.DisabledReason, &webhook.DisabledAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan webhook: %w", err)

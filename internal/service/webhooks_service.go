@@ -22,25 +22,17 @@ type WebhooksRepository interface {
 	ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error)
 }
 
-// WebhookCacheInvalidator invalidates webhook caches when webhooks are mutated.
-// Implemented by WebhookDeliveryService so its per-event-type cache is cleared on create/update/delete.
-type WebhookCacheInvalidator interface {
-	InvalidateCache()
-}
-
 // WebhooksService handles business logic for webhooks
 type WebhooksService struct {
-	repo             WebhooksRepository
-	publisher        MessagePublisher
-	cacheInvalidator WebhookCacheInvalidator
+	repo      WebhooksRepository
+	publisher MessagePublisher
 }
 
-// NewWebhooksService creates a new webhooks service. cacheInvalidator may be nil if no cache is used.
-func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher, cacheInvalidator WebhookCacheInvalidator) *WebhooksService {
+// NewWebhooksService creates a new webhooks service.
+func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher) *WebhooksService {
 	return &WebhooksService{
-		repo:             repo,
-		publisher:        publisher,
-		cacheInvalidator: cacheInvalidator,
+		repo:      repo,
+		publisher: publisher,
 	}
 }
 
@@ -57,10 +49,6 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 	webhook, err := s.repo.Create(ctx, req)
 	if err != nil {
 		return nil, err
-	}
-
-	if s.cacheInvalidator != nil {
-		s.cacheInvalidator.InvalidateCache()
 	}
 
 	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, *webhook)
@@ -114,10 +102,6 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 		return nil, err
 	}
 
-	if s.cacheInvalidator != nil {
-		s.cacheInvalidator.InvalidateCache()
-	}
-
 	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, s.getChangedFields(req))
 
 	return webhook, nil
@@ -153,10 +137,6 @@ func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error
 
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
-	}
-
-	if s.cacheInvalidator != nil {
-		s.cacheInvalidator.InvalidateCache()
 	}
 
 	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, *webhook)

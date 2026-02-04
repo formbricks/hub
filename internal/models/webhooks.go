@@ -10,14 +10,16 @@ import (
 
 // Webhook represents a webhook endpoint
 type Webhook struct {
-	ID         uuid.UUID             `json:"id"`
-	URL        string                `json:"url"`
-	SigningKey string                `json:"signing_key"`
-	Enabled    bool                  `json:"enabled"`
-	TenantID   *string               `json:"tenant_id,omitempty"`
-	EventTypes []datatypes.EventType `json:"event_types,omitempty"`
-	CreatedAt  time.Time             `json:"created_at"`
-	UpdatedAt  time.Time             `json:"updated_at"`
+	ID             uuid.UUID             `json:"id"`
+	URL            string                `json:"url"`
+	SigningKey     string                `json:"signing_key"`
+	Enabled        bool                  `json:"enabled"`
+	TenantID       *string               `json:"tenant_id,omitempty"`
+	EventTypes     []datatypes.EventType `json:"event_types,omitempty"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+	DisabledReason *string               `json:"disabled_reason,omitempty"`
+	DisabledAt     *time.Time            `json:"disabled_at,omitempty"`
 }
 
 // MarshalJSON converts []datatypes.EventType to JSON string array
@@ -82,13 +84,17 @@ func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UpdateWebhookRequest represents the request to update a webhook
+// UpdateWebhookRequest represents the request to update a webhook.
+// DisabledReason and DisabledAt are read-only in the API (json:"-" so clients cannot set them);
+// the system sets them when a webhook is disabled. Re-enabling (enabled: true) clears them in the repo.
 type UpdateWebhookRequest struct {
-	URL        *string                `json:"url,omitempty" validate:"omitempty,no_null_bytes,min=1,max=2048"`
-	SigningKey *string                `json:"signing_key,omitempty" validate:"omitempty,no_null_bytes,min=1,max=255"`
-	Enabled    *bool                  `json:"enabled,omitempty"`
-	TenantID   *string                `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
-	EventTypes *[]datatypes.EventType `json:"event_types,omitempty"`
+	URL            *string                `json:"url,omitempty" validate:"omitempty,no_null_bytes,min=1,max=2048"`
+	SigningKey     *string                `json:"signing_key,omitempty" validate:"omitempty,no_null_bytes,min=1,max=255"`
+	Enabled        *bool                  `json:"enabled,omitempty"`
+	TenantID       *string                `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
+	EventTypes     *[]datatypes.EventType `json:"event_types,omitempty"`
+	DisabledReason *string                `json:"-"` // read-only; set by system when disabling
+	DisabledAt     *time.Time             `json:"-"` // read-only; set by system when disabling
 }
 
 // UnmarshalJSON converts JSON string array to *[]datatypes.EventType

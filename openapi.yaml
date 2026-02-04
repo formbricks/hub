@@ -1159,6 +1159,15 @@ components:
                     type: string
                     format: date-time
                     description: When the webhook was last updated
+                disabled_reason:
+                    type: string
+                    nullable: true
+                    description: Read-only. Set by the system when the webhook was disabled (e.g. after 410 Gone or max delivery failures). Omitted when null.
+                disabled_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Read-only. When the webhook was disabled. Omitted when null. Cleared when the webhook is re-enabled via PATCH.
             required:
                 - id
                 - url

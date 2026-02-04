@@ -56,7 +56,8 @@ func NewMessagePublisherManager() *MessagePublisherManager {
 	return m
 }
 
-// RegisterProvider registers a message provider (webhooks, email, SMS, etc.)
+// RegisterProvider registers a message provider (webhooks, email, SMS, etc.).
+// Must only be called during startup, before any events are published.
 func (m *MessagePublisherManager) RegisterProvider(provider eventPublisher) {
 	m.providers = append(m.providers, provider)
 }

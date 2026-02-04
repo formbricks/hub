@@ -47,7 +47,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, nil)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
@@ -87,9 +87,10 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	// Create test server
 	server := httptest.NewServer(mainMux)
 
-	// Cleanup function
+	// Cleanup function: stop message publisher worker, then server and db
 	cleanup := func() {
 		server.Close()
+		messageManager.Shutdown()
 		db.Close()
 	}
 
