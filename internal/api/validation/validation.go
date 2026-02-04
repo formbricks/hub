@@ -93,7 +93,7 @@ func formatFieldError(fieldError validator.FieldError) string {
 
 	switch tag {
 	case "required":
-		return fmt.Sprintf("%s is required", field)
+		return field + " is required"
 	case "min":
 		return fmt.Sprintf("%s must be at least %s", field, fieldError.Param())
 	case "max":
@@ -105,15 +105,15 @@ func formatFieldError(fieldError validator.FieldError) string {
 	case "oneof":
 		return fmt.Sprintf("%s must be one of: %s", field, fieldError.Param())
 	case "field_type":
-		return fmt.Sprintf("%s must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date", field)
+		return field + " must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
 	case "uuid":
-		return fmt.Sprintf("%s must be a valid UUID", field)
+		return field + " must be a valid UUID"
 	case "rfc3339":
-		return fmt.Sprintf("%s must be in RFC3339 format (ISO 8601)", field)
+		return field + " must be in RFC3339 format (ISO 8601)"
 	case "no_null_bytes":
-		return fmt.Sprintf("%s must not contain NULL bytes", field)
+		return field + " must not contain NULL bytes"
 	default:
-		return fmt.Sprintf("%s is invalid", field)
+		return field + " is invalid"
 	}
 }
 

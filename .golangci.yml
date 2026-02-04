@@ -23,11 +23,17 @@ output:
 linters:
   default: none
   enable:
+    - bodyclose     # HTTP response bodies must be closed (resource leaks)
     - errcheck      # must use returned errors
     - gocritic      # error handling and style
     - govet         # standard go vet
+    - gosec         # security (SQL injection, secrets, weak crypto, etc.)
     - ineffassign   # ineffective assignments
     - modernize     # prefer modern Go (e.g. any instead of interface{})
+    - noctx         # HTTP/DB calls should use context (timeouts, cancellation)
+    - perfsprint    # prefer faster alternatives to fmt.Sprintf where possible
+    - rowserrcheck # Rows.Err must be checked after iterating
+    - sqlclosecheck # sql.Rows/Stmt must be closed
     - staticcheck   # static analysis
     - unused        # unused code
     - revive        # fast, configurable
@@ -37,6 +43,10 @@ linters:
       - path: internal/errors
         linters:
           - revive
+      # tests often use http.Get/Post/NewRequest for brevity; production code still must use context
+      - path: _test\.go$
+        linters:
+          - noctx
   settings:
     errcheck:
       check-blank: true           # report when error discarded with _
