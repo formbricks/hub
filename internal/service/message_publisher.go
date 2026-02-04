@@ -2,11 +2,15 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/google/uuid"
 )
+
+// eventChanBufferSize is the buffer size for the event channel (creates backpressure when full).
+const eventChanBufferSize = 1024
 
 // Event represents an event that can be published to message providers (webhooks, email, etc.)
 type Event struct {
@@ -32,14 +36,21 @@ type eventPublisher interface {
 
 // MessagePublisherManager coordinates multiple message providers
 type MessagePublisherManager struct {
+	eventChan chan Event
 	providers []eventPublisher
 }
 
 // NewMessagePublisherManager creates a new message publisher manager
 func NewMessagePublisherManager() *MessagePublisherManager {
-	return &MessagePublisherManager{
+	m := &MessagePublisherManager{
+		eventChan: make(chan Event, eventChanBufferSize),
 		providers: make([]eventPublisher, 0),
 	}
+
+	// Start the worker in a dedicated goroutine
+	go m.startWorker()
+
+	return m
 }
 
 // RegisterProvider registers a message provider (webhooks, email, SMS, etc.)
@@ -61,7 +72,24 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(ctx context.Cont
 		Data:          data,
 		ChangedFields: changedFields,
 	}
-	for _, provider := range m.providers {
-		go provider.PublishEvent(ctx, event)
+
+	select {
+	case m.eventChan <- event:
+		slog.Debug("Event published to channel", "event_id", event.ID, "event_type", event.Type)
+	default:
+		slog.Warn("Event channel full, event dropped", "event_id", event.ID, "event_type", event.Type)
+	}
+}
+
+// startWorker runs in a dedicated goroutine, reading events from the channel
+// and fanning out each event to all registered providers. It is started with go
+// in NewMessagePublisherManager and runs for the lifetime of the manager.
+func (m *MessagePublisherManager) startWorker() {
+	ctx := context.Background()
+
+	for event := range m.eventChan {
+		for _, provider := range m.providers {
+			provider.PublishEvent(ctx, event)
+		}
 	}
 }
