@@ -77,7 +77,7 @@ func ValidateStruct(s any) error {
 // that can be used in RFC 7807 Problem Details responses
 func formatValidationErrors(err error) error {
 	if validationErrors, ok := err.(validator.ValidationErrors); ok {
-		var messages []string
+		messages := make([]string, 0, len(validationErrors))
 		for _, fieldError := range validationErrors {
 			messages = append(messages, formatFieldError(fieldError))
 		}

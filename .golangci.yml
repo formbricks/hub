@@ -32,7 +32,8 @@ linters:
     - modernize     # prefer modern Go (e.g. any instead of interface{})
     - noctx         # HTTP/DB calls should use context (timeouts, cancellation)
     - perfsprint    # prefer faster alternatives to fmt.Sprintf where possible
-    - rowserrcheck # Rows.Err must be checked after iterating
+    - prealloc      # slice declarations that could be pre-allocated
+    - rowserrcheck  # Rows.Err must be checked after iterating
     - sqlclosecheck # sql.Rows/Stmt must be closed
     - staticcheck   # static analysis
     - unused        # unused code
