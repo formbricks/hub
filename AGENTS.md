@@ -13,7 +13,7 @@
 - `make build`: build the API binary to `bin/api`.
 - `make tests`: run integration tests in `tests/`.
 - `make tests-coverage`: generate `coverage.html`.
-- `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations.
+- `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations (`-- +goose up` / `-- +goose down`). Name files with a sequential number and short description (e.g. `002_add_webhooks_table.sql`); goose orders by the numeric prefix.
 - `make fmt` / `make fmt-check`: format or verify formatting with `gofumpt`.
 - `make lint`: run `golangci-lint` (requires `make install-tools`).
 
