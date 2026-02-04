@@ -41,10 +41,7 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 		return nil, err
 	}
 
-	s.publisher.PublishEvent(ctx, Event{
-		Type: datatypes.FeedbackRecordCreated,
-		Data: *record,
-	})
+	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, *record)
 
 	return record, nil
 }
@@ -81,18 +78,12 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(ctx context.Context, filter
 
 // UpdateFeedbackRecord updates an existing feedback record
 func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
-	changedFields := s.getChangedFields(req)
-
 	record, err := s.repo.Update(ctx, id, req)
 	if err != nil {
 		return nil, err
 	}
 
-	s.publisher.PublishEvent(ctx, Event{
-		Type:          datatypes.FeedbackRecordUpdated,
-		Data:          *record,
-		ChangedFields: changedFields,
-	})
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, *record, s.getChangedFields(req))
 
 	return record, nil
 }
@@ -138,10 +129,7 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 		return err
 	}
 
-	s.publisher.PublishEvent(ctx, Event{
-		Type: datatypes.FeedbackRecordDeleted,
-		Data: *record,
-	})
+	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, *record)
 
 	return nil
 }

@@ -62,10 +62,8 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 	if s.cacheInvalidator != nil {
 		s.cacheInvalidator.InvalidateCache()
 	}
-	s.publisher.PublishEvent(ctx, Event{
-		Type: datatypes.WebhookCreated,
-		Data: *webhook,
-	})
+
+	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, *webhook)
 
 	return webhook, nil
 }
@@ -111,8 +109,6 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 
 // UpdateWebhook updates an existing webhook
 func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
-	changedFields := s.getChangedFields(req)
-
 	webhook, err := s.repo.Update(ctx, id, req)
 	if err != nil {
 		return nil, err
@@ -121,11 +117,8 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 	if s.cacheInvalidator != nil {
 		s.cacheInvalidator.InvalidateCache()
 	}
-	s.publisher.PublishEvent(ctx, Event{
-		Type:          datatypes.WebhookUpdated,
-		Data:          *webhook,
-		ChangedFields: changedFields,
-	})
+
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, s.getChangedFields(req))
 
 	return webhook, nil
 }
@@ -165,10 +158,8 @@ func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error
 	if s.cacheInvalidator != nil {
 		s.cacheInvalidator.InvalidateCache()
 	}
-	s.publisher.PublishEvent(ctx, Event{
-		Type: datatypes.WebhookDeleted,
-		Data: *webhook,
-	})
+
+	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, *webhook)
 
 	return nil
 }

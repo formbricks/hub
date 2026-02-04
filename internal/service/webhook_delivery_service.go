@@ -12,7 +12,6 @@ import (
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
-	"github.com/google/uuid"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
@@ -27,7 +26,7 @@ type WebhookCacheConfig struct {
 	MaxConcurrent int           // Max concurrent outbound HTTP calls (0 = 100)
 }
 
-// WebhookDeliveryService implements MessagePublisher for webhook delivery
+// WebhookDeliveryService implements eventPublisher for webhook delivery
 type WebhookDeliveryService struct {
 	repo         WebhooksRepository
 	httpClient   *http.Client
@@ -80,7 +79,7 @@ func NewWebhookDeliveryService(repo WebhooksRepository, cacheConfig *WebhookCach
 	return service
 }
 
-// PublishEvent publishes a single event to all enabled webhooks (implements MessagePublisher)
+// PublishEvent publishes a single event to all enabled webhooks (implements eventPublisher)
 func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) {
 	webhooks, err := s.getWebhooksForEventType(ctx, event.Type)
 	if err != nil {
@@ -113,7 +112,7 @@ func (s *WebhookDeliveryService) PublishEvent(ctx context.Context, event Event) 
 		return
 	}
 
-	messageID := uuid.New().String()
+	messageID := event.ID.String()
 
 	for _, webhook := range webhooks {
 		s.sem <- struct{}{} // acquire (blocks if at cap)
@@ -207,6 +206,7 @@ func (s *WebhookDeliveryService) InvalidateCache() {
 // eventToPayload converts an Event to a WebhookPayload
 func (s *WebhookDeliveryService) eventToPayload(event Event) (*WebhookPayload, error) {
 	payload := &WebhookPayload{
+		ID:        event.ID,
 		Type:      event.Type.String(),
 		Timestamp: time.Unix(event.Timestamp, 0),
 		Data:      event.Data,
