@@ -127,8 +127,11 @@ func main() {
 
 	if err := server.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
+		messageManager.Shutdown()
 		os.Exit(1)
 	}
+
+	messageManager.Shutdown()
 
 	slog.Info("Server exited")
 }

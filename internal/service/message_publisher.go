@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/formbricks/hub/internal/datatypes"
@@ -38,6 +39,7 @@ type eventPublisher interface {
 type MessagePublisherManager struct {
 	eventChan chan Event
 	providers []eventPublisher
+	wg        sync.WaitGroup
 }
 
 // NewMessagePublisherManager creates a new message publisher manager
@@ -48,6 +50,7 @@ func NewMessagePublisherManager() *MessagePublisherManager {
 	}
 
 	// Start the worker in a dedicated goroutine
+	m.wg.Add(1)
 	go m.startWorker()
 
 	return m
@@ -85,11 +88,23 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(ctx context.Cont
 // and fanning out each event to all registered providers. It is started with go
 // in NewMessagePublisherManager and runs for the lifetime of the manager.
 func (m *MessagePublisherManager) startWorker() {
-	ctx := context.Background()
+	defer m.wg.Done()
+	bgCtx := context.Background()
 
+	// This loop automatically breaks when m.eventChan is closed
 	for event := range m.eventChan {
+		// Create a timeout per event batch so one stuck DB call doesn't freeze the worker forever
+		ctx, cancel := context.WithTimeout(bgCtx, 10*time.Second)
+
 		for _, provider := range m.providers {
 			provider.PublishEvent(ctx, event)
 		}
+		cancel()
 	}
+}
+
+// Shutdown stops the background worker and waits for the buffer to drain.
+func (m *MessagePublisherManager) Shutdown() {
+	close(m.eventChan)
+	m.wg.Wait()
 }
