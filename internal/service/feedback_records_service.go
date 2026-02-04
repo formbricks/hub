@@ -1,3 +1,4 @@
+// Package service implements business logic for feedback records.
 package service
 
 import (

@@ -1,3 +1,4 @@
+// Package tests provides integration test helpers and utilities.
 package tests
 
 import (

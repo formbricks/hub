@@ -1,3 +1,4 @@
+// Package response provides HTTP response helpers and RFC 7807 problem details.
 package response
 
 import (
@@ -8,9 +9,9 @@ import (
 
 // ErrorDetail represents a single error detail in RFC 7807 Problem Details
 type ErrorDetail struct {
-	Location string      `json:"location,omitempty"`
-	Message  string      `json:"message,omitempty"`
-	Value    interface{} `json:"value,omitempty"`
+	Location string `json:"location,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Value    any    `json:"value,omitempty"`
 }
 
 // ProblemDetails represents an RFC 7807 Problem Details error response
@@ -24,7 +25,7 @@ type ProblemDetails struct {
 }
 
 // RespondError writes an RFC 7807 Problem Details error response
-func RespondError(w http.ResponseWriter, statusCode int, title string, detail string) {
+func RespondError(w http.ResponseWriter, statusCode int, title, detail string) {
 	problem := ProblemDetails{
 		Type:   "about:blank",
 		Title:  title,
@@ -60,7 +61,7 @@ func RespondInternalServerError(w http.ResponseWriter, detail string) {
 }
 
 // RespondJSON writes a JSON response directly without wrapping
-func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func RespondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {

@@ -1,3 +1,4 @@
+// Package errors provides sentinel and custom error types for the application.
 package errors
 
 import "fmt"

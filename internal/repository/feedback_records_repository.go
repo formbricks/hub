@@ -1,3 +1,4 @@
+// Package repository provides data access for feedback records.
 package repository
 
 import (
@@ -95,11 +96,10 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	return &record, nil
 }
 
-// buildFilterConditions builds WHERE clause conditions and arguments from filters
-// Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice
-func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, []interface{}) {
+// buildFilterConditions builds WHERE clause conditions and arguments from filters.
+// Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice.
+func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereClause string, args []any) {
 	var conditions []string
-	var args []interface{}
 	argCount := 1
 
 	if filters.TenantID != nil {
@@ -155,7 +155,6 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, 
 		args = append(args, *filters.Until)
 	}
 
-	whereClause := ""
 	if len(conditions) > 0 {
 		whereClause = " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -236,11 +235,10 @@ func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.L
 	return count, nil
 }
 
-// buildUpdateQuery builds an UPDATE query with SET clause and arguments
-// Returns the query string, arguments, and a boolean indicating if any updates were provided
-func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time) (string, []interface{}, bool) {
+// buildUpdateQuery builds an UPDATE query with SET clause and arguments.
+// Returns the query string, arguments, and a boolean indicating if any updates were provided.
+func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time) (query string, args []any, hasUpdates bool) {
 	var updates []string
-	var args []interface{}
 	argCount := 1
 
 	if req.ValueText != nil {
@@ -295,7 +293,7 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 
 	args = append(args, id)
 
-	query := fmt.Sprintf(`
+	query = fmt.Sprintf(`
 		UPDATE feedback_records
 		SET %s
 		WHERE id = $%d
@@ -354,7 +352,7 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 // BulkDelete deletes all feedback records matching user_identifier and optional tenant_id
 func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error) {
 	query := `DELETE FROM feedback_records WHERE user_identifier = $1`
-	args := []interface{}{userIdentifier}
+	args := []any{userIdentifier}
 	argCount := 2
 
 	if tenantID != nil {

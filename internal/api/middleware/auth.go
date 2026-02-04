@@ -1,3 +1,4 @@
+// Package middleware provides HTTP middleware (auth, logging, CORS).
 package middleware
 
 import (
@@ -21,7 +22,7 @@ func Auth(apiKey string) func(http.Handler) http.Handler {
 
 			// Expected format: "Bearer <api-key>"
 			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
 				response.RespondUnauthorized(w, "Invalid Authorization header format. Expected: Bearer <api-key>")
 				return
 			}

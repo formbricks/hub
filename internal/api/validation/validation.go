@@ -1,3 +1,4 @@
+// Package validation provides request validation and custom validators.
 package validation
 
 import (
@@ -39,7 +40,7 @@ func init() {
 
 	// Register custom type converters for form decoding
 	// Handle *time.Time (pointer type used in our models)
-	decoder.RegisterCustomTypeFunc(func(vals []string) (interface{}, error) {
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
 		if len(vals) == 0 || vals[0] == "" {
 			return (*time.Time)(nil), nil
 		}
@@ -51,7 +52,7 @@ func init() {
 	}, (*time.Time)(nil))
 
 	// Handle *models.FieldType (pointer type used in filters)
-	decoder.RegisterCustomTypeFunc(func(vals []string) (interface{}, error) {
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
 		if len(vals) == 0 || vals[0] == "" {
 			return (*models.FieldType)(nil), nil
 		}
@@ -65,7 +66,7 @@ func init() {
 
 // ValidateStruct validates a struct using go-playground/validator
 // Returns validation errors formatted as RFC 7807 Problem Details
-func ValidateStruct(s interface{}) error {
+func ValidateStruct(s any) error {
 	if err := validate.Struct(s); err != nil {
 		return formatValidationErrors(err)
 	}
@@ -154,7 +155,7 @@ func RespondValidationError(w http.ResponseWriter, err error) {
 }
 
 // DecodeQueryParams decodes URL query parameters into a struct
-func DecodeQueryParams(r *http.Request, dst interface{}) error {
+func DecodeQueryParams(r *http.Request, dst any) error {
 	if err := decoder.Decode(dst, r.URL.Query()); err != nil {
 		return fmt.Errorf("failed to decode query parameters: %w", err)
 	}
@@ -162,7 +163,7 @@ func DecodeQueryParams(r *http.Request, dst interface{}) error {
 }
 
 // ValidateAndDecodeQueryParams decodes and validates query parameters in one step
-func ValidateAndDecodeQueryParams(r *http.Request, dst interface{}) error {
+func ValidateAndDecodeQueryParams(r *http.Request, dst any) error {
 	if err := DecodeQueryParams(r, dst); err != nil {
 		return err
 	}
@@ -175,7 +176,7 @@ func validateFieldType(fl validator.FieldLevel) bool {
 	field := fl.Field()
 
 	// Handle FieldType enum type directly
-	if field.Type() == reflect.TypeOf(models.FieldType("")) {
+	if field.Type() == reflect.TypeFor[models.FieldType]() {
 		ft := models.FieldType(field.String())
 		return ft.IsValid()
 	}

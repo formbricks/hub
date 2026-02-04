@@ -1,7 +1,9 @@
+// Package config provides application configuration loaded from environment variables.
 package config
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"strconv"
 
@@ -43,7 +45,9 @@ func getEnvAsInt(key string, defaultValue int) int {
 // API_KEY is required and the function will return an error if it's not set.
 func Load() (*Config, error) {
 	// Load .env file if it exists (ignore error if file doesn't exist)
-	_ = godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		slog.Warn("Failed to load .env file", "error", err)
+	}
 
 	apiKey := os.Getenv("API_KEY")
 	if apiKey == "" {

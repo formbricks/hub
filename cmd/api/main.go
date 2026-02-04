@@ -1,3 +1,4 @@
+// Package main is the Formbricks Hub API server entrypoint.
 package main
 
 import (
@@ -19,13 +20,17 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	ctx := context.Background()
 
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Configure slog with the log level from config
@@ -35,7 +40,7 @@ func main() {
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer db.Close()
 
@@ -51,7 +56,6 @@ func main() {
 
 	// Apply middleware to public endpoints
 	var publicHandler http.Handler = publicMux
-	// publicHandler = middleware.CORS(publicHandler) // CORS disabled
 
 	// Set up protected endpoints (authentication required)
 	protectedMux := http.NewServeMux()
@@ -65,7 +69,6 @@ func main() {
 	// Apply middleware to protected endpoints
 	var protectedHandler http.Handler = protectedMux
 	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
-	// protectedHandler = middleware.CORS(protectedHandler)	// CORS disabled
 
 	// Combine both handlers
 	mainMux := http.NewServeMux()
@@ -89,7 +92,6 @@ func main() {
 		slog.Info("Starting server", "port", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Server error", "error", err)
-			os.Exit(1)
 		}
 	}()
 
@@ -100,15 +102,16 @@ func main() {
 
 	slog.Info("Shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	slog.Info("Server exited")
+	return 0
 }
 
 // setupLogging configures slog with the specified log level

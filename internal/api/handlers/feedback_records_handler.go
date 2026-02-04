@@ -1,3 +1,4 @@
+// Package handlers provides HTTP handlers for feedback records and health.
 package handlers
 
 import (

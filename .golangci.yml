@@ -1,0 +1,50 @@
+# golangci-lint v2 configuration
+# Run: make lint (requires make install-tools)
+# See: https://golangci-lint.run/docs/configuration/
+
+version: "2"
+
+run:
+  timeout: 5m
+  concurrency: 4
+  modules-download-mode: readonly
+  go: "1.25"
+
+output:
+  formats:
+    text:
+      path: stdout
+      colors: true
+      print-issued-lines: true
+      print-linter-name: true
+  sort-order: ["linter", "file"]
+
+# Linters: errcheck ensures returned errors are always handled (no silent ignoring).
+linters:
+  default: none
+  enable:
+    - errcheck      # must use returned errors
+    - gocritic      # error handling and style
+    - govet         # standard go vet
+    - ineffassign   # ineffective assignments
+    - modernize     # prefer modern Go (e.g. any instead of interface{})
+    - staticcheck   # static analysis
+    - unused        # unused code
+    - revive        # fast, configurable
+  exclusions:
+    rules:
+      # internal/errors is intentionally named for domain errors; conflicts with stdlib "errors" package name
+      - path: internal/errors
+        linters:
+          - revive
+  settings:
+    errcheck:
+      check-blank: true           # report when error discarded with _
+      check-type-assertions: true # report unchecked type assertions
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - hugeParam  # often too noisy for large structs
