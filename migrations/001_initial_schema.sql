@@ -67,7 +67,8 @@ CREATE INDEX idx_feedback_records_tenant_source_type ON feedback_records(tenant_
 CREATE INDEX idx_feedback_records_tenant_field_type ON feedback_records(tenant_id, field_type);
 
 -- +goose down
+-- Extensions (vector, pgcrypto) are not dropped: in shared database environments
+-- other tables may depend on them. Safe for isolated deployments only if you
+-- explicitly drop extensions elsewhere.
 DROP TABLE IF EXISTS feedback_records;
 DROP TYPE IF EXISTS field_type_enum;
-DROP EXTENSION IF EXISTS vector;
-DROP EXTENSION IF EXISTS "pgcrypto";
