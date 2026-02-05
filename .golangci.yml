@@ -91,10 +91,6 @@ issues:
   max-same-issues: 0
 
   exclude-rules:
-    # Exclude internal/errors from revive to avoid package name conflicts
-    - path: internal/errors
-      linters:
-        - revive
     # Tests are allowed to be more relaxed
     - path: _test\.go
       linters:
