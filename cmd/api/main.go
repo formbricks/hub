@@ -114,7 +114,7 @@ func run() int {
 	return 0
 }
 
-// setupLogging configures slog with the specified log level
+// setupLogging configures slog with the specified log level.
 func setupLogging(level string) {
 	var logLevel slog.Level
 	switch strings.ToLower(level) {

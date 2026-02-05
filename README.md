@@ -83,7 +83,7 @@ make dev-setup
 This will:
 - Start PostgreSQL container
 - Install Go dependencies
-- Install development tools (gofumpt, golangci-lint, goose)
+- Install development tools (golangci-lint, govulncheck, goose)
 - Run database migrations (goose)
 - Install git hooks for code quality
 
@@ -229,11 +229,10 @@ make install-hooks
 ```
 
 The pre-commit hook automatically:
-1. Checks for potential secrets in staged changes (warning only)
-2. Formats staged Go files with `gofumpt`
-3. Runs the linter (`golangci-lint`)
+1. Validates migration files when `migrations/` is changed
+2. Runs `golangci-lint run --fix` (format and fixable issues), then the linter (includes gosec for secrets in Go code)
 
-If formatting or linting fails, the commit is blocked.
+If any check fails, the commit is blocked.
 
 **Note:** Git hooks are automatically installed when you run `make dev-setup`.
 

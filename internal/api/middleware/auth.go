@@ -10,7 +10,7 @@ import (
 
 // Auth middleware validates API keys from the Authorization header
 // It compares the provided key against the API key from configuration
-// The apiKey parameter must not be empty (enforced at server startup)
+// The apiKey parameter must not be empty (enforced at server startup).
 func Auth(apiKey string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -10,7 +10,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Config holds all application configuration
+// Config holds all application configuration.
 type Config struct {
 	DatabaseURL string
 	Port        string
@@ -18,7 +18,7 @@ type Config struct {
 	LogLevel    string
 }
 
-// getEnv retrieves an environment variable or returns a default value
+// getEnv retrieves an environment variable or returns a default value.
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -26,7 +26,7 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getEnvAsInt retrieves an environment variable as an integer or returns a default value
+// getEnvAsInt retrieves an environment variable as an integer or returns a default value.
 func getEnvAsInt(key string, defaultValue int) int {
 	valueStr := os.Getenv(key)
 	if valueStr == "" {

@@ -10,6 +10,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
@@ -17,8 +20,6 @@ import (
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/pkg/database"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
@@ -86,14 +87,19 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 // decodeData decodes JSON responses directly from the response body.
 // The API handlers use RespondJSON which encodes responses directly without wrapping.
 func decodeData(resp *http.Response, v any) error {
-	return json.NewDecoder(resp.Body).Decode(v)
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
 }
 
 func TestHealthEndpoint(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	resp, err := http.Get(server.URL + "/health")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/health", http.NoBody)
+	require.NoError(t, err)
+	resp, err := (&http.Client{}).Do(req)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
@@ -120,7 +126,10 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		resp, err := http.Post(server.URL+"/v1/feedback-records", "application/json", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := (&http.Client{}).Do(req)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, resp.Body.Close()) }()
 
@@ -138,7 +147,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 		req.Header.Set("Content-Type", "application/json")
@@ -162,7 +171,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer ")
 		req.Header.Set("Content-Type", "application/json")
@@ -186,7 +195,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "InvalidFormat")
 		req.Header.Set("Content-Type", "application/json")
@@ -210,7 +219,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
@@ -242,7 +251,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
@@ -264,7 +273,7 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 
@@ -284,7 +293,7 @@ func TestListFeedbackRecords(t *testing.T) {
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
-	req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -294,7 +303,7 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	// Test listing feedback records
 	t.Run("List all feedback records", func(t *testing.T) {
-		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -313,7 +322,7 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	// Test with filters
 	t.Run("List with source_type filter", func(t *testing.T) {
-		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records?source_type=formbricks&limit=10", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records?source_type=formbricks&limit=10", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -341,7 +350,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 
@@ -361,7 +370,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
-	req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -376,7 +385,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 	// Test getting the feedback record by ID
 	t.Run("Get existing feedback record", func(t *testing.T) {
-		req, err := http.NewRequest("GET", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -395,7 +404,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 	})
 
 	t.Run("Get non-existent feedback record", func(t *testing.T) {
-		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -421,7 +430,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(updateBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequest("PATCH", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 		req.Header.Set("Content-Type", "application/json")
@@ -442,7 +451,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
-	req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -463,7 +472,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(updateBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
@@ -492,7 +501,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, err := http.NewRequest("DELETE", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 
@@ -512,7 +521,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
-	req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -527,7 +536,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	// Test deleting the feedback record
 	t.Run("Delete feedback record", func(t *testing.T) {
-		req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -540,7 +549,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	// Verify it's deleted
 	t.Run("Verify deletion", func(t *testing.T) {
-		req, err := http.NewRequest("GET", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 

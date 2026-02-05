@@ -7,14 +7,14 @@ import (
 	"net/http"
 )
 
-// ErrorDetail represents a single error detail in RFC 7807 Problem Details
+// ErrorDetail represents a single error detail in RFC 7807 Problem Details.
 type ErrorDetail struct {
 	Location string `json:"location,omitempty"`
 	Message  string `json:"message,omitempty"`
 	Value    any    `json:"value,omitempty"`
 }
 
-// ProblemDetails represents an RFC 7807 Problem Details error response
+// ProblemDetails represents an RFC 7807 Problem Details error response.
 type ProblemDetails struct {
 	Type     string        `json:"type,omitempty"`
 	Title    string        `json:"title"`
@@ -24,7 +24,7 @@ type ProblemDetails struct {
 	Errors   []ErrorDetail `json:"errors,omitempty"`
 }
 
-// RespondError writes an RFC 7807 Problem Details error response
+// RespondError writes an RFC 7807 Problem Details error response.
 func RespondError(w http.ResponseWriter, statusCode int, title, detail string) {
 	problem := ProblemDetails{
 		Type:   "about:blank",
@@ -40,27 +40,27 @@ func RespondError(w http.ResponseWriter, statusCode int, title, detail string) {
 	}
 }
 
-// RespondBadRequest writes a 400 Bad Request error response
+// RespondBadRequest writes a 400 Bad Request error response.
 func RespondBadRequest(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusBadRequest, "Bad Request", detail)
 }
 
-// RespondUnauthorized writes a 401 Unauthorized error response
+// RespondUnauthorized writes a 401 Unauthorized error response.
 func RespondUnauthorized(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusUnauthorized, "Unauthorized", detail)
 }
 
-// RespondNotFound writes a 404 Not Found error response
+// RespondNotFound writes a 404 Not Found error response.
 func RespondNotFound(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusNotFound, "Not Found", detail)
 }
 
-// RespondInternalServerError writes a 500 Internal Server Error response
+// RespondInternalServerError writes a 500 Internal Server Error response.
 func RespondInternalServerError(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusInternalServerError, "Internal Server Error", detail)
 }
 
-// RespondJSON writes a JSON response directly without wrapping
+// RespondJSON writes a JSON response directly without wrapping.
 func RespondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
