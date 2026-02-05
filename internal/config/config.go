@@ -44,8 +44,8 @@ func getEnvAsInt(key string, defaultValue int) int {
 // Returns default values for any missing environment variables.
 // API_KEY is required and the function will return an error if it's not set.
 func Load() (*Config, error) {
-	// Load .env file if it exists (ignore error if file doesn't exist)
-	if err := godotenv.Load(); err != nil {
+	// Load .env file if it exists. Skip logging when absent (e.g. env from secrets/parameter store).
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("Failed to load .env file", "error", err)
 	}
 
