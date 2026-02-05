@@ -1,3 +1,4 @@
+// Package models defines request/response and domain types for feedback records.
 package models
 
 import (
@@ -8,9 +9,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// FieldType represents the type of feedback field
+// FieldType represents the type of feedback field.
 type FieldType string
 
+// Valid FieldType constants for feedback fields (NPS, CSAT, CES, rating, etc.).
 const (
 	FieldTypeText        FieldType = "text"
 	FieldTypeCategorical FieldType = "categorical"
@@ -23,7 +25,7 @@ const (
 	FieldTypeDate        FieldType = "date"
 )
 
-// ValidFieldTypes contains all valid field type values (set membership)
+// ValidFieldTypes contains all valid field type values (set membership).
 var ValidFieldTypes = map[FieldType]struct{}{
 	FieldTypeText:        {},
 	FieldTypeCategorical: {},
@@ -36,13 +38,13 @@ var ValidFieldTypes = map[FieldType]struct{}{
 	FieldTypeDate:        {},
 }
 
-// IsValid returns true if the FieldType is valid
+// IsValid returns true if the FieldType is valid.
 func (ft FieldType) IsValid() bool {
 	_, valid := ValidFieldTypes[ft]
 	return valid
 }
 
-// ParseFieldType parses a string to FieldType, returns error if invalid
+// ParseFieldType parses a string to FieldType, returns error if invalid.
 func ParseFieldType(s string) (FieldType, error) {
 	ft := FieldType(s)
 	if !ft.IsValid() {
@@ -51,11 +53,11 @@ func ParseFieldType(s string) (FieldType, error) {
 	return ft, nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler to validate field type during JSON unmarshaling
+// UnmarshalJSON implements json.Unmarshaler to validate field type during JSON unmarshaling.
 func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
-		return err
+		return fmt.Errorf("unmarshal field type: %w", err)
 	}
 	parsed, err := ParseFieldType(s)
 	if err != nil {
@@ -65,7 +67,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// FeedbackRecord represents a single feedback record
+// FeedbackRecord represents a single feedback record.
 type FeedbackRecord struct {
 	ID              uuid.UUID       `json:"id"`
 	CollectedAt     time.Time       `json:"collected_at"`
@@ -89,7 +91,7 @@ type FeedbackRecord struct {
 	TenantID        *string         `json:"tenant_id,omitempty"`
 }
 
-// CreateFeedbackRecordRequest represents the request to create a feedback record
+// CreateFeedbackRecordRequest represents the request to create a feedback record.
 type CreateFeedbackRecordRequest struct {
 	CollectedAt     *time.Time      `json:"collected_at,omitempty"`
 	SourceType      string          `json:"source_type" validate:"required,no_null_bytes,min=1,max=255"`
@@ -111,7 +113,7 @@ type CreateFeedbackRecordRequest struct {
 }
 
 // UpdateFeedbackRecordRequest represents the request to update a feedback record
-// Only value fields, metadata, language, and user_identifier can be updated
+// Only value fields, metadata, language, and user_identifier can be updated.
 type UpdateFeedbackRecordRequest struct {
 	ValueText      *string         `json:"value_text,omitempty" validate:"omitempty,no_null_bytes"`
 	ValueNumber    *float64        `json:"value_number,omitempty"`
@@ -122,7 +124,7 @@ type UpdateFeedbackRecordRequest struct {
 	UserIdentifier *string         `json:"user_identifier,omitempty"`
 }
 
-// ListFeedbackRecordsFilters represents filters for listing feedback records
+// ListFeedbackRecordsFilters represents filters for listing feedback records.
 type ListFeedbackRecordsFilters struct {
 	TenantID       *string    `form:"tenant_id" validate:"omitempty,no_null_bytes"`
 	SourceType     *string    `form:"source_type" validate:"omitempty,no_null_bytes"`
@@ -137,7 +139,7 @@ type ListFeedbackRecordsFilters struct {
 	Offset         int        `form:"offset" validate:"omitempty,min=0"`
 }
 
-// ListFeedbackRecordsResponse represents the response for listing feedback records
+// ListFeedbackRecordsResponse represents the response for listing feedback records.
 type ListFeedbackRecordsResponse struct {
 	Data   []FeedbackRecord `json:"data"`
 	Total  int64            `json:"total"`
@@ -145,13 +147,13 @@ type ListFeedbackRecordsResponse struct {
 	Offset int              `json:"offset"`
 }
 
-// BulkDeleteFilters represents query parameters for bulk delete operation
+// BulkDeleteFilters represents query parameters for bulk delete operation.
 type BulkDeleteFilters struct {
 	UserIdentifier string  `form:"user_identifier" validate:"required,no_null_bytes,min=1"`
 	TenantID       *string `form:"tenant_id" validate:"omitempty,no_null_bytes"`
 }
 
-// BulkDeleteResponse represents the response for bulk delete operation
+// BulkDeleteResponse represents the response for bulk delete operation.
 type BulkDeleteResponse struct {
 	DeletedCount int64  `json:"deleted_count"`
 	Message      string `json:"message"`

@@ -1,0 +1,129 @@
+# golangci-lint v2 configuration
+# Run: make lint (requires make install-tools)
+# See: https://golangci-lint.run/docs/configuration/
+# Optimized for: Safety, Strict Modern Standards, and Performance
+
+version: "2"
+
+run:
+  timeout: 5m
+  concurrency: 4
+  modules-download-mode: readonly
+  go: "1.25"
+  # Allow linting test files but suppress specific strict rules via exclusion below
+  tests: true
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-issued-lines: true
+      print-linter-name: true
+  sort-order: ["linter", "file"]
+
+formatters:
+  enable:
+    - gci     # Deterministic import ordering
+    - gofumpt # Stricter gofmt (gold standard for formatting)
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/formbricks/hub)
+    gofumpt:
+      extra-rules: true
+
+linters:
+  # Disable everything first to have full control
+  disable-all: true
+  enable:
+    ## 1. Bugs & Logic
+    - bodyclose     # Checks HTTP response bodies are closed
+    - errcheck      # checks for unchecked errors
+    - govet         # standard vetted checks
+    - staticcheck   # massive suite of static analysis checks
+    - ineffassign   # detects when assignments are not used
+    - nilerr        # Reports return nil, err when err is not nil (Subtle bug catcher!)
+    - noctx         # Ensures Context is sent to HTTP/DB requests
+    - contextcheck  # Stricter: context must be first param and propagated correctly
+    - rowserrcheck  # checks if rows.Err() is checked
+    - sqlclosecheck # checks if rows/statements are closed
+    - durationcheck # detects multiplying two durations (logic error)
+    - copyloopvar   # detects loop variable capture issues (modern replacement for exportloopref)
+
+    ## 2. Modern Error Handling
+    - errorlint     # Enforces errors.Is/As and fmt.Errorf("%w") (CRITICAL for modern Go)
+    - wrapcheck     # Enforces wrapping errors from external packages for context
+
+    ## 3. Performance
+    - perfsprint    # Checks for optimized usage of fmt.Sprintf
+    - prealloc      # Encourages pre-allocating slices
+    - makezero      # Prevents slice initialization with length + append (common perf bug)
+
+    ## 4. Security
+    - gosec         # Security scanner (SQLi, hardcoded creds, etc.)
+
+    ## 4b. Exhaustiveness & stdlib
+    - exhaustive    # Exhaustive switch on enum-like types (catch missing cases)
+    - usestdlibvars # Prefer http.StatusOK, time.Kitchen etc. over magic numbers
+
+    ## 5. Style & Formatting (The "Clean" factor)
+    - revive        # Faster, configurable replacement for golint
+    - misspell      # Fixes typos
+    - godot         # Comments should end in a period
+    - unparam       # Reports unused function parameters
+    - unused        # Reports unused constants, variables, functions and types
+    - sloglint      # Structured logging (log/slog) best practices — you use slog
+
+    ## 6. Code Quality/Complexity
+    - gocritic      # Opinionated checks for bugs, performance, and style
+    - modernize     # Suggests newer Go language features
+    - nolintlint    # Ensures //nolint comments are actually useful and formatted
+
+    ## 7. Testing
+    - testifylint   # Checks for misuse of testify/require and testify/assert
+
+issues:
+  # Maximum issues count per one linter. Set to 0 to disable.
+  max-issues-per-linter: 0
+  # Maximum count of issues with the same text. Set to 0 to disable.
+  max-same-issues: 0
+
+  exclude-rules:
+    # Tests are allowed to be more relaxed
+    - path: _test\.go
+      linters:
+        - noctx         # HTTP requests in tests often don't need context
+        - contextcheck  # same: test helpers may not propagate context
+        - wrapcheck     # We don't usually wrap errors in test assertions
+        - gosec         # Weak RNG is fine in tests
+        - bodyclose     # often irrelevant in simple test logic
+        - funlen        # tests can be long
+        - exhaustive    # test switch on types often intentionally partial
+
+linters-settings:
+  # Error checking strictness
+  errcheck:
+    check-blank: true
+    check-type-assertions: true
+
+  # Modern error handling strictness
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+
+  # Code Critic options
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - hugeParam # optional: can be noisy, re-enable if you want strict struct passing rules
+
+  # Ensure nolint comments explain WHY they are ignoring something
+  nolintlint:
+    require-explanation: true
+    require-specific: true

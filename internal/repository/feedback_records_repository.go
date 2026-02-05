@@ -1,29 +1,32 @@
+// Package repository provides data access for feedback records.
 package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	apperrors "github.com/formbricks/hub/internal/errors"
-	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/models"
 )
 
-// FeedbackRecordsRepository handles data access for feedback records
+// FeedbackRecordsRepository handles data access for feedback records.
 type FeedbackRecordsRepository struct {
 	db *pgxpool.Pool
 }
 
-// NewFeedbackRecordsRepository creates a new feedback records repository
+// NewFeedbackRecordsRepository creates a new feedback records repository.
 func NewFeedbackRecordsRepository(db *pgxpool.Pool) *FeedbackRecordsRepository {
 	return &FeedbackRecordsRepository{db: db}
 }
 
-// Create inserts a new feedback record
+// Create inserts a new feedback record.
 func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
 	collectedAt := time.Now()
 	if req.CollectedAt != nil {
@@ -65,7 +68,7 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 	return &record, nil
 }
 
-// GetByID retrieves a single feedback record by ID
+// GetByID retrieves a single feedback record by ID.
 func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
@@ -86,8 +89,8 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
 	}
@@ -95,11 +98,10 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	return &record, nil
 }
 
-// buildFilterConditions builds WHERE clause conditions and arguments from filters
-// Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice
-func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, []interface{}) {
+// buildFilterConditions builds WHERE clause conditions and arguments from filters.
+// Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice.
+func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereClause string, args []any) {
 	var conditions []string
-	var args []interface{}
 	argCount := 1
 
 	if filters.TenantID != nil {
@@ -155,7 +157,6 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, 
 		args = append(args, *filters.Until)
 	}
 
-	whereClause := ""
 	if len(conditions) > 0 {
 		whereClause = " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -163,7 +164,7 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (string, 
 	return whereClause, args
 }
 
-// List retrieves feedback records with optional filters
+// List retrieves feedback records with optional filters.
 func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
@@ -220,7 +221,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	return records, nil
 }
 
-// Count returns the total count of feedback records matching the filters
+// Count returns the total count of feedback records matching the filters.
 func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error) {
 	query := `SELECT COUNT(*) FROM feedback_records`
 
@@ -236,11 +237,10 @@ func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.L
 	return count, nil
 }
 
-// buildUpdateQuery builds an UPDATE query with SET clause and arguments
-// Returns the query string, arguments, and a boolean indicating if any updates were provided
-func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time) (string, []interface{}, bool) {
+// buildUpdateQuery builds an UPDATE query with SET clause and arguments.
+// Returns the query string, arguments, and a boolean indicating if any updates were provided.
+func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time) (query string, args []any, hasUpdates bool) {
 	var updates []string
-	var args []interface{}
 	argCount := 1
 
 	if req.ValueText != nil {
@@ -295,7 +295,7 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 
 	args = append(args, id)
 
-	query := fmt.Sprintf(`
+	query = fmt.Sprintf(`
 		UPDATE feedback_records
 		SET %s
 		WHERE id = $%d
@@ -310,7 +310,7 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 }
 
 // Update updates an existing feedback record
-// Only value fields, metadata, language, and user_identifier can be updated
+// Only value fields, metadata, language, and user_identifier can be updated.
 func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
 	query, args, hasUpdates := buildUpdateQuery(req, id, time.Now())
 	if !hasUpdates {
@@ -326,8 +326,8 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 		return nil, fmt.Errorf("failed to update feedback record: %w", err)
 	}
@@ -335,7 +335,7 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 	return &record, nil
 }
 
-// Delete removes a feedback record
+// Delete removes a feedback record.
 func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM feedback_records WHERE id = $1`
 
@@ -345,16 +345,16 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 	}
 
 	if result.RowsAffected() == 0 {
-		return apperrors.NewNotFoundError("feedback record", "feedback record not found")
+		return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 	}
 
 	return nil
 }
 
-// BulkDelete deletes all feedback records matching user_identifier and optional tenant_id
+// BulkDelete deletes all feedback records matching user_identifier and optional tenant_id.
 func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error) {
 	query := `DELETE FROM feedback_records WHERE user_identifier = $1`
-	args := []interface{}{userIdentifier}
+	args := []any{userIdentifier}
 	argCount := 2
 
 	if tenantID != nil {

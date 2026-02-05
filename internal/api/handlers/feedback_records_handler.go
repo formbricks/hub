@@ -1,3 +1,4 @@
+// Package handlers provides HTTP handlers for feedback records and health.
 package handlers
 
 import (
@@ -7,11 +8,12 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/api/validation"
-	apperrors "github.com/formbricks/hub/internal/errors"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
-	"github.com/google/uuid"
 )
 
 // FeedbackRecordsService defines the interface for feedback records business logic.
@@ -24,17 +26,17 @@ type FeedbackRecordsService interface {
 	BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
 }
 
-// FeedbackRecordsHandler handles HTTP requests for feedback records
+// FeedbackRecordsHandler handles HTTP requests for feedback records.
 type FeedbackRecordsHandler struct {
 	service FeedbackRecordsService
 }
 
-// NewFeedbackRecordsHandler creates a new feedback records handler
+// NewFeedbackRecordsHandler creates a new feedback records handler.
 func NewFeedbackRecordsHandler(service FeedbackRecordsService) *FeedbackRecordsHandler {
 	return &FeedbackRecordsHandler{service: service}
 }
 
-// Create handles POST /v1/feedback-records
+// Create handles POST /v1/feedback-records.
 func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateFeedbackRecordRequest
 	decoder := json.NewDecoder(r.Body)
@@ -52,7 +54,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 
 	record, err := h.service.CreateFeedbackRecord(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
@@ -63,7 +65,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	response.RespondJSON(w, http.StatusCreated, record)
 }
 
-// Get handles GET /v1/feedback-records/{id}
+// Get handles GET /v1/feedback-records/{id}.
 func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
@@ -79,7 +81,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	record, err := h.service.GetFeedbackRecord(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
@@ -90,7 +92,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, record)
 }
 
-// List handles GET /v1/feedback-records
+// List handles GET /v1/feedback-records.
 func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	filters := &models.ListFeedbackRecordsFilters{}
 
@@ -109,7 +111,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
-// Update handles PATCH /v1/feedback-records/{id}
+// Update handles PATCH /v1/feedback-records/{id}.
 func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
@@ -139,7 +141,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 
 	record, err := h.service.UpdateFeedbackRecord(r.Context(), id, &req)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
@@ -150,7 +152,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	response.RespondJSON(w, http.StatusOK, record)
 }
 
-// Delete handles DELETE /v1/feedback-records/{id}
+// Delete handles DELETE /v1/feedback-records/{id}.
 func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
@@ -165,7 +167,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.service.DeleteFeedbackRecord(r.Context(), id); err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
@@ -176,7 +178,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// BulkDelete handles DELETE /v1/feedback-records?user_identifier=<id>
+// BulkDelete handles DELETE /v1/feedback-records?user_identifier=<id>.
 func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	filters := &models.BulkDeleteFilters{}
 
