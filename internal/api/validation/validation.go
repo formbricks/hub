@@ -3,6 +3,7 @@ package validation
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,10 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/formbricks/hub/internal/api/response"
-	"github.com/formbricks/hub/internal/models"
 	"github.com/go-playground/form/v4"
 	"github.com/go-playground/validator/v10"
+
+	"github.com/formbricks/hub/internal/api/response"
+	"github.com/formbricks/hub/internal/models"
 )
 
 var (
@@ -65,7 +67,7 @@ func init() {
 }
 
 // ValidateStruct validates a struct using go-playground/validator
-// Returns validation errors formatted as RFC 7807 Problem Details
+// Returns validation errors formatted as RFC 7807 Problem Details.
 func ValidateStruct(s any) error {
 	if err := validate.Struct(s); err != nil {
 		return formatValidationErrors(err)
@@ -74,9 +76,10 @@ func ValidateStruct(s any) error {
 }
 
 // formatValidationErrors converts validator errors to a formatted error message
-// that can be used in RFC 7807 Problem Details responses
+// that can be used in RFC 7807 Problem Details responses.
 func formatValidationErrors(err error) error {
-	if validationErrors, ok := err.(validator.ValidationErrors); ok {
+	var validationErrors validator.ValidationErrors
+	if errors.As(err, &validationErrors) {
 		messages := make([]string, 0, len(validationErrors))
 		for _, fieldError := range validationErrors {
 			messages = append(messages, formatFieldError(fieldError))
@@ -86,7 +89,7 @@ func formatValidationErrors(err error) error {
 	return err
 }
 
-// formatFieldError formats a single field validation error
+// formatFieldError formats a single field validation error.
 func formatFieldError(fieldError validator.FieldError) string {
 	field := fieldError.Field()
 	tag := fieldError.Tag()
@@ -118,11 +121,12 @@ func formatFieldError(fieldError validator.FieldError) string {
 }
 
 // GetValidationErrorDetails extracts field-level error details from validation errors
-// Returns a slice of ErrorDetail for RFC 7807 Problem Details
+// Returns a slice of ErrorDetail for RFC 7807 Problem Details.
 func GetValidationErrorDetails(err error) []response.ErrorDetail {
 	var details []response.ErrorDetail
 
-	if validationErrors, ok := err.(validator.ValidationErrors); ok {
+	var validationErrors validator.ValidationErrors
+	if errors.As(err, &validationErrors) {
 		for _, fieldError := range validationErrors {
 			details = append(details, response.ErrorDetail{
 				Location: fieldError.Field(),
@@ -135,7 +139,7 @@ func GetValidationErrorDetails(err error) []response.ErrorDetail {
 	return details
 }
 
-// RespondValidationError writes a validation error response with RFC 7807 Problem Details
+// RespondValidationError writes a validation error response with RFC 7807 Problem Details.
 func RespondValidationError(w http.ResponseWriter, err error) {
 	details := GetValidationErrorDetails(err)
 
@@ -154,7 +158,7 @@ func RespondValidationError(w http.ResponseWriter, err error) {
 	}
 }
 
-// DecodeQueryParams decodes URL query parameters into a struct
+// DecodeQueryParams decodes URL query parameters into a struct.
 func DecodeQueryParams(r *http.Request, dst any) error {
 	if err := decoder.Decode(dst, r.URL.Query()); err != nil {
 		return fmt.Errorf("failed to decode query parameters: %w", err)
@@ -162,7 +166,7 @@ func DecodeQueryParams(r *http.Request, dst any) error {
 	return nil
 }
 
-// ValidateAndDecodeQueryParams decodes and validates query parameters in one step
+// ValidateAndDecodeQueryParams decodes and validates query parameters in one step.
 func ValidateAndDecodeQueryParams(r *http.Request, dst any) error {
 	if err := DecodeQueryParams(r, dst); err != nil {
 		return err
@@ -171,7 +175,7 @@ func ValidateAndDecodeQueryParams(r *http.Request, dst any) error {
 }
 
 // validateFieldType is a custom validator for field_type enum
-// It validates both string and FieldType types
+// It validates both string and FieldType types.
 func validateFieldType(fl validator.FieldLevel) bool {
 	field := fl.Field()
 
@@ -191,7 +195,7 @@ func validateFieldType(fl validator.FieldLevel) bool {
 }
 
 // validateNoNullBytes checks that a string field does not contain NULL bytes
-// Handles both string and *string types
+// Handles both string and *string types.
 func validateNoNullBytes(fl validator.FieldLevel) bool {
 	field := fl.Field()
 

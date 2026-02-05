@@ -2,13 +2,15 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
-	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/google/uuid"
+
+	"github.com/formbricks/hub/internal/datatypes"
 )
 
-// Webhook represents a webhook endpoint
+// Webhook represents a webhook endpoint.
 type Webhook struct {
 	ID             uuid.UUID             `json:"id"`
 	URL            string                `json:"url"`
@@ -22,7 +24,7 @@ type Webhook struct {
 	DisabledAt     *time.Time            `json:"disabled_at,omitempty"`
 }
 
-// MarshalJSON converts []datatypes.EventType to JSON string array
+// MarshalJSON converts []datatypes.EventType to JSON string array.
 func (w *Webhook) MarshalJSON() ([]byte, error) {
 	type Alias Webhook
 	aux := &struct {
@@ -32,10 +34,14 @@ func (w *Webhook) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(w),
 	}
 	aux.EventTypes = datatypes.EventTypeStrings(w.EventTypes)
-	return json.Marshal(aux)
+	data, err := json.Marshal(aux)
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook: %w", err)
+	}
+	return data, nil
 }
 
-// UnmarshalJSON converts JSON string array to []datatypes.EventType
+// UnmarshalJSON converts JSON string array to []datatypes.EventType.
 func (w *Webhook) UnmarshalJSON(data []byte) error {
 	type Alias Webhook
 	aux := &struct {
@@ -45,17 +51,17 @@ func (w *Webhook) UnmarshalJSON(data []byte) error {
 		Alias: (*Alias)(w),
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
+		return fmt.Errorf("unmarshal webhook: %w", err)
 	}
 	parsed, err := datatypes.ParseEventTypes(aux.EventTypes)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse event types: %w", err)
 	}
 	w.EventTypes = parsed
 	return nil
 }
 
-// CreateWebhookRequest represents the request to create a webhook
+// CreateWebhookRequest represents the request to create a webhook.
 type CreateWebhookRequest struct {
 	URL        string                `json:"url" validate:"required,no_null_bytes,min=1,max=2048"`
 	SigningKey string                `json:"signing_key,omitempty"`
@@ -64,7 +70,7 @@ type CreateWebhookRequest struct {
 	EventTypes []datatypes.EventType `json:"event_types,omitempty"`
 }
 
-// UnmarshalJSON converts JSON string array to []datatypes.EventType
+// UnmarshalJSON converts JSON string array to []datatypes.EventType.
 func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 	type Alias CreateWebhookRequest
 	aux := &struct {
@@ -74,11 +80,11 @@ func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 		Alias: (*Alias)(r),
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
+		return fmt.Errorf("unmarshal create webhook request: %w", err)
 	}
 	parsed, err := datatypes.ParseEventTypes(aux.EventTypes)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse event types: %w", err)
 	}
 	r.EventTypes = parsed
 	return nil
@@ -97,7 +103,7 @@ type UpdateWebhookRequest struct {
 	DisabledAt     *time.Time             `json:"-"` // read-only; set by system when disabling
 }
 
-// UnmarshalJSON converts JSON string array to *[]datatypes.EventType
+// UnmarshalJSON converts JSON string array to *[]datatypes.EventType.
 func (r *UpdateWebhookRequest) UnmarshalJSON(data []byte) error {
 	type Alias UpdateWebhookRequest
 	aux := &struct {
@@ -107,19 +113,19 @@ func (r *UpdateWebhookRequest) UnmarshalJSON(data []byte) error {
 		Alias: (*Alias)(r),
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
+		return fmt.Errorf("unmarshal update webhook request: %w", err)
 	}
 	if aux.EventTypes != nil {
 		parsed, err := datatypes.ParseEventTypes(aux.EventTypes)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse event types: %w", err)
 		}
 		r.EventTypes = &parsed
 	}
 	return nil
 }
 
-// MarshalJSON converts *[]datatypes.EventType to JSON string array
+// MarshalJSON converts *[]datatypes.EventType to JSON string array.
 func (r *UpdateWebhookRequest) MarshalJSON() ([]byte, error) {
 	type Alias UpdateWebhookRequest
 	aux := &struct {
@@ -131,10 +137,14 @@ func (r *UpdateWebhookRequest) MarshalJSON() ([]byte, error) {
 	if r.EventTypes != nil {
 		aux.EventTypes = datatypes.EventTypeStrings(*r.EventTypes)
 	}
-	return json.Marshal(aux)
+	data, err := json.Marshal(aux)
+	if err != nil {
+		return nil, fmt.Errorf("marshal update webhook request: %w", err)
+	}
+	return data, nil
 }
 
-// ListWebhooksFilters represents filters for listing webhooks
+// ListWebhooksFilters represents filters for listing webhooks.
 type ListWebhooksFilters struct {
 	Enabled  *bool   `form:"enabled"`
 	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes"`
@@ -142,7 +152,7 @@ type ListWebhooksFilters struct {
 	Offset   int     `form:"offset" validate:"omitempty,min=0"`
 }
 
-// ListWebhooksResponse represents the response for listing webhooks
+// ListWebhooksResponse represents the response for listing webhooks.
 type ListWebhooksResponse struct {
 	Data   []Webhook `json:"data"`
 	Total  int64     `json:"total"`

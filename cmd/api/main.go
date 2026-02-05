@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
@@ -18,8 +22,11 @@ import (
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
 	"github.com/formbricks/hub/pkg/database"
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+)
+
+const (
+	exitSuccess = 0
+	exitFailure = 1
 )
 
 func main() {
@@ -27,23 +34,24 @@ func main() {
 }
 
 func run() int {
+	// Set up logging early so config load errors use the same handler (default: info).
+	setupLogging(getLogLevelEnv())
+
 	ctx := context.Background()
 
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
-		return 1
+		return exitFailure
 	}
-
-	// Configure slog with the log level from config
 	setupLogging(cfg.LogLevel)
 
 	// Initialize database connection
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
-		return 1
+		return exitFailure
 	}
 	defer db.Close()
 
@@ -65,7 +73,7 @@ func run() int {
 	})
 	if err != nil {
 		slog.Error("Failed to create River client", "error", err)
-		return 1
+		return exitFailure
 	}
 
 	webhookProvider := service.NewWebhookProvider(riverClient, webhooksRepo, cfg.WebhookDeliveryMaxAttempts)
@@ -73,7 +81,7 @@ func run() int {
 
 	// Start River in background
 	go func() {
-		if err := riverClient.Start(ctx); err != nil && err != context.Canceled {
+		if err := riverClient.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("River client stopped with error", "error", err)
 		}
 	}()
@@ -87,14 +95,11 @@ func run() int {
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
-	// Set up public endpoints (no authentication required)
+	// Public endpoints (no authentication)
 	publicMux := http.NewServeMux()
 	publicMux.HandleFunc("GET /health", healthHandler.Check)
 
-	// Apply middleware to public endpoints
-	var publicHandler http.Handler = publicMux
-
-	// Set up protected endpoints (authentication required)
+	// Protected endpoints (API key required)
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("POST /v1/feedback-records", feedbackRecordsHandler.Create)
 	protectedMux.HandleFunc("GET /v1/feedback-records", feedbackRecordsHandler.List)
@@ -107,17 +112,13 @@ func run() int {
 	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
 	protectedMux.HandleFunc("PATCH /v1/webhooks/{id}", webhooksHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/webhooks/{id}", webhooksHandler.Delete)
+	protectedHandler := middleware.Auth(cfg.APIKey)(protectedMux)
 
-	// Apply middleware to protected endpoints
-	var protectedHandler http.Handler = protectedMux
-	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
-
-	// Combine both handlers
+	// Mount protected under /v1/, public (e.g. /health) at /
 	mainMux := http.NewServeMux()
 	mainMux.Handle("/v1/", protectedHandler)
-	mainMux.Handle("/", publicHandler) // Catch-all for public routes (/health, etc.)
+	mainMux.Handle("/", publicMux)
 
-	// Apply logging to all requests
 	handler := middleware.Logging(mainMux)
 
 	// Create HTTP server
@@ -129,31 +130,38 @@ func run() int {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in a goroutine
+	// Start server in a goroutine; report start failure so we can exit non-zero
+	serverErr := make(chan error, 1)
 	go func() {
 		slog.Info("Starting server", "port", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("Server error", "error", err)
+			serverErr <- err
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
+	// Wait for interrupt signal or server start failure
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	select {
+	case err := <-serverErr:
+		slog.Error("Server failed to start", "error", err)
+		return exitFailure
+	case sig := <-quit:
+		slog.Info("Received signal, shutting down", "signal", sig)
+		signal.Reset(syscall.SIGINT, syscall.SIGTERM)
+	}
 
-	slog.Info("Shutting down server...")
-
+	// Graceful shutdown with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		slog.Error("Server forced to shutdown", "error", err)
+	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Error("Server shutdown failed", "error", err)
 		messageManager.Shutdown()
 		if stopErr := riverClient.Stop(ctx); stopErr != nil {
 			slog.Error("River client stop after server shutdown error", "error", stopErr)
 		}
-		return 1
+		return exitFailure
 	}
 
 	messageManager.Shutdown()
@@ -161,11 +169,19 @@ func run() int {
 		slog.Warn("River client stop", "error", err)
 	}
 
-	slog.Info("Server exited")
-	return 0
+	slog.Info("Server stopped")
+	return exitSuccess
 }
 
-// setupLogging configures slog with the specified log level
+// getLogLevelEnv returns LOG_LEVEL from the environment for use before config is loaded.
+func getLogLevelEnv() string {
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		return v
+	}
+	return "info"
+}
+
+// setupLogging configures slog with the specified log level.
 func setupLogging(level string) {
 	var logLevel slog.Level
 	switch strings.ToLower(level) {
@@ -184,7 +200,6 @@ func setupLogging(level string) {
 	opts := &slog.HandlerOptions{
 		Level: logLevel,
 	}
-
 	handler := slog.NewTextHandler(os.Stdout, opts)
 	slog.SetDefault(slog.New(handler))
 }

@@ -5,14 +5,15 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/pkg/database"
-	"github.com/stretchr/testify/require"
 )
 
 const testAPIKey = "test-api-key-12345"
 
-// CleanupTestData removes test data from the database
+// CleanupTestData removes test data from the database.
 func CleanupTestData(t *testing.T) {
 	ctx := context.Background()
 

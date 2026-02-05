@@ -4,13 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
+
+	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
-	"github.com/google/uuid"
 )
 
-// WebhooksRepository defines the interface for webhooks data access
+// WebhooksRepository defines the interface for webhooks data access.
 type WebhooksRepository interface {
 	Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
@@ -22,7 +24,7 @@ type WebhooksRepository interface {
 	ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error)
 }
 
-// WebhooksService handles business logic for webhooks
+// WebhooksService handles business logic for webhooks.
 type WebhooksService struct {
 	repo      WebhooksRepository
 	publisher MessagePublisher
@@ -36,19 +38,19 @@ func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher) *We
 	}
 }
 
-// CreateWebhook creates a new webhook
+// CreateWebhook creates a new webhook.
 func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
 	if req.SigningKey == "" {
 		key, err := generateSigningKey()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("generate signing key: %w", err)
 		}
 		req.SigningKey = key
 	}
 
 	webhook, err := s.repo.Create(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create webhook: %w", err)
 	}
 
 	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, *webhook)
@@ -57,21 +59,25 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 }
 
 // generateSigningKey generates a cryptographically secure signing key
-// in the format expected by Standard Webhooks: "whsec_" + base64(32 random bytes)
+// in the format expected by Standard Webhooks: "whsec_" + base64(32 random bytes).
 func generateSigningKey() (string, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
-		return "", err
+		return "", fmt.Errorf("rand read: %w", err)
 	}
 	return "whsec_" + base64.StdEncoding.EncodeToString(key), nil
 }
 
-// GetWebhook retrieves a single webhook by ID
+// GetWebhook retrieves a single webhook by ID.
 func (s *WebhooksService) GetWebhook(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
-	return s.repo.GetByID(ctx, id)
+	webhook, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get webhook: %w", err)
+	}
+	return webhook, nil
 }
 
-// ListWebhooks retrieves a list of webhooks with optional filters
+// ListWebhooks retrieves a list of webhooks with optional filters.
 func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksResponse, error) {
 	if filters.Limit <= 0 {
 		filters.Limit = 100
@@ -79,12 +85,12 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 
 	webhooks, err := s.repo.List(ctx, filters)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list webhooks: %w", err)
 	}
 
 	total, err := s.repo.Count(ctx, filters)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("count webhooks: %w", err)
 	}
 
 	return &models.ListWebhooksResponse{
@@ -95,11 +101,11 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 	}, nil
 }
 
-// UpdateWebhook updates an existing webhook
+// UpdateWebhook updates an existing webhook.
 func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	webhook, err := s.repo.Update(ctx, id, req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update webhook: %w", err)
 	}
 
 	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, s.getChangedFields(req))
@@ -107,7 +113,7 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 	return webhook, nil
 }
 
-// getChangedFields extracts which fields were changed from the update request
+// getChangedFields extracts which fields were changed from the update request.
 func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []string {
 	var fields []string
 	if req.URL != nil {
@@ -128,15 +134,15 @@ func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []s
 	return fields
 }
 
-// DeleteWebhook deletes a webhook by ID
+// DeleteWebhook deletes a webhook by ID.
 func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
 	webhook, err := s.repo.GetByID(ctx, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("get webhook for delete: %w", err)
 	}
 
 	if err := s.repo.Delete(ctx, id); err != nil {
-		return err
+		return fmt.Errorf("delete webhook: %w", err)
 	}
 
 	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, *webhook)

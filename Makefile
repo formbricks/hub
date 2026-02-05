@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Default target - show help
 help:
@@ -15,11 +15,10 @@ help:
 	@echo "  make migrate-status   - Show migration status"
 	@echo "  make migrate-validate - Validate migration files (no DB)"
 	@echo "  make river-migrate    - Run River job queue migrations (required for webhook delivery)"
-	@echo "  make fmt              - Format code with gofumpt"
-	@echo "  make fmt-check        - Check if code is formatted"
-	@echo "  make lint             - Run linter"
+	@echo "  make fmt              - Format code (golangci-lint run --fix)"
+	@echo "  make lint             - Run linter (includes format checks)"
 	@echo "  make deps             - Install Go dependencies"
-	@echo "  make install-tools    - Install development tools (gofumpt, golangci-lint)"
+	@echo "  make install-tools    - Install development tools (golangci-lint, govulncheck, goose)"
 	@echo "  make install-hooks    - Install git hooks"
 	@echo "  make docker-up        - Start Docker containers"
 	@echo "  make docker-down      - Stop Docker containers"
@@ -158,36 +157,23 @@ deps:
 
 # Install development tools
 # Tool versions - update these periodically
-GOFUMPT_VERSION := v0.9.2
 GOLANGCI_LINT_VERSION := v2.8.0
 GOVULNCHECK_VERSION := v1.1.4
 GOOSE_VERSION := v3.26.0
 
 install-tools:
 	@echo "Installing development tools..."
-	go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	go install github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
-	@echo "Tools installed (gofumpt $(GOFUMPT_VERSION), golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION), goose $(GOOSE_VERSION))"
+	@echo "Tools installed (golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION), goose $(GOOSE_VERSION))"
 
-# Format code
+# Format code (golangci-lint applies gofumpt + gci from .golangci.yml formatters)
 fmt:
 	@echo "Formatting code..."
-	@command -v gofumpt >/dev/null 2>&1 || { echo "Error: gofumpt not found. Install with: make install-tools"; exit 1; }
-	gofumpt -l -w .
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	golangci-lint run --fix ./...
 	@echo "Code formatted"
-
-# Check code formatting (fails if code needs formatting)
-fmt-check:
-	@echo "Checking code formatting..."
-	@command -v gofumpt >/dev/null 2>&1 || { echo "Error: gofumpt not found. Install with: make install-tools"; exit 1; }
-	@if [ -n "$$(gofumpt -l .)" ]; then \
-		echo "Error: Code is not formatted. Run 'make fmt' to fix."; \
-		gofumpt -l .; \
-		exit 1; \
-	fi
-	@echo "Code is properly formatted"
 
 # Lint code
 lint:

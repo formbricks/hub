@@ -2,30 +2,32 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/formbricks/hub/internal/datatypes"
-	apperrors "github.com/formbricks/hub/internal/errors"
-	"github.com/formbricks/hub/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/models"
 )
 
-// WebhooksRepository handles data access for webhooks
+// WebhooksRepository handles data access for webhooks.
 type WebhooksRepository struct {
 	db *pgxpool.Pool
 }
 
-// NewWebhooksRepository creates a new webhooks repository
+// NewWebhooksRepository creates a new webhooks repository.
 func NewWebhooksRepository(db *pgxpool.Pool) *WebhooksRepository {
 	return &WebhooksRepository{db: db}
 }
 
-// Create inserts a new webhook
+// Create inserts a new webhook.
 func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
 	enabled := true
 	if req.Enabled != nil {
@@ -74,7 +76,7 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 	return &webhook, nil
 }
 
-// GetByID retrieves a single webhook by ID
+// GetByID retrieves a single webhook by ID.
 func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
@@ -90,8 +92,8 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 		&webhook.DisabledReason, &webhook.DisabledAt,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, apperrors.NewNotFoundError("webhook", "webhook not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
 		}
 		return nil, fmt.Errorf("failed to get webhook: %w", err)
 	}
@@ -133,7 +135,7 @@ func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (whereCla
 	return whereClause, args
 }
 
-// List retrieves webhooks with optional filters
+// List retrieves webhooks with optional filters.
 func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
@@ -195,7 +197,7 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 	return webhooks, nil
 }
 
-// Count returns the total count of webhooks matching the filters
+// Count returns the total count of webhooks matching the filters.
 func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error) {
 	query := `SELECT COUNT(*) FROM webhooks`
 
@@ -211,7 +213,7 @@ func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebh
 	return count, nil
 }
 
-// Update updates an existing webhook
+// Update updates an existing webhook.
 func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	var updates []string
 	var args []any
@@ -299,8 +301,8 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		&webhook.DisabledReason, &webhook.DisabledAt,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, apperrors.NewNotFoundError("webhook", "webhook not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
 		}
 		return nil, fmt.Errorf("failed to update webhook: %w", err)
 	}
@@ -319,7 +321,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 	return &webhook, nil
 }
 
-// Delete removes a webhook
+// Delete removes a webhook.
 func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM webhooks WHERE id = $1`
 
@@ -329,13 +331,13 @@ func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 
 	if result.RowsAffected() == 0 {
-		return apperrors.NewNotFoundError("webhook", "webhook not found")
+		return huberrors.NewNotFoundError("webhook", "webhook not found")
 	}
 
 	return nil
 }
 
-// ListEnabled retrieves all enabled webhooks
+// ListEnabled retrieves all enabled webhooks.
 func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
 	filters := &models.ListWebhooksFilters{
 		Enabled: func() *bool { b := true; return &b }(),
@@ -346,7 +348,7 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 // maxWebhookListLimit caps the number of webhooks returned for delivery to avoid unbounded queries.
 const maxWebhookListLimit = 1000
 
-// ListEnabledForEventType retrieves enabled webhooks that should receive a specific event type
+// ListEnabledForEventType retrieves enabled webhooks that should receive a specific event type.
 func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at

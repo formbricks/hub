@@ -14,11 +14,11 @@
 - `make tests`: run integration tests in `tests/`.
 - `make tests-coverage`: generate `coverage.html`.
 - `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations (`-- +goose up` / `-- +goose down`). Name files with a sequential number and short description (e.g. `002_add_webhooks_table.sql`); goose orders by the numeric prefix. For webhook delivery, run `make river-migrate` after `init-db` to apply River job queue migrations.
-- `make fmt` / `make fmt-check`: format or verify formatting with `gofumpt`.
-- `make lint`: run `golangci-lint` (requires `make install-tools`).
+- `make fmt`: format code (runs `golangci-lint run --fix`; uses gofumpt/gci from config).
+- `make lint`: run `golangci-lint` (includes format checks; requires `make install-tools`).
 
 ## Coding Style & Naming Conventions
-- Language: Go; format with `gofumpt` (run `make fmt`).
+- Language: Go; format with `make fmt` (golangci-lint applies gofumpt/gci).
 - Prefer Go naming conventions (CamelCase for exported, lowerCamel for unexported).
 - Keep package names short and domain-focused (e.g., `repository`, `service`).
 

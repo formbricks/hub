@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/google/uuid"
+
+	"github.com/formbricks/hub/internal/datatypes"
 )
 
 // eventChanBufferSize is the buffer size for the event channel (creates backpressure when full).
@@ -22,7 +23,7 @@ type Event struct {
 	ChangedFields []string            // Only for updates
 }
 
-// MessagePublisher defines the interface for publishing events
+// MessagePublisher defines the interface for publishing events.
 type MessagePublisher interface {
 	// PublishEvent publishes a single event with data (no changed fields)
 	PublishEvent(ctx context.Context, eventType datatypes.EventType, data any)
@@ -30,19 +31,19 @@ type MessagePublisher interface {
 	PublishEventWithChangedFields(ctx context.Context, eventType datatypes.EventType, data any, changedFields []string)
 }
 
-// eventPublisher is the internal interface for providers that receive a full Event
+// eventPublisher is the internal interface for providers that receive a full Event.
 type eventPublisher interface {
 	PublishEvent(ctx context.Context, event Event)
 }
 
-// MessagePublisherManager coordinates multiple message providers
+// MessagePublisherManager coordinates multiple message providers.
 type MessagePublisherManager struct {
 	eventChan chan Event
 	providers []eventPublisher
 	wg        sync.WaitGroup
 }
 
-// NewMessagePublisherManager creates a new message publisher manager
+// NewMessagePublisherManager creates a new message publisher manager.
 func NewMessagePublisherManager() *MessagePublisherManager {
 	m := &MessagePublisherManager{
 		eventChan: make(chan Event, eventChanBufferSize),
@@ -62,12 +63,12 @@ func (m *MessagePublisherManager) RegisterProvider(provider eventPublisher) {
 	m.providers = append(m.providers, provider)
 }
 
-// PublishEvent publishes an event with data to all registered providers (convenience for no changed fields)
+// PublishEvent publishes an event with data to all registered providers (convenience for no changed fields).
 func (m *MessagePublisherManager) PublishEvent(ctx context.Context, eventType datatypes.EventType, data any) {
 	m.PublishEventWithChangedFields(ctx, eventType, data, nil)
 }
 
-// PublishEventWithChangedFields publishes an event with data to all registered providers
+// PublishEventWithChangedFields publishes an event with data to all registered providers.
 func (m *MessagePublisherManager) PublishEventWithChangedFields(_ context.Context, eventType datatypes.EventType, data any, changedFields []string) {
 	event := Event{
 		ID:            uuid.Must(uuid.NewV7()),

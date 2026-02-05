@@ -3,13 +3,15 @@ package workers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
-	"github.com/formbricks/hub/internal/models"
-	"github.com/formbricks/hub/internal/service"
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+
+	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/service"
 )
 
 // WebhookDispatchWorker delivers one event to one webhook endpoint.
@@ -94,7 +96,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			"event_id", args.EventID,
 			"error", err,
 		)
-		return err
+		return fmt.Errorf("webhook send (final attempt): %w", err)
 	}
 
 	slog.Warn("webhook delivery failed, will retry",
@@ -104,7 +106,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		"event_type", args.EventType,
 		"error", err,
 	)
-	return err
+	return fmt.Errorf("webhook send: %w", err)
 }
 
 // argsToPayload builds a WebhookPayload from job args.

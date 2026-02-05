@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/formbricks/hub/internal/models"
-	"github.com/formbricks/hub/internal/service"
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+
+	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/service"
 )
 
 type mockDispatchRepo struct {

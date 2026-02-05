@@ -203,6 +203,7 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// TestLoadAlwaysReturnsNilError cannot use t.Parallel() because it uses t.Setenv (Go restriction).
 func TestLoadAlwaysReturnsNilError(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
 

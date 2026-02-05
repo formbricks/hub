@@ -7,14 +7,15 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/api/validation"
-	apperrors "github.com/formbricks/hub/internal/errors"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
-	"github.com/google/uuid"
 )
 
-// WebhooksService defines the interface for webhooks business logic
+// WebhooksService defines the interface for webhooks business logic.
 type WebhooksService interface {
 	CreateWebhook(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error)
 	GetWebhook(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
@@ -23,17 +24,17 @@ type WebhooksService interface {
 	DeleteWebhook(ctx context.Context, id uuid.UUID) error
 }
 
-// WebhooksHandler handles HTTP requests for webhooks
+// WebhooksHandler handles HTTP requests for webhooks.
 type WebhooksHandler struct {
 	service WebhooksService
 }
 
-// NewWebhooksHandler creates a new webhooks handler
+// NewWebhooksHandler creates a new webhooks handler.
 func NewWebhooksHandler(service WebhooksService) *WebhooksHandler {
 	return &WebhooksHandler{service: service}
 }
 
-// Create handles POST /v1/webhooks
+// Create handles POST /v1/webhooks.
 func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateWebhookRequest
 	decoder := json.NewDecoder(r.Body)
@@ -51,7 +52,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	webhook, err := h.service.CreateWebhook(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
 			return
 		}
@@ -63,7 +64,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusCreated, webhook)
 }
 
-// Get handles GET /v1/webhooks/{id}
+// Get handles GET /v1/webhooks/{id}.
 func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
@@ -79,7 +80,7 @@ func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	webhook, err := h.service.GetWebhook(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
 			return
 		}
@@ -91,7 +92,7 @@ func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, webhook)
 }
 
-// List handles GET /v1/webhooks
+// List handles GET /v1/webhooks.
 func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 	filters := &models.ListWebhooksFilters{}
 
@@ -110,7 +111,7 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
-// Update handles PATCH /v1/webhooks/{id}
+// Update handles PATCH /v1/webhooks/{id}.
 func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
@@ -140,7 +141,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	webhook, err := h.service.UpdateWebhook(r.Context(), id, &req)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
 			return
 		}
@@ -152,7 +153,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, webhook)
 }
 
-// Delete handles DELETE /v1/webhooks/{id}
+// Delete handles DELETE /v1/webhooks/{id}.
 func (h *WebhooksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
@@ -167,7 +168,7 @@ func (h *WebhooksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.DeleteWebhook(r.Context(), id); err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
 			return
 		}
