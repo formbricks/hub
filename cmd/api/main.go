@@ -158,14 +158,14 @@ func run() int {
 	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("Server shutdown failed", "error", err)
 		messageManager.Shutdown()
-		if stopErr := riverClient.Stop(ctx); stopErr != nil {
+		if stopErr := riverClient.Stop(shutdownCtx); stopErr != nil {
 			slog.Error("River client stop after server shutdown error", "error", stopErr)
 		}
 		return exitFailure
 	}
 
 	messageManager.Shutdown()
-	if err := riverClient.Stop(ctx); err != nil {
+	if err := riverClient.Stop(shutdownCtx); err != nil {
 		slog.Warn("River client stop", "error", err)
 	}
 

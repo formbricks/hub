@@ -115,16 +115,14 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 // buildWebhookFilterConditions builds WHERE clause conditions and arguments from filters.
 func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (whereClause string, args []any) {
 	var conditions []string
-	argCount := 1
 
 	if filters.Enabled != nil {
-		conditions = append(conditions, fmt.Sprintf("enabled = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("enabled = $%d", len(args)+1))
 		args = append(args, *filters.Enabled)
-		argCount++
 	}
 
 	if filters.TenantID != nil {
-		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", len(args)+1))
 		args = append(args, *filters.TenantID)
 	}
 
