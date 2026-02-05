@@ -1,3 +1,4 @@
+// Package validation provides request validation and custom validators.
 package validation
 
 import (
@@ -51,7 +52,7 @@ func init() {
 	}, (*time.Time)(nil))
 
 	// Handle *models.FieldType (pointer type used in filters)
-	decoder.RegisterCustomTypeFunc(func(vals []string) (interface{}, error) {
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
 		if len(vals) == 0 || vals[0] == "" {
 			return (*models.FieldType)(nil), nil
 		}
@@ -76,7 +77,7 @@ func ValidateStruct(s any) error {
 // that can be used in RFC 7807 Problem Details responses
 func formatValidationErrors(err error) error {
 	if validationErrors, ok := err.(validator.ValidationErrors); ok {
-		var messages []string
+		messages := make([]string, 0, len(validationErrors))
 		for _, fieldError := range validationErrors {
 			messages = append(messages, formatFieldError(fieldError))
 		}
@@ -92,7 +93,7 @@ func formatFieldError(fieldError validator.FieldError) string {
 
 	switch tag {
 	case "required":
-		return fmt.Sprintf("%s is required", field)
+		return field + " is required"
 	case "min":
 		return fmt.Sprintf("%s must be at least %s", field, fieldError.Param())
 	case "max":
@@ -104,15 +105,15 @@ func formatFieldError(fieldError validator.FieldError) string {
 	case "oneof":
 		return fmt.Sprintf("%s must be one of: %s", field, fieldError.Param())
 	case "field_type":
-		return fmt.Sprintf("%s must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date", field)
+		return field + " must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
 	case "uuid":
-		return fmt.Sprintf("%s must be a valid UUID", field)
+		return field + " must be a valid UUID"
 	case "rfc3339":
-		return fmt.Sprintf("%s must be in RFC3339 format (ISO 8601)", field)
+		return field + " must be in RFC3339 format (ISO 8601)"
 	case "no_null_bytes":
-		return fmt.Sprintf("%s must not contain NULL bytes", field)
+		return field + " must not contain NULL bytes"
 	default:
-		return fmt.Sprintf("%s is invalid", field)
+		return field + " is invalid"
 	}
 }
 
@@ -175,7 +176,7 @@ func validateFieldType(fl validator.FieldLevel) bool {
 	field := fl.Field()
 
 	// Handle FieldType enum type directly
-	if field.Type() == reflect.TypeOf(models.FieldType("")) {
+	if field.Type() == reflect.TypeFor[models.FieldType]() {
 		ft := models.FieldType(field.String())
 		return ft.IsValid()
 	}

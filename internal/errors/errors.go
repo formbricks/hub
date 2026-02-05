@@ -1,6 +1,5 @@
+// Package errors provides sentinel and custom error types for the application.
 package errors
-
-import "fmt"
 
 // ErrNotFound represents a "not found" error
 // This should be used when a requested resource doesn't exist
@@ -18,7 +17,7 @@ func (e *NotFoundError) Error() string {
 		return e.Message
 	}
 	if e.Resource != "" {
-		return fmt.Sprintf("%s not found", e.Resource)
+		return e.Resource + " not found"
 	}
 	return "resource not found"
 }
@@ -53,7 +52,7 @@ func (e *ValidationError) Error() string {
 		return e.Message
 	}
 	if e.Field != "" {
-		return fmt.Sprintf("validation failed for field: %s", e.Field)
+		return "validation failed for field: " + e.Field
 	}
 	return "validation error"
 }

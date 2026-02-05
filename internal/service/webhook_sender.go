@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/formbricks/hub/internal/models"
@@ -67,7 +68,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(standardwebhooks.HeaderWebhookID, messageID)
 	req.Header.Set(standardwebhooks.HeaderWebhookSignature, signature)
-	req.Header.Set(standardwebhooks.HeaderWebhookTimestamp, fmt.Sprintf("%d", timestamp.Unix()))
+	req.Header.Set(standardwebhooks.HeaderWebhookTimestamp, strconv.FormatInt(timestamp.Unix(), 10))
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {

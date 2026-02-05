@@ -19,11 +19,11 @@ type mockDispatchRepo struct {
 	update  *models.UpdateWebhookRequest
 }
 
-func (m *mockDispatchRepo) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
+func (m *mockDispatchRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
 	return m.webhook, m.err
 }
 
-func (m *mockDispatchRepo) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+func (m *mockDispatchRepo) Update(_ context.Context, _ uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	m.update = req
 	return nil, nil
 }
@@ -32,7 +32,7 @@ type mockSender struct {
 	err error
 }
 
-func (m *mockSender) Send(ctx context.Context, webhook *models.Webhook, payload *service.WebhookPayload) error {
+func (m *mockSender) Send(_ context.Context, _ *models.Webhook, _ *service.WebhookPayload) error {
 	return m.err
 }
 

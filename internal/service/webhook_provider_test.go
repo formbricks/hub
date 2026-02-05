@@ -23,7 +23,7 @@ type insertCall struct {
 	opts *river.InsertOpts
 }
 
-func (m *mockWebhookInserter) Insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+func (m *mockWebhookInserter) Insert(_ context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 	if m.insertErr != nil {
 		return nil, m.insertErr
 	}
@@ -41,7 +41,7 @@ type mockProviderRepo struct {
 	err      error
 }
 
-func (m *mockProviderRepo) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
+func (m *mockProviderRepo) ListEnabledForEventType(_ context.Context, _ string) ([]models.Webhook, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -49,31 +49,31 @@ func (m *mockProviderRepo) ListEnabledForEventType(ctx context.Context, eventTyp
 }
 
 // Stub other WebhooksRepository methods so mockProviderRepo can be used as WebhooksRepository.
-func (m *mockProviderRepo) Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+func (m *mockProviderRepo) Create(_ context.Context, _ *models.CreateWebhookRequest) (*models.Webhook, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
+func (m *mockProviderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
+func (m *mockProviderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error) {
+func (m *mockProviderRepo) Count(_ context.Context, _ *models.ListWebhooksFilters) (int64, error) {
 	return 0, errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+func (m *mockProviderRepo) Update(_ context.Context, _ uuid.UUID, _ *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) Delete(ctx context.Context, id uuid.UUID) error {
+func (m *mockProviderRepo) Delete(_ context.Context, _ uuid.UUID) error {
 	return errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
+func (m *mockProviderRepo) ListEnabled(_ context.Context) ([]models.Webhook, error) {
 	return nil, errors.New("not implemented")
 }
 

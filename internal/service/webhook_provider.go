@@ -56,13 +56,13 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 		},
 	}
 
-	for _, webhook := range webhooks {
-		args.WebhookID = webhook.ID
+	for i := range webhooks {
+		args.WebhookID = webhooks[i].ID
 		_, err := p.inserter.Insert(ctx, args, opts)
 		if err != nil {
 			slog.Error("failed to enqueue webhook job",
 				"event_id", event.ID,
-				"webhook_id", webhook.ID,
+				"webhook_id", webhooks[i].ID,
 				"error", err,
 			)
 		}

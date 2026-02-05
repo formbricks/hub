@@ -17,36 +17,36 @@ type mockSenderRepo struct {
 	updateErr    error
 }
 
-func (m *mockSenderRepo) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+func (m *mockSenderRepo) Update(_ context.Context, _ uuid.UUID, _ *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	m.updateCalled = true
 	return nil, m.updateErr
 }
 
-func (m *mockSenderRepo) Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+func (m *mockSenderRepo) Create(_ context.Context, _ *models.CreateWebhookRequest) (*models.Webhook, error) {
 	return nil, nil
 }
 
-func (m *mockSenderRepo) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
+func (m *mockSenderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
 	return nil, nil
 }
 
-func (m *mockSenderRepo) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
+func (m *mockSenderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
 	return nil, nil
 }
 
-func (m *mockSenderRepo) Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error) {
+func (m *mockSenderRepo) Count(_ context.Context, _ *models.ListWebhooksFilters) (int64, error) {
 	return 0, nil
 }
 
-func (m *mockSenderRepo) Delete(ctx context.Context, id uuid.UUID) error {
+func (m *mockSenderRepo) Delete(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (m *mockSenderRepo) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
+func (m *mockSenderRepo) ListEnabled(_ context.Context) ([]models.Webhook, error) {
 	return nil, nil
 }
 
-func (m *mockSenderRepo) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
+func (m *mockSenderRepo) ListEnabledForEventType(_ context.Context, _ string) ([]models.Webhook, error) {
 	return nil, nil
 }
 
@@ -102,7 +102,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 	})
 
 	t.Run("disables webhook and returns error on 410", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusGone)
 		}))
 		defer server.Close()
@@ -122,7 +122,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 	})
 
 	t.Run("returns error on non-2xx", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		defer server.Close()

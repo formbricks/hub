@@ -1,3 +1,4 @@
+// Package models defines request/response and domain types for feedback records.
 package models
 
 import (
@@ -8,9 +9,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// FieldType represents the type of feedback field
+// FieldType represents the type of feedback field.
 type FieldType string
 
+// Valid FieldType constants for feedback fields (NPS, CSAT, CES, rating, etc.).
 const (
 	FieldTypeText        FieldType = "text"
 	FieldTypeCategorical FieldType = "categorical"

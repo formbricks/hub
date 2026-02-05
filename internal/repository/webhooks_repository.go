@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,10 +110,9 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 	return &webhook, nil
 }
 
-// buildWebhookFilterConditions builds WHERE clause conditions and arguments from filters
-func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (string, []any) {
+// buildWebhookFilterConditions builds WHERE clause conditions and arguments from filters.
+func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (whereClause string, args []any) {
 	var conditions []string
-	var args []any
 	argCount := 1
 
 	if filters.Enabled != nil {
@@ -126,7 +126,6 @@ func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (string, 
 		args = append(args, *filters.TenantID)
 	}
 
-	whereClause := ""
 	if len(conditions) > 0 {
 		whereClause = " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -354,7 +353,7 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 		FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
-		LIMIT ` + fmt.Sprintf("%d", maxWebhookListLimit) + `
+		LIMIT ` + strconv.Itoa(maxWebhookListLimit) + `
 	`
 
 	rows, err := r.db.Query(ctx, query, eventType)

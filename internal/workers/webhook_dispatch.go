@@ -1,3 +1,4 @@
+// Package workers provides River job workers (e.g. webhook delivery).
 package workers
 
 import (

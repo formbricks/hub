@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt fmt-check lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Default target - show help
 help:

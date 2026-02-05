@@ -1,3 +1,4 @@
+// Package response provides HTTP response helpers and RFC 7807 problem details.
 package response
 
 import (
@@ -24,7 +25,7 @@ type ProblemDetails struct {
 }
 
 // RespondError writes an RFC 7807 Problem Details error response
-func RespondError(w http.ResponseWriter, statusCode int, title string, detail string) {
+func RespondError(w http.ResponseWriter, statusCode int, title, detail string) {
 	problem := ProblemDetails{
 		Type:   "about:blank",
 		Title:  title,

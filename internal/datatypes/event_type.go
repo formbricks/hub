@@ -1,3 +1,4 @@
+// Package datatypes defines shared types for events (e.g. webhook event types).
 package datatypes
 
 import "fmt"
@@ -6,6 +7,7 @@ import "fmt"
 // Use String() to get the string representation for API/database.
 type EventType uint16
 
+// Event type constants; string form is given in eventTypeMap.
 const (
 	FeedbackRecordCreated EventType = iota
 	FeedbackRecordUpdated

@@ -68,7 +68,7 @@ func (m *MessagePublisherManager) PublishEvent(ctx context.Context, eventType da
 }
 
 // PublishEventWithChangedFields publishes an event with data to all registered providers
-func (m *MessagePublisherManager) PublishEventWithChangedFields(ctx context.Context, eventType datatypes.EventType, data any, changedFields []string) {
+func (m *MessagePublisherManager) PublishEventWithChangedFields(_ context.Context, eventType datatypes.EventType, data any, changedFields []string) {
 	event := Event{
 		ID:            uuid.Must(uuid.NewV7()),
 		Type:          eventType,

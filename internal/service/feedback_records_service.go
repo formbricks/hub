@@ -1,8 +1,9 @@
+// Package service implements business logic for feedback records.
 package service
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
@@ -137,7 +138,7 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 // BulkDeleteFeedbackRecords deletes all feedback records matching user_identifier and optional tenant_id
 func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int64, error) {
 	if userIdentifier == "" {
-		return 0, fmt.Errorf("user_identifier is required")
+		return 0, errors.New("user_identifier is required")
 	}
 
 	return s.repo.BulkDelete(ctx, userIdentifier, tenantID)

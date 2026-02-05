@@ -26,8 +26,8 @@ import (
 // which would cause "password authentication failed" when .env points at another database.
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
 
-// setupTestServer creates a test HTTP server with all routes configured
-func setupTestServer(t *testing.T) (*httptest.Server, func()) {
+// setupTestServer creates a test HTTP server with all routes configured.
+func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
 
 	// Set test env before loading config so config.Load() uses test values and is not affected by .env.
@@ -85,10 +85,10 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	mainMux.Handle("/", publicHandler)
 
 	// Create test server
-	server := httptest.NewServer(mainMux)
+	server = httptest.NewServer(mainMux)
 
 	// Cleanup function: stop message publisher worker, then server and db
-	cleanup := func() {
+	cleanup = func() {
 		server.Close()
 		messageManager.Shutdown()
 		db.Close()
@@ -109,7 +109,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 	resp, err := http.Get(server.URL + "/health")
 	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -131,11 +131,12 @@ func TestCreateFeedbackRecord(t *testing.T) {
 			"field_type":  "text",
 			"value_text":  "Great product!",
 		}
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
 		resp, err := http.Post(server.URL+"/v1/feedback-records", "application/json", bytes.NewBuffer(body))
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -148,16 +149,18 @@ func TestCreateFeedbackRecord(t *testing.T) {
 			"field_type":  "text",
 			"value_text":  "Great product!",
 		}
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
-		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 		req.Header.Set("Content-Type", "application/json")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -170,16 +173,18 @@ func TestCreateFeedbackRecord(t *testing.T) {
 			"field_type":  "text",
 			"value_text":  "Great product!",
 		}
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
-		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer ")
 		req.Header.Set("Content-Type", "application/json")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -192,16 +197,18 @@ func TestCreateFeedbackRecord(t *testing.T) {
 			"field_type":  "text",
 			"value_text":  "Great product!",
 		}
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
-		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "InvalidFormat")
 		req.Header.Set("Content-Type", "application/json")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -214,16 +221,18 @@ func TestCreateFeedbackRecord(t *testing.T) {
 			"field_type":  "text",
 			"value_text":  "Great product!",
 		}
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
-		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
@@ -244,16 +253,18 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		reqBody := map[string]any{
 			"field_id": "feedback",
 		}
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
-		req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
@@ -267,12 +278,13 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records", nil)
+		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records", http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -284,20 +296,25 @@ func TestListFeedbackRecords(t *testing.T) {
 		"field_type":   "number",
 		"value_number": 9,
 	}
-	body, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
-	_, _ = client.Do(req)
+	createResp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, createResp.Body.Close()) }()
 
 	// Test listing feedback records
 	t.Run("List all feedback records", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records", nil)
+		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records", http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -310,12 +327,13 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	// Test with filters
 	t.Run("List with source_type filter", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records?source_type=formbricks&limit=10", nil)
+		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records?source_type=formbricks&limit=10", http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -337,12 +355,13 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", nil)
+		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -354,14 +373,16 @@ func TestGetFeedbackRecord(t *testing.T) {
 		"field_type":   "number",
 		"value_number": 5,
 	}
-	body, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { _ = createResp.Body.Close() }()
+	defer func() { require.NoError(t, createResp.Body.Close()) }()
 
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
@@ -369,12 +390,13 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 	// Test getting the feedback record by ID
 	t.Run("Get existing feedback record", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), nil)
+		req, err := http.NewRequest("GET", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -387,12 +409,13 @@ func TestGetFeedbackRecord(t *testing.T) {
 	})
 
 	t.Run("Get non-existent feedback record", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", nil)
+		req, err := http.NewRequest("GET", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
@@ -409,15 +432,17 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		updateBody := map[string]any{
 			"value_text": "Updated comment",
 		}
-		body, _ := json.Marshal(updateBody)
+		body, err := json.Marshal(updateBody)
+		require.NoError(t, err)
 
-		req, _ := http.NewRequest("PATCH", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", bytes.NewBuffer(body))
+		req, err := http.NewRequest("PATCH", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", bytes.NewBuffer(body))
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -429,14 +454,16 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		"field_type":  "text",
 		"value_text":  "Initial comment",
 	}
-	body, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { _ = createResp.Body.Close() }()
+	defer func() { require.NoError(t, createResp.Body.Close()) }()
 
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
@@ -447,15 +474,17 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		updateBody := map[string]any{
 			"value_text": "Updated comment",
 		}
-		body, _ := json.Marshal(updateBody)
+		body, err := json.Marshal(updateBody)
+		require.NoError(t, err)
 
-		req, _ := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), bytes.NewBuffer(body))
+		req, err := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), bytes.NewBuffer(body))
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -477,12 +506,13 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, _ := http.NewRequest("DELETE", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", nil)
+		req, err := http.NewRequest("DELETE", server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -494,14 +524,16 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 		"field_type":  "text",
 		"value_text":  "To be deleted",
 	}
-	body, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	req, err := http.NewRequest("POST", server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { _ = createResp.Body.Close() }()
+	defer func() { require.NoError(t, createResp.Body.Close()) }()
 
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
@@ -509,24 +541,26 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	// Test deleting the feedback record
 	t.Run("Delete feedback record", func(t *testing.T) {
-		req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), nil)
+		req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 	})
 
 	// Verify it's deleted
 	t.Run("Verify deletion", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), nil)
+		req, err := http.NewRequest("GET", fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), http.NoBody)
+		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
+		defer func() { require.NoError(t, resp.Body.Close()) }()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
@@ -544,14 +578,16 @@ func TestWebhooksCRUD(t *testing.T) {
 		"url":         "https://example.com/webhook",
 		"event_types": []string{"feedback_record.created", "feedback_record.updated"},
 	}
-	body, _ := json.Marshal(createBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/webhooks", bytes.NewBuffer(body))
+	body, err := json.Marshal(createBody)
+	require.NoError(t, err)
+	req, err := http.NewRequest("POST", server.URL+"/v1/webhooks", bytes.NewBuffer(body))
+	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { _ = createResp.Body.Close() }()
+	defer func() { require.NoError(t, createResp.Body.Close()) }()
 
 	assert.Equal(t, http.StatusCreated, createResp.StatusCode)
 
@@ -560,16 +596,17 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, "", created.ID.String())
 	assert.Equal(t, "https://example.com/webhook", created.URL)
-	assert.True(t, len(created.SigningKey) > 0)
+	assert.NotEqual(t, "", created.SigningKey)
 	assert.True(t, created.Enabled)
 	assert.Len(t, created.EventTypes, 2)
 
 	// Get webhook
-	getReq, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), nil)
+	getReq, err := http.NewRequest("GET", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), http.NoBody)
+	require.NoError(t, err)
 	getReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	getResp, err := client.Do(getReq)
 	require.NoError(t, err)
-	defer func() { _ = getResp.Body.Close() }()
+	defer func() { require.NoError(t, getResp.Body.Close()) }()
 
 	assert.Equal(t, http.StatusOK, getResp.StatusCode)
 	var got models.Webhook
@@ -579,11 +616,12 @@ func TestWebhooksCRUD(t *testing.T) {
 	assert.Equal(t, created.URL, got.URL)
 
 	// List webhooks
-	listReq, _ := http.NewRequest("GET", server.URL+"/v1/webhooks", nil)
+	listReq, err := http.NewRequest("GET", server.URL+"/v1/webhooks", http.NoBody)
+	require.NoError(t, err)
 	listReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	listResp, err := client.Do(listReq)
 	require.NoError(t, err)
-	defer func() { _ = listResp.Body.Close() }()
+	defer func() { require.NoError(t, listResp.Body.Close()) }()
 
 	assert.Equal(t, http.StatusOK, listResp.StatusCode)
 	var listResult models.ListWebhooksResponse
@@ -598,13 +636,15 @@ func TestWebhooksCRUD(t *testing.T) {
 		"enabled":   false,
 		"tenant_id": "org-123",
 	}
-	updateJSON, _ := json.Marshal(updateBody)
-	updateReq, _ := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(updateJSON))
+	updateJSON, err := json.Marshal(updateBody)
+	require.NoError(t, err)
+	updateReq, err := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(updateJSON))
+	require.NoError(t, err)
 	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateResp, err := client.Do(updateReq)
 	require.NoError(t, err)
-	defer func() { _ = updateResp.Body.Close() }()
+	defer func() { require.NoError(t, updateResp.Body.Close()) }()
 
 	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
 	var updated models.Webhook
@@ -617,13 +657,15 @@ func TestWebhooksCRUD(t *testing.T) {
 
 	// PATCH tenant_id to empty string to clear it
 	clearTenantBody := map[string]any{"tenant_id": ""}
-	clearTenantJSON, _ := json.Marshal(clearTenantBody)
-	clearTenantReq, _ := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(clearTenantJSON))
+	clearTenantJSON, err := json.Marshal(clearTenantBody)
+	require.NoError(t, err)
+	clearTenantReq, err := http.NewRequest("PATCH", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(clearTenantJSON))
+	require.NoError(t, err)
 	clearTenantReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	clearTenantReq.Header.Set("Content-Type", "application/json")
 	clearTenantResp, err := client.Do(clearTenantReq)
 	require.NoError(t, err)
-	defer func() { _ = clearTenantResp.Body.Close() }()
+	defer func() { require.NoError(t, clearTenantResp.Body.Close()) }()
 	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
 	var afterClear models.Webhook
 	err = decodeData(clearTenantResp, &afterClear)
@@ -631,20 +673,22 @@ func TestWebhooksCRUD(t *testing.T) {
 	assert.Nil(t, afterClear.TenantID)
 
 	// Delete webhook
-	deleteReq, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), nil)
+	deleteReq, err := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), http.NoBody)
+	require.NoError(t, err)
 	deleteReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	deleteResp, err := client.Do(deleteReq)
 	require.NoError(t, err)
-	defer func() { _ = deleteResp.Body.Close() }()
+	defer func() { require.NoError(t, deleteResp.Body.Close()) }()
 
 	assert.Equal(t, http.StatusNoContent, deleteResp.StatusCode)
 
 	// Verify deleted
-	getAfterReq, _ := http.NewRequest("GET", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), nil)
+	getAfterReq, err := http.NewRequest("GET", fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), http.NoBody)
+	require.NoError(t, err)
 	getAfterReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	getAfterResp, err := client.Do(getAfterReq)
 	require.NoError(t, err)
-	defer func() { _ = getAfterResp.Body.Close() }()
+	defer func() { require.NoError(t, getAfterResp.Body.Close()) }()
 
 	assert.Equal(t, http.StatusNotFound, getAfterResp.StatusCode)
 }

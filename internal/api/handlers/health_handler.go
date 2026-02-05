@@ -14,7 +14,7 @@ func NewHealthHandler() *HealthHandler {
 }
 
 // Check handles GET /health
-func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
+func (h *HealthHandler) Check(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK")); err != nil {
 		slog.Error("Failed to write health check response", "error", err)
