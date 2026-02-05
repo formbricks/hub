@@ -67,11 +67,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 
 ### Prerequisites
 
-- **Go 1.25.6 or higher** — must be [installed](https://go.dev/doc/install) and available on your `PATH`. Verify with:
-  ```bash
-  go version
-  ```
-  If `go` is not found, add your Go installation to `PATH` (e.g. on macOS/Linux add `$HOME/go/bin` and the Go root, often `/usr/local/go/bin` or `$HOME/sdk/go1.x/bin`).
+- **Go 1.25.6 or higher** — must be [installed](https://go.dev/doc/install) and available on your `PATH`. Verify with `go version`. If `go` is not found, see [Adding Go to PATH](#adding-go-to-path) below.
 - **Docker** and **Docker Compose**
 - **Make** (optional, for convenience)
 
@@ -226,8 +222,21 @@ make test-all     # Run all tests
 
 ### Troubleshooting (local development)
 
-- **`go: command not found` or `make` fails with "go not found"** — Go is not on your `PATH`. Install Go from [go.dev/doc/install](https://go.dev/doc/install), then ensure your shell’s `PATH` includes the Go binary directory. Restart the terminal (or re-source your profile) after changing `PATH`.
+- **`go: command not found` or `make` fails with "go not found"** — Go is not on your `PATH`. Install Go from [go.dev/doc/install](https://go.dev/doc/install), then add it to your PATH using the platform steps in [Adding Go to PATH](#adding-go-to-path) below. Restart the terminal (or re-source your profile) after changing PATH.
 - **Docker/Postgres port already in use** (e.g. `5432` or `address already in use`) — Set `POSTGRES_PORT` in `.env` to a free port (e.g. `5433`), and set the same port in `DATABASE_URL` (e.g. `postgres://postgres:postgres@localhost:5433/test_db?sslmode=disable`). Then run `make docker-up` again.
+
+#### Adding Go to PATH
+
+After installing Go, your shell must be able to find the `go` binary. Restart the terminal (or re-source your profile) after editing PATH.
+
+**macOS / Linux (bash or zsh)**  
+Add this line to `~/.bashrc` or `~/.zshrc` (create the file if it doesn’t exist). It adds the Go toolchain (`go`) and the directory where `go install` puts binaries (e.g. `goose`, `river`) used by the Makefile.
+
+```bash
+export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"
+```
+
+If you installed Go via the [Go version manager](https://go.dev/doc/manage-install) (e.g. under `$HOME/sdk/go1.21/bin`), use that directory instead of `/usr/local/go/bin`. To check that Go is on your PATH, run `which go` — it should print the path to the `go` binary.
 
 ### Git Hooks
 
