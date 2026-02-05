@@ -12,7 +12,7 @@ import (
 
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/api/validation"
-	apperrors "github.com/formbricks/hub/internal/errors"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -54,7 +54,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 
 	record, err := h.service.CreateFeedbackRecord(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
@@ -81,7 +81,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	record, err := h.service.GetFeedbackRecord(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
@@ -141,7 +141,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 
 	record, err := h.service.UpdateFeedbackRecord(r.Context(), id, &req)
 	if err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
@@ -167,7 +167,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.service.DeleteFeedbackRecord(r.Context(), id); err != nil {
-		if errors.Is(err, apperrors.ErrNotFound) {
+		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}

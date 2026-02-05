@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	apperrors "github.com/formbricks/hub/internal/errors"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -90,7 +90,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
+			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
 	}
@@ -327,7 +327,7 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperrors.NewNotFoundError("feedback record", "feedback record not found")
+			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 		return nil, fmt.Errorf("failed to update feedback record: %w", err)
 	}
@@ -345,7 +345,7 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 	}
 
 	if result.RowsAffected() == 0 {
-		return apperrors.NewNotFoundError("feedback record", "feedback record not found")
+		return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 	}
 
 	return nil

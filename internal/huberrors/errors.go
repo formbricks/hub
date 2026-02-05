@@ -1,10 +1,8 @@
-// Package errors provides sentinel and custom error types for the application.
-//
-//nolint:revive // Package name "errors" is intentional; imported as apperrors elsewhere to avoid stdlib conflict.
-package errors
+// Package huberrors provides sentinel and custom error types for the application.
+package huberrors
 
-// ErrNotFound represents a "not found" error
-// This should be used when a requested resource doesn't exist.
+// ErrNotFound represents a "not found" error.
+// Use when a requested resource doesn't exist.
 var ErrNotFound = &NotFoundError{}
 
 // NotFoundError is a sentinel error for resources that are not found.
@@ -38,8 +36,8 @@ func NewNotFoundError(resource, message string) *NotFoundError {
 	}
 }
 
-// ErrValidation represents a validation error
-// This should be used when client input fails validation.
+// ErrValidation represents a validation error.
+// Use when client input fails validation.
 var ErrValidation = &ValidationError{}
 
 // ValidationError is a sentinel error for validation failures.
