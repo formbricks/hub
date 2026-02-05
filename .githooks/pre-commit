@@ -32,6 +32,8 @@ if [ -n "$STAGED_MIGRATIONS" ]; then
 fi
 
 # Format and fix fixable issues (gofumpt, gci, etc. from .golangci.yml)
+# Keep track of staged Go files so we only auto-stage fixes for those files.
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
 echo "Running golangci-lint (format + fix)..."
 if ! golangci-lint run --fix ./...; then
     echo ""
@@ -39,13 +41,19 @@ if ! golangci-lint run --fix ./...; then
     exit 1
 fi
 
-# Stage any files that were auto-fixed (formatting, imports, etc.)
-FIXED_FILES=$(git diff --name-only | grep '\.go$' || true)
-if [ -n "$FIXED_FILES" ]; then
-    echo "Staging auto-fixed files..."
-    echo "$FIXED_FILES" | xargs git add
-    echo "⚠️  Some files were auto-fixed and have been staged:"
-    echo "$FIXED_FILES" | sed 's/^/    /'
+# Stage only auto-fixed files that were already staged.
+if [ -n "$STAGED_GO_FILES" ]; then
+    FIXED_FILES=""
+    for file in $STAGED_GO_FILES; do
+        if git diff --name-only -- "$file" | grep -q .; then
+            git add -- "$file"
+            FIXED_FILES="${FIXED_FILES}${FIXED_FILES:+$'\n'}${file}"
+        fi
+    done
+    if [ -n "$FIXED_FILES" ]; then
+        echo "Staging auto-fixed files..."
+        echo "$FIXED_FILES" | sed 's/^/    /'
+    fi
 fi
 
 # Verify no remaining issues
