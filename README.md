@@ -67,9 +67,13 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 
 ### Prerequisites
 
-- Go 1.25.6 or higher
-- Docker and Docker Compose
-- Make (optional, for convenience)
+- **Go 1.25.6 or higher** — must be [installed](https://go.dev/doc/install) and available on your `PATH`. Verify with:
+  ```bash
+  go version
+  ```
+  If `go` is not found, add your Go installation to `PATH` (e.g. on macOS/Linux add `$HOME/go/bin` and the Go root, often `/usr/local/go/bin` or `$HOME/sdk/go1.x/bin`).
+- **Docker** and **Docker Compose**
+- **Make** (optional, for convenience)
 
 ### Quick Start
 
@@ -220,6 +224,11 @@ make tests        # Integration tests (requires database)
 make test-all     # Run all tests
 ```
 
+### Troubleshooting (local development)
+
+- **`go: command not found` or `make` fails with "go not found"** — Go is not on your `PATH`. Install Go from [go.dev/doc/install](https://go.dev/doc/install), then ensure your shell’s `PATH` includes the Go binary directory. Restart the terminal (or re-source your profile) after changing `PATH`.
+- **Docker/Postgres port already in use** (e.g. `5432` or `address already in use`) — Set `POSTGRES_PORT` in `.env` to a free port (e.g. `5433`), and set the same port in `DATABASE_URL` (e.g. `postgres://postgres:postgres@localhost:5433/test_db?sslmode=disable`). Then run `make docker-up` again.
+
 ### Git Hooks
 
 The repository includes pre-commit hooks for code quality. To install them:
@@ -271,13 +280,15 @@ All protected endpoints require the `Authorization: Bearer <key>` header with th
 
 ## Environment Variables
 
-See [.env.example](.env.example) for all available configuration options:
+Copy [.env.example](.env.example) to `.env` and set values as needed. Reference:
 
-- `DATABASE_URL` - PostgreSQL connection string
-- `PORT` - HTTP server port (default: 8080)
-- `API_KEY` - API key for authentication (required for protected endpoints)
-- `ENV` - Environment (development/production)
-- `LOG_LEVEL` - Logging level (debug, info, warn, error)
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `API_KEY` | Yes | — | API key for authenticating requests to protected endpoints. Server will not start without it. |
+| `DATABASE_URL` | No | `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable` | PostgreSQL connection string. Format: `postgres://user:password@host:port/database?sslmode=...`. When using Docker Compose, the host port in this URL must match `POSTGRES_PORT`. |
+| `POSTGRES_PORT` | No | `5432` | Host port used by Docker Compose for the Postgres container (`host:container` = `POSTGRES_PORT:5432`). Set this (e.g. `5433`) to avoid port conflicts with another Postgres or Formbricks instance; if you change it, set the same port in `DATABASE_URL`. |
+| `PORT` | No | `8080` | HTTP server listen port. |
+| `LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warn`, or `error`. |
 
 ## Example Requests
 
