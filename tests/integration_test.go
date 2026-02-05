@@ -44,7 +44,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize message publisher manager for tests (no providers required)
-	messageManager := service.NewMessagePublisherManager()
+	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout)
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)

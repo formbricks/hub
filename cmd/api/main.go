@@ -56,7 +56,7 @@ func run() int {
 	defer db.Close()
 
 	// Initialize message publisher manager
-	messageManager := service.NewMessagePublisherManager()
+	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout)
 
 	// Webhooks: repository, River client, worker, provider, and CRUD service
 	webhooksRepo := repository.NewWebhooksRepository(db)
@@ -76,7 +76,7 @@ func run() int {
 		return exitFailure
 	}
 
-	webhookProvider := service.NewWebhookProvider(riverClient, webhooksRepo, cfg.WebhookDeliveryMaxAttempts)
+	webhookProvider := service.NewWebhookProvider(riverClient, webhooksRepo, cfg.WebhookDeliveryMaxAttempts, cfg.WebhookMaxFanOutPerEvent)
 	messageManager.RegisterProvider(webhookProvider)
 
 	// Start River in background
@@ -152,7 +152,7 @@ func run() int {
 	}
 
 	// Graceful shutdown with timeout
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {

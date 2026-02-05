@@ -15,25 +15,23 @@ import (
 )
 
 type mockWebhookInserter struct {
-	insertCalls []insertCall
-	insertErr   error
+	insertManyCalls [][]river.InsertManyParams
+	insertManyErr   error
 }
 
-type insertCall struct {
-	args WebhookDispatchArgs
-	opts *river.InsertOpts
-}
-
-func (m *mockWebhookInserter) Insert(_ context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-	if m.insertErr != nil {
-		return nil, m.insertErr
+func (m *mockWebhookInserter) InsertMany(_ context.Context, params []river.InsertManyParams) ([]*rivertype.JobInsertResult, error) {
+	// Record a copy of params for assertions (even when returning error).
+	cp := make([]river.InsertManyParams, len(params))
+	copy(cp, params)
+	m.insertManyCalls = append(m.insertManyCalls, cp)
+	if m.insertManyErr != nil {
+		return nil, m.insertManyErr
 	}
-	a, ok := args.(WebhookDispatchArgs)
-	if !ok {
-		return nil, errors.New("wrong args type")
+	results := make([]*rivertype.JobInsertResult, len(params))
+	for i := range results {
+		results[i] = &rivertype.JobInsertResult{Job: &rivertype.JobRow{ID: int64(i + 1)}}
 	}
-	m.insertCalls = append(m.insertCalls, insertCall{args: a, opts: opts})
-	return &rivertype.JobInsertResult{Job: &rivertype.JobRow{ID: 1}}, nil
+	return results, nil
 }
 
 // mockProviderRepo implements only ListEnabledForEventType for provider tests.
@@ -85,12 +83,12 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 	wh1 := uuid.Must(uuid.NewV7())
 	wh2 := uuid.Must(uuid.NewV7())
 
-	t.Run("inserts one job per webhook with correct opts", func(t *testing.T) {
+	t.Run("inserts one job per webhook via InsertMany with correct opts", func(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 		repo := &mockProviderRepo{
 			webhooks: []models.Webhook{{ID: wh1}, {ID: wh2}},
 		}
-		provider := NewWebhookProvider(inserter, repo, 3)
+		provider := NewWebhookProvider(inserter, repo, 3, 500)
 
 		event := Event{
 			ID:        eventID,
@@ -101,62 +99,92 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 
 		provider.PublishEvent(ctx, event)
 
-		if n := len(inserter.insertCalls); n != 2 {
-			t.Fatalf("Insert called %d times, want 2", n)
+		if n := len(inserter.insertManyCalls); n != 1 {
+			t.Fatalf("InsertMany called %d times, want 1", n)
 		}
-		for i, call := range inserter.insertCalls {
-			if call.args.EventID != eventID {
-				t.Errorf("call %d EventID = %v, want %v", i, call.args.EventID, eventID)
+		params := inserter.insertManyCalls[0]
+		if len(params) != 2 {
+			t.Fatalf("InsertMany params length = %d, want 2", len(params))
+		}
+		for i, p := range params {
+			args, ok := p.Args.(WebhookDispatchArgs)
+			if !ok {
+				t.Fatalf("param %d Args type = %T, want WebhookDispatchArgs", i, p.Args)
 			}
-			if call.args.EventType != eventType.String() {
-				t.Errorf("call %d EventType = %q, want %q", i, call.args.EventType, eventType.String())
+			if args.EventID != eventID {
+				t.Errorf("param %d EventID = %v, want %v", i, args.EventID, eventID)
+			}
+			if args.EventType != eventType.String() {
+				t.Errorf("param %d EventType = %q, want %q", i, args.EventType, eventType.String())
 			}
 			wantID := repo.webhooks[i].ID
-			if call.args.WebhookID != wantID {
-				t.Errorf("call %d WebhookID = %v, want %v", i, call.args.WebhookID, wantID)
+			if args.WebhookID != wantID {
+				t.Errorf("param %d WebhookID = %v, want %v", i, args.WebhookID, wantID)
 			}
-			if call.opts == nil || call.opts.MaxAttempts != 3 {
-				t.Errorf("call %d MaxAttempts = %v, want 3", i, call.opts)
+			if p.InsertOpts == nil || p.InsertOpts.MaxAttempts != 3 {
+				t.Errorf("param %d MaxAttempts = %v, want 3", i, p.InsertOpts)
 			}
-			if call.opts != nil && (!call.opts.UniqueOpts.ByArgs || call.opts.UniqueOpts.ByPeriod != 24*time.Hour) {
-				t.Errorf("call %d UniqueOpts = %+v", i, call.opts.UniqueOpts)
+			if p.InsertOpts != nil && (!p.InsertOpts.UniqueOpts.ByArgs || p.InsertOpts.UniqueOpts.ByPeriod != 24*time.Hour) {
+				t.Errorf("param %d UniqueOpts = %+v", i, p.InsertOpts.UniqueOpts)
 			}
 		}
 	})
 
-	t.Run("no insert when list returns empty", func(t *testing.T) {
+	t.Run("no InsertMany when list returns empty", func(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 		repo := &mockProviderRepo{webhooks: nil}
-		provider := NewWebhookProvider(inserter, repo, 3)
+		provider := NewWebhookProvider(inserter, repo, 3, 500)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
-		if len(inserter.insertCalls) != 0 {
-			t.Errorf("Insert called %d times, want 0", len(inserter.insertCalls))
+		if len(inserter.insertManyCalls) != 0 {
+			t.Errorf("InsertMany called %d times, want 0", len(inserter.insertManyCalls))
 		}
 	})
 
-	t.Run("no insert when list returns error", func(t *testing.T) {
+	t.Run("no InsertMany when list returns error", func(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 		repo := &mockProviderRepo{err: errors.New("db error")}
-		provider := NewWebhookProvider(inserter, repo, 3)
+		provider := NewWebhookProvider(inserter, repo, 3, 500)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
-		if len(inserter.insertCalls) != 0 {
-			t.Errorf("Insert called %d times, want 0", len(inserter.insertCalls))
+		if len(inserter.insertManyCalls) != 0 {
+			t.Errorf("InsertMany called %d times, want 0", len(inserter.insertManyCalls))
 		}
 	})
 
-	t.Run("continues with remaining webhooks when one insert fails", func(t *testing.T) {
-		inserter := &mockWebhookInserter{}
+	t.Run("when InsertMany returns error, provider logs and returns", func(t *testing.T) {
+		inserter := &mockWebhookInserter{insertManyErr: errors.New("river error")}
 		repo := &mockProviderRepo{webhooks: []models.Webhook{{ID: wh1}, {ID: wh2}}}
-		provider := NewWebhookProvider(inserter, repo, 5)
+		provider := NewWebhookProvider(inserter, repo, 5, 500)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
-		if len(inserter.insertCalls) != 2 {
-			t.Errorf("Insert called %d times, want 2", len(inserter.insertCalls))
+		// InsertMany was still called once (batch fails as a whole).
+		if len(inserter.insertManyCalls) != 1 {
+			t.Errorf("InsertMany called %d times, want 1", len(inserter.insertManyCalls))
 		}
-		if inserter.insertCalls[0].opts.MaxAttempts != 5 {
-			t.Errorf("MaxAttempts = %d, want 5", inserter.insertCalls[0].opts.MaxAttempts)
+		if len(inserter.insertManyCalls[0]) != 2 {
+			t.Errorf("InsertMany params length = %d, want 2", len(inserter.insertManyCalls[0]))
+		}
+		if inserter.insertManyCalls[0][0].InsertOpts.MaxAttempts != 5 {
+			t.Errorf("MaxAttempts = %d, want 5", inserter.insertManyCalls[0][0].InsertOpts.MaxAttempts)
+		}
+	})
+
+	t.Run("caps fan-out when webhooks exceed maxFanOut", func(t *testing.T) {
+		inserter := &mockWebhookInserter{}
+		webhooks := make([]models.Webhook, 501)
+		for i := range webhooks {
+			webhooks[i] = models.Webhook{ID: uuid.Must(uuid.NewV7())}
+		}
+		repo := &mockProviderRepo{webhooks: webhooks}
+		provider := NewWebhookProvider(inserter, repo, 3, 500)
+		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
+		provider.PublishEvent(ctx, event)
+		if len(inserter.insertManyCalls) != 1 {
+			t.Fatalf("InsertMany called %d times, want 1", len(inserter.insertManyCalls))
+		}
+		if len(inserter.insertManyCalls[0]) != 500 {
+			t.Errorf("InsertMany params length = %d, want 500 (capped)", len(inserter.insertManyCalls[0]))
 		}
 	})
 }

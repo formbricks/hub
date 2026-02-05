@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -22,6 +23,18 @@ type Config struct {
 
 	// Webhook delivery max attempts per job (River retries); default 3
 	WebhookDeliveryMaxAttempts int
+
+	// Webhook max fan-out per event (max jobs enqueued per event); default 500
+	WebhookMaxFanOutPerEvent int
+
+	// Message publisher: event channel buffer size; default 1024
+	MessagePublisherBufferSize int
+
+	// Message publisher: per-event timeout (max time to process one event across all providers); default 10s
+	MessagePublisherPerEventTimeout time.Duration
+
+	// Graceful shutdown timeout for HTTP server and River; default 30s
+	ShutdownTimeout time.Duration
 }
 
 // getEnv retrieves an environment variable or returns a default value.
@@ -70,14 +83,38 @@ func Load() (*Config, error) {
 		return nil, errors.New("WEBHOOK_DELIVERY_MAX_ATTEMPTS must be a positive integer")
 	}
 
+	webhookMaxFanOutPerEvent := getEnvAsInt("WEBHOOK_MAX_FAN_OUT_PER_EVENT", 500)
+	if webhookMaxFanOutPerEvent <= 0 {
+		return nil, errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
+	}
+
+	messagePublisherBufferSize := getEnvAsInt("MESSAGE_PUBLISHER_BUFFER_SIZE", 1024)
+	if messagePublisherBufferSize <= 0 {
+		return nil, errors.New("MESSAGE_PUBLISHER_BUFFER_SIZE must be a positive integer")
+	}
+
+	perEventTimeoutSecs := getEnvAsInt("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS", 10)
+	if perEventTimeoutSecs <= 0 {
+		return nil, errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
+	}
+
+	shutdownTimeoutSecs := getEnvAsInt("SHUTDOWN_TIMEOUT_SECONDS", 30)
+	if shutdownTimeoutSecs <= 0 {
+		return nil, errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
+	}
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
 		APIKey:      apiKey,
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 
-		WebhookDeliveryMaxConcurrent: webhookDeliveryMaxConcurrent,
-		WebhookDeliveryMaxAttempts:   webhookDeliveryMaxAttempts,
+		WebhookDeliveryMaxConcurrent:    webhookDeliveryMaxConcurrent,
+		WebhookDeliveryMaxAttempts:      webhookDeliveryMaxAttempts,
+		WebhookMaxFanOutPerEvent:        webhookMaxFanOutPerEvent,
+		MessagePublisherBufferSize:      messagePublisherBufferSize,
+		MessagePublisherPerEventTimeout: time.Duration(perEventTimeoutSecs) * time.Second,
+		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
 	}
 
 	return cfg, nil

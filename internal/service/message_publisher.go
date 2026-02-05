@@ -11,9 +11,6 @@ import (
 	"github.com/formbricks/hub/internal/datatypes"
 )
 
-// eventChanBufferSize is the buffer size for the event channel (creates backpressure when full).
-const eventChanBufferSize = 1024
-
 // Event represents an event that can be published to message providers (webhooks, email, etc.)
 type Event struct {
 	ID            uuid.UUID           // Unique event id (UUID v7, time-ordered)
@@ -38,16 +35,19 @@ type eventPublisher interface {
 
 // MessagePublisherManager coordinates multiple message providers.
 type MessagePublisherManager struct {
-	eventChan chan Event
-	providers []eventPublisher
-	wg        sync.WaitGroup
+	eventChan       chan Event
+	providers       []eventPublisher
+	perEventTimeout time.Duration
+	wg              sync.WaitGroup
 }
 
 // NewMessagePublisherManager creates a new message publisher manager.
-func NewMessagePublisherManager() *MessagePublisherManager {
+// bufferSize is the event channel capacity; perEventTimeout limits how long processing one event across all providers may take.
+func NewMessagePublisherManager(bufferSize int, perEventTimeout time.Duration) *MessagePublisherManager {
 	m := &MessagePublisherManager{
-		eventChan: make(chan Event, eventChanBufferSize),
-		providers: make([]eventPublisher, 0),
+		eventChan:       make(chan Event, bufferSize),
+		providers:       make([]eventPublisher, 0),
+		perEventTimeout: perEventTimeout,
 	}
 
 	// Start the worker in a dedicated goroutine
@@ -95,8 +95,8 @@ func (m *MessagePublisherManager) startWorker() {
 
 	// This loop automatically breaks when m.eventChan is closed
 	for event := range m.eventChan {
-		// Create a timeout per event batch so one stuck DB call doesn't freeze the worker forever
-		ctx, cancel := context.WithTimeout(bgCtx, 10*time.Second)
+		// Timeout per event so one stuck provider doesn't freeze the worker
+		ctx, cancel := context.WithTimeout(bgCtx, m.perEventTimeout)
 
 		for _, provider := range m.providers {
 			provider.PublishEvent(ctx, event)

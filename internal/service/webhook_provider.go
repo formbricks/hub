@@ -10,9 +10,9 @@ import (
 	"github.com/riverqueue/river/rivertype"
 )
 
-// WebhookDispatchInserter inserts webhook_dispatch jobs (e.g. River client).
+// WebhookDispatchInserter inserts webhook_dispatch jobs in batch (e.g. River client).
 type WebhookDispatchInserter interface {
-	Insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error)
+	InsertMany(ctx context.Context, params []river.InsertManyParams) ([]*rivertype.JobInsertResult, error)
 }
 
 // WebhookProvider implements eventPublisher by enqueueing one River job per (event, webhook).
@@ -20,18 +20,20 @@ type WebhookProvider struct {
 	repo        WebhooksRepository
 	inserter    WebhookDispatchInserter
 	maxAttempts int
+	maxFanOut   int
 }
 
-// NewWebhookProvider creates a provider that lists enabled webhooks and enqueues one job per webhook.
-func NewWebhookProvider(inserter WebhookDispatchInserter, repo WebhooksRepository, maxAttempts int) *WebhookProvider {
+// NewWebhookProvider creates a provider that lists enabled webhooks and enqueues jobs via InsertMany (capped by maxFanOut per event).
+func NewWebhookProvider(inserter WebhookDispatchInserter, repo WebhooksRepository, maxAttempts, maxFanOut int) *WebhookProvider {
 	return &WebhookProvider{
 		repo:        repo,
 		inserter:    inserter,
 		maxAttempts: maxAttempts,
+		maxFanOut:   maxFanOut,
 	}
 }
 
-// PublishEvent lists enabled webhooks for the event type and inserts one job per webhook.
+// PublishEvent lists enabled webhooks for the event type and enqueues jobs via InsertMany (capped by maxFanOut).
 func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	webhooks, err := p.repo.ListEnabledForEventType(ctx, event.Type.String())
 	if err != nil {
@@ -47,7 +49,17 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
-	args := p.eventToArgs(event)
+	// Cap fan-out per event to avoid blocking the publisher.
+	if len(webhooks) > p.maxFanOut {
+		slog.Warn("webhook fan-out capped per event",
+			"event_id", event.ID,
+			"event_type", event.Type,
+			"requested", len(webhooks),
+			"capped", p.maxFanOut,
+		)
+		webhooks = webhooks[:p.maxFanOut]
+	}
+
 	opts := &river.InsertOpts{
 		MaxAttempts: p.maxAttempts,
 		UniqueOpts: river.UniqueOpts{
@@ -55,17 +67,21 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 			ByPeriod: 24 * time.Hour,
 		},
 	}
-
+	params := make([]river.InsertManyParams, 0, len(webhooks))
+	baseArgs := p.eventToArgs(event)
 	for i := range webhooks {
+		args := baseArgs
 		args.WebhookID = webhooks[i].ID
-		_, err := p.inserter.Insert(ctx, args, opts)
-		if err != nil {
-			slog.Error("failed to enqueue webhook job",
-				"event_id", event.ID,
-				"webhook_id", webhooks[i].ID,
-				"error", err,
-			)
-		}
+		params = append(params, river.InsertManyParams{Args: args, InsertOpts: opts})
+	}
+
+	_, err = p.inserter.InsertMany(ctx, params)
+	if err != nil {
+		slog.Error("failed to enqueue webhook jobs",
+			"event_id", event.ID,
+			"event_type", event.Type,
+			"error", err,
+		)
 	}
 }
 
