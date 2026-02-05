@@ -22,6 +22,21 @@ if ! command -v golangci-lint >/dev/null 2>&1; then
     exit 1
 fi
 
+# Validate migrations if any staged file is in migrations/
+STAGED_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACM | grep '^migrations/' || true)
+if [ -n "$STAGED_MIGRATIONS" ]; then
+    echo "Validating migration files..."
+    if ! command -v goose >/dev/null 2>&1; then
+        echo "Error: goose not found. Install it with: make install-tools"
+        exit 1
+    fi
+    if ! make migrate-validate; then
+        echo ""
+        echo "❌ Migration validation failed. Fix the errors above before committing."
+        exit 1
+    fi
+fi
+
 # Check for potential secrets and show what was found (warning only)
 SECRET_MATCHES=$(git diff --cached | grep -iE "(password|secret|api_key|token|private_key)" | grep -vE "(test|example|sample|TODO|FIXME)" || true)
 

@@ -68,6 +68,12 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Install goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
+
+      - name: Validate migrations
+        run: make migrate-validate
+
       - name: Initialize database schema
         run: make init-db
 

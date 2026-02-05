@@ -20,7 +20,7 @@ Create a new directory and download the Docker Compose file:
 
 ```bash
 mkdir formbricks-hub && cd formbricks-hub
-curl -o docker-compose.yml https://raw.githubusercontent.com/formbricks/hub/main/docker-compose.yml
+curl -o compose.yml https://raw.githubusercontent.com/formbricks/hub/main/compose.yml
 ```
 
 Or create it manually:
@@ -122,22 +122,22 @@ This will:
 - Start PostgreSQL with persistent storage
 - Start the Hub API on port 8080
 
-#### 4. Initialize the Database Schema
+#### 4. Run Database Migrations
 
-The database schema must be initialized before first use:
+Migrations are managed with [goose](https://github.com/pressly/goose). From the project directory with `DATABASE_URL` set to your Postgres connection string:
 
 ```bash
-# Wait for PostgreSQL to be ready
-docker compose exec postgres pg_isready -U formbricks -d hub
+# Install goose (if not already: make install-tools)
+go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
 
-# Apply the schema
-docker compose exec postgres psql -U formbricks -d hub -f /dev/stdin < sql/001_initial_schema.sql
+# Apply migrations
+goose -dir migrations postgres "$DATABASE_URL" up
 ```
 
-Or if you have `psql` installed locally:
+Or use the Makefile (loads `DATABASE_URL` from `.env`):
 
 ```bash
-psql "postgres://formbricks:your_postgres_password@localhost:5432/hub?sslmode=disable" -f sql/001_initial_schema.sql
+make init-db
 ```
 
 <Info>
@@ -187,11 +187,7 @@ docker run -d \
 ```
 
 <Warning>
-  Make sure to initialize the database schema before starting the API. Download and run the schema file from the [GitHub repository](https://github.com/formbricks/hub/blob/main/sql/001_initial_schema.sql):
-
-  ```bash
-  psql "postgresql://user:password@host:5432/hub" -f sql/001_initial_schema.sql
-  ```
+  Make sure to run migrations before starting the API. From the Hub repo with `DATABASE_URL` set: `make init-db` or `goose -dir migrations postgres "$DATABASE_URL" up`.
 </Warning>
 
 ## Making Your First API Call
@@ -366,7 +362,7 @@ If port 8080 or 5432 is occupied:
 PORT=8081
 ```
 
-Or modify the port mapping in `docker-compose.yml`:
+Or modify the port mapping in `compose.yml`:
 
 ```yaml
 ports:
