@@ -37,7 +37,8 @@ func run() int {
 	// Set up logging early so config load errors use the same handler (default: info).
 	setupLogging(getLogLevelEnv())
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -73,6 +74,7 @@ func run() int {
 	})
 	if err != nil {
 		slog.Error("Failed to create River client", "error", err)
+		messageManager.Shutdown()
 		return exitFailure
 	}
 
@@ -145,6 +147,12 @@ func run() int {
 	select {
 	case err := <-serverErr:
 		slog.Error("Server failed to start", "error", err)
+		messageManager.Shutdown()
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		if stopErr := riverClient.Stop(stopCtx); stopErr != nil {
+			slog.Warn("River client stop after server start failure", "error", stopErr)
+		}
+		stopCancel()
 		return exitFailure
 	case sig := <-quit:
 		slog.Info("Received signal, shutting down", "signal", sig)

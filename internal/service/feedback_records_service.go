@@ -20,7 +20,7 @@ type FeedbackRecordsRepository interface {
 	Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
+	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]models.FeedbackRecord, error)
 }
 
 // FeedbackRecordsService handles business logic for feedback records.
@@ -138,14 +138,20 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 }
 
 // BulkDeleteFeedbackRecords deletes all feedback records matching user_identifier and optional tenant_id.
-func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int64, error) {
+// Publishes FeedbackRecordDeleted for each deleted record (same as single delete).
+// The repository uses DELETE ... RETURNING so we get the deleted rows in one query.
+func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int, error) {
 	if userIdentifier == "" {
 		return 0, errors.New("user_identifier is required")
 	}
 
-	count, err := s.repo.BulkDelete(ctx, userIdentifier, tenantID)
+	records, err := s.repo.BulkDelete(ctx, userIdentifier, tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("bulk delete feedback records: %w", err)
 	}
-	return count, nil
+
+	for i := range records {
+		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, records[i])
+	}
+	return len(records), nil
 }
