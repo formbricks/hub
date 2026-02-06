@@ -54,6 +54,7 @@ linters:
     - sqlclosecheck # checks if rows/statements are closed
     - durationcheck # detects multiplying two durations (logic error)
     - copyloopvar   # detects loop variable capture issues (modern replacement for exportloopref)
+    - spancheck     # OpenTelemetry spans: End(), RecordError(), SetStatus() usage
 
     ## 2. Modern Error Handling
     - errorlint     # Enforces errors.Is/As and fmt.Errorf("%w") (CRITICAL for modern Go)
