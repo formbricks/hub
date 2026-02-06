@@ -43,8 +43,8 @@ var ValidFieldTypes = map[FieldType]struct{}{
 }
 
 // IsValid returns true if the FieldType is valid.
-func (ft FieldType) IsValid() bool {
-	_, valid := ValidFieldTypes[ft]
+func (ft *FieldType) IsValid() bool {
+	_, valid := ValidFieldTypes[*ft]
 
 	return valid
 }

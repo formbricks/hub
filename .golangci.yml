@@ -123,6 +123,7 @@ linters:
     - interfacebloat  # Limits number of methods in an interface
     - intrange        # Suggests integer range in for loops where applicable
     - iotamixing      # Iota mixed with non-iota in same const block
+    - recvcheck       # Receiver type consistency (value vs pointer)
     - unconvert       # Removes unnecessary type conversions
 
     ## 5. Style & Formatting (The "Clean" factor)
@@ -142,9 +143,13 @@ linters:
     - revive        # Faster, configurable replacement for golint
     - misspell      # Fixes typos
     - godot         # Comments should end in a period
+    - godoclint     # Checks godoc style and conventions
+    - godox         # Finds FIXME, TODO, BUG, etc. in comments
     - unparam       # Reports unused function parameters
     - unused        # Reports unused constants, variables, functions and types
     - sloglint      # Structured logging (log/slog) best practices — you use slog
+    - loggercheck   # Key-value pairs for slog, zap, logr, klog, kitlog
+    - zerologlint   # Correct use of zerolog (e.g. Send/Msg)
     - promlinter    # Prometheus metrics naming (promlint)
     - importas      # Enforces consistent import aliases (configure alias map in settings)
     - tagliatelle   # Struct tag naming (e.g. json, yaml) case
@@ -161,10 +166,11 @@ linters:
     - nolintlint    # Ensures //nolint comments are actually useful and formatted
 
     ## 7. Testing
-    - testifylint   # Checks for misuse of testify/require and testify/assert
-    - usetesting    # Prefer newer testing APIs (e.g. context.Background vs context.TODO in tests)
-    - tparallel     # Flags inappropriate use of t.Parallel()
-    - testpackage   # Encourages _test package for black-box tests
+    - testifylint       # Checks for misuse of testify/require and testify/assert
+    - usetesting        # Prefer newer testing APIs (e.g. context.Background vs context.TODO in tests)
+    - tparallel         # Flags inappropriate use of t.Parallel()
+    - testpackage       # Encourages _test package for black-box tests
+    - testableexamples  # Example functions should have expected output
 
 issues:
   # Maximum issues count per one linter. Set to 0 to disable.
