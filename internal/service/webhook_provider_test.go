@@ -88,7 +88,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		repo := &mockProviderRepo{
 			webhooks: []models.Webhook{{ID: wh1}, {ID: wh2}},
 		}
-		provider := NewWebhookProvider(inserter, repo, 3, 500)
+		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
 
 		event := Event{
 			ID:        eventID,
@@ -133,7 +133,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 	t.Run("no InsertMany when list returns empty", func(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 		repo := &mockProviderRepo{webhooks: nil}
-		provider := NewWebhookProvider(inserter, repo, 3, 500)
+		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
 		if len(inserter.insertManyCalls) != 0 {
@@ -144,7 +144,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 	t.Run("no InsertMany when list returns error", func(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 		repo := &mockProviderRepo{err: errors.New("db error")}
-		provider := NewWebhookProvider(inserter, repo, 3, 500)
+		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
 		if len(inserter.insertManyCalls) != 0 {
@@ -155,7 +155,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 	t.Run("when InsertMany returns error, provider logs and returns", func(t *testing.T) {
 		inserter := &mockWebhookInserter{insertManyErr: errors.New("river error")}
 		repo := &mockProviderRepo{webhooks: []models.Webhook{{ID: wh1}, {ID: wh2}}}
-		provider := NewWebhookProvider(inserter, repo, 5, 500)
+		provider := NewWebhookProvider(inserter, repo, 5, 500, nil)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
 		// InsertMany was still called once (batch fails as a whole).
@@ -177,7 +177,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 			webhooks[i] = models.Webhook{ID: uuid.Must(uuid.NewV7())}
 		}
 		repo := &mockProviderRepo{webhooks: webhooks}
-		provider := NewWebhookProvider(inserter, repo, 3, 500)
+		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
 		if len(inserter.insertManyCalls) != 1 {

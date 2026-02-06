@@ -13,6 +13,7 @@ import (
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // WebhookSender sends a single webhook payload to an endpoint (Standard Webhooks: signing, headers, 410 handling).
@@ -24,11 +25,13 @@ type WebhookSender interface {
 type WebhookSenderImpl struct {
 	repo       WebhooksRepository
 	httpClient *http.Client
+	metrics    observability.HubMetrics
 }
 
 // NewWebhookSenderImpl creates a sender that uses the given repo.
 // HTTP client uses 15s timeout and does not follow redirects.
-func NewWebhookSenderImpl(repo WebhooksRepository) *WebhookSenderImpl {
+// metrics is optional; when non-nil, success and 410_gone delivery outcomes are recorded.
+func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.HubMetrics) *WebhookSenderImpl {
 	client := &http.Client{
 		Timeout: 15 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -38,11 +41,13 @@ func NewWebhookSenderImpl(repo WebhooksRepository) *WebhookSenderImpl {
 	return &WebhookSenderImpl{
 		repo:       repo,
 		httpClient: client,
+		metrics:    metrics,
 	}
 }
 
 // Send signs and POSTs the payload to the webhook URL. On 410 Gone, disables the webhook and returns an error.
 func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, payload *WebhookPayload) error {
+	start := time.Now()
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal webhook payload: %w", err)
@@ -102,11 +107,23 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 				"url", webhook.URL,
 			)
 		}
+
+		if s.metrics != nil {
+			duration := time.Since(start)
+			s.metrics.RecordWebhookDisabled(ctx, "410_gone")
+			s.metrics.RecordWebhookDelivery(ctx, payload.Type, "disabled_410", duration)
+		}
+
 		return fmt.Errorf("webhook returned 410 Gone (endpoint disabled): %s", webhook.URL)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned non-2xx status: %d", resp.StatusCode)
+	}
+
+	if s.metrics != nil {
+		duration := time.Since(start)
+		s.metrics.RecordWebhookDelivery(ctx, payload.Type, "success", duration)
 	}
 
 	return nil

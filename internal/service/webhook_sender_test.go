@@ -85,7 +85,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo)
+		sender := NewWebhookSenderImpl(repo, nil)
 		payload := &WebhookPayload{
 			ID:        uuid.Must(uuid.NewV7()),
 			Type:      "feedback_record.created",
@@ -110,7 +110,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo)
+		sender := NewWebhookSenderImpl(repo, nil)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
@@ -130,7 +130,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo)
+		sender := NewWebhookSenderImpl(repo, nil)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)

@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // WebhookDispatchInserter inserts webhook_dispatch jobs in batch (e.g. River client).
@@ -21,15 +23,18 @@ type WebhookProvider struct {
 	inserter    WebhookDispatchInserter
 	maxAttempts int
 	maxFanOut   int
+	metrics     observability.HubMetrics
 }
 
 // NewWebhookProvider creates a provider that lists enabled webhooks and enqueues jobs via InsertMany (capped by maxFanOut per event).
-func NewWebhookProvider(inserter WebhookDispatchInserter, repo WebhooksRepository, maxAttempts, maxFanOut int) *WebhookProvider {
+// metrics is optional; when non-nil, enqueue counts and errors are recorded.
+func NewWebhookProvider(inserter WebhookDispatchInserter, repo WebhooksRepository, maxAttempts, maxFanOut int, metrics observability.HubMetrics) *WebhookProvider {
 	return &WebhookProvider{
 		repo:        repo,
 		inserter:    inserter,
 		maxAttempts: maxAttempts,
 		maxFanOut:   maxFanOut,
+		metrics:     metrics,
 	}
 }
 
@@ -82,6 +87,11 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 			"event_type", event.Type,
 			"error", err,
 		)
+		if p.metrics != nil {
+			p.metrics.RecordWebhookEnqueueError(ctx, event.Type.String())
+		}
+	} else if p.metrics != nil {
+		p.metrics.RecordWebhookJobsEnqueued(ctx, event.Type.String(), len(params))
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -42,6 +43,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
+		slog.Warn("Invalid request body", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondBadRequest(w, "Invalid request body")
 		return
 	}
@@ -58,6 +60,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
+		slog.Error("Failed to create feedback record", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
@@ -75,6 +78,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
+		slog.Warn("Invalid UUID format", "method", r.Method, "path", r.URL.Path, "id", idStr, "error", err)
 		response.RespondBadRequest(w, "Invalid UUID format")
 		return
 	}
@@ -85,6 +89,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
+		slog.Error("Failed to get feedback record", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
@@ -104,6 +109,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
 	if err != nil {
+		slog.Error("Failed to list feedback records", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
@@ -121,6 +127,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
+		slog.Warn("Invalid UUID format", "method", r.Method, "path", r.URL.Path, "id", idStr, "error", err)
 		response.RespondBadRequest(w, "Invalid UUID format")
 		return
 	}
@@ -129,6 +136,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
+		slog.Warn("Invalid request body for update", "method", r.Method, "path", r.URL.Path, "id", idStr, "error", err)
 		response.RespondBadRequest(w, "Invalid request body")
 		return
 	}
@@ -145,6 +153,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
+		slog.Error("Failed to update feedback record", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
@@ -162,6 +171,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
+		slog.Warn("Invalid UUID format", "method", r.Method, "path", r.URL.Path, "id", idStr, "error", err)
 		response.RespondBadRequest(w, "Invalid UUID format")
 		return
 	}
@@ -171,6 +181,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 			response.RespondNotFound(w, "Feedback record not found")
 			return
 		}
+		slog.Error("Failed to delete feedback record", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}
@@ -190,6 +201,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 
 	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters.UserIdentifier, filters.TenantID)
 	if err != nil {
+		slog.Error("Failed to bulk delete feedback records", "method", r.Method, "path", r.URL.Path, "user_identifier", filters.UserIdentifier, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
 	}

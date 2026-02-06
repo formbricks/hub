@@ -18,6 +18,7 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
@@ -56,13 +57,59 @@ func run() int {
 	}
 	defer db.Close()
 
+	// Metrics (optional): when PrometheusEnabled, create MeterProvider and custom metrics; otherwise no-op
+	var metrics observability.HubMetrics
+	var meterProvider observability.MeterProviderShutdown
+	var metricsServer *http.Server
+
+	if cfg.PrometheusEnabled {
+		mp, metricsHandler, m, err := observability.NewMeterProvider(ctx, observability.MeterProviderConfig{})
+		if err != nil {
+			slog.Error("Failed to create MeterProvider", "error", err)
+			return exitFailure
+		}
+
+		meterProvider = mp
+		metrics = m
+		metricsServer = &http.Server{
+			Addr:              ":" + cfg.PrometheusExporterPort,
+			Handler:           metricsHandler,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+
+		go func() {
+			slog.Info("Starting metrics server", "port", cfg.PrometheusExporterPort)
+			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("Metrics server failed", "error", err)
+			}
+		}()
+	}
+
+	defer func() {
+		if metricsServer != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("Metrics server shutdown", "error", err)
+			}
+			cancel()
+		}
+
+		if meterProvider != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := meterProvider.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("MeterProvider shutdown", "error", err)
+			}
+			cancel()
+		}
+	}()
+
 	// Initialize message publisher manager
-	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout)
+	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, metrics)
 
 	// Webhooks: repository, River client, worker, provider, and CRUD service
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhookSender := service.NewWebhookSenderImpl(webhooksRepo)
-	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender)
+	webhookSender := service.NewWebhookSenderImpl(webhooksRepo, metrics)
+	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender, metrics)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, webhookWorker)
 
@@ -78,7 +125,7 @@ func run() int {
 		return exitFailure
 	}
 
-	webhookProvider := service.NewWebhookProvider(riverClient, webhooksRepo, cfg.WebhookDeliveryMaxAttempts, cfg.WebhookMaxFanOutPerEvent)
+	webhookProvider := service.NewWebhookProvider(riverClient, webhooksRepo, cfg.WebhookDeliveryMaxAttempts, cfg.WebhookMaxFanOutPerEvent, metrics)
 	messageManager.RegisterProvider(webhookProvider)
 
 	// Start River in background
@@ -121,7 +168,8 @@ func run() int {
 	mainMux.Handle("/v1/", protectedHandler)
 	mainMux.Handle("/", publicMux)
 
-	handler := middleware.Logging(mainMux)
+	// Metrics outermost so duration is full request time
+	handler := middleware.Metrics(metrics)(middleware.Logging(mainMux))
 
 	// Create HTTP server
 	server := &http.Server{
@@ -176,6 +224,7 @@ func run() int {
 	if err := riverClient.Stop(shutdownCtx); err != nil {
 		slog.Warn("River client stop", "error", err)
 	}
+	// Metrics server and MeterProvider are shut down via defer
 
 	slog.Info("Server stopped")
 	return exitSuccess
