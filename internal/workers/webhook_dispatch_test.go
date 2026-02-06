@@ -52,7 +52,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	t.Run("returns nil when webhook not found", func(t *testing.T) {
 		repo := &mockDispatchRepo{webhook: nil, err: errors.New("not found")}
 		sender := &mockSender{}
-		worker := NewWebhookDispatchWorker(repo, sender)
+		worker := NewWebhookDispatchWorker(repo, sender, nil)
 		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: args}
 		err := worker.Work(ctx, job)
 		if err != nil {
@@ -63,7 +63,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	t.Run("returns nil when webhook disabled", func(t *testing.T) {
 		repo := &mockDispatchRepo{webhook: &models.Webhook{ID: webhookID, Enabled: false}}
 		sender := &mockSender{}
-		worker := NewWebhookDispatchWorker(repo, sender)
+		worker := NewWebhookDispatchWorker(repo, sender, nil)
 		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: args}
 		err := worker.Work(ctx, job)
 		if err != nil {
@@ -74,7 +74,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	t.Run("returns nil on send success", func(t *testing.T) {
 		repo := &mockDispatchRepo{webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk"}}
 		sender := &mockSender{}
-		worker := NewWebhookDispatchWorker(repo, sender)
+		worker := NewWebhookDispatchWorker(repo, sender, nil)
 		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: args}
 		err := worker.Work(ctx, job)
 		if err != nil {
@@ -88,7 +88,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	t.Run("returns error and does not update when send fails and attempt < max", func(t *testing.T) {
 		repo := &mockDispatchRepo{webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk"}}
 		sender := &mockSender{err: errors.New("network error")}
-		worker := NewWebhookDispatchWorker(repo, sender)
+		worker := NewWebhookDispatchWorker(repo, sender, nil)
 		job := &river.Job[service.WebhookDispatchArgs]{
 			JobRow: &rivertype.JobRow{Attempt: 1, MaxAttempts: 3},
 			Args:   args,
@@ -105,7 +105,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	t.Run("updates webhook and returns error when send fails on last attempt", func(t *testing.T) {
 		repo := &mockDispatchRepo{webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk"}}
 		sender := &mockSender{err: errors.New("final failure")}
-		worker := NewWebhookDispatchWorker(repo, sender)
+		worker := NewWebhookDispatchWorker(repo, sender, nil)
 		job := &river.Job[service.WebhookDispatchArgs]{
 			JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
 			Args:   args,
@@ -130,7 +130,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 }
 
 func TestWebhookDispatchWorker_Timeout(t *testing.T) {
-	worker := NewWebhookDispatchWorker(nil, nil)
+	worker := NewWebhookDispatchWorker(nil, nil, nil)
 	job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}}
 	d := worker.Timeout(job)
 	if d != 25*time.Second {

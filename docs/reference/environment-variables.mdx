@@ -96,6 +96,41 @@ LOG_LEVEL=warn   # Quiet production
 
 ---
 
+## Observability (Prometheus metrics)
+
+When enabled, the server exposes OpenTelemetry metrics exported in Prometheus format on a **separate** HTTP server (no API key). Custom metrics include HTTP request count/duration, webhook jobs enqueued/deliveries/disabled, and dropped events. See [Metrics (Prometheus)](/reference/metrics) for a full list of metrics, labels, and example queries.
+
+### `PROMETHEUS_ENABLED`
+
+Set to `1` to enable the metrics server and custom metrics. When unset or not `1`, metrics are disabled (no-op).
+
+**Example:**
+
+```bash
+PROMETHEUS_ENABLED=1
+```
+
+**Default:** Off (metrics disabled)
+
+### `PROMETHEUS_EXPORTER_PORT`
+
+Port for the metrics HTTP server. Only used when `PROMETHEUS_ENABLED=1`. The server serves only `GET /metrics` (Prometheus scrape endpoint).
+
+**Example:**
+
+```bash
+PROMETHEUS_EXPORTER_PORT=9464
+```
+
+**Default:** `9464`
+
+### Health and readiness
+
+- **`GET /health`** – Liveness; returns 200 OK (no DB check).
+- **`GET /ready`** – Readiness; returns 200 if the database ping succeeds, 503 otherwise. Use for load balancer readiness probes.
+
+---
+
 ## Complete Example: Development
 
 ```bash
@@ -112,6 +147,10 @@ PORT=8080
 
 # Logging
 LOG_LEVEL=debug
+
+# Optional: Prometheus metrics on port 9464
+# PROMETHEUS_ENABLED=1
+# PROMETHEUS_EXPORTER_PORT=9464
 ```
 
 ## Complete Example: Production
@@ -130,6 +169,10 @@ PORT=8080
 
 # Logging
 LOG_LEVEL=info
+
+# Optional: Prometheus metrics (separate port 9464)
+PROMETHEUS_ENABLED=1
+PROMETHEUS_EXPORTER_PORT=9464
 ```
 
 ## Loading Environment Variables

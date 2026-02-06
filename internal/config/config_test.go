@@ -53,6 +53,49 @@ func TestGetEnv(t *testing.T) {
 	}
 }
 
+func TestGetEnvAsBool(t *testing.T) {
+	tests := []struct {
+		name      string
+		key       string
+		envValue  string
+		shouldSet bool
+		want      bool
+	}{
+		{"unset -> false", "TEST_BOOL_MISSING", "", false, false},
+		{"empty -> false", "TEST_BOOL_EMPTY", "", true, false},
+		{"true (lower) -> true", "TEST_BOOL", "true", true, true},
+		{"True (mixed) -> true", "TEST_BOOL", "True", true, true},
+		{"TRUE (upper) -> true", "TEST_BOOL", "TRUE", true, true},
+		{"1 -> true", "TEST_BOOL", "1", true, true},
+		{"yes -> true", "TEST_BOOL", "yes", true, true},
+		{"on -> true", "TEST_BOOL", "on", true, true},
+		{"false -> false", "TEST_BOOL", "false", true, false},
+		{"False -> false", "TEST_BOOL", "False", true, false},
+		{"0 -> false", "TEST_BOOL", "0", true, false},
+		{"000 -> false", "TEST_BOOL", "000", true, false},
+		{"0.0 -> false", "TEST_BOOL", "0.0", true, false},
+		{"0.0000 -> false", "TEST_BOOL", "0.0000", true, false},
+		{"no -> false", "TEST_BOOL", "no", true, false},
+		{"off -> false", "TEST_BOOL", "off", true, false},
+		{"tRuE (mixed case) -> true", "TEST_BOOL", "tRuE", true, true},
+		{"unknown value -> false", "TEST_BOOL", "enabled", true, false},
+		{"whitespace trimmed", "TEST_BOOL", "  true  ", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.shouldSet {
+				t.Setenv(tt.key, tt.envValue)
+			} else {
+				t.Setenv(tt.key, "")
+			}
+			got := getEnvAsBool(tt.key)
+			if got != tt.want {
+				t.Errorf("getEnvAsBool(%q) with env=%q = %v, want %v", tt.key, tt.envValue, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetEnvAsInt(t *testing.T) {
 	tests := []struct {
 		name         string

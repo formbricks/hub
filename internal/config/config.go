@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -35,6 +36,12 @@ type Config struct {
 
 	// Graceful shutdown timeout for HTTP server and River; default 30s
 	ShutdownTimeout time.Duration
+
+	// Prometheus metrics: when true, enable MeterProvider and metrics server on PROMETHEUS_EXPORTER_PORT
+	PrometheusEnabled bool
+
+	// Prometheus metrics server listen address (e.g. ":9464"); only used when PrometheusEnabled is true
+	PrometheusExporterPort string
 }
 
 // getEnv retrieves an environment variable or returns a default value.
@@ -43,6 +50,27 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// getEnvAsBool interprets an environment variable as a boolean (case-insensitive).
+// True: "1", "true", "yes", "on". False: "", "0", "false", "no", "off", or numeric zero (e.g. "000", "0.0").
+// Any other value is treated as false.
+func getEnvAsBool(key string) bool {
+	s := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if s == "" {
+		return false
+	}
+	switch s {
+	case "false", "no", "off":
+		return false
+	case "true", "yes", "on", "1":
+		return true
+	}
+	// Numeric zero (0, 000, 0.0, etc.) -> false
+	if n, err := strconv.ParseFloat(s, 64); err == nil && n == 0 {
+		return false
+	}
+	return false
 }
 
 // getEnvAsInt retrieves an environment variable as an integer or returns a default value.
@@ -103,6 +131,12 @@ func Load() (*Config, error) {
 		return nil, errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
 	}
 
+	prometheusEnabled := getEnvAsBool("PROMETHEUS_ENABLED")
+	prometheusPort := getEnv("PROMETHEUS_EXPORTER_PORT", "9464")
+	if prometheusEnabled && prometheusPort == "" {
+		prometheusPort = "9464"
+	}
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
@@ -115,6 +149,8 @@ func Load() (*Config, error) {
 		MessagePublisherBufferSize:      messagePublisherBufferSize,
 		MessagePublisherPerEventTimeout: time.Duration(perEventTimeoutSecs) * time.Second,
 		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
+		PrometheusEnabled:               prometheusEnabled,
+		PrometheusExporterPort:          prometheusPort,
 	}
 
 	return cfg, nil

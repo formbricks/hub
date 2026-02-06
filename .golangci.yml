@@ -37,6 +37,9 @@ formatters:
 linters:
   # Disable everything first to have full control
   disable-all: true
+  settings:
+    lll:
+      line-length: 164  # enforce max line length; lower to 120–140 and fix lines to tighten
   enable:
     ## 1. Bugs & Logic
     - bodyclose     # Checks HTTP response bodies are closed
@@ -69,12 +72,15 @@ linters:
     - usestdlibvars # Prefer http.StatusOK, time.Kitchen etc. over magic numbers
 
     ## 5. Style & Formatting (The "Clean" factor)
+    - lll           # Max line length (enforces readable line width)
+    - whitespace    # Trailing newlines, unnecessary blank lines, spaces (consistency with if/for etc.)
     - revive        # Faster, configurable replacement for golint
     - misspell      # Fixes typos
     - godot         # Comments should end in a period
     - unparam       # Reports unused function parameters
     - unused        # Reports unused constants, variables, functions and types
     - sloglint      # Structured logging (log/slog) best practices — you use slog
+    - promlinter    # Prometheus metrics naming (promlint)
 
     ## 6. Code Quality/Complexity
     - gocritic      # Opinionated checks for bugs, performance, and style
@@ -101,6 +107,11 @@ issues:
         - bodyclose     # often irrelevant in simple test logic
         - funlen        # tests can be long
         - exhaustive    # test switch on types often intentionally partial
+        - lll           # test URLs and mock signatures are often long
+    # Integration tests (long URLs, request setup)
+    - path: tests/
+      linters:
+        - lll
 
 linters-settings:
   # Error checking strictness

@@ -11,14 +11,16 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
 
 // WebhookDispatchWorker delivers one event to one webhook endpoint.
 type WebhookDispatchWorker struct {
 	river.WorkerDefaults[service.WebhookDispatchArgs]
-	repo   webhookDispatchRepo
-	sender service.WebhookSender
+	repo    webhookDispatchRepo
+	sender  service.WebhookSender
+	metrics observability.HubMetrics
 }
 
 // webhookDispatchRepo is the minimal repo interface needed by the worker.
@@ -28,8 +30,9 @@ type webhookDispatchRepo interface {
 }
 
 // NewWebhookDispatchWorker creates a worker that uses the given repo and sender.
-func NewWebhookDispatchWorker(repo webhookDispatchRepo, sender service.WebhookSender) *WebhookDispatchWorker {
-	return &WebhookDispatchWorker{repo: repo, sender: sender}
+// metrics is optional; when non-nil, retryable_failure and disabled_max_retries are recorded.
+func NewWebhookDispatchWorker(repo webhookDispatchRepo, sender service.WebhookSender, metrics observability.HubMetrics) *WebhookDispatchWorker {
+	return &WebhookDispatchWorker{repo: repo, sender: sender, metrics: metrics}
 }
 
 // Timeout limits how long a single delivery can run (align with HTTP client timeout).
@@ -68,13 +71,24 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		return nil
 	}
 
+	sendStart := time.Now()
 	err = w.sender.Send(ctx, webhook, payload)
+	duration := time.Since(sendStart)
+
 	if err == nil {
 		return nil
 	}
 
 	// Send failed
 	isLastAttempt := job.Attempt >= job.MaxAttempts
+	if w.metrics != nil {
+		if isLastAttempt {
+			w.metrics.RecordWebhookDelivery(ctx, args.EventType, "disabled_max_retries", duration)
+			w.metrics.RecordWebhookDisabled(ctx, "max_retries")
+		} else {
+			w.metrics.RecordWebhookDelivery(ctx, args.EventType, "retryable_failure", duration)
+		}
+	}
 	if isLastAttempt {
 		enabled := false
 		reason := err.Error()

@@ -44,7 +44,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize message publisher manager for tests (no providers required)
-	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout)
+	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, nil)
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)
@@ -444,7 +444,8 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(updateBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", bytes.NewBuffer(body))
+		patchURL := server.URL + "/v1/feedback-records/00000000-0000-0000-0000-000000000000"
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, patchURL, bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 		req.Header.Set("Content-Type", "application/json")
@@ -486,7 +487,8 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		body, err := json.Marshal(updateBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID), bytes.NewBuffer(body))
+		updateURL := fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, created.ID)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, updateURL, bytes.NewBuffer(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		req.Header.Set("Content-Type", "application/json")
@@ -515,7 +517,8 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, server.URL+"/v1/feedback-records/00000000-0000-0000-0000-000000000000", http.NoBody)
+		delURL := server.URL + "/v1/feedback-records/00000000-0000-0000-0000-000000000000"
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL, http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 
@@ -688,7 +691,8 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		}
 
 		// Delete only tenant_a
-		delReq, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, server.URL+"/v1/feedback-records?user_identifier="+userIDTenant+"&tenant_id="+tenantA, http.NoBody)
+		delURL := server.URL + "/v1/feedback-records?user_identifier=" + userIDTenant + "&tenant_id=" + tenantA
+		delReq, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL, http.NoBody)
 		require.NoError(t, err)
 		delReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 		delResp, err := client.Do(delReq)
@@ -701,7 +705,8 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		assert.Equal(t, int64(1), delResult.DeletedCount)
 
 		// Delete remaining (tenant_b) — should delete 2
-		delReq2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, server.URL+"/v1/feedback-records?user_identifier="+userIDTenant+"&tenant_id="+tenantB, http.NoBody)
+		delURL2 := server.URL + "/v1/feedback-records?user_identifier=" + userIDTenant + "&tenant_id=" + tenantB
+		delReq2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL2, http.NoBody)
 		require.NoError(t, err)
 		delReq2.Header.Set("Authorization", "Bearer "+testAPIKey)
 		delResp2, err := client.Do(delReq2)
@@ -838,7 +843,8 @@ func TestWebhooksCRUD(t *testing.T) {
 	}
 	updateJSON, err := json.Marshal(updateBody)
 	require.NoError(t, err)
-	updateReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(updateJSON))
+	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	updateReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, updateURL, bytes.NewBuffer(updateJSON))
 	require.NoError(t, err)
 	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	updateReq.Header.Set("Content-Type", "application/json")
@@ -859,7 +865,8 @@ func TestWebhooksCRUD(t *testing.T) {
 	clearTenantBody := map[string]any{"tenant_id": ""}
 	clearTenantJSON, err := json.Marshal(clearTenantBody)
 	require.NoError(t, err)
-	clearTenantReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(clearTenantJSON))
+	clearTenantURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	clearTenantReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, clearTenantURL, bytes.NewBuffer(clearTenantJSON))
 	require.NoError(t, err)
 	clearTenantReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	clearTenantReq.Header.Set("Content-Type", "application/json")

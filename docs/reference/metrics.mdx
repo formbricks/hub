@@ -1,0 +1,166 @@
+---
+title: "Metrics (Prometheus)"
+description: "Reference for Prometheus metrics exposed by Formbricks Hub when observability is enabled."
+---
+
+## Overview
+
+When [Prometheus metrics are enabled](/reference/environment-variables#observability-prometheus-metrics) (`PROMETHEUS_ENABLED=1`), the Hub exposes OpenTelemetry metrics in Prometheus format on a **separate** HTTP server. The metrics endpoint is:
+
+- **URL:** `GET http://<host>:<PROMETHEUS_EXPORTER_PORT>/metrics` (default port `9464`)
+- **Auth:** None (metrics server is separate from the API and does not use `API_KEY`)
+
+All label values are normalized to a bounded set to control cardinality (e.g. unknown event types become `unknown`). The SDK enforces a cardinality limit (default 2000); excess attribute sets are aggregated into an overflow bucket.
+
+---
+
+## HTTP metrics
+
+### `http_server_request_count`
+
+**Type:** Counter (cumulative)  
+**Description:** Total HTTP requests handled by the API.
+
+**Labels:**
+
+| Label           | Description                                      | Example values        |
+| --------------- | ------------------------------------------------- | --------------------- |
+| `method`        | HTTP method                                      | `GET`, `POST`, `PATCH` |
+| `route`        | Normalized route (path with UUIDs replaced by `{id}`) | `GET /v1/feedback-records`, `GET /v1/feedback-records/{id}` |
+| `status_class` | Response status class                            | `2xx`, `4xx`, `5xx`    |
+
+**When recorded:** On every API request, after the response is written (by the metrics middleware).
+
+---
+
+### `http_server_duration`
+
+**Type:** Histogram (seconds)  
+**Description:** HTTP request duration in seconds.
+
+**Labels:**
+
+| Label    | Description                                      |
+| -------- | ------------------------------------------------- |
+| `method` | HTTP method                                       |
+| `route`  | Normalized route (path with UUIDs as `{id}`)     |
+
+**When recorded:** On every API request.
+
+**Buckets (seconds):** `0.005`, `0.025`, `0.1`, `0.5`, `1`, `2.5`, `5`  
+Use these for consistent percentiles (e.g. p50, p95, p99) and SLOs.
+
+---
+
+## Event and webhook metrics
+
+### `events_dropped_total`
+
+**Type:** Counter  
+**Description:** Number of events dropped because the publisher channel was full (backpressure).
+
+**Labels:**
+
+| Label        | Description | Example values |
+| ------------ | ----------- | -------------- |
+| `event_type` | Normalized event type | `feedback_record.created`, `webhook.created`, `unknown` |
+
+**When recorded:** When the message publisher cannot enqueue an event within the configured timeout; only known event types are emitted (others are normalized to `unknown`).
+
+---
+
+### `webhook_jobs_enqueued_total`
+
+**Type:** Counter  
+**Description:** Number of webhook dispatch jobs enqueued (per event type).
+
+**Labels:**
+
+| Label        | Description |
+| ------------ | ----------- |
+| `event_type` | Normalized event type |
+
+**When recorded:** When webhook jobs are successfully enqueued to the job queue after an event (e.g. feedback record or webhook CRUD).
+
+---
+
+### `webhook_jobs_enqueue_errors_total`
+
+**Type:** Counter  
+**Description:** Number of failures to enqueue a webhook dispatch job.
+
+**Labels:**
+
+| Label        | Description |
+| ------------ | ----------- |
+| `event_type` | Normalized event type |
+
+**When recorded:** When enqueueing a webhook job fails (e.g. queue error).
+
+---
+
+### `webhook_deliveries_total`
+
+**Type:** Counter  
+**Description:** Webhook delivery outcomes (success or failure reason).
+
+**Labels:**
+
+| Label        | Description |
+| ------------ | ----------- |
+| `event_type` | Normalized event type |
+| `outcome`    | `success`, `retryable_failure`, `disabled_410`, `disabled_max_retries`, or `unknown` |
+
+**When recorded:** After each webhook delivery attempt (success or failure).
+
+---
+
+### `webhook_delivery_duration_seconds`
+
+**Type:** Histogram (seconds)  
+**Description:** Webhook delivery duration in seconds (time to send the HTTP request and get a response).
+
+**Labels:**
+
+| Label        | Description |
+| ------------ | ----------- |
+| `event_type` | Normalized event type |
+| `outcome`    | Same as `webhook_deliveries_total` |
+
+**When recorded:** On each webhook delivery attempt.
+
+**Buckets (seconds):** `0.005`, `0.025`, `0.1`, `0.5`, `1`, `2.5`, `5`
+
+---
+
+### `webhook_disabled_total`
+
+**Type:** Counter  
+**Description:** Webhooks disabled by reason (endpoint returned 410 Gone or max retries exceeded).
+
+**Labels:**
+
+| Label    | Description | Example values   |
+| -------- | ----------- | ---------------- |
+| `reason` | Why the webhook was disabled | `410_gone`, `max_retries`, `unknown` |
+
+**When recorded:** When a webhook is disabled because the destination returned 410 Gone or the job exceeded the maximum retry count.
+
+---
+
+## Normalized label values
+
+To keep cardinality bounded, the following labels are normalized; any value not in the allowed set is emitted as `unknown`.
+
+- **event_type:** `feedback_record.created`, `feedback_record.updated`, `feedback_record.deleted`, `webhook.created`, `webhook.updated`, `webhook.deleted`
+- **outcome:** `success`, `retryable_failure`, `disabled_410`, `disabled_max_retries`
+- **reason** (webhook_disabled_total): `410_gone`, `max_retries`
+
+---
+
+## Example Prometheus queries
+
+- Request rate by route: `rate(http_server_request_count[5m])`
+- p95 API latency: `histogram_quantile(0.95, rate(http_server_duration_bucket[5m]))`
+- Webhook delivery success rate: `rate(webhook_deliveries_total{outcome="success"}[5m]) / rate(webhook_deliveries_total[5m])`
+- Dropped events: `increase(events_dropped_total[1h])`
