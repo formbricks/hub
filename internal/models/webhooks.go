@@ -70,10 +70,10 @@ func (w *Webhook) UnmarshalJSON(data []byte) error {
 
 // CreateWebhookRequest represents the request to create a webhook.
 type CreateWebhookRequest struct {
-	URL        string                `json:"url" validate:"required,no_null_bytes,min=1,max=2048"`
+	URL        string                `json:"url"                   validate:"required,no_null_bytes,min=1,max=2048"`
 	SigningKey string                `json:"signing_key,omitempty"`
 	Enabled    *bool                 `json:"enabled,omitempty"`
-	TenantID   *string               `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
+	TenantID   *string               `json:"tenant_id,omitempty"   validate:"omitempty,no_null_bytes,max=255"`
 	EventTypes []datatypes.EventType `json:"event_types,omitempty"`
 }
 
@@ -105,10 +105,10 @@ func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 // DisabledReason and DisabledAt are read-only in the API (json:"-" so clients cannot set them);
 // the system sets them when a webhook is disabled. Re-enabling (enabled: true) clears them in the repo.
 type UpdateWebhookRequest struct {
-	URL            *string                `json:"url,omitempty" validate:"omitempty,no_null_bytes,min=1,max=2048"`
+	URL            *string                `json:"url,omitempty"         validate:"omitempty,no_null_bytes,min=1,max=2048"`
 	SigningKey     *string                `json:"signing_key,omitempty" validate:"omitempty,no_null_bytes,min=1,max=255"`
 	Enabled        *bool                  `json:"enabled,omitempty"`
-	TenantID       *string                `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
+	TenantID       *string                `json:"tenant_id,omitempty"   validate:"omitempty,no_null_bytes,max=255"`
 	EventTypes     *[]datatypes.EventType `json:"event_types,omitempty"`
 	DisabledReason *string                `json:"-"` // read-only; set by system when disabling
 	DisabledAt     *time.Time             `json:"-"` // read-only; set by system when disabling
@@ -166,8 +166,8 @@ func (r *UpdateWebhookRequest) MarshalJSON() ([]byte, error) {
 type ListWebhooksFilters struct {
 	Enabled  *bool   `form:"enabled"`
 	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes"`
-	Limit    int     `form:"limit" validate:"omitempty,min=1,max=1000"`
-	Offset   int     `form:"offset" validate:"omitempty,min=0"`
+	Limit    int     `form:"limit"     validate:"omitempty,min=1,max=1000"`
+	Offset   int     `form:"offset"    validate:"omitempty,min=0"`
 }
 
 // ListWebhooksResponse represents the response for listing webhooks.

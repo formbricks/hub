@@ -45,6 +45,14 @@ linters:
   settings:
     lll:
       line-length: 164  # enforce max line length; lower to 120–140 and fix lines to tighten
+    # Struct tag naming: API uses snake_case for json/form/validate/river
+    tagliatelle:
+      case:
+        rules:
+          json: snake
+          form: snake
+          validate: snake
+          river: snake
   enable:
     ## 1. Bugs & Logic
     - bodyclose     # Checks HTTP response bodies are closed
@@ -67,6 +75,9 @@ linters:
     - nilnil        # flags return nil, nil (often a bug; prefer explicit sentinel or error)
     - nosprintfhostport # use net.JoinHostPort instead of fmt.Sprintf for host:port
     - spancheck     # OpenTelemetry spans: End(), RecordError(), SetStatus() usage
+    - reassign      # Flags reassignment of package-level variables
+    - wastedassign  # Assignments overwritten before use
+    - unqueryvet    # SQL: detects SELECT *, format strings, etc.
 
     ## 2. Modern Error Handling
     - errorlint     # Enforces errors.Is/As and fmt.Errorf("%w") (CRITICAL for modern Go)
@@ -79,16 +90,30 @@ linters:
 
     ## 4. Security
     - gosec         # Security scanner (SQLi, hardcoded creds, etc.)
+    - gosmopolitan  # i18n/l10n anti-patterns (timezone, locale, etc.)
 
     ## 4b. Exhaustiveness & stdlib
     - exhaustive    # Exhaustive switch on enum-like types (catch missing cases)
     - usestdlibvars # Prefer http.StatusOK, time.Kitchen etc. over magic numbers
+    - exptostd      # Replace golang.org/x/exp with stdlib when possible
+
+    ## 4c. Interfaces & types
+    - iface           # Interface misuse and "interface pollution"
+    - inamedparam     # Interfaces should use named method parameters
+    - interfacebloat  # Limits number of methods in an interface
+    - intrange        # Suggests integer range in for loops where applicable
+    - iotamixing      # Iota mixed with non-iota in same const block
 
     ## 5. Style & Formatting (The "Clean" factor)
     - lll           # Max line length (enforces readable line width)
     - whitespace    # Trailing newlines, unnecessary blank lines, spaces (consistency with if/for etc.)
     - wsl_v5        # Empty-line / statement grouping (granular checks)
     - nlreturn      # Newline before return and branch statements (complements wsl_v5)
+    - asciicheck    # Identifiers must use only ASCII characters
+    - bidichk       # Dangerous Unicode bidirectional characters
+    - canonicalheader # net/http.Header canonical key format
+    - dogsled       # Too many blank identifiers in assignments
+    - dupword       # Duplicate words in source (e.g. "the the")
     - revive        # Faster, configurable replacement for golint
     - misspell      # Fixes typos
     - godot         # Comments should end in a period
@@ -96,6 +121,10 @@ linters:
     - unused        # Reports unused constants, variables, functions and types
     - sloglint      # Structured logging (log/slog) best practices — you use slog
     - promlinter    # Prometheus metrics naming (promlint)
+    - importas      # Enforces consistent import aliases (configure alias map in settings)
+    - tagliatelle   # Struct tag naming (e.g. json, yaml) case
+    - tagalign      # Align and sort struct tags
+    - nakedret      # Restricts or disallows naked returns
 
     ## 6. Code Quality/Complexity
     - gocritic      # Opinionated checks for bugs, performance, and style

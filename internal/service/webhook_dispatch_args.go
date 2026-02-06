@@ -12,12 +12,12 @@ const webhookDispatchKind = "webhook_dispatch"
 // Only event_id and webhook_id are used for River uniqueness (river:"unique")
 // so the hash is fast and does not include the potentially large data payload.
 type WebhookDispatchArgs struct {
-	EventID       uuid.UUID `json:"event_id" river:"unique"`
+	EventID       uuid.UUID `json:"event_id"                 river:"unique"`
 	EventType     string    `json:"event_type"`
 	Timestamp     int64     `json:"timestamp"`
 	Data          any       `json:"data"`
 	ChangedFields []string  `json:"changed_fields,omitempty"`
-	WebhookID     uuid.UUID `json:"webhook_id" river:"unique"`
+	WebhookID     uuid.UUID `json:"webhook_id"               river:"unique"`
 }
 
 // Kind returns the River job kind.
