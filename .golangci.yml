@@ -37,6 +37,11 @@ formatters:
 linters:
   # Disable everything first to have full control
   disable-all: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - nilnil  # mocks often return (nil, nil) for success
   settings:
     lll:
       line-length: 164  # enforce max line length; lower to 120–140 and fix lines to tighten
@@ -54,6 +59,14 @@ linters:
     - sqlclosecheck # checks if rows/statements are closed
     - durationcheck # detects multiplying two durations (logic error)
     - copyloopvar   # detects loop variable capture issues (modern replacement for exportloopref)
+    - asasalint     # flags passing []any as any in variadic func(...any) (can hide type bugs)
+    - containedctx  # ensures structs that store context.Context use it (no unused ctx fields)
+    - errchkjson    # checks that json.Marshal/Unmarshal (and similar) errors are handled
+    - fatcontext    # discourages storing many values in context (use structs/params instead)
+    - nilnesserr    # checks for nilness issues in error handling paths
+    - nilnil        # flags return nil, nil (often a bug; prefer explicit sentinel or error)
+    - nosprintfhostport # use net.JoinHostPort instead of fmt.Sprintf for host:port
+    - spancheck     # OpenTelemetry spans: End(), RecordError(), SetStatus() usage
 
     ## 2. Modern Error Handling
     - errorlint     # Enforces errors.Is/As and fmt.Errorf("%w") (CRITICAL for modern Go)
@@ -74,6 +87,8 @@ linters:
     ## 5. Style & Formatting (The "Clean" factor)
     - lll           # Max line length (enforces readable line width)
     - whitespace    # Trailing newlines, unnecessary blank lines, spaces (consistency with if/for etc.)
+    - wsl_v5        # Empty-line / statement grouping (granular checks)
+    - nlreturn      # Newline before return and branch statements (complements wsl_v5)
     - revive        # Faster, configurable replacement for golint
     - misspell      # Fixes typos
     - godot         # Comments should end in a period
@@ -85,6 +100,7 @@ linters:
     ## 6. Code Quality/Complexity
     - gocritic      # Opinionated checks for bugs, performance, and style
     - modernize     # Suggests newer Go language features
+    - mnd           # Magic number detection (prefer named constants)
     - nolintlint    # Ensures //nolint comments are actually useful and formatted
 
     ## 7. Testing

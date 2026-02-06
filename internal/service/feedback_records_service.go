@@ -45,6 +45,7 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(ctx context.Context, req *
 	}
 
 	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, *record)
+
 	return record, nil
 }
 
@@ -54,6 +55,7 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 	if err != nil {
 		return nil, fmt.Errorf("get feedback record: %w", err)
 	}
+
 	return record, nil
 }
 
@@ -90,6 +92,7 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 	}
 
 	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, *record, s.getChangedFields(req))
+
 	return record, nil
 }
 
@@ -100,21 +103,27 @@ func (s *FeedbackRecordsService) getChangedFields(req *models.UpdateFeedbackReco
 	if req.ValueText != nil {
 		fields = append(fields, "value_text")
 	}
+
 	if req.ValueNumber != nil {
 		fields = append(fields, "value_number")
 	}
+
 	if req.ValueBoolean != nil {
 		fields = append(fields, "value_boolean")
 	}
+
 	if req.ValueDate != nil {
 		fields = append(fields, "value_date")
 	}
+
 	if req.Metadata != nil {
 		fields = append(fields, "metadata")
 	}
+
 	if req.Language != nil {
 		fields = append(fields, "language")
 	}
+
 	if req.UserIdentifier != nil {
 		fields = append(fields, "user_identifier")
 	}
@@ -134,6 +143,7 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 	}
 
 	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, *record)
+
 	return nil
 }
 
@@ -153,5 +163,6 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 	for i := range records {
 		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, records[i])
 	}
+
 	return len(records), nil
 }

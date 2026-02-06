@@ -43,6 +43,7 @@ func (m *mockFeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Conte
 	if m.bulkDeleteFunc != nil {
 		return m.bulkDeleteFunc(ctx, userIdentifier, tenantID)
 	}
+
 	return 0, nil
 }
 
@@ -51,6 +52,7 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 		mock := &mockFeedbackRecordsService{
 			bulkDeleteFunc: func(_ context.Context, userIdentifier string, _ *string) (int, error) {
 				assert.Equal(t, "user-123", userIdentifier)
+
 				return 3, nil
 			},
 		}
@@ -62,7 +64,9 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 		h.BulkDelete(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
+
 		var resp models.BulkDeleteResponse
+
 		err := json.Unmarshal(rec.Body.Bytes(), &resp)
 		require.NoError(t, err)
 		assert.Equal(t, int64(3), resp.DeletedCount)
@@ -71,10 +75,13 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 
 	t.Run("success with tenant_id passes tenant to service", func(t *testing.T) {
 		var capturedTenantID *string
+
 		mock := &mockFeedbackRecordsService{
 			bulkDeleteFunc: func(_ context.Context, userIdentifier string, tenantID *string) (int, error) {
 				assert.Equal(t, "user-456", userIdentifier)
+
 				capturedTenantID = tenantID
+
 				return 1, nil
 			},
 		}
@@ -144,7 +151,9 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 		h.BulkDelete(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
+
 		var resp models.BulkDeleteResponse
+
 		err := json.Unmarshal(rec.Body.Bytes(), &resp)
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), resp.DeletedCount)

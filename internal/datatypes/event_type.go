@@ -48,6 +48,7 @@ func (et EventType) String() string {
 	if !ok {
 		return "" // Invalid event type
 	}
+
 	return str
 }
 
@@ -55,6 +56,7 @@ func (et EventType) String() string {
 // Returns the EventType and true if valid, or 0 and false if invalid.
 func ParseEventType(s string) (EventType, bool) {
 	et, ok := eventTypeMap[s]
+
 	return et, ok
 }
 
@@ -65,37 +67,48 @@ func GetAllEventTypes() []string {
 	for k := range eventTypeMap {
 		types = append(types, k)
 	}
+
 	return types
 }
 
 // IsValidEventType checks if an event type string is valid.
 func IsValidEventType(eventType string) bool {
 	_, ok := eventTypeMap[eventType]
+
 	return ok
 }
 
 // ParseEventTypes converts a slice of strings to []EventType.
 // Returns an error if any string is invalid, exceeds 64 chars, or is duplicated.
 func ParseEventTypes(ss []string) ([]EventType, error) {
+	// maxEventTypeLen is the maximum allowed length for an event type string.
+	const maxEventTypeLen = 64
+
 	if len(ss) == 0 {
 		return nil, nil
 	}
+
 	out := make([]EventType, 0, len(ss))
+
 	seen := make(map[string]bool, len(ss))
 	for _, s := range ss {
-		if len(s) > 64 {
-			return nil, fmt.Errorf("event type exceeds 64 characters: %s", s)
+		if len(s) > maxEventTypeLen {
+			return nil, fmt.Errorf("event type exceeds %d characters: %s", maxEventTypeLen, s)
 		}
+
 		if !IsValidEventType(s) {
 			return nil, fmt.Errorf("invalid event type: %s", s)
 		}
+
 		if seen[s] {
 			return nil, fmt.Errorf("duplicate event type: %s", s)
 		}
+
 		seen[s] = true
 		et, _ := ParseEventType(s)
 		out = append(out, et)
 	}
+
 	return out, nil
 }
 
@@ -104,9 +117,11 @@ func EventTypeStrings(types []EventType) []string {
 	if len(types) == 0 {
 		return nil
 	}
+
 	out := make([]string, len(types))
 	for i, et := range types {
 		out[i] = et.String()
 	}
+
 	return out
 }

@@ -20,6 +20,7 @@ import (
 const (
 	meterScope         = "github.com/formbricks/hub/internal/observability"
 	defaultServiceName = "formbricks-hub"
+	cardinalityLimit   = 2000
 )
 
 // latencyHistogramBoundaries are Prometheus-style buckets (seconds) for request and webhook duration histograms.
@@ -62,6 +63,7 @@ func NewMeterProvider(_ context.Context, cfg MeterProviderConfig) (provider Mete
 	)
 
 	reg := prometheus.NewRegistry()
+
 	exporter, err := prometheusexporter.New(
 		prometheusexporter.WithRegisterer(reg),
 	)
@@ -72,7 +74,7 @@ func NewMeterProvider(_ context.Context, cfg MeterProviderConfig) (provider Mete
 	mp := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(exporter),
-		sdkmetric.WithCardinalityLimit(2000),
+		sdkmetric.WithCardinalityLimit(cardinalityLimit),
 		sdkmetric.WithView(
 			sdkmetric.NewView(
 				sdkmetric.Instrument{Name: "http.server.duration"},
@@ -86,11 +88,14 @@ func NewMeterProvider(_ context.Context, cfg MeterProviderConfig) (provider Mete
 	)
 	provider = mp
 	meter := mp.Meter(meterScope)
+
 	metrics, err = newMetricsFromMeter(meter)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create metrics instruments: %w", err)
 	}
+
 	metricsHandler = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+
 	return provider, metricsHandler, metrics, nil
 }
 
@@ -191,6 +196,7 @@ func (m *hubMetricsImpl) RecordRequest(ctx context.Context, method, route, statu
 		attribute.String("status_class", statusClass),
 	)
 	m.requestCount.Add(ctx, 1, metric.WithAttributeSet(attrs))
+
 	durAttrs := attribute.NewSet(
 		attribute.String("method", method),
 		attribute.String("route", route),

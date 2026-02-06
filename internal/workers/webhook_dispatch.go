@@ -35,9 +35,9 @@ func NewWebhookDispatchWorker(repo webhookDispatchRepo, sender service.WebhookSe
 	return &WebhookDispatchWorker{repo: repo, sender: sender, metrics: metrics}
 }
 
-// Timeout limits how long a single delivery can run (align with HTTP client timeout).
+// Timeout limits how long a single delivery can run (uses service.WebhookDeliveryTimeout).
 func (w *WebhookDispatchWorker) Timeout(*river.Job[service.WebhookDispatchArgs]) time.Duration {
-	return 25 * time.Second
+	return service.WebhookDeliveryTimeout
 }
 
 // Work loads the webhook, builds the payload, and sends once.
@@ -51,6 +51,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			"webhook_id", args.WebhookID,
 			"error", err,
 		)
+
 		return nil // no retry if webhook not found
 	}
 
@@ -59,6 +60,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			"event_id", args.EventID,
 			"webhook_id", args.WebhookID,
 		)
+
 		return nil
 	}
 
@@ -68,6 +70,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			"event_id", args.EventID,
 			"webhook_id", args.WebhookID,
 		)
+
 		return nil
 	}
 
@@ -89,10 +92,12 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			w.metrics.RecordWebhookDelivery(ctx, args.EventType, "retryable_failure", duration)
 		}
 	}
+
 	if isLastAttempt {
 		enabled := false
 		reason := err.Error()
 		now := time.Now()
+
 		_, updateErr := w.repo.Update(ctx, webhook.ID, &models.UpdateWebhookRequest{
 			Enabled:        &enabled,
 			DisabledReason: &reason,
@@ -105,11 +110,13 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 				"error", updateErr,
 			)
 		}
+
 		slog.Error("webhook disabled after max delivery attempts",
 			"webhook_id", webhook.ID,
 			"event_id", args.EventID,
 			"error", err,
 		)
+
 		return fmt.Errorf("webhook send (final attempt): %w", err)
 	}
 
@@ -120,6 +127,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		"event_type", args.EventType,
 		"error", err,
 	)
+
 	return fmt.Errorf("webhook send: %w", err)
 }
 

@@ -18,6 +18,7 @@ func TestMetricsEndpointExposesExpectedMetrics(t *testing.T) {
 	ctx := context.Background()
 	provider, metricsHandler, metrics, err := observability.NewMeterProvider(ctx, observability.MeterProviderConfig{})
 	require.NoError(t, err)
+
 	defer func() { _ = provider.Shutdown(ctx) }()
 
 	// Record at least one sample per metric so they appear in the output
@@ -57,5 +58,6 @@ func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
+
 	return s[:maxLen] + "..."
 }

@@ -28,6 +28,12 @@ import (
 const (
 	exitSuccess = 0
 	exitFailure = 1
+
+	metricsReadHeaderTimeout = 10 * time.Second
+	auxShutdownTimeout       = 5 * time.Second // metrics server and MeterProvider
+	serverReadTimeout        = 15 * time.Second
+	serverWriteTimeout       = 15 * time.Second
+	serverIdleTimeout        = 60 * time.Second
 )
 
 func main() {
@@ -45,27 +51,33 @@ func run() int {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
+
 		return exitFailure
 	}
+
 	setupLogging(cfg.LogLevel)
 
 	// Initialize database connection
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
+
 		return exitFailure
 	}
 	defer db.Close()
 
 	// Metrics (optional): when PrometheusEnabled, create MeterProvider and custom metrics; otherwise no-op
-	var metrics observability.HubMetrics
-	var meterProvider observability.MeterProviderShutdown
-	var metricsServer *http.Server
+	var (
+		metrics       observability.HubMetrics
+		meterProvider observability.MeterProviderShutdown
+		metricsServer *http.Server
+	)
 
 	if cfg.PrometheusEnabled {
 		mp, metricsHandler, m, err := observability.NewMeterProvider(ctx, observability.MeterProviderConfig{})
 		if err != nil {
 			slog.Error("Failed to create MeterProvider", "error", err)
+
 			return exitFailure
 		}
 
@@ -74,11 +86,12 @@ func run() int {
 		metricsServer = &http.Server{
 			Addr:              ":" + cfg.PrometheusExporterPort,
 			Handler:           metricsHandler,
-			ReadHeaderTimeout: 10 * time.Second,
+			ReadHeaderTimeout: metricsReadHeaderTimeout,
 		}
 
 		go func() {
 			slog.Info("Starting metrics server", "port", cfg.PrometheusExporterPort)
+
 			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("Metrics server failed", "error", err)
 			}
@@ -87,18 +100,20 @@ func run() int {
 
 	defer func() {
 		if metricsServer != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), auxShutdownTimeout)
 			if err := metricsServer.Shutdown(shutdownCtx); err != nil {
 				slog.Warn("Metrics server shutdown", "error", err)
 			}
+
 			cancel()
 		}
 
 		if meterProvider != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), auxShutdownTimeout)
 			if err := meterProvider.Shutdown(shutdownCtx); err != nil {
 				slog.Warn("MeterProvider shutdown", "error", err)
 			}
+
 			cancel()
 		}
 	}()
@@ -122,6 +137,7 @@ func run() int {
 	if err != nil {
 		slog.Error("Failed to create River client", "error", err)
 		messageManager.Shutdown()
+
 		return exitFailure
 	}
 
@@ -175,15 +191,17 @@ func run() int {
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  serverReadTimeout,
+		WriteTimeout: serverWriteTimeout,
+		IdleTimeout:  serverIdleTimeout,
 	}
 
 	// Start server in a goroutine; report start failure so we can exit non-zero
 	serverErr := make(chan error, 1)
+
 	go func() {
 		slog.Info("Starting server", "port", cfg.Port)
+
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
@@ -192,15 +210,19 @@ func run() int {
 	// Wait for interrupt signal or server start failure
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
 	select {
 	case err := <-serverErr:
 		slog.Error("Server failed to start", "error", err)
 		messageManager.Shutdown()
+
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		if stopErr := riverClient.Stop(stopCtx); stopErr != nil {
 			slog.Warn("River client stop after server start failure", "error", stopErr)
 		}
+
 		stopCancel()
+
 		return exitFailure
 	case sig := <-quit:
 		slog.Info("Received signal, shutting down", "signal", sig)
@@ -214,19 +236,23 @@ func run() int {
 	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("Server shutdown failed", "error", err)
 		messageManager.Shutdown()
+
 		if stopErr := riverClient.Stop(shutdownCtx); stopErr != nil {
 			slog.Error("River client stop after server shutdown error", "error", stopErr)
 		}
+
 		return exitFailure
 	}
 
 	messageManager.Shutdown()
+
 	if err := riverClient.Stop(shutdownCtx); err != nil {
 		slog.Warn("River client stop", "error", err)
 	}
 	// Metrics server and MeterProvider are shut down via defer
 
 	slog.Info("Server stopped")
+
 	return exitSuccess
 }
 
@@ -235,12 +261,14 @@ func getLogLevelEnv() string {
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		return v
 	}
+
 	return "info"
 }
 
 // setupLogging configures slog with the specified log level.
 func setupLogging(level string) {
 	var logLevel slog.Level
+
 	switch strings.ToLower(level) {
 	case "debug":
 		logLevel = slog.LevelDebug

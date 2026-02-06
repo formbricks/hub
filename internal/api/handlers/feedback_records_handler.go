@@ -40,17 +40,21 @@ func NewFeedbackRecordsHandler(service FeedbackRecordsService) *FeedbackRecordsH
 // Create handles POST /v1/feedback-records.
 func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateFeedbackRecordRequest
+
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(&req); err != nil {
 		slog.Warn("Invalid request body", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondBadRequest(w, "Invalid request body")
+
 		return
 	}
 
 	// Validate request
 	if err := validation.ValidateStruct(&req); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -58,10 +62,13 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
+
 			return
 		}
+
 		slog.Error("Failed to create feedback record", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -73,6 +80,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Feedback Record ID is required")
+
 		return
 	}
 
@@ -80,6 +88,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("Invalid UUID format", "method", r.Method, "path", r.URL.Path, "id", idStr, "error", err)
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
@@ -87,10 +96,13 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
+
 			return
 		}
+
 		slog.Error("Failed to get feedback record", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -104,6 +116,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Decode and validate query parameters
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -111,6 +124,7 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("Failed to list feedback records", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -122,6 +136,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Feedback Record ID is required")
+
 		return
 	}
 
@@ -129,21 +144,26 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		slog.Warn("Invalid UUID format", "method", r.Method, "path", r.URL.Path, "id", idStr, "error", err)
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
 	var req models.UpdateFeedbackRecordRequest
+
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(&req); err != nil {
 		slog.Warn("Invalid request body for update", "method", r.Method, "path", r.URL.Path, "id", idStr, "error", err)
 		response.RespondBadRequest(w, "Invalid request body")
+
 		return
 	}
 
 	// Validate request (all fields are optional for update, but validate if provided)
 	if err := validation.ValidateStruct(&req); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -151,10 +171,13 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
+
 			return
 		}
+
 		slog.Error("Failed to update feedback record", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -166,6 +189,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Feedback Record ID is required")
+
 		return
 	}
 
@@ -173,16 +197,20 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		slog.Warn("Invalid UUID format", "method", r.Method, "path", r.URL.Path, "id", idStr, "error", err)
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
 	if err := h.service.DeleteFeedbackRecord(r.Context(), id); err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
+
 			return
 		}
+
 		slog.Error("Failed to delete feedback record", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -196,6 +224,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 	// Decode and validate query parameters
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -203,6 +232,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		slog.Error("Failed to bulk delete feedback records", "method", r.Method, "path", r.URL.Path, "user_identifier", filters.UserIdentifier, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 

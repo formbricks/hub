@@ -27,6 +27,7 @@ type Webhook struct {
 // MarshalJSON converts []datatypes.EventType to JSON string array.
 func (w *Webhook) MarshalJSON() ([]byte, error) {
 	type Alias Webhook
+
 	aux := &struct {
 		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
@@ -34,16 +35,19 @@ func (w *Webhook) MarshalJSON() ([]byte, error) {
 		Alias: (*Alias)(w),
 	}
 	aux.EventTypes = datatypes.EventTypeStrings(w.EventTypes)
+
 	data, err := json.Marshal(aux)
 	if err != nil {
 		return nil, fmt.Errorf("marshal webhook: %w", err)
 	}
+
 	return data, nil
 }
 
 // UnmarshalJSON converts JSON string array to []datatypes.EventType.
 func (w *Webhook) UnmarshalJSON(data []byte) error {
 	type Alias Webhook
+
 	aux := &struct {
 		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
@@ -53,11 +57,14 @@ func (w *Webhook) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return fmt.Errorf("unmarshal webhook: %w", err)
 	}
+
 	parsed, err := datatypes.ParseEventTypes(aux.EventTypes)
 	if err != nil {
 		return fmt.Errorf("parse event types: %w", err)
 	}
+
 	w.EventTypes = parsed
+
 	return nil
 }
 
@@ -73,6 +80,7 @@ type CreateWebhookRequest struct {
 // UnmarshalJSON converts JSON string array to []datatypes.EventType.
 func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 	type Alias CreateWebhookRequest
+
 	aux := &struct {
 		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
@@ -82,11 +90,14 @@ func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return fmt.Errorf("unmarshal create webhook request: %w", err)
 	}
+
 	parsed, err := datatypes.ParseEventTypes(aux.EventTypes)
 	if err != nil {
 		return fmt.Errorf("parse event types: %w", err)
 	}
+
 	r.EventTypes = parsed
+
 	return nil
 }
 
@@ -106,6 +117,7 @@ type UpdateWebhookRequest struct {
 // UnmarshalJSON converts JSON string array to *[]datatypes.EventType.
 func (r *UpdateWebhookRequest) UnmarshalJSON(data []byte) error {
 	type Alias UpdateWebhookRequest
+
 	aux := &struct {
 		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
@@ -115,19 +127,23 @@ func (r *UpdateWebhookRequest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return fmt.Errorf("unmarshal update webhook request: %w", err)
 	}
+
 	if aux.EventTypes != nil {
 		parsed, err := datatypes.ParseEventTypes(aux.EventTypes)
 		if err != nil {
 			return fmt.Errorf("parse event types: %w", err)
 		}
+
 		r.EventTypes = &parsed
 	}
+
 	return nil
 }
 
 // MarshalJSON converts *[]datatypes.EventType to JSON string array.
 func (r *UpdateWebhookRequest) MarshalJSON() ([]byte, error) {
 	type Alias UpdateWebhookRequest
+
 	aux := &struct {
 		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
@@ -137,10 +153,12 @@ func (r *UpdateWebhookRequest) MarshalJSON() ([]byte, error) {
 	if r.EventTypes != nil {
 		aux.EventTypes = datatypes.EventTypeStrings(*r.EventTypes)
 	}
+
 	data, err := json.Marshal(aux)
 	if err != nil {
 		return nil, fmt.Errorf("marshal update webhook request: %w", err)
 	}
+
 	return data, nil
 }
 

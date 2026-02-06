@@ -41,6 +41,7 @@ var ValidFieldTypes = map[FieldType]struct{}{
 // IsValid returns true if the FieldType is valid.
 func (ft FieldType) IsValid() bool {
 	_, valid := ValidFieldTypes[ft]
+
 	return valid
 }
 
@@ -50,6 +51,7 @@ func ParseFieldType(s string) (FieldType, error) {
 	if !ft.IsValid() {
 		return "", fmt.Errorf("invalid field type: %s", s)
 	}
+
 	return ft, nil
 }
 
@@ -59,11 +61,14 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return fmt.Errorf("unmarshal field type: %w", err)
 	}
+
 	parsed, err := ParseFieldType(s)
 	if err != nil {
 		return err
 	}
+
 	*ft = parsed
+
 	return nil
 }
 

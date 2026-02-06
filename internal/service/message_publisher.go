@@ -56,6 +56,7 @@ func NewMessagePublisherManager(bufferSize int, perEventTimeout time.Duration, m
 
 	// Start the worker in a dedicated goroutine
 	m.wg.Add(1)
+
 	go m.startWorker()
 
 	return m
@@ -87,6 +88,7 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(_ context.Contex
 		slog.Debug("Event published to channel", "event_id", event.ID, "event_type", event.Type)
 	default:
 		slog.Warn("Event channel full, event dropped", "event_id", event.ID, "event_type", event.Type)
+
 		if m.metrics != nil {
 			// Fire-and-forget publish path: no request context available.
 			m.metrics.RecordEventDropped(context.Background(), event.Type.String()) //nolint:contextcheck
@@ -99,6 +101,7 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(_ context.Contex
 // in NewMessagePublisherManager and runs for the lifetime of the manager.
 func (m *MessagePublisherManager) startWorker() {
 	defer m.wg.Done()
+
 	bgCtx := context.Background()
 
 	// This loop automatically breaks when m.eventChan is closed
@@ -109,6 +112,7 @@ func (m *MessagePublisherManager) startWorker() {
 		for _, provider := range m.providers {
 			provider.PublishEvent(ctx, event)
 		}
+
 		cancel()
 	}
 }

@@ -18,14 +18,17 @@ func Metrics(metrics observability.HubMetrics) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if metrics == nil {
 				next.ServeHTTP(w, r)
+
 				return
 			}
+
 			start := time.Now()
 			rw := &responseWriter{
 				ResponseWriter: w,
 				statusCode:     http.StatusOK,
 			}
 			next.ServeHTTP(rw, r)
+
 			duration := time.Since(start)
 			route := normalizeRoute(r.URL.Path)
 			statusClass := statusToClass(rw.statusCode)
@@ -41,20 +44,25 @@ func normalizeRoute(path string) string {
 
 // statusToClass maps HTTP status code to 1xx, 2xx, 4xx, 5xx.
 func statusToClass(status int) string {
-	if status >= 500 {
+	if status >= http.StatusInternalServerError {
 		return "5xx"
 	}
-	if status >= 400 {
+
+	if status >= http.StatusBadRequest {
 		return "4xx"
 	}
-	if status >= 300 {
+
+	if status >= http.StatusMultipleChoices {
 		return "3xx"
 	}
-	if status >= 200 {
+
+	if status >= http.StatusOK {
 		return "2xx"
 	}
-	if status >= 100 {
+
+	if status >= http.StatusContinue {
 		return "1xx"
 	}
+
 	return "unknown"
 }

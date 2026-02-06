@@ -28,16 +28,23 @@ type WebhookSenderImpl struct {
 	metrics    observability.HubMetrics
 }
 
+// Webhook delivery timeouts (single source of truth; worker timeout must exceed HTTP client timeout).
+const (
+	WebhookHTTPClientTimeout = 15 * time.Second // outbound HTTP request timeout
+	WebhookDeliveryTimeout   = 25 * time.Second // River job timeout (must be > WebhookHTTPClientTimeout)
+)
+
 // NewWebhookSenderImpl creates a sender that uses the given repo.
 // HTTP client uses 15s timeout and does not follow redirects.
 // metrics is optional; when non-nil, success and 410_gone delivery outcomes are recorded.
 func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.HubMetrics) *WebhookSenderImpl {
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout: WebhookHTTPClientTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
+
 	return &WebhookSenderImpl{
 		repo:       repo,
 		httpClient: client,
@@ -48,6 +55,7 @@ func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.HubMetr
 // Send signs and POSTs the payload to the webhook URL. On 410 Gone, disables the webhook and returns an error.
 func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, payload *WebhookPayload) error {
 	start := time.Now()
+
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal webhook payload: %w", err)
@@ -61,6 +69,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	}
 
 	timestamp := time.Now()
+
 	signature, err := wh.Sign(messageID, timestamp, payloadJSON)
 	if err != nil {
 		return fmt.Errorf("sign webhook: %w", err)
@@ -80,6 +89,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	if err != nil {
 		return fmt.Errorf("send webhook: %w", err)
 	}
+
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			slog.Warn("failed to close webhook response body", "webhook_id", webhook.ID, "error", closeErr)
@@ -90,6 +100,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 		enabled := false
 		reason := "Endpoint returned 410 Gone"
 		now := time.Now()
+
 		_, updateErr := s.repo.Update(ctx, webhook.ID, &models.UpdateWebhookRequest{
 			Enabled:        &enabled,
 			DisabledReason: &reason,
@@ -110,6 +121,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 
 		if s.metrics != nil {
 			duration := time.Since(start)
+
 			s.metrics.RecordWebhookDisabled(ctx, "410_gone")
 			s.metrics.RecordWebhookDelivery(ctx, payload.Type, "disabled_410", duration)
 		}

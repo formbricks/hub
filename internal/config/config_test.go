@@ -88,6 +88,7 @@ func TestGetEnvAsBool(t *testing.T) {
 			} else {
 				t.Setenv(tt.key, "")
 			}
+
 			got := getEnvAsBool(tt.key)
 			if got != tt.want {
 				t.Errorf("getEnvAsBool(%q) with env=%q = %v, want %v", tt.key, tt.envValue, got, tt.want)
@@ -225,6 +226,7 @@ func TestLoad(t *testing.T) {
 			if tt.setDatabaseURL {
 				t.Setenv("DATABASE_URL", tt.databaseURL)
 			}
+
 			if tt.setPort {
 				t.Setenv("PORT", tt.port)
 			}
@@ -232,6 +234,7 @@ func TestLoad(t *testing.T) {
 			cfg, err := Load()
 			if err != nil {
 				t.Errorf("Load() error = %v, want nil", err)
+
 				return
 			}
 
@@ -254,6 +257,7 @@ func TestLoadAlwaysReturnsNilError(t *testing.T) {
 	if err != nil {
 		t.Errorf("Load() error = %v, want nil", err)
 	}
+
 	if cfg == nil {
 		t.Error("Load() config = nil, want non-nil config")
 	}
@@ -267,6 +271,7 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
+
 		if cfg.WebhookDeliveryMaxAttempts != 3 {
 			t.Errorf("WebhookDeliveryMaxAttempts = %d, want 3", cfg.WebhookDeliveryMaxAttempts)
 		}
@@ -274,10 +279,12 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 
 	t.Run("override via WEBHOOK_DELIVERY_MAX_ATTEMPTS", func(t *testing.T) {
 		t.Setenv("WEBHOOK_DELIVERY_MAX_ATTEMPTS", "5")
+
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
+
 		if cfg.WebhookDeliveryMaxAttempts != 5 {
 			t.Errorf("WebhookDeliveryMaxAttempts = %d, want 5", cfg.WebhookDeliveryMaxAttempts)
 		}
@@ -285,6 +292,7 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 
 	t.Run("validation error when <= 0", func(t *testing.T) {
 		t.Setenv("WEBHOOK_DELIVERY_MAX_ATTEMPTS", "0")
+
 		_, err := Load()
 		if err == nil {
 			t.Error("Load() error = nil, want error for WEBHOOK_DELIVERY_MAX_ATTEMPTS <= 0")
@@ -293,10 +301,12 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 
 	t.Run("non-numeric falls back to default", func(t *testing.T) {
 		t.Setenv("WEBHOOK_DELIVERY_MAX_ATTEMPTS", "x")
+
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
+
 		if cfg.WebhookDeliveryMaxAttempts != 3 {
 			t.Errorf("WebhookDeliveryMaxAttempts = %d, want default 3", cfg.WebhookDeliveryMaxAttempts)
 		}

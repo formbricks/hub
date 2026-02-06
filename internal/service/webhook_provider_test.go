@@ -23,14 +23,17 @@ func (m *mockWebhookInserter) InsertMany(_ context.Context, params []river.Inser
 	// Record a copy of params for assertions (even when returning error).
 	cp := make([]river.InsertManyParams, len(params))
 	copy(cp, params)
+
 	m.insertManyCalls = append(m.insertManyCalls, cp)
 	if m.insertManyErr != nil {
 		return nil, m.insertManyErr
 	}
+
 	results := make([]*rivertype.JobInsertResult, len(params))
 	for i := range results {
 		results[i] = &rivertype.JobInsertResult{Job: &rivertype.JobRow{ID: int64(i + 1)}}
 	}
+
 	return results, nil
 }
 
@@ -44,6 +47,7 @@ func (m *mockProviderRepo) ListEnabledForEventType(_ context.Context, _ string) 
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	return m.webhooks, nil
 }
 
@@ -102,28 +106,35 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		if n := len(inserter.insertManyCalls); n != 1 {
 			t.Fatalf("InsertMany called %d times, want 1", n)
 		}
+
 		params := inserter.insertManyCalls[0]
 		if len(params) != 2 {
 			t.Fatalf("InsertMany params length = %d, want 2", len(params))
 		}
+
 		for i, p := range params {
 			args, ok := p.Args.(WebhookDispatchArgs)
 			if !ok {
 				t.Fatalf("param %d Args type = %T, want WebhookDispatchArgs", i, p.Args)
 			}
+
 			if args.EventID != eventID {
 				t.Errorf("param %d EventID = %v, want %v", i, args.EventID, eventID)
 			}
+
 			if args.EventType != eventType.String() {
 				t.Errorf("param %d EventType = %q, want %q", i, args.EventType, eventType.String())
 			}
+
 			wantID := repo.webhooks[i].ID
 			if args.WebhookID != wantID {
 				t.Errorf("param %d WebhookID = %v, want %v", i, args.WebhookID, wantID)
 			}
+
 			if p.InsertOpts == nil || p.InsertOpts.MaxAttempts != 3 {
 				t.Errorf("param %d MaxAttempts = %v, want 3", i, p.InsertOpts)
 			}
+
 			if p.InsertOpts != nil && (!p.InsertOpts.UniqueOpts.ByArgs || p.InsertOpts.UniqueOpts.ByPeriod != 24*time.Hour) {
 				t.Errorf("param %d UniqueOpts = %+v", i, p.InsertOpts.UniqueOpts)
 			}
@@ -136,6 +147,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
+
 		if len(inserter.insertManyCalls) != 0 {
 			t.Errorf("InsertMany called %d times, want 0", len(inserter.insertManyCalls))
 		}
@@ -147,6 +159,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
+
 		if len(inserter.insertManyCalls) != 0 {
 			t.Errorf("InsertMany called %d times, want 0", len(inserter.insertManyCalls))
 		}
@@ -162,9 +175,11 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		if len(inserter.insertManyCalls) != 1 {
 			t.Errorf("InsertMany called %d times, want 1", len(inserter.insertManyCalls))
 		}
+
 		if len(inserter.insertManyCalls[0]) != 2 {
 			t.Errorf("InsertMany params length = %d, want 2", len(inserter.insertManyCalls[0]))
 		}
+
 		if inserter.insertManyCalls[0][0].InsertOpts.MaxAttempts != 5 {
 			t.Errorf("MaxAttempts = %d, want 5", inserter.insertManyCalls[0][0].InsertOpts.MaxAttempts)
 		}
@@ -172,17 +187,21 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 
 	t.Run("caps fan-out when webhooks exceed maxFanOut", func(t *testing.T) {
 		inserter := &mockWebhookInserter{}
+
 		webhooks := make([]models.Webhook, 501)
 		for i := range webhooks {
 			webhooks[i] = models.Webhook{ID: uuid.Must(uuid.NewV7())}
 		}
+
 		repo := &mockProviderRepo{webhooks: webhooks}
 		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
 		provider.PublishEvent(ctx, event)
+
 		if len(inserter.insertManyCalls) != 1 {
 			t.Fatalf("InsertMany called %d times, want 1", len(inserter.insertManyCalls))
 		}
+
 		if len(inserter.insertManyCalls[0]) != 500 {
 			t.Errorf("InsertMany params length = %d, want 500 (capped)", len(inserter.insertManyCalls[0]))
 		}

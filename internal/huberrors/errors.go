@@ -16,15 +16,18 @@ func (e *NotFoundError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
+
 	if e.Resource != "" {
 		return e.Resource + " not found"
 	}
+
 	return "resource not found"
 }
 
 // Is implements the error interface for error comparison.
 func (e *NotFoundError) Is(target error) bool {
 	_, ok := target.(*NotFoundError)
+
 	return ok
 }
 
@@ -51,15 +54,18 @@ func (e *ValidationError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
+
 	if e.Field != "" {
 		return "validation failed for field: " + e.Field
 	}
+
 	return "validation error"
 }
 
 // Is implements the error interface for error comparison.
 func (e *ValidationError) Is(target error) bool {
 	_, ok := target.(*ValidationError)
+
 	return ok
 }
 

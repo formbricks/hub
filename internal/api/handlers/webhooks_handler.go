@@ -37,16 +37,20 @@ func NewWebhooksHandler(service WebhooksService) *WebhooksHandler {
 // Create handles POST /v1/webhooks.
 func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateWebhookRequest
+
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(&req); err != nil {
 		slog.Warn("Invalid request body", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondBadRequest(w, "Invalid request body")
+
 		return
 	}
 
 	if err := validation.ValidateStruct(&req); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -54,10 +58,13 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
+
 			return
 		}
+
 		slog.Error("Failed to create webhook", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -69,12 +76,14 @@ func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Webhook ID is required")
+
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
@@ -82,10 +91,13 @@ func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
+
 			return
 		}
+
 		slog.Error("Failed to get webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -98,6 +110,7 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -105,6 +118,7 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("Failed to list webhooks", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -116,26 +130,32 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Webhook ID is required")
+
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
 	var req models.UpdateWebhookRequest
+
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(&req); err != nil {
 		slog.Warn("Invalid request body for update", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondBadRequest(w, "Invalid request body")
+
 		return
 	}
 
 	if err := validation.ValidateStruct(&req); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -143,10 +163,13 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
+
 			return
 		}
+
 		slog.Error("Failed to update webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -158,22 +181,27 @@ func (h *WebhooksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Webhook ID is required")
+
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
 	if err := h.service.DeleteWebhook(r.Context(), id); err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
+
 			return
 		}
+
 		slog.Error("Failed to delete webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 

@@ -45,6 +45,7 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 		if err != nil {
 			return nil, fmt.Errorf("generate signing key: %w", err)
 		}
+
 		req.SigningKey = key
 	}
 
@@ -61,10 +62,14 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 // generateSigningKey generates a cryptographically secure signing key
 // in the format expected by Standard Webhooks: "whsec_" + base64(32 random bytes).
 func generateSigningKey() (string, error) {
-	key := make([]byte, 32)
+	// signingKeyByteSize is the number of random bytes for Standard Webhooks signing keys.
+	const signingKeyByteSize = 32
+
+	key := make([]byte, signingKeyByteSize)
 	if _, err := rand.Read(key); err != nil {
 		return "", fmt.Errorf("rand read: %w", err)
 	}
+
 	return "whsec_" + base64.StdEncoding.EncodeToString(key), nil
 }
 
@@ -74,6 +79,7 @@ func (s *WebhooksService) GetWebhook(ctx context.Context, id uuid.UUID) (*models
 	if err != nil {
 		return nil, fmt.Errorf("get webhook: %w", err)
 	}
+
 	return webhook, nil
 }
 
@@ -119,18 +125,23 @@ func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []s
 	if req.URL != nil {
 		fields = append(fields, "url")
 	}
+
 	if req.SigningKey != nil {
 		fields = append(fields, "signing_key")
 	}
+
 	if req.Enabled != nil {
 		fields = append(fields, "enabled")
 	}
+
 	if req.TenantID != nil {
 		fields = append(fields, "tenant_id")
 	}
+
 	if req.EventTypes != nil {
 		fields = append(fields, "event_types")
 	}
+
 	return fields
 }
 
