@@ -99,41 +99,6 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 	return record, nil
 }
 
-// getChangedFields extracts which fields were changed from the update request.
-func (s *FeedbackRecordsService) getChangedFields(req *models.UpdateFeedbackRecordRequest) []string {
-	var fields []string
-
-	if req.ValueText != nil {
-		fields = append(fields, "value_text")
-	}
-
-	if req.ValueNumber != nil {
-		fields = append(fields, "value_number")
-	}
-
-	if req.ValueBoolean != nil {
-		fields = append(fields, "value_boolean")
-	}
-
-	if req.ValueDate != nil {
-		fields = append(fields, "value_date")
-	}
-
-	if req.Metadata != nil {
-		fields = append(fields, "metadata")
-	}
-
-	if req.Language != nil {
-		fields = append(fields, "language")
-	}
-
-	if req.UserIdentifier != nil {
-		fields = append(fields, "user_identifier")
-	}
-
-	return fields
-}
-
 // DeleteFeedbackRecord deletes a feedback record by ID.
 func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error {
 	record, err := s.repo.GetByID(ctx, id)
@@ -168,4 +133,39 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 	}
 
 	return len(records), nil
+}
+
+// getChangedFields extracts which fields were changed from the update request.
+func (s *FeedbackRecordsService) getChangedFields(req *models.UpdateFeedbackRecordRequest) []string {
+	var fields []string
+
+	if req.ValueText != nil {
+		fields = append(fields, "value_text")
+	}
+
+	if req.ValueNumber != nil {
+		fields = append(fields, "value_number")
+	}
+
+	if req.ValueBoolean != nil {
+		fields = append(fields, "value_boolean")
+	}
+
+	if req.ValueDate != nil {
+		fields = append(fields, "value_date")
+	}
+
+	if req.Metadata != nil {
+		fields = append(fields, "metadata")
+	}
+
+	if req.Language != nil {
+		fields = append(fields, "language")
+	}
+
+	if req.UserIdentifier != nil {
+		fields = append(fields, "user_identifier")
+	}
+
+	return fields
 }

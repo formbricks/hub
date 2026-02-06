@@ -11,6 +11,14 @@ type NotFoundError struct {
 	Message  string
 }
 
+// NewNotFoundError creates a new NotFoundError with a custom message.
+func NewNotFoundError(resource, message string) *NotFoundError {
+	return &NotFoundError{
+		Resource: resource,
+		Message:  message,
+	}
+}
+
 // Error implements the error interface.
 func (e *NotFoundError) Error() string {
 	if e.Message != "" {
@@ -31,14 +39,6 @@ func (e *NotFoundError) Is(target error) bool {
 	return ok
 }
 
-// NewNotFoundError creates a new NotFoundError with a custom message.
-func NewNotFoundError(resource, message string) *NotFoundError {
-	return &NotFoundError{
-		Resource: resource,
-		Message:  message,
-	}
-}
-
 // ErrValidation represents a validation error.
 // Use when client input fails validation.
 var ErrValidation = &ValidationError{}
@@ -47,6 +47,14 @@ var ErrValidation = &ValidationError{}
 type ValidationError struct {
 	Field   string
 	Message string
+}
+
+// NewValidationError creates a new ValidationError with a custom message.
+func NewValidationError(field, message string) *ValidationError {
+	return &ValidationError{
+		Field:   field,
+		Message: message,
+	}
 }
 
 // Error implements the error interface.
@@ -67,12 +75,4 @@ func (e *ValidationError) Is(target error) bool {
 	_, ok := target.(*ValidationError)
 
 	return ok
-}
-
-// NewValidationError creates a new ValidationError with a custom message.
-func NewValidationError(field, message string) *ValidationError {
-	return &ValidationError{
-		Field:   field,
-		Message: message,
-	}
 }

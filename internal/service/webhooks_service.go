@@ -119,6 +119,22 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 	return webhook, nil
 }
 
+// DeleteWebhook deletes a webhook by ID.
+func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
+	webhook, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get webhook for delete: %w", err)
+	}
+
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("delete webhook: %w", err)
+	}
+
+	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, *webhook)
+
+	return nil
+}
+
 // getChangedFields extracts which fields were changed from the update request.
 func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []string {
 	var fields []string
@@ -143,20 +159,4 @@ func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []s
 	}
 
 	return fields
-}
-
-// DeleteWebhook deletes a webhook by ID.
-func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
-	webhook, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("get webhook for delete: %w", err)
-	}
-
-	if err := s.repo.Delete(ctx, id); err != nil {
-		return fmt.Errorf("delete webhook: %w", err)
-	}
-
-	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, *webhook)
-
-	return nil
 }

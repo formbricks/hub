@@ -18,6 +18,7 @@ import (
 // WebhookDispatchWorker delivers one event to one webhook endpoint.
 type WebhookDispatchWorker struct {
 	river.WorkerDefaults[service.WebhookDispatchArgs]
+
 	repo    webhookDispatchRepo
 	sender  service.WebhookSender
 	metrics observability.HubMetrics

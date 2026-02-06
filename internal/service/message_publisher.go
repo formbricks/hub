@@ -96,6 +96,12 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(_ context.Contex
 	}
 }
 
+// Shutdown stops the background worker and waits for the buffer to drain.
+func (m *MessagePublisherManager) Shutdown() {
+	close(m.eventChan)
+	m.wg.Wait()
+}
+
 // startWorker runs in a dedicated goroutine, reading events from the channel
 // and fanning out each event to all registered providers. It is started with go
 // in NewMessagePublisherManager and runs for the lifetime of the manager.
@@ -115,10 +121,4 @@ func (m *MessagePublisherManager) startWorker() {
 
 		cancel()
 	}
-}
-
-// Shutdown stops the background worker and waits for the buffer to drain.
-func (m *MessagePublisherManager) Shutdown() {
-	close(m.eventChan)
-	m.wg.Wait()
 }

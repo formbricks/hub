@@ -55,6 +55,22 @@ linters:
           form: snake
           validate: snake
           river: snake
+    # Ignore common Go idioms (handlers w/r, id, db, test tt, etc.)
+    varnamelen:
+      ignore-names:
+        - id
+        - w
+        - r
+        - db
+        - tt
+        - s
+        - m
+        - mp
+        - rw
+        - wh
+        - i
+        - ss
+        - p
   enable:
     ## 1. Bugs & Logic
     - bodyclose     # Checks HTTP response bodies are closed
@@ -110,6 +126,10 @@ linters:
     - unconvert       # Removes unnecessary type conversions
 
     ## 5. Style & Formatting (The "Clean" factor)
+    - decorder                   # Declaration order and count of types, constants, variables, functions
+    - embeddedstructfieldcheck   # Embedded types at top of struct, blank line before normal fields
+    - funcorder     # Order of functions/methods/constructors
+    - varnamelen    # Variable name length should match scope (short names for short scope)
     - lll           # Max line length (enforces readable line width)
     - whitespace    # Trailing newlines, unnecessary blank lines, spaces (consistency with if/for etc.)
     - wsl_v5        # Empty-line / statement grouping (granular checks)
@@ -129,10 +149,12 @@ linters:
     - importas      # Enforces consistent import aliases (configure alias map in settings)
     - tagliatelle   # Struct tag naming (e.g. json, yaml) case
     - tagalign      # Align and sort struct tags
+    - grouper       # Grouping of expressions (e.g. var blocks)
     - nakedret      # Restricts or disallows naked returns
     - goprintffuncname # Printf-like functions must have name ending in f
 
     ## 6. Code Quality/Complexity
+    - nestif        # Deeply nested if statements (reduces nesting complexity)
     - gocritic      # Opinionated checks for bugs, performance, and style
     - modernize     # Suggests newer Go language features
     - mnd           # Magic number detection (prefer named constants)

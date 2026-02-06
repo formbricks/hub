@@ -29,8 +29,9 @@ func (w *Webhook) MarshalJSON() ([]byte, error) {
 	type Alias Webhook
 
 	aux := &struct {
-		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
+
+		EventTypes []string `json:"event_types,omitempty"`
 	}{
 		Alias: (*Alias)(w),
 	}
@@ -49,8 +50,9 @@ func (w *Webhook) UnmarshalJSON(data []byte) error {
 	type Alias Webhook
 
 	aux := &struct {
-		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
+
+		EventTypes []string `json:"event_types,omitempty"`
 	}{
 		Alias: (*Alias)(w),
 	}
@@ -82,8 +84,9 @@ func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 	type Alias CreateWebhookRequest
 
 	aux := &struct {
-		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
+
+		EventTypes []string `json:"event_types,omitempty"`
 	}{
 		Alias: (*Alias)(r),
 	}
@@ -119,8 +122,9 @@ func (r *UpdateWebhookRequest) UnmarshalJSON(data []byte) error {
 	type Alias UpdateWebhookRequest
 
 	aux := &struct {
-		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
+
+		EventTypes []string `json:"event_types,omitempty"`
 	}{
 		Alias: (*Alias)(r),
 	}
@@ -145,8 +149,9 @@ func (r *UpdateWebhookRequest) MarshalJSON() ([]byte, error) {
 	type Alias UpdateWebhookRequest
 
 	aux := &struct {
-		EventTypes []string `json:"event_types,omitempty"`
 		*Alias
+
+		EventTypes []string `json:"event_types,omitempty"`
 	}{
 		Alias: (*Alias)(r),
 	}
