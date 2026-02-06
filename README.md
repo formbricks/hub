@@ -30,7 +30,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 - ✅ **Clean Architecture** with repository, service, and handler layers
 - ✅ **Docker Compose** for local development
 - ✅ **Database Schema** initialization
-- ✅ **Swagger/OpenAPI** documentation
+- ✅ **OpenAPI** spec (`openapi.yaml`) and contract tests (Schemathesis)
 - ✅ **Health Check** endpoints
 
 ## Tech Stack
@@ -39,7 +39,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 - **Database**: PostgreSQL 16
 - **Driver**: pgx/v5
 - **HTTP**: Standard library `net/http` (barebones approach)
-- **Documentation**: Swagger/OpenAPI
+- **Documentation**: OpenAPI spec in repo, contract tests (Schemathesis)
 - **License**: Apache 2.0
 
 ## Project Structure
@@ -60,7 +60,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 │   └── database/         # Database utilities and connection pooling
 ├── migrations/           # SQL migrations (goose)
 ├── tests/               # Integration tests
-└── docs/                # API documentation (Swagger)
+└── docs/                # API and product documentation
 ```
 
 ## Getting Started
@@ -132,7 +132,8 @@ go run ./cmd/api/main.go
 
 ### Health Check
 - `GET /health` - Health check endpoint
-- `GET /swagger/` - Swagger API documentation
+
+The OpenAPI 3.1 spec lives in **`openapi.yaml`** at the repo root and is used by Schemathesis for API contract tests (`make schemathesis`). Serving the spec (e.g. `GET /openapi.json` or Swagger UI) is planned; see [todo.md](todo.md) § OpenAPI.
 
 ### Feedback Records
 
@@ -373,4 +374,4 @@ Apache 2.0
 
 ## Related Documentation
 
-- [API Documentation](http://localhost:8080/swagger/) - Interactive Swagger documentation (when server is running)
+- [OpenAPI spec](openapi.yaml) - API contract (used by Schemathesis); serving it from the server is planned (see [todo.md](todo.md)).

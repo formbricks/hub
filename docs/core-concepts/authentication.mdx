@@ -5,7 +5,7 @@ description: "Secure your Hub API with Bearer token authentication."
 
 ## How It Works
 
-Hub requires Bearer token authentication. All API endpoints require the `Authorization` header with a Bearer token - except health checks and documentation, which remain public.
+Hub requires Bearer token authentication. All API endpoints require the `Authorization` header with a Bearer token — except the health check endpoint, which is public.
 
 ## Configuring Authentication
 
@@ -36,7 +36,7 @@ make run
 
 ### 3. Include Token in Requests
 
-All API requests (except `/health` and `/docs`) require the `Authorization` header:
+All API requests except `GET /health` require the `Authorization` header:
 
 ```bash
 curl -H "Authorization: Bearer your-secret-key-here" \
@@ -57,8 +57,8 @@ These endpoints require authentication:
 **Always public** (no auth required):
 
 - `GET /health` - Health check
-- `GET /docs` - API documentation
-- `GET /openapi.json` - OpenAPI spec
+
+The OpenAPI spec is maintained in the repo as **`openapi.yaml`** and used for contract tests (Schemathesis). Serving it at runtime (e.g. `GET /openapi.json` or `GET /docs`) is planned; see [todo.md](../../todo.md) § OpenAPI.
 
 ## Authentication Workflow
 
@@ -252,11 +252,9 @@ Health checks (`/health`) should **never** require auth.
 
 If you see this, it's a bug. Please [report it](https://github.com/formbricks/hub/issues).
 
-### Docs Page Returns 401
+### Future spec endpoint
 
-The `/docs` endpoint should always be public.
-
-If you see this, it's a bug. Please [report it](https://github.com/formbricks/hub/issues).
+If you add a `/docs` or `/openapi.json` endpoint to serve the API spec, it should remain public (no auth). See [todo.md](../../todo.md) § OpenAPI.
 
 ## Examples
 
