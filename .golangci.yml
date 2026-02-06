@@ -41,7 +41,9 @@ linters:
     rules:
       - path: _test\.go
         linters:
-          - nilnil  # mocks often return (nil, nil) for success
+          - nilnil       # mocks often return (nil, nil) for success
+          - err113       # mocks and test helpers use dynamic errors
+          - testpackage  # tests use same package (white-box); enable when adopting _test package
   settings:
     lll:
       line-length: 164  # enforce max line length; lower to 120–140 and fix lines to tighten
@@ -82,6 +84,8 @@ linters:
     ## 2. Modern Error Handling
     - errorlint     # Enforces errors.Is/As and fmt.Errorf("%w") (CRITICAL for modern Go)
     - wrapcheck     # Enforces wrapping errors from external packages for context
+    - errname       # Sentinel errors: Err prefix; error types: Error suffix
+    - err113        # Stricter error handling (sentinel errors, error types, no dynamic errors)
 
     ## 3. Performance
     - perfsprint    # Checks for optimized usage of fmt.Sprintf
@@ -103,6 +107,7 @@ linters:
     - interfacebloat  # Limits number of methods in an interface
     - intrange        # Suggests integer range in for loops where applicable
     - iotamixing      # Iota mixed with non-iota in same const block
+    - unconvert       # Removes unnecessary type conversions
 
     ## 5. Style & Formatting (The "Clean" factor)
     - lll           # Max line length (enforces readable line width)
@@ -125,6 +130,7 @@ linters:
     - tagliatelle   # Struct tag naming (e.g. json, yaml) case
     - tagalign      # Align and sort struct tags
     - nakedret      # Restricts or disallows naked returns
+    - goprintffuncname # Printf-like functions must have name ending in f
 
     ## 6. Code Quality/Complexity
     - gocritic      # Opinionated checks for bugs, performance, and style
@@ -134,6 +140,9 @@ linters:
 
     ## 7. Testing
     - testifylint   # Checks for misuse of testify/require and testify/assert
+    - usetesting    # Prefer newer testing APIs (e.g. context.Background vs context.TODO in tests)
+    - tparallel     # Flags inappropriate use of t.Parallel()
+    - testpackage   # Encourages _test package for black-box tests
 
 issues:
   # Maximum issues count per one linter. Set to 0 to disable.
@@ -153,6 +162,7 @@ issues:
         - funlen        # tests can be long
         - exhaustive    # test switch on types often intentionally partial
         - lll           # test URLs and mock signatures are often long
+        - err113        # mocks and test helpers use dynamic errors
     # Integration tests (long URLs, request setup)
     - path: tests/
       linters:

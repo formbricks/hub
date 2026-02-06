@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,12 @@ import (
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
+)
+
+// Webhook delivery errors (sentinels for err113).
+var (
+	ErrWebhookGone   = errors.New("webhook returned 410 Gone (endpoint disabled)")
+	ErrWebhookNon2xx = errors.New("webhook returned non-2xx status")
 )
 
 // WebhookSender sends a single webhook payload to an endpoint (Standard Webhooks: signing, headers, 410 handling).
@@ -126,11 +133,11 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 			s.metrics.RecordWebhookDelivery(ctx, payload.Type, "disabled_410", duration)
 		}
 
-		return fmt.Errorf("webhook returned 410 Gone (endpoint disabled): %s", webhook.URL)
+		return fmt.Errorf("%w: %s", ErrWebhookGone, webhook.URL)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook returned non-2xx status: %d", resp.StatusCode)
+		return fmt.Errorf("%w: %d", ErrWebhookNon2xx, resp.StatusCode)
 	}
 
 	if s.metrics != nil {

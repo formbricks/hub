@@ -17,6 +17,9 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+// ErrInvalidEventTypeInDB is returned when the database contains an invalid event type string.
+var ErrInvalidEventTypeInDB = errors.New("invalid event type in database")
+
 // WebhooksRepository handles data access for webhooks.
 type WebhooksRepository struct {
 	db *pgxpool.Pool
@@ -70,7 +73,7 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 		for _, s := range dbEventTypes {
 			et, ok := datatypes.ParseEventType(s)
 			if !ok {
-				return nil, fmt.Errorf("invalid event type in database: %s", s)
+				return nil, fmt.Errorf("%w: %s", ErrInvalidEventTypeInDB, s)
 			}
 
 			webhook.EventTypes = append(webhook.EventTypes, et)
@@ -111,7 +114,7 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 		for _, s := range dbEventTypes {
 			et, ok := datatypes.ParseEventType(s)
 			if !ok {
-				return nil, fmt.Errorf("invalid event type in database: %s", s)
+				return nil, fmt.Errorf("%w: %s", ErrInvalidEventTypeInDB, s)
 			}
 
 			webhook.EventTypes = append(webhook.EventTypes, et)
@@ -196,7 +199,7 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 			for _, s := range dbEventTypes {
 				et, ok := datatypes.ParseEventType(s)
 				if !ok {
-					return nil, fmt.Errorf("invalid event type in database: %s", s)
+					return nil, fmt.Errorf("%w: %s", ErrInvalidEventTypeInDB, s)
 				}
 
 				webhook.EventTypes = append(webhook.EventTypes, et)
@@ -338,7 +341,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		for _, s := range dbEventTypes {
 			et, ok := datatypes.ParseEventType(s)
 			if !ok {
-				return nil, fmt.Errorf("invalid event type in database: %s", s)
+				return nil, fmt.Errorf("%w: %s", ErrInvalidEventTypeInDB, s)
 			}
 
 			webhook.EventTypes = append(webhook.EventTypes, et)
@@ -418,7 +421,7 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 			for _, s := range dbEventTypes {
 				et, ok := datatypes.ParseEventType(s)
 				if !ok {
-					return nil, fmt.Errorf("invalid event type in database: %s", s)
+					return nil, fmt.Errorf("%w: %s", ErrInvalidEventTypeInDB, s)
 				}
 
 				webhook.EventTypes = append(webhook.EventTypes, et)

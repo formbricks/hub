@@ -3,11 +3,15 @@ package models
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrInvalidFieldType is returned when a field type string is not valid.
+var ErrInvalidFieldType = errors.New("invalid field type")
 
 // FieldType represents the type of feedback field.
 type FieldType string
@@ -49,7 +53,7 @@ func (ft FieldType) IsValid() bool {
 func ParseFieldType(s string) (FieldType, error) {
 	ft := FieldType(s)
 	if !ft.IsValid() {
-		return "", fmt.Errorf("invalid field type: %s", s)
+		return "", fmt.Errorf("%w: %s", ErrInvalidFieldType, s)
 	}
 
 	return ft, nil

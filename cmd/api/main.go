@@ -92,7 +92,7 @@ func run() int {
 		go func() {
 			slog.Info("Starting metrics server", "port", cfg.PrometheusExporterPort)
 
-			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("Metrics server failed", "error", err)
 			}
 		}()
@@ -202,7 +202,7 @@ func run() int {
 	go func() {
 		slog.Info("Starting server", "port", cfg.Port)
 
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
 	}()

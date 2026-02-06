@@ -12,6 +12,17 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Configuration load errors (sentinels for err113).
+var (
+	ErrAPIKeyRequired                         = errors.New("API_KEY environment variable is required but not set")
+	ErrWebhookDeliveryMaxConcurrentInvalid    = errors.New("WEBHOOK_DELIVERY_MAX_CONCURRENT must be a positive integer")
+	ErrWebhookDeliveryMaxAttemptsInvalid      = errors.New("WEBHOOK_DELIVERY_MAX_ATTEMPTS must be a positive integer")
+	ErrWebhookMaxFanOutPerEventInvalid        = errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
+	ErrMessagePublisherBufferSizeInvalid      = errors.New("MESSAGE_PUBLISHER_BUFFER_SIZE must be a positive integer")
+	ErrMessagePublisherPerEventTimeoutInvalid = errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
+	ErrShutdownTimeoutInvalid                 = errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
+)
+
 // Config holds all application configuration.
 type Config struct {
 	DatabaseURL string
@@ -112,37 +123,37 @@ func Load() (*Config, error) {
 
 	apiKey := os.Getenv("API_KEY")
 	if apiKey == "" {
-		return nil, errors.New("API_KEY environment variable is required but not set")
+		return nil, ErrAPIKeyRequired
 	}
 
 	webhookDeliveryMaxConcurrent := getEnvAsInt("WEBHOOK_DELIVERY_MAX_CONCURRENT", defaultWebhookDeliveryMaxConcurrent)
 	if webhookDeliveryMaxConcurrent <= 0 {
-		return nil, errors.New("WEBHOOK_DELIVERY_MAX_CONCURRENT must be a positive integer")
+		return nil, ErrWebhookDeliveryMaxConcurrentInvalid
 	}
 
 	webhookDeliveryMaxAttempts := getEnvAsInt("WEBHOOK_DELIVERY_MAX_ATTEMPTS", defaultWebhookDeliveryMaxAttempts)
 	if webhookDeliveryMaxAttempts <= 0 {
-		return nil, errors.New("WEBHOOK_DELIVERY_MAX_ATTEMPTS must be a positive integer")
+		return nil, ErrWebhookDeliveryMaxAttemptsInvalid
 	}
 
 	webhookMaxFanOutPerEvent := getEnvAsInt("WEBHOOK_MAX_FAN_OUT_PER_EVENT", defaultWebhookMaxFanOutPerEvent)
 	if webhookMaxFanOutPerEvent <= 0 {
-		return nil, errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
+		return nil, ErrWebhookMaxFanOutPerEventInvalid
 	}
 
 	messagePublisherBufferSize := getEnvAsInt("MESSAGE_PUBLISHER_BUFFER_SIZE", defaultMessagePublisherBufferSize)
 	if messagePublisherBufferSize <= 0 {
-		return nil, errors.New("MESSAGE_PUBLISHER_BUFFER_SIZE must be a positive integer")
+		return nil, ErrMessagePublisherBufferSizeInvalid
 	}
 
 	perEventTimeoutSecs := getEnvAsInt("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS", defaultPerEventTimeoutSecs)
 	if perEventTimeoutSecs <= 0 {
-		return nil, errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
+		return nil, ErrMessagePublisherPerEventTimeoutInvalid
 	}
 
 	shutdownTimeoutSecs := getEnvAsInt("SHUTDOWN_TIMEOUT_SECONDS", defaultShutdownTimeoutSecs)
 	if shutdownTimeoutSecs <= 0 {
-		return nil, errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
+		return nil, ErrShutdownTimeoutInvalid
 	}
 
 	prometheusEnabled := getEnvAsBool("PROMETHEUS_ENABLED")

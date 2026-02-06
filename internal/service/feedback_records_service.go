@@ -12,6 +12,9 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+// ErrUserIdentifierRequired is returned when bulk delete is called without user_identifier.
+var ErrUserIdentifierRequired = errors.New("user_identifier is required")
+
 // FeedbackRecordsRepository defines the interface for feedback records data access.
 type FeedbackRecordsRepository interface {
 	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
@@ -152,7 +155,7 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 // The repository uses DELETE ... RETURNING so we get the deleted rows in one query.
 func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int, error) {
 	if userIdentifier == "" {
-		return 0, errors.New("user_identifier is required")
+		return 0, ErrUserIdentifierRequired
 	}
 
 	records, err := s.repo.BulkDelete(ctx, userIdentifier, tenantID)

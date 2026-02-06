@@ -15,6 +15,7 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"github.com/formbricks/hub/internal/api/response"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -83,15 +84,12 @@ func ValidateStruct(s any) error {
 
 // formatValidationErrors converts validator errors to a formatted error message
 // that can be used in RFC 7807 Problem Details responses.
+// It wraps huberrors.ErrValidation and the original err so both errors.Is(ErrValidation)
+// and errors.As(validator.ValidationErrors) work for handlers and GetValidationErrorDetails.
 func formatValidationErrors(err error) error {
 	var validationErrors validator.ValidationErrors
 	if errors.As(err, &validationErrors) {
-		messages := make([]string, 0, len(validationErrors))
-		for _, fieldError := range validationErrors {
-			messages = append(messages, formatFieldError(fieldError))
-		}
-
-		return fmt.Errorf("validation failed: %s", strings.Join(messages, "; "))
+		return fmt.Errorf("%w: %w", huberrors.ErrValidation, err)
 	}
 
 	return err

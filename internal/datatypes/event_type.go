@@ -1,7 +1,20 @@
 // Package datatypes defines shared types for events (e.g. webhook event types).
 package datatypes
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// Event type validation errors (sentinels for err113).
+var (
+	ErrEventTypeTooLong   = errors.New("event type exceeds max length")
+	ErrInvalidEventType   = errors.New("invalid event type")
+	ErrDuplicateEventType = errors.New("duplicate event type")
+)
+
+// maxEventTypeLen is the maximum allowed length for an event type string.
+const maxEventTypeLen = 64
 
 // EventType represents a webhook event type as an enum.
 // Use String() to get the string representation for API/database.
@@ -79,11 +92,8 @@ func IsValidEventType(eventType string) bool {
 }
 
 // ParseEventTypes converts a slice of strings to []EventType.
-// Returns an error if any string is invalid, exceeds 64 chars, or is duplicated.
+// Returns an error if any string is invalid, exceeds maxEventTypeLen chars, or is duplicated.
 func ParseEventTypes(ss []string) ([]EventType, error) {
-	// maxEventTypeLen is the maximum allowed length for an event type string.
-	const maxEventTypeLen = 64
-
 	if len(ss) == 0 {
 		return nil, nil
 	}
@@ -93,15 +103,15 @@ func ParseEventTypes(ss []string) ([]EventType, error) {
 	seen := make(map[string]bool, len(ss))
 	for _, s := range ss {
 		if len(s) > maxEventTypeLen {
-			return nil, fmt.Errorf("event type exceeds %d characters: %s", maxEventTypeLen, s)
+			return nil, fmt.Errorf("%w: %d characters: %s", ErrEventTypeTooLong, maxEventTypeLen, s)
 		}
 
 		if !IsValidEventType(s) {
-			return nil, fmt.Errorf("invalid event type: %s", s)
+			return nil, fmt.Errorf("%w: %s", ErrInvalidEventType, s)
 		}
 
 		if seen[s] {
-			return nil, fmt.Errorf("duplicate event type: %s", s)
+			return nil, fmt.Errorf("%w: %s", ErrDuplicateEventType, s)
 		}
 
 		seen[s] = true
