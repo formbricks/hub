@@ -43,9 +43,17 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	require.NoError(t, err, "Failed to connect to database")
 
+	// Initialize message publisher manager for tests (no providers required)
+	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout)
+
+	// Webhooks
+	webhooksRepo := repository.NewWebhooksRepository(db)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager)
+	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
+
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
@@ -63,6 +71,11 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
+	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
+	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
+	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/webhooks/{id}", webhooksHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/webhooks/{id}", webhooksHandler.Delete)
 
 	var protectedHandler http.Handler = protectedMux
 	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
@@ -75,9 +88,10 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	// Create test server
 	server = httptest.NewServer(mainMux)
 
-	// Cleanup function
+	// Cleanup function: stop message publisher worker, then server and db
 	cleanup = func() {
 		server.Close()
+		messageManager.Shutdown()
 		db.Close()
 	}
 
@@ -559,4 +573,322 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
+}
+
+func TestBulkDeleteFeedbackRecords(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+	userID := "bulk-delete-test-user-123"
+
+	// Create several feedback records with the same user_identifier
+	createPayload := func(fieldID string, valueNum float64) map[string]any {
+		return map[string]any{
+			"source_type":     "formbricks",
+			"user_identifier": userID,
+			"field_id":        fieldID,
+			"field_type":      "number",
+			"value_number":    valueNum,
+		}
+	}
+	createdIDs := make([]string, 0, 3)
+	for i, p := range []map[string]any{
+		createPayload("nps_1", 8),
+		createPayload("nps_2", 9),
+		createPayload("nps_3", 10),
+	} {
+		body, err := json.Marshal(p)
+		require.NoError(t, err)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, resp.Body.Close()) }()
+		require.Equal(t, http.StatusCreated, resp.StatusCode, "create record %d", i+1)
+		var rec models.FeedbackRecord
+		err = decodeData(resp, &rec)
+		require.NoError(t, err)
+		createdIDs = append(createdIDs, rec.ID.String())
+	}
+
+	// Bulk delete by user_identifier
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, server.URL+"/v1/feedback-records?user_identifier="+userID, http.NoBody)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var bulkResp models.BulkDeleteResponse
+	err = decodeData(resp, &bulkResp)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), bulkResp.DeletedCount)
+	assert.Equal(t, "Successfully deleted 3 feedback records", bulkResp.Message)
+
+	// Verify records are gone
+	for _, id := range createdIDs {
+		getReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records/"+id, http.NoBody)
+		require.NoError(t, err)
+		getReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+		getResp, err := client.Do(getReq)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, getResp.Body.Close()) }()
+		assert.Equal(t, http.StatusNotFound, getResp.StatusCode)
+	}
+
+	// Bulk delete again (no matching records) returns 0
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, server.URL+"/v1/feedback-records?user_identifier="+userID, http.NoBody)
+	require.NoError(t, err)
+	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
+	resp2, err := client.Do(req2)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp2.Body.Close()) }()
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	var bulkResp2 models.BulkDeleteResponse
+	err = decodeData(resp2, &bulkResp2)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), bulkResp2.DeletedCount)
+
+	// Bulk delete with tenant_id: only records for that tenant are deleted
+	t.Run("Bulk delete with tenant_id filter", func(t *testing.T) {
+		tenantA, tenantB := "tenant-bulk-a", "tenant-bulk-b"
+		userIDTenant := "bulk-delete-tenant-user"
+
+		// Create one record with tenant_a, two with tenant_b
+		for _, item := range []struct {
+			tenantID string
+			fieldID  string
+		}{
+			{tenantA, "fa"},
+			{tenantB, "fb1"},
+			{tenantB, "fb2"},
+		} {
+			body, err := json.Marshal(map[string]any{
+				"source_type":     "formbricks",
+				"user_identifier": userIDTenant,
+				"tenant_id":       item.tenantID,
+				"field_id":        item.fieldID,
+				"field_type":      "text",
+				"value_text":      "x",
+			})
+			require.NoError(t, err)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+		}
+
+		// Delete only tenant_a
+		delReq, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, server.URL+"/v1/feedback-records?user_identifier="+userIDTenant+"&tenant_id="+tenantA, http.NoBody)
+		require.NoError(t, err)
+		delReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+		delResp, err := client.Do(delReq)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, delResp.Body.Close()) }()
+		require.Equal(t, http.StatusOK, delResp.StatusCode)
+		var delResult models.BulkDeleteResponse
+		err = decodeData(delResp, &delResult)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), delResult.DeletedCount)
+
+		// Delete remaining (tenant_b) — should delete 2
+		delReq2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, server.URL+"/v1/feedback-records?user_identifier="+userIDTenant+"&tenant_id="+tenantB, http.NoBody)
+		require.NoError(t, err)
+		delReq2.Header.Set("Authorization", "Bearer "+testAPIKey)
+		delResp2, err := client.Do(delReq2)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, delResp2.Body.Close()) }()
+		require.Equal(t, http.StatusOK, delResp2.StatusCode)
+		err = decodeData(delResp2, &delResult)
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), delResult.DeletedCount)
+	})
+}
+
+// TestFeedbackRecordsRepository_BulkDelete tests the repository BulkDelete return value (deleted records).
+func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("API_KEY", testAPIKey)
+	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+	userID := "repo-bulk-delete-user"
+	sourceType := "formbricks"
+
+	// Create two records with same user_identifier
+	req1 := &models.CreateFeedbackRecordRequest{
+		SourceType:     sourceType,
+		FieldID:        "f1",
+		FieldType:      models.FieldTypeNumber,
+		ValueNumber:    ptrFloat64(1),
+		UserIdentifier: strPtr(userID),
+	}
+	rec1, err := repo.Create(ctx, req1)
+	require.NoError(t, err)
+	require.NotEmpty(t, rec1.ID)
+
+	req2 := &models.CreateFeedbackRecordRequest{
+		SourceType:     sourceType,
+		FieldID:        "f2",
+		FieldType:      models.FieldTypeNumber,
+		ValueNumber:    ptrFloat64(2),
+		UserIdentifier: strPtr(userID),
+	}
+	rec2, err := repo.Create(ctx, req2)
+	require.NoError(t, err)
+	require.NotEmpty(t, rec2.ID)
+
+	// BulkDelete returns the deleted records
+	deleted, err := repo.BulkDelete(ctx, userID, nil)
+	require.NoError(t, err)
+	require.Len(t, deleted, 2)
+	ids := map[string]bool{deleted[0].ID.String(): true, deleted[1].ID.String(): true}
+	assert.True(t, ids[rec1.ID.String()])
+	assert.True(t, ids[rec2.ID.String()])
+	assert.Equal(t, userID, *deleted[0].UserIdentifier)
+	assert.Equal(t, userID, *deleted[1].UserIdentifier)
+}
+
+func strPtr(s string) *string       { return &s }
+func ptrFloat64(f float64) *float64 { return &f }
+
+// TestWebhooksCRUD tests webhook create, get, list, update, delete.
+func TestWebhooksCRUD(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+
+	// Create webhook (no signing key = auto-generated)
+	createBody := map[string]any{
+		"url":         "https://example.com/webhook",
+		"event_types": []string{"feedback_record.created", "feedback_record.updated"},
+	}
+	body, err := json.Marshal(createBody)
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	createResp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, createResp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	var created models.Webhook
+	err = decodeData(createResp, &created)
+	require.NoError(t, err)
+	assert.NotEmpty(t, created.ID.String())
+	assert.Equal(t, "https://example.com/webhook", created.URL)
+	assert.NotEmpty(t, created.SigningKey)
+	assert.True(t, created.Enabled)
+	assert.Len(t, created.EventTypes, 2)
+
+	// Get webhook
+	getReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), http.NoBody)
+	require.NoError(t, err)
+	getReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	getResp, err := client.Do(getReq)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, getResp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusOK, getResp.StatusCode)
+	var got models.Webhook
+	err = decodeData(getResp, &got)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, got.ID)
+	assert.Equal(t, created.URL, got.URL)
+
+	// List webhooks
+	listReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/webhooks", http.NoBody)
+	require.NoError(t, err)
+	listReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	listResp, err := client.Do(listReq)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, listResp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusOK, listResp.StatusCode)
+	var listResult models.ListWebhooksResponse
+	err = decodeData(listResp, &listResult)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, listResult.Total, int64(1))
+	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	// Update webhook (including tenant_id)
+	updateBody := map[string]any{
+		"url":       "https://example.com/webhook-v2",
+		"enabled":   false,
+		"tenant_id": "org-123",
+	}
+	updateJSON, err := json.Marshal(updateBody)
+	require.NoError(t, err)
+	updateReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(updateJSON))
+	require.NoError(t, err)
+	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp, err := client.Do(updateReq)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, updateResp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
+	var updated models.Webhook
+	err = decodeData(updateResp, &updated)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/webhook-v2", updated.URL)
+	assert.False(t, updated.Enabled)
+	require.NotNil(t, updated.TenantID)
+	assert.Equal(t, "org-123", *updated.TenantID)
+
+	// PATCH tenant_id to empty string to clear it
+	clearTenantBody := map[string]any{"tenant_id": ""}
+	clearTenantJSON, err := json.Marshal(clearTenantBody)
+	require.NoError(t, err)
+	clearTenantReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(clearTenantJSON))
+	require.NoError(t, err)
+	clearTenantReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	clearTenantReq.Header.Set("Content-Type", "application/json")
+	clearTenantResp, err := client.Do(clearTenantReq)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, clearTenantResp.Body.Close()) }()
+	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
+	var afterClear models.Webhook
+	err = decodeData(clearTenantResp, &afterClear)
+	require.NoError(t, err)
+	assert.Nil(t, afterClear.TenantID)
+
+	// Delete webhook
+	deleteReq, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), http.NoBody)
+	require.NoError(t, err)
+	deleteReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	deleteResp, err := client.Do(deleteReq)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, deleteResp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusNoContent, deleteResp.StatusCode)
+
+	// Verify deleted
+	getAfterReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), http.NoBody)
+	require.NoError(t, err)
+	getAfterReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	getAfterResp, err := client.Do(getAfterReq)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, getAfterResp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusNotFound, getAfterResp.StatusCode)
 }

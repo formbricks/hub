@@ -25,7 +25,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
-          go-version: '1.25.6'
+          go-version: '1.25.7'
 
       - name: Install goose
         run: go install github.com/pressly/goose/v3/cmd/goose@v3.26.0

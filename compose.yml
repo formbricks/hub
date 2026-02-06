@@ -20,5 +20,19 @@ services:
       postgres
       -c shared_preload_libraries=vector
 
+  # River UI - web dashboard for River job queue (webhook delivery jobs)
+  riverui:
+    image: ghcr.io/riverqueue/riverui:latest
+    container_name: formbricks_riverui
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/test_db?sslmode=disable
+      RIVER_BASIC_AUTH_USER: ${RIVER_BASIC_AUTH_USER}
+      RIVER_BASIC_AUTH_PASS: ${RIVER_BASIC_AUTH_PASS}
+    ports:
+      - '8081:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:

@@ -352,8 +352,11 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 }
 
 // BulkDelete deletes all feedback records matching user_identifier and optional tenant_id.
-func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error) {
-	query := `DELETE FROM feedback_records WHERE user_identifier = $1`
+// It returns the deleted rows (via RETURNING) so callers can e.g. publish events per record.
+func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]models.FeedbackRecord, error) {
+	query := `
+		DELETE FROM feedback_records
+		WHERE user_identifier = $1`
 	args := []any{userIdentifier}
 	argCount := 2
 
@@ -362,10 +365,36 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 		args = append(args, *tenantID)
 	}
 
-	result, err := r.db.Exec(ctx, query, args...)
-	if err != nil {
-		return 0, fmt.Errorf("failed to bulk delete feedback records: %w", err)
-	}
+	query += `
+		RETURNING id, collected_at, created_at, updated_at,
+			source_type, source_id, source_name,
+			field_id, field_label, field_type, field_group_id, field_group_label,
+			value_text, value_number, value_boolean, value_date,
+			metadata, language, user_identifier, tenant_id`
 
-	return result.RowsAffected(), nil
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to bulk delete feedback records: %w", err)
+	}
+	defer rows.Close()
+
+	var records []models.FeedbackRecord
+	for rows.Next() {
+		var record models.FeedbackRecord
+		err := rows.Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan deleted feedback record: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating bulk delete result: %w", err)
+	}
+	return records, nil
 }

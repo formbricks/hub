@@ -12,11 +12,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/internal/workers"
 	"github.com/formbricks/hub/pkg/database"
 )
 
@@ -33,7 +37,8 @@ func run() int {
 	// Set up logging early so config load errors use the same handler (default: info).
 	setupLogging(getLogLevelEnv())
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -51,9 +56,44 @@ func run() int {
 	}
 	defer db.Close()
 
+	// Initialize message publisher manager
+	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout)
+
+	// Webhooks: repository, River client, worker, provider, and CRUD service
+	webhooksRepo := repository.NewWebhooksRepository(db)
+	webhookSender := service.NewWebhookSenderImpl(webhooksRepo)
+	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender)
+	riverWorkers := river.NewWorkers()
+	river.AddWorker(riverWorkers, webhookWorker)
+
+	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
+		Queues: map[string]river.QueueConfig{
+			river.QueueDefault: {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
+		},
+		Workers: riverWorkers,
+	})
+	if err != nil {
+		slog.Error("Failed to create River client", "error", err)
+		messageManager.Shutdown()
+		return exitFailure
+	}
+
+	webhookProvider := service.NewWebhookProvider(riverClient, webhooksRepo, cfg.WebhookDeliveryMaxAttempts, cfg.WebhookMaxFanOutPerEvent)
+	messageManager.RegisterProvider(webhookProvider)
+
+	// Start River in background
+	go func() {
+		if err := riverClient.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("River client stopped with error", "error", err)
+		}
+	}()
+
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager)
+	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
+
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo)
+	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
@@ -69,6 +109,11 @@ func run() int {
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
+	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
+	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
+	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
+	protectedMux.HandleFunc("PATCH /v1/webhooks/{id}", webhooksHandler.Update)
+	protectedMux.HandleFunc("DELETE /v1/webhooks/{id}", webhooksHandler.Delete)
 	protectedHandler := middleware.Auth(cfg.APIKey)(protectedMux)
 
 	// Mount protected under /v1/, public (e.g. /health) at /
@@ -102,6 +147,12 @@ func run() int {
 	select {
 	case err := <-serverErr:
 		slog.Error("Server failed to start", "error", err)
+		messageManager.Shutdown()
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		if stopErr := riverClient.Stop(stopCtx); stopErr != nil {
+			slog.Warn("River client stop after server start failure", "error", stopErr)
+		}
+		stopCancel()
 		return exitFailure
 	case sig := <-quit:
 		slog.Info("Received signal, shutting down", "signal", sig)
@@ -109,12 +160,21 @@ func run() int {
 	}
 
 	// Graceful shutdown with timeout
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("Server shutdown failed", "error", err)
+		messageManager.Shutdown()
+		if stopErr := riverClient.Stop(shutdownCtx); stopErr != nil {
+			slog.Error("River client stop after server shutdown error", "error", stopErr)
+		}
 		return exitFailure
+	}
+
+	messageManager.Shutdown()
+	if err := riverClient.Stop(shutdownCtx); err != nil {
+		slog.Warn("River client stop", "error", err)
 	}
 
 	slog.Info("Server stopped")
