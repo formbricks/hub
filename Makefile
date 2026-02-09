@@ -63,8 +63,8 @@ run:
 		echo "# API Key for authentication (required)" >> .env; \
 		echo "API_KEY=test-api-key-12345" >> .env; \
 		echo "" >> .env; \
-		echo "# Database connection URL" >> .env; \
-		echo "DATABASE_URL=postgres://postgres:postgres@localhost:5433/test_db?sslmode=disable" >> .env; \
+		echo "# Database connection URL (optional: set POSTGRES_PORT in .env if 5432 is in use; keep port in sync here)" >> .env; \
+		echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable" >> .env; \
 		echo "" >> .env; \
 		echo "# Server port (default: 8080)" >> .env; \
 		echo "PORT=8080" >> .env; \
