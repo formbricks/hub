@@ -35,7 +35,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 
 ## Tech Stack
 
-- **Language**: Go 1.25.6
+- **Language**: Go 1.25.7
 - **Database**: PostgreSQL 16
 - **Driver**: pgx/v5
 - **HTTP**: Standard library `net/http` (barebones approach)
@@ -67,7 +67,7 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 
 ### Prerequisites
 
-- **Go 1.25.6 or higher** — must be [installed](https://go.dev/doc/install) and available on your `PATH`. Verify with `go version`. If `go` is not found, see [Adding Go to PATH](#adding-go-to-path) below.
+- **Go 1.25.7 or higher** — must be [installed](https://go.dev/doc/install) and available on your `PATH`. Verify with `go version`. If `go` is not found, see [Adding Go to PATH](#adding-go-to-path) below.
 - **Docker** and **Docker Compose**
 - **Make** (optional, for convenience)
 
