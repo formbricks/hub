@@ -296,7 +296,7 @@ Copy [.env.example](.env.example) to `.env` and set values as needed. Reference:
 |----------|----------|---------|-------------|
 | `API_KEY` | Yes | — | API key for authenticating requests to protected endpoints. Server will not start without it. |
 | `DATABASE_URL` | No | `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable` | PostgreSQL connection string. Format: `postgres://user:password@host:port/database?sslmode=...`. When using Docker Compose, the host port in this URL must match `POSTGRES_PORT`. |
-| `POSTGRES_PORT` | No | `5432` | Host port used by Docker Compose for the Postgres container (`host:container` = `POSTGRES_PORT:5432`). Set this (e.g. `5433`) to avoid port conflicts with another Postgres or Formbricks instance; if you change it, set the same port in `DATABASE_URL`. |
+| `POSTGRES_PORT` | No | `5432` | Host port used by Docker Compose for the Postgres container (`host:container` = `POSTGRES_PORT:5432`). Set this (e.g. `5433`) only if 5432 is already in use; set the same port in `DATABASE_URL`. |
 | `PORT` | No | `8080` | HTTP server listen port. |
 | `LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warn`, or `error`. |
 
