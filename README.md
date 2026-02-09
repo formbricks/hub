@@ -30,16 +30,16 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 - ✅ **Clean Architecture** with repository, service, and handler layers
 - ✅ **Docker Compose** for local development
 - ✅ **Database Schema** initialization
-- ✅ **Swagger/OpenAPI** documentation
+- ✅ **OpenAPI** spec (`openapi.yaml`) and contract tests (Schemathesis)
 - ✅ **Health Check** endpoints
 
 ## Tech Stack
 
-- **Language**: Go 1.25.6
+- **Language**: Go 1.25.7
 - **Database**: PostgreSQL 16
 - **Driver**: pgx/v5
 - **HTTP**: Standard library `net/http` (barebones approach)
-- **Documentation**: Swagger/OpenAPI
+- **Documentation**: OpenAPI spec in repo, contract tests (Schemathesis)
 - **License**: Apache 2.0
 
 ## Project Structure
@@ -60,16 +60,16 @@ An open-source Experience Management (XM) database service. Hub is a headless AP
 │   └── database/         # Database utilities and connection pooling
 ├── migrations/           # SQL migrations (goose)
 ├── tests/               # Integration tests
-└── docs/                # API documentation (Swagger)
+└── docs/                # API and product documentation
 ```
 
 ## Getting Started
 
 ### Prerequisites
 
-- Go 1.25.6 or higher
-- Docker and Docker Compose
-- Make (optional, for convenience)
+- **Go 1.25.7 or higher** — must be [installed](https://go.dev/doc/install) and available on your `PATH`. Verify with `go version`. If `go` is not found, see [Adding Go to PATH](#adding-go-to-path) below.
+- **Docker** and **Docker Compose**
+- **Make** (optional, for convenience)
 
 ### Quick Start
 
@@ -132,7 +132,8 @@ go run ./cmd/api/main.go
 
 ### Health Check
 - `GET /health` - Health check endpoint
-- `GET /swagger/` - Swagger API documentation
+
+The OpenAPI 3.1 spec lives in **`openapi.yaml`** at the repo root and is used by Schemathesis for API contract tests (`make schemathesis`). Serving the spec (e.g. `GET /openapi.json` or Swagger UI) is planned; see [todo.md](todo.md) § OpenAPI.
 
 ### Feedback Records
 
@@ -220,6 +221,24 @@ make tests        # Integration tests (requires database)
 make test-all     # Run all tests
 ```
 
+### Troubleshooting (local development)
+
+- **`go: command not found` or `make` fails with "go not found"** — Go is not on your `PATH`. Install Go from [go.dev/doc/install](https://go.dev/doc/install), then add it to your PATH using the platform steps in [Adding Go to PATH](#adding-go-to-path) below. Restart the terminal (or re-source your profile) after changing PATH.
+- **Docker/Postgres port already in use** (e.g. `5432` or `address already in use`) — Set `POSTGRES_PORT` in `.env` to a free port (e.g. `5433`), and set the same port in `DATABASE_URL` (e.g. `postgres://postgres:postgres@localhost:5433/test_db?sslmode=disable`). Then run `make docker-up` again.
+
+#### Adding Go to PATH
+
+After installing Go, your shell must be able to find the `go` binary. Restart the terminal (or re-source your profile) after editing PATH.
+
+**macOS / Linux (bash or zsh)**  
+Add this line to `~/.bashrc` or `~/.zshrc` (create the file if it doesn’t exist). It adds the Go toolchain (`go`) and the directory where `go install` puts binaries (e.g. `goose`, `river`) used by the Makefile.
+
+```bash
+export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"
+```
+
+If you installed Go via the [Go version manager](https://go.dev/doc/manage-install) (e.g. under `$HOME/sdk/go1.21/bin`), use that directory instead of `/usr/local/go/bin`. To check that Go is on your PATH, run `which go` — it should print the path to the `go` binary.
+
 ### Git Hooks
 
 The repository includes pre-commit hooks for code quality. To install them:
@@ -271,13 +290,15 @@ All protected endpoints require the `Authorization: Bearer <key>` header with th
 
 ## Environment Variables
 
-See [.env.example](.env.example) for all available configuration options:
+Copy [.env.example](.env.example) to `.env` and set values as needed. Reference:
 
-- `DATABASE_URL` - PostgreSQL connection string
-- `PORT` - HTTP server port (default: 8080)
-- `API_KEY` - API key for authentication (required for protected endpoints)
-- `ENV` - Environment (development/production)
-- `LOG_LEVEL` - Logging level (debug, info, warn, error)
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `API_KEY` | Yes | — | API key for authenticating requests to protected endpoints. Server will not start without it. |
+| `DATABASE_URL` | No | `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable` | PostgreSQL connection string. Format: `postgres://user:password@host:port/database?sslmode=...`. When using Docker Compose, the host port in this URL must match `POSTGRES_PORT`. |
+| `POSTGRES_PORT` | No | `5432` | Host port used by Docker Compose for the Postgres container (`host:container` = `POSTGRES_PORT:5432`). Set this (e.g. `5433`) only if 5432 is already in use; set the same port in `DATABASE_URL`. |
+| `PORT` | No | `8080` | HTTP server listen port. |
+| `LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warn`, or `error`. |
 
 ## Example Requests
 
@@ -353,4 +374,4 @@ Apache 2.0
 
 ## Related Documentation
 
-- [API Documentation](http://localhost:8080/swagger/) - Interactive Swagger documentation (when server is running)
+- [OpenAPI spec](openapi.yaml) - API contract (used by Schemathesis); serving it from the server is planned (see [todo.md](todo.md)).
