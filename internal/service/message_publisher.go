@@ -15,7 +15,7 @@ import (
 type Event struct {
 	ID            uuid.UUID           // Unique event id (UUID v7, time-ordered)
 	Type          datatypes.EventType // Event type enum (e.g., FeedbackRecordCreated, WebhookCreated)
-	Timestamp     int64               // Unix timestamp
+	Timestamp     time.Time           // Event creation time
 	Data          any                 // Event data (FeedbackRecord, Webhook, etc.)
 	ChangedFields []string            // Only for updates
 }
@@ -73,7 +73,7 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(_ context.Contex
 	event := Event{
 		ID:            uuid.Must(uuid.NewV7()),
 		Type:          eventType,
-		Timestamp:     time.Now().Unix(),
+		Timestamp:     time.Now(),
 		Data:          data,
 		ChangedFields: changedFields,
 	}

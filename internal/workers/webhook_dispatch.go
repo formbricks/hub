@@ -107,7 +107,7 @@ func argsToPayload(args service.WebhookDispatchArgs) *service.WebhookPayload {
 	return &service.WebhookPayload{
 		ID:            args.EventID,
 		Type:          args.EventType,
-		Timestamp:     time.Unix(args.Timestamp, 0),
+		Timestamp:     args.Timestamp,
 		Data:          args.Data,
 		ChangedFields: args.ChangedFields,
 	}
