@@ -19,8 +19,10 @@ var (
 	ErrWebhookDeliveryMaxAttemptsInvalid      = errors.New("WEBHOOK_DELIVERY_MAX_ATTEMPTS must be a positive integer")
 	ErrWebhookMaxFanOutPerEventInvalid        = errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
 	ErrMessagePublisherBufferSizeInvalid      = errors.New("MESSAGE_PUBLISHER_BUFFER_SIZE must be a positive integer")
+	ErrMessagePublisherQueueMaxSizeInvalid    = errors.New("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE must be a positive integer")
 	ErrMessagePublisherPerEventTimeoutInvalid = errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
 	ErrShutdownTimeoutInvalid                 = errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
+	ErrWebhookMaxCountInvalid                 = errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
 )
 
 // Config holds all application configuration.
@@ -53,6 +55,9 @@ type Config struct {
 
 	// Prometheus metrics server listen address (e.g. ":9464"); only used when PrometheusEnabled is true
 	PrometheusExporterPort string
+
+	// Max total webhooks allowed (creation rejected when count >= this); default 500
+	WebhookMaxCount int
 }
 
 // getEnv retrieves an environment variable or returns a default value.
@@ -111,9 +116,10 @@ func Load() (*Config, error) {
 		defaultWebhookDeliveryMaxConcurrent = 100
 		defaultWebhookDeliveryMaxAttempts   = 3
 		defaultWebhookMaxFanOutPerEvent     = 500
-		defaultMessagePublisherBufferSize   = 1024
+		defaultMessagePublisherQueueMaxSize = 16384
 		defaultPerEventTimeoutSecs          = 10
 		defaultShutdownTimeoutSecs          = 30
+		defaultWebhookMaxCount              = 500
 	)
 
 	// Load .env file if it exists. Skip logging when absent (e.g. env from secrets/parameter store).
@@ -141,9 +147,9 @@ func Load() (*Config, error) {
 		return nil, ErrWebhookMaxFanOutPerEventInvalid
 	}
 
-	messagePublisherBufferSize := getEnvAsInt("MESSAGE_PUBLISHER_BUFFER_SIZE", defaultMessagePublisherBufferSize)
+	messagePublisherBufferSize := getEnvAsInt("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE", defaultMessagePublisherQueueMaxSize)
 	if messagePublisherBufferSize <= 0 {
-		return nil, ErrMessagePublisherBufferSizeInvalid
+		return nil, ErrMessagePublisherQueueMaxSizeInvalid
 	}
 
 	perEventTimeoutSecs := getEnvAsInt("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS", defaultPerEventTimeoutSecs)
@@ -163,6 +169,11 @@ func Load() (*Config, error) {
 		prometheusPort = "9464"
 	}
 
+	webhookMaxCount := getEnvAsInt("WEBHOOK_MAX_COUNT", defaultWebhookMaxCount)
+	if webhookMaxCount <= 0 {
+		return nil, ErrWebhookMaxCountInvalid
+	}
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
@@ -177,6 +188,7 @@ func Load() (*Config, error) {
 		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
 		PrometheusEnabled:               prometheusEnabled,
 		PrometheusExporterPort:          prometheusPort,
+		WebhookMaxCount:                 webhookMaxCount,
 	}
 
 	return cfg, nil

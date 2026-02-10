@@ -97,7 +97,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		event := Event{
 			ID:        eventID,
 			Type:      eventType,
-			Timestamp: time.Now().Unix(),
+			Timestamp: time.Now(),
 			Data:      map[string]string{"id": "123"},
 		}
 
@@ -145,7 +145,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 		repo := &mockProviderRepo{webhooks: nil}
 		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
-		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
+		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now(), Data: nil}
 		provider.PublishEvent(ctx, event)
 
 		if len(inserter.insertManyCalls) != 0 {
@@ -157,7 +157,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 		repo := &mockProviderRepo{err: errors.New("db error")}
 		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
-		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
+		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now(), Data: nil}
 		provider.PublishEvent(ctx, event)
 
 		if len(inserter.insertManyCalls) != 0 {
@@ -169,7 +169,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		inserter := &mockWebhookInserter{insertManyErr: errors.New("river error")}
 		repo := &mockProviderRepo{webhooks: []models.Webhook{{ID: wh1}, {ID: wh2}}}
 		provider := NewWebhookProvider(inserter, repo, 5, 500, nil)
-		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
+		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now(), Data: nil}
 		provider.PublishEvent(ctx, event)
 		// InsertMany was still called once (batch fails as a whole).
 		if len(inserter.insertManyCalls) != 1 {
@@ -185,7 +185,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		}
 	})
 
-	t.Run("caps fan-out when webhooks exceed maxFanOut", func(t *testing.T) {
+	t.Run("enqueues all webhooks in batches of maxFanOut", func(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 
 		webhooks := make([]models.Webhook, 501)
@@ -195,15 +195,19 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 
 		repo := &mockProviderRepo{webhooks: webhooks}
 		provider := NewWebhookProvider(inserter, repo, 3, 500, nil)
-		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now().Unix(), Data: nil}
+		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now(), Data: nil}
 		provider.PublishEvent(ctx, event)
 
-		if len(inserter.insertManyCalls) != 1 {
-			t.Fatalf("InsertMany called %d times, want 1", len(inserter.insertManyCalls))
+		if len(inserter.insertManyCalls) != 2 {
+			t.Fatalf("InsertMany called %d times, want 2 (batches of 500 and 1)", len(inserter.insertManyCalls))
 		}
 
 		if len(inserter.insertManyCalls[0]) != 500 {
-			t.Errorf("InsertMany params length = %d, want 500 (capped)", len(inserter.insertManyCalls[0]))
+			t.Errorf("first batch params length = %d, want 500", len(inserter.insertManyCalls[0]))
+		}
+
+		if len(inserter.insertManyCalls[1]) != 1 {
+			t.Errorf("second batch params length = %d, want 1", len(inserter.insertManyCalls[1]))
 		}
 	})
 }

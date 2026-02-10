@@ -133,6 +133,40 @@ type UpdateFeedbackRecordRequest struct {
 	UserIdentifier *string         `json:"user_identifier,omitempty"`
 }
 
+// ChangedFields returns the names of fields that are set (non-nil) in the update request.
+func (r *UpdateFeedbackRecordRequest) ChangedFields() []string {
+	var fields []string
+	if r.ValueText != nil {
+		fields = append(fields, "value_text")
+	}
+
+	if r.ValueNumber != nil {
+		fields = append(fields, "value_number")
+	}
+
+	if r.ValueBoolean != nil {
+		fields = append(fields, "value_boolean")
+	}
+
+	if r.ValueDate != nil {
+		fields = append(fields, "value_date")
+	}
+
+	if r.Metadata != nil {
+		fields = append(fields, "metadata")
+	}
+
+	if r.Language != nil {
+		fields = append(fields, "language")
+	}
+
+	if r.UserIdentifier != nil {
+		fields = append(fields, "user_identifier")
+	}
+
+	return fields
+}
+
 // ListFeedbackRecordsFilters represents filters for listing feedback records.
 type ListFeedbackRecordsFilters struct {
 	TenantID       *string    `form:"tenant_id"       validate:"omitempty,no_null_bytes"`

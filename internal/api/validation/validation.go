@@ -121,6 +121,10 @@ func formatFieldError(fieldError validator.FieldError) string {
 		return field + " must be in RFC3339 format (ISO 8601)"
 	case "no_null_bytes":
 		return field + " must not contain NULL bytes"
+	case "http_url":
+		return field + " must be a valid HTTP or HTTPS URL"
+	case "url":
+		return field + " must be a valid URL"
 	default:
 		return field + " is invalid"
 	}
@@ -128,6 +132,7 @@ func formatFieldError(fieldError validator.FieldError) string {
 
 // GetValidationErrorDetails extracts field-level error details from validation errors
 // Returns a slice of ErrorDetail for RFC 7807 Problem Details.
+// Supports both validator.ValidationErrors and huberrors.ValidationError.
 func GetValidationErrorDetails(err error) []response.ErrorDetail {
 	var details []response.ErrorDetail
 
@@ -140,6 +145,21 @@ func GetValidationErrorDetails(err error) []response.ErrorDetail {
 				Value:    fieldError.Value(),
 			})
 		}
+
+		return details
+	}
+
+	var hubValidation *huberrors.ValidationError
+	if errors.As(err, &hubValidation) {
+		msg := hubValidation.Message
+		if msg == "" {
+			msg = "validation failed"
+		}
+
+		details = append(details, response.ErrorDetail{
+			Location: hubValidation.Field,
+			Message:  msg,
+		})
 	}
 
 	return details

@@ -7,8 +7,10 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 
 	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -26,20 +28,31 @@ type WebhooksRepository interface {
 
 // WebhooksService handles business logic for webhooks.
 type WebhooksService struct {
-	repo      WebhooksRepository
-	publisher MessagePublisher
+	repo        WebhooksRepository
+	publisher   MessagePublisher
+	maxWebhooks int
 }
 
 // NewWebhooksService creates a new webhooks service.
-func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher) *WebhooksService {
+func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher, maxWebhooks int) *WebhooksService {
 	return &WebhooksService{
-		repo:      repo,
-		publisher: publisher,
+		repo:        repo,
+		publisher:   publisher,
+		maxWebhooks: maxWebhooks,
 	}
 }
 
 // CreateWebhook creates a new webhook.
 func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+	count, err := s.repo.Count(ctx, &models.ListWebhooksFilters{})
+	if err != nil {
+		return nil, fmt.Errorf("count webhooks: %w", err)
+	}
+
+	if count >= int64(s.maxWebhooks) {
+		return nil, huberrors.NewLimitExceededError(fmt.Sprintf("webhook limit reached (max %d)", s.maxWebhooks))
+	}
+
 	if req.SigningKey == "" {
 		key, err := generateSigningKey()
 		if err != nil {
@@ -47,6 +60,10 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 		}
 
 		req.SigningKey = key
+	} else {
+		if err := validateSigningKey(req.SigningKey); err != nil {
+			return nil, err
+		}
 	}
 
 	webhook, err := s.repo.Create(ctx, req)
@@ -57,6 +74,19 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, *webhook)
 
 	return webhook, nil
+}
+
+// validateSigningKey checks that the key is valid for Standard Webhooks (base64-decodable, correct prefix/length).
+// Returns a ValidationError if the key is malformed so the client gets a 400 with a clear message.
+func validateSigningKey(key string) error {
+	_, err := standardwebhooks.NewWebhook(key)
+	if err != nil {
+		msg := "invalid for Standard Webhooks: must be base64-decodable with correct prefix and length (e.g. whsec_...): " + err.Error()
+
+		return huberrors.NewValidationError("signing_key", msg)
+	}
+
+	return nil
 }
 
 // generateSigningKey generates a cryptographically secure signing key
@@ -109,12 +139,18 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 
 // UpdateWebhook updates an existing webhook.
 func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+	if req.SigningKey != nil {
+		if err := validateSigningKey(*req.SigningKey); err != nil {
+			return nil, err
+		}
+	}
+
 	webhook, err := s.repo.Update(ctx, id, req)
 	if err != nil {
 		return nil, fmt.Errorf("update webhook: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, s.getChangedFields(req))
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, req.ChangedFields())
 
 	return webhook, nil
 }
@@ -129,30 +165,4 @@ func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error
 	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, []uuid.UUID{id})
 
 	return nil
-}
-
-// getChangedFields extracts which fields were changed from the update request.
-func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []string {
-	var fields []string
-	if req.URL != nil {
-		fields = append(fields, "url")
-	}
-
-	if req.SigningKey != nil {
-		fields = append(fields, "signing_key")
-	}
-
-	if req.Enabled != nil {
-		fields = append(fields, "enabled")
-	}
-
-	if req.TenantID != nil {
-		fields = append(fields, "tenant_id")
-	}
-
-	if req.EventTypes != nil {
-		fields = append(fields, "event_types")
-	}
-
-	return fields
 }

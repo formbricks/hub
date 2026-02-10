@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 )
@@ -14,7 +16,7 @@ const webhookDispatchKind = "webhook_dispatch"
 type WebhookDispatchArgs struct {
 	EventID       uuid.UUID `json:"event_id"                 river:"unique"`
 	EventType     string    `json:"event_type"`
-	Timestamp     int64     `json:"timestamp"`
+	Timestamp     time.Time `json:"timestamp"`
 	Data          any       `json:"data"`
 	ChangedFields []string  `json:"changed_fields,omitempty"`
 	WebhookID     uuid.UUID `json:"webhook_id"               river:"unique"`
