@@ -150,12 +150,11 @@ func (a *App) Run(ctx context.Context) error {
 
 // Shutdown stops the server, message publisher, and River in order. Call after Run returns.
 func (a *App) Shutdown(ctx context.Context) error {
+	defer a.message.Shutdown()
 	if err := a.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		a.message.Shutdown()
 		_ = a.river.Stop(ctx)
 		return fmt.Errorf("server shutdown: %w", err)
 	}
-	a.message.Shutdown()
 	if err := a.river.Stop(ctx); err != nil {
 		return fmt.Errorf("river stop: %w", err)
 	}
