@@ -116,13 +116,12 @@ func TestHealthEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := (&http.Client{}).Do(req)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// Health endpoint returns plain text "OK"
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, "OK", string(body))
 }
 
@@ -146,9 +145,8 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := (&http.Client{}).Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Test with invalid API key
@@ -170,9 +168,8 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Test with empty API key in header
@@ -194,9 +191,8 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Test with malformed Authorization header
@@ -218,9 +214,8 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Test with valid authentication
@@ -242,13 +237,12 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		var result models.FeedbackRecord
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
 
 		assert.NotEmpty(t, result.ID)
 		assert.Equal(t, "formbricks", result.SourceType)
@@ -274,9 +268,8 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 }
 
@@ -294,9 +287,8 @@ func TestListFeedbackRecords(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Create a test feedback record first
@@ -314,7 +306,8 @@ func TestListFeedbackRecords(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, createResp.Body.Close()) }()
+	// decodeData not needed for this create; we only need a record to list
+	require.NoError(t, createResp.Body.Close())
 
 	// Test listing feedback records
 	t.Run("List all feedback records", func(t *testing.T) {
@@ -324,13 +317,12 @@ func TestListFeedbackRecords(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var result models.ListFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
 
 		assert.NotEmpty(t, result.Data)
 	})
@@ -343,13 +335,12 @@ func TestListFeedbackRecords(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var result models.ListFeedbackRecordsResponse
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
 
 		for _, exp := range result.Data {
 			assert.Equal(t, "formbricks", exp.SourceType)
@@ -371,9 +362,8 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Create a test feedback record
@@ -392,11 +382,10 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, createResp.Body.Close()) }()
-
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
 	require.NoError(t, err)
+	require.NoError(t, createResp.Body.Close())
 
 	// Test getting the feedback record by ID
 	t.Run("Get existing feedback record", func(t *testing.T) {
@@ -406,13 +395,12 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var result models.FeedbackRecord
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
 
 		assert.Equal(t, created.ID, result.ID)
 		assert.Equal(t, "formbricks", result.SourceType)
@@ -425,9 +413,8 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 }
 
@@ -452,9 +439,8 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Create a test feedback record
@@ -473,11 +459,10 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, createResp.Body.Close()) }()
-
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
 	require.NoError(t, err)
+	require.NoError(t, createResp.Body.Close())
 
 	// Test updating the feedback record
 	t.Run("Update feedback record", func(t *testing.T) {
@@ -494,13 +479,12 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		var result models.FeedbackRecord
 		err = decodeData(resp, &result)
 		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
 
 		assert.Equal(t, created.ID, result.ID)
 		assert.NotNil(t, result.ValueText)
@@ -522,9 +506,8 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Create a test feedback record
@@ -543,11 +526,10 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, createResp.Body.Close()) }()
-
 	var created models.FeedbackRecord
 	err = decodeData(createResp, &created)
 	require.NoError(t, err)
+	require.NoError(t, createResp.Body.Close())
 
 	// Test deleting the feedback record
 	t.Run("Delete feedback record", func(t *testing.T) {
@@ -557,9 +539,8 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 
 	// Verify it's deleted
@@ -570,9 +551,8 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
 	})
 }
 
@@ -607,12 +587,12 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
 		require.Equal(t, http.StatusCreated, resp.StatusCode, "create record %d", i+1)
 		var rec models.FeedbackRecord
 		err = decodeData(resp, &rec)
 		require.NoError(t, err)
 		createdIDs = append(createdIDs, rec.ID.String())
+		require.NoError(t, resp.Body.Close())
 	}
 
 	// Bulk delete by user_identifier
@@ -622,12 +602,11 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var bulkResp models.BulkDeleteResponse
 	err = decodeData(resp, &bulkResp)
 	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, int64(3), bulkResp.DeletedCount)
 	assert.Equal(t, "Successfully deleted 3 feedback records", bulkResp.Message)
 
@@ -638,8 +617,8 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		getReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 		getResp, err := client.Do(getReq)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, getResp.Body.Close()) }()
 		assert.Equal(t, http.StatusNotFound, getResp.StatusCode)
+		require.NoError(t, getResp.Body.Close())
 	}
 
 	// Bulk delete again (no matching records) returns 0
@@ -648,11 +627,11 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
 	resp2, err := client.Do(req2)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, resp2.Body.Close()) }()
 	assert.Equal(t, http.StatusOK, resp2.StatusCode)
 	var bulkResp2 models.BulkDeleteResponse
 	err = decodeData(resp2, &bulkResp2)
 	require.NoError(t, err)
+	require.NoError(t, resp2.Body.Close())
 	assert.Equal(t, int64(0), bulkResp2.DeletedCount)
 
 	// Bulk delete with tenant_id: only records for that tenant are deleted
@@ -684,8 +663,8 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := client.Do(req)
 			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
 			require.Equal(t, http.StatusCreated, resp.StatusCode)
+			require.NoError(t, resp.Body.Close())
 		}
 
 		// Delete only tenant_a
@@ -694,11 +673,11 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		delReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 		delResp, err := client.Do(delReq)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, delResp.Body.Close()) }()
 		require.Equal(t, http.StatusOK, delResp.StatusCode)
 		var delResult models.BulkDeleteResponse
 		err = decodeData(delResp, &delResult)
 		require.NoError(t, err)
+		require.NoError(t, delResp.Body.Close())
 		assert.Equal(t, int64(1), delResult.DeletedCount)
 
 		// Delete remaining (tenant_b) — should delete 2
@@ -707,10 +686,10 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		delReq2.Header.Set("Authorization", "Bearer "+testAPIKey)
 		delResp2, err := client.Do(delReq2)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, delResp2.Body.Close()) }()
 		require.Equal(t, http.StatusOK, delResp2.StatusCode)
 		err = decodeData(delResp2, &delResult)
 		require.NoError(t, err)
+		require.NoError(t, delResp2.Body.Close())
 		assert.Equal(t, int64(2), delResult.DeletedCount)
 	})
 }
@@ -786,13 +765,12 @@ func TestWebhooksCRUD(t *testing.T) {
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, createResp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusCreated, createResp.StatusCode)
 
 	var created models.Webhook
 	err = decodeData(createResp, &created)
 	require.NoError(t, err)
+	require.NoError(t, createResp.Body.Close())
 	assert.NotEmpty(t, created.ID.String())
 	assert.Equal(t, "https://example.com/webhook", created.URL)
 	assert.NotEmpty(t, created.SigningKey)
@@ -805,12 +783,11 @@ func TestWebhooksCRUD(t *testing.T) {
 	getReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	getResp, err := client.Do(getReq)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, getResp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusOK, getResp.StatusCode)
 	var got models.Webhook
 	err = decodeData(getResp, &got)
 	require.NoError(t, err)
+	require.NoError(t, getResp.Body.Close())
 	assert.Equal(t, created.ID, got.ID)
 	assert.Equal(t, created.URL, got.URL)
 
@@ -820,12 +797,11 @@ func TestWebhooksCRUD(t *testing.T) {
 	listReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	listResp, err := client.Do(listReq)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, listResp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusOK, listResp.StatusCode)
 	var listResult models.ListWebhooksResponse
 	err = decodeData(listResp, &listResult)
 	require.NoError(t, err)
+	require.NoError(t, listResp.Body.Close())
 	assert.GreaterOrEqual(t, listResult.Total, int64(1))
 	assert.GreaterOrEqual(t, len(listResult.Data), 1)
 
@@ -843,12 +819,11 @@ func TestWebhooksCRUD(t *testing.T) {
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateResp, err := client.Do(updateReq)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, updateResp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
 	var updated models.Webhook
 	err = decodeData(updateResp, &updated)
 	require.NoError(t, err)
+	require.NoError(t, updateResp.Body.Close())
 	assert.Equal(t, "https://example.com/webhook-v2", updated.URL)
 	assert.False(t, updated.Enabled)
 	require.NotNil(t, updated.TenantID)
@@ -864,11 +839,11 @@ func TestWebhooksCRUD(t *testing.T) {
 	clearTenantReq.Header.Set("Content-Type", "application/json")
 	clearTenantResp, err := client.Do(clearTenantReq)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, clearTenantResp.Body.Close()) }()
 	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
 	var afterClear models.Webhook
 	err = decodeData(clearTenantResp, &afterClear)
 	require.NoError(t, err)
+	require.NoError(t, clearTenantResp.Body.Close())
 	assert.Nil(t, afterClear.TenantID)
 
 	// Delete webhook
@@ -877,9 +852,8 @@ func TestWebhooksCRUD(t *testing.T) {
 	deleteReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	deleteResp, err := client.Do(deleteReq)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, deleteResp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusNoContent, deleteResp.StatusCode)
+	require.NoError(t, deleteResp.Body.Close())
 
 	// Verify deleted
 	getAfterReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), http.NoBody)
@@ -887,9 +861,8 @@ func TestWebhooksCRUD(t *testing.T) {
 	getAfterReq.Header.Set("Authorization", "Bearer "+testAPIKey)
 	getAfterResp, err := client.Do(getAfterReq)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, getAfterResp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusNotFound, getAfterResp.StatusCode)
+	require.NoError(t, getAfterResp.Body.Close())
 }
 
 // TestWebhooksInvalidSigningKey asserts that create and update reject invalid signing_key with 400.
@@ -914,14 +887,13 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 
 	createResp, err := client.Do(req)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, createResp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusBadRequest, createResp.StatusCode)
 	assert.Contains(t, createResp.Header.Get("Content-Type"), "application/problem+json")
 
 	var problem response.ProblemDetails
 	err = json.NewDecoder(createResp.Body).Decode(&problem)
 	require.NoError(t, err)
+	require.NoError(t, createResp.Body.Close())
 	assert.Equal(t, "Validation Error", problem.Title)
 	require.Len(t, problem.Errors, 1)
 	assert.Equal(t, "signing_key", problem.Errors[0].Location)
@@ -938,11 +910,11 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	createReq.Header.Set("Content-Type", "application/json")
 	validResp, err := client.Do(createReq)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, validResp.Body.Close()) }()
 	require.Equal(t, http.StatusCreated, validResp.StatusCode)
 	var created models.Webhook
 	err = decodeData(validResp, &created)
 	require.NoError(t, err)
+	require.NoError(t, validResp.Body.Close())
 
 	// Update with invalid signing_key
 	updateBody := map[string]any{"signing_key": "bad_key"}
@@ -952,12 +924,11 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateResp, err := client.Do(updateReq)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, updateResp.Body.Close()) }()
-
 	assert.Equal(t, http.StatusBadRequest, updateResp.StatusCode)
 	var updateProblem response.ProblemDetails
 	err = json.NewDecoder(updateResp.Body).Decode(&updateProblem)
 	require.NoError(t, err)
+	require.NoError(t, updateResp.Body.Close())
 	require.Len(t, updateProblem.Errors, 1)
 	assert.Equal(t, "signing_key", updateProblem.Errors[0].Location)
 }
