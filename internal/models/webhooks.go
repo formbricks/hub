@@ -63,7 +63,7 @@ func (w *Webhook) UnmarshalJSON(data []byte) error {
 
 // CreateWebhookRequest represents the request to create a webhook.
 type CreateWebhookRequest struct {
-	URL        string                `json:"url" validate:"required,no_null_bytes,min=1,max=2048"`
+	URL        string                `json:"url" validate:"required,no_null_bytes,http_url,min=1,max=2048"`
 	SigningKey string                `json:"signing_key,omitempty"`
 	Enabled    *bool                 `json:"enabled,omitempty"`
 	TenantID   *string               `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
@@ -94,7 +94,7 @@ func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 // DisabledReason and DisabledAt are read-only in the API (json:"-" so clients cannot set them);
 // the system sets them when a webhook is disabled. Re-enabling (enabled: true) clears them in the repo.
 type UpdateWebhookRequest struct {
-	URL            *string                `json:"url,omitempty" validate:"omitempty,no_null_bytes,min=1,max=2048"`
+	URL            *string                `json:"url,omitempty" validate:"omitempty,no_null_bytes,http_url,min=1,max=2048"`
 	SigningKey     *string                `json:"signing_key,omitempty" validate:"omitempty,no_null_bytes,min=1,max=255"`
 	Enabled        *bool                  `json:"enabled,omitempty"`
 	TenantID       *string                `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`

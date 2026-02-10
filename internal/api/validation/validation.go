@@ -115,6 +115,10 @@ func formatFieldError(fieldError validator.FieldError) string {
 		return field + " must be in RFC3339 format (ISO 8601)"
 	case "no_null_bytes":
 		return field + " must not contain NULL bytes"
+	case "http_url":
+		return field + " must be a valid HTTP or HTTPS URL"
+	case "url":
+		return field + " must be a valid URL"
 	default:
 		return field + " is invalid"
 	}
