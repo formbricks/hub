@@ -44,7 +44,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	args := service.WebhookDispatchArgs{
 		EventID:   eventID,
 		EventType: "feedback_record.created",
-		Timestamp: time.Now().Unix(),
+		Timestamp: time.Now(),
 		Data:      nil,
 		WebhookID: webhookID,
 	}

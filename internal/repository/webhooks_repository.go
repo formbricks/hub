@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -62,17 +61,10 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 		return nil, fmt.Errorf("failed to create webhook: %w", err)
 	}
 
-	if dbEventTypes != nil {
-		webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
-		for _, s := range dbEventTypes {
-			et, ok := datatypes.ParseEventType(s)
-			if !ok {
-				return nil, fmt.Errorf("invalid event type in database: %s", s)
-			}
-			webhook.EventTypes = append(webhook.EventTypes, et)
-		}
+	webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
+	if err != nil {
+		return nil, err
 	}
-
 	return &webhook, nil
 }
 
@@ -98,17 +90,10 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 		return nil, fmt.Errorf("failed to get webhook: %w", err)
 	}
 
-	if dbEventTypes != nil {
-		webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
-		for _, s := range dbEventTypes {
-			et, ok := datatypes.ParseEventType(s)
-			if !ok {
-				return nil, fmt.Errorf("invalid event type in database: %s", s)
-			}
-			webhook.EventTypes = append(webhook.EventTypes, et)
-		}
+	webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
+	if err != nil {
+		return nil, err
 	}
-
 	return &webhook, nil
 }
 
@@ -175,15 +160,9 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan webhook: %w", err)
 		}
-		if dbEventTypes != nil {
-			webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
-			for _, s := range dbEventTypes {
-				et, ok := datatypes.ParseEventType(s)
-				if !ok {
-					return nil, fmt.Errorf("invalid event type in database: %s", s)
-				}
-				webhook.EventTypes = append(webhook.EventTypes, et)
-			}
+		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
+		if err != nil {
+			return nil, err
 		}
 		webhooks = append(webhooks, webhook)
 	}
@@ -305,17 +284,10 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		return nil, fmt.Errorf("failed to update webhook: %w", err)
 	}
 
-	if dbEventTypes != nil {
-		webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
-		for _, s := range dbEventTypes {
-			et, ok := datatypes.ParseEventType(s)
-			if !ok {
-				return nil, fmt.Errorf("invalid event type in database: %s", s)
-			}
-			webhook.EventTypes = append(webhook.EventTypes, et)
-		}
+	webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
+	if err != nil {
+		return nil, err
 	}
-
 	return &webhook, nil
 }
 
@@ -335,6 +307,22 @@ func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// parseDBEventTypes converts a DB string slice to []datatypes.EventType. Returns (nil, nil) for nil input.
+func parseDBEventTypes(ss []string) ([]datatypes.EventType, error) {
+	if ss == nil {
+		return nil, nil
+	}
+	out := make([]datatypes.EventType, 0, len(ss))
+	for _, s := range ss {
+		et, ok := datatypes.ParseEventType(s)
+		if !ok {
+			return nil, fmt.Errorf("invalid event type in database: %s", s)
+		}
+		out = append(out, et)
+	}
+	return out, nil
+}
+
 // ListEnabled retrieves all enabled webhooks.
 func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
 	filters := &models.ListWebhooksFilters{
@@ -343,17 +331,14 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 	return r.List(ctx, filters)
 }
 
-// maxWebhookListLimit caps the number of webhooks returned for delivery to avoid unbounded queries.
-const maxWebhookListLimit = 1000
-
-// ListEnabledForEventType retrieves enabled webhooks that should receive a specific event type.
+// ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
+// Order is deterministic (ORDER BY id) so delivery behavior is consistent.
 func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
-		LIMIT ` + strconv.Itoa(maxWebhookListLimit) + `
 	`
 
 	rows, err := r.db.Query(ctx, query, eventType)
@@ -374,15 +359,9 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan webhook: %w", err)
 		}
-		if dbEventTypes != nil {
-			webhook.EventTypes = make([]datatypes.EventType, 0, len(dbEventTypes))
-			for _, s := range dbEventTypes {
-				et, ok := datatypes.ParseEventType(s)
-				if !ok {
-					return nil, fmt.Errorf("invalid event type in database: %s", s)
-				}
-				webhook.EventTypes = append(webhook.EventTypes, et)
-			}
+		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
+		if err != nil {
+			return nil, err
 		}
 		webhooks = append(webhooks, webhook)
 	}

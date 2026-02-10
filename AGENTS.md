@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `cmd/api/` holds the API server entrypoint (`main.go`).
+- `cmd/api/` holds the API server (package `main`: `main.go`, `app.go`). Build/run the package, e.g. `go run ./cmd/api` or `make run`.
 - `internal/` contains core application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, and `config`.
 - `pkg/` provides shared utilities (currently `pkg/database`).
 - `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.

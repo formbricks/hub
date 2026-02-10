@@ -63,7 +63,7 @@ func (w *Webhook) UnmarshalJSON(data []byte) error {
 
 // CreateWebhookRequest represents the request to create a webhook.
 type CreateWebhookRequest struct {
-	URL        string                `json:"url" validate:"required,no_null_bytes,min=1,max=2048"`
+	URL        string                `json:"url" validate:"required,no_null_bytes,http_url,min=1,max=2048"`
 	SigningKey string                `json:"signing_key,omitempty"`
 	Enabled    *bool                 `json:"enabled,omitempty"`
 	TenantID   *string               `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
@@ -94,7 +94,7 @@ func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 // DisabledReason and DisabledAt are read-only in the API (json:"-" so clients cannot set them);
 // the system sets them when a webhook is disabled. Re-enabling (enabled: true) clears them in the repo.
 type UpdateWebhookRequest struct {
-	URL            *string                `json:"url,omitempty" validate:"omitempty,no_null_bytes,min=1,max=2048"`
+	URL            *string                `json:"url,omitempty" validate:"omitempty,no_null_bytes,http_url,min=1,max=2048"`
 	SigningKey     *string                `json:"signing_key,omitempty" validate:"omitempty,no_null_bytes,min=1,max=255"`
 	Enabled        *bool                  `json:"enabled,omitempty"`
 	TenantID       *string                `json:"tenant_id,omitempty" validate:"omitempty,no_null_bytes,max=255"`
@@ -142,6 +142,27 @@ func (r *UpdateWebhookRequest) MarshalJSON() ([]byte, error) {
 		return nil, fmt.Errorf("marshal update webhook request: %w", err)
 	}
 	return data, nil
+}
+
+// ChangedFields returns the names of fields that are set (non-nil) in the update request.
+func (r *UpdateWebhookRequest) ChangedFields() []string {
+	var fields []string
+	if r.URL != nil {
+		fields = append(fields, "url")
+	}
+	if r.SigningKey != nil {
+		fields = append(fields, "signing_key")
+	}
+	if r.Enabled != nil {
+		fields = append(fields, "enabled")
+	}
+	if r.TenantID != nil {
+		fields = append(fields, "tenant_id")
+	}
+	if r.EventTypes != nil {
+		fields = append(fields, "event_types")
+	}
+	return fields
 }
 
 // ListWebhooksFilters represents filters for listing webhooks.

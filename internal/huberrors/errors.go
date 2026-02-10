@@ -70,3 +70,31 @@ func NewValidationError(field, message string) *ValidationError {
 		Message: message,
 	}
 }
+
+// ErrLimitExceeded is the sentinel for limit-exceeded errors (e.g. webhook max count).
+// Use when an operation is rejected because a configured limit was reached.
+var ErrLimitExceeded = &LimitExceededError{}
+
+// LimitExceededError is a sentinel error for limit-exceeded conditions.
+type LimitExceededError struct {
+	Message string
+}
+
+// Error implements the error interface.
+func (e *LimitExceededError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "limit exceeded"
+}
+
+// Is implements the error interface for error comparison.
+func (e *LimitExceededError) Is(target error) bool {
+	_, ok := target.(*LimitExceededError)
+	return ok
+}
+
+// NewLimitExceededError creates a LimitExceededError with a custom message.
+func NewLimitExceededError(message string) *LimitExceededError {
+	return &LimitExceededError{Message: message}
+}

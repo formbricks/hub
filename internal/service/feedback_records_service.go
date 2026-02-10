@@ -89,37 +89,8 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, *record, s.getChangedFields(req))
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, *record, req.ChangedFields())
 	return record, nil
-}
-
-// getChangedFields extracts which fields were changed from the update request.
-func (s *FeedbackRecordsService) getChangedFields(req *models.UpdateFeedbackRecordRequest) []string {
-	var fields []string
-
-	if req.ValueText != nil {
-		fields = append(fields, "value_text")
-	}
-	if req.ValueNumber != nil {
-		fields = append(fields, "value_number")
-	}
-	if req.ValueBoolean != nil {
-		fields = append(fields, "value_boolean")
-	}
-	if req.ValueDate != nil {
-		fields = append(fields, "value_date")
-	}
-	if req.Metadata != nil {
-		fields = append(fields, "metadata")
-	}
-	if req.Language != nil {
-		fields = append(fields, "language")
-	}
-	if req.UserIdentifier != nil {
-		fields = append(fields, "user_identifier")
-	}
-
-	return fields
 }
 
 // DeleteFeedbackRecord deletes a feedback record by ID.
