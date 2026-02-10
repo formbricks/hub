@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/huberrors"
@@ -57,6 +58,10 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 			return nil, fmt.Errorf("generate signing key: %w", err)
 		}
 		req.SigningKey = key
+	} else {
+		if err := validateSigningKey(req.SigningKey); err != nil {
+			return nil, err
+		}
 	}
 
 	webhook, err := s.repo.Create(ctx, req)
@@ -67,6 +72,17 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, *webhook)
 
 	return webhook, nil
+}
+
+// validateSigningKey checks that the key is valid for Standard Webhooks (base64-decodable, correct prefix/length).
+// Returns a ValidationError if the key is malformed so the client gets a 400 with a clear message.
+func validateSigningKey(key string) error {
+	_, err := standardwebhooks.NewWebhook(key)
+	if err != nil {
+		msg := "invalid for Standard Webhooks: must be base64-decodable with correct prefix and length (e.g. whsec_...): " + err.Error()
+		return huberrors.NewValidationError("signing_key", msg)
+	}
+	return nil
 }
 
 // generateSigningKey generates a cryptographically secure signing key
@@ -114,6 +130,11 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 
 // UpdateWebhook updates an existing webhook.
 func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+	if req.SigningKey != nil {
+		if err := validateSigningKey(*req.SigningKey); err != nil {
+			return nil, err
+		}
+	}
 	webhook, err := s.repo.Update(ctx, id, req)
 	if err != nil {
 		return nil, fmt.Errorf("update webhook: %w", err)

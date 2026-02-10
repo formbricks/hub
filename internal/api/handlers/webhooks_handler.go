@@ -52,6 +52,10 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	webhook, err := h.service.CreateWebhook(r.Context(), &req)
 	if err != nil {
+		if errors.Is(err, huberrors.ErrValidation) {
+			validation.RespondValidationError(w, err)
+			return
+		}
 		if errors.Is(err, huberrors.ErrLimitExceeded) {
 			response.RespondError(w, http.StatusForbidden, "Forbidden", err.Error())
 			return
@@ -141,10 +145,16 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	webhook, err := h.service.UpdateWebhook(r.Context(), id, &req)
 	if err != nil {
+		if errors.Is(err, huberrors.ErrValidation) {
+			validation.RespondValidationError(w, err)
+			return
+		}
+
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Webhook not found")
 			return
 		}
+
 		slog.Error("Failed to update webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return

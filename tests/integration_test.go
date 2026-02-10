@@ -15,6 +15,7 @@ import (
 
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
+	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
@@ -889,4 +890,74 @@ func TestWebhooksCRUD(t *testing.T) {
 	defer func() { require.NoError(t, getAfterResp.Body.Close()) }()
 
 	assert.Equal(t, http.StatusNotFound, getAfterResp.StatusCode)
+}
+
+// TestWebhooksInvalidSigningKey asserts that create and update reject invalid signing_key with 400.
+func TestWebhooksInvalidSigningKey(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+
+	// Create with invalid signing_key
+	createBody := map[string]any{
+		"url":         "https://example.com/webhook",
+		"signing_key": "not-valid",
+		"event_types": []string{"feedback_record.created"},
+	}
+	body, err := json.Marshal(createBody)
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	createResp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, createResp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusBadRequest, createResp.StatusCode)
+	assert.Contains(t, createResp.Header.Get("Content-Type"), "application/problem+json")
+
+	var problem response.ProblemDetails
+	err = json.NewDecoder(createResp.Body).Decode(&problem)
+	require.NoError(t, err)
+	assert.Equal(t, "Validation Error", problem.Title)
+	require.Len(t, problem.Errors, 1)
+	assert.Equal(t, "signing_key", problem.Errors[0].Location)
+	assert.Contains(t, problem.Errors[0].Message, "Standard Webhooks")
+
+	// Create a valid webhook first for update test
+	validBody := map[string]any{
+		"url":         "https://example.com/webhook",
+		"event_types": []string{"feedback_record.created"},
+	}
+	validJSON, _ := json.Marshal(validBody)
+	createReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(validJSON))
+	createReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	createReq.Header.Set("Content-Type", "application/json")
+	validResp, err := client.Do(createReq)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, validResp.Body.Close()) }()
+	require.Equal(t, http.StatusCreated, validResp.StatusCode)
+	var created models.Webhook
+	err = decodeData(validResp, &created)
+	require.NoError(t, err)
+
+	// Update with invalid signing_key
+	updateBody := map[string]any{"signing_key": "bad_key"}
+	updateJSON, _ := json.Marshal(updateBody)
+	updateReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPatch, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID), bytes.NewBuffer(updateJSON))
+	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp, err := client.Do(updateReq)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, updateResp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusBadRequest, updateResp.StatusCode)
+	var updateProblem response.ProblemDetails
+	err = json.NewDecoder(updateResp.Body).Decode(&updateProblem)
+	require.NoError(t, err)
+	require.Len(t, updateProblem.Errors, 1)
+	assert.Equal(t, "signing_key", updateProblem.Errors[0].Location)
 }
