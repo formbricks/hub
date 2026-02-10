@@ -714,7 +714,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	})
 }
 
-// TestFeedbackRecordsRepository_BulkDelete tests the repository BulkDelete return value (deleted records).
+// TestFeedbackRecordsRepository_BulkDelete tests the repository BulkDelete return value (deleted IDs).
 func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("API_KEY", testAPIKey)
@@ -752,15 +752,13 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, rec2.ID)
 
-	// BulkDelete returns the deleted records
-	deleted, err := repo.BulkDelete(ctx, userID, nil)
+	// BulkDelete returns the deleted IDs
+	deletedIDs, err := repo.BulkDelete(ctx, userID, nil)
 	require.NoError(t, err)
-	require.Len(t, deleted, 2)
-	ids := map[string]bool{deleted[0].ID.String(): true, deleted[1].ID.String(): true}
+	require.Len(t, deletedIDs, 2)
+	ids := map[string]bool{deletedIDs[0].String(): true, deletedIDs[1].String(): true}
 	assert.True(t, ids[rec1.ID.String()])
 	assert.True(t, ids[rec2.ID.String()])
-	assert.Equal(t, userID, *deleted[0].UserIdentifier)
-	assert.Equal(t, userID, *deleted[1].UserIdentifier)
 }
 
 func strPtr(s string) *string       { return &s }

@@ -135,17 +135,11 @@ func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []s
 }
 
 // DeleteWebhook deletes a webhook by ID.
+// Publishes WebhookDeleted with data = [id] (array of deleted IDs) for consistency with feedback record deletes.
 func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
-	webhook, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("get webhook for delete: %w", err)
-	}
-
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
-
-	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, *webhook)
-
+	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, []uuid.UUID{id})
 	return nil
 }
