@@ -140,30 +140,9 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 		return nil, fmt.Errorf("update webhook: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, s.getChangedFields(req))
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, req.ChangedFields())
 
 	return webhook, nil
-}
-
-// getChangedFields extracts which fields were changed from the update request.
-func (s *WebhooksService) getChangedFields(req *models.UpdateWebhookRequest) []string {
-	var fields []string
-	if req.URL != nil {
-		fields = append(fields, "url")
-	}
-	if req.SigningKey != nil {
-		fields = append(fields, "signing_key")
-	}
-	if req.Enabled != nil {
-		fields = append(fields, "enabled")
-	}
-	if req.TenantID != nil {
-		fields = append(fields, "tenant_id")
-	}
-	if req.EventTypes != nil {
-		fields = append(fields, "event_types")
-	}
-	return fields
 }
 
 // DeleteWebhook deletes a webhook by ID.

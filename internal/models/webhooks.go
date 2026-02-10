@@ -144,6 +144,27 @@ func (r *UpdateWebhookRequest) MarshalJSON() ([]byte, error) {
 	return data, nil
 }
 
+// ChangedFields returns the names of fields that are set (non-nil) in the update request.
+func (r *UpdateWebhookRequest) ChangedFields() []string {
+	var fields []string
+	if r.URL != nil {
+		fields = append(fields, "url")
+	}
+	if r.SigningKey != nil {
+		fields = append(fields, "signing_key")
+	}
+	if r.Enabled != nil {
+		fields = append(fields, "enabled")
+	}
+	if r.TenantID != nil {
+		fields = append(fields, "tenant_id")
+	}
+	if r.EventTypes != nil {
+		fields = append(fields, "event_types")
+	}
+	return fields
+}
+
 // ListWebhooksFilters represents filters for listing webhooks.
 type ListWebhooksFilters struct {
 	Enabled  *bool   `form:"enabled"`
