@@ -46,7 +46,7 @@ linters:
           - testpackage  # tests use same package (white-box); enable when adopting _test package
   settings:
     lll:
-      line-length: 164  # enforce max line length; lower to 120–140 and fix lines to tighten
+      line-length: 164  # consider 120–140 for new code; many existing lines exceed 140
     # Struct tag naming: API uses snake_case for json/form/validate/river
     tagliatelle:
       case:
@@ -71,6 +71,11 @@ linters:
         - i
         - ss
         - p
+    # Optional: enable once long functions are refactored (excluded in tests via exclude-rules)
+    # funlen: { lines: 80, statements: 50, ignore-comments: true }
+    # Nesting: only flag deeply nested if (min-complexity 5)
+    nestif:
+      min-complexity: 5
   enable:
     ## 1. Bugs & Logic
     - bodyclose     # Checks HTTP response bodies are closed
@@ -108,9 +113,10 @@ linters:
     - prealloc      # Encourages pre-allocating slices
     - makezero      # Prevents slice initialization with length + append (common perf bug)
 
-    ## 4. Security
+    ## 4. Security & API safety
     - gosec         # Security scanner (SQLi, hardcoded creds, etc.)
     - gosmopolitan  # i18n/l10n anti-patterns (timezone, locale, etc.)
+    - musttag       # Enforce json/form/validate tags on (un)marshaled structs (prevents accidental API breaks)
 
     ## 4b. Exhaustiveness & stdlib
     - exhaustive    # Exhaustive switch on enum-like types (catch missing cases)
@@ -149,7 +155,6 @@ linters:
     - unused        # Reports unused constants, variables, functions and types
     - sloglint      # Structured logging (log/slog) best practices — you use slog
     - loggercheck   # Key-value pairs for slog, zap, logr, klog, kitlog
-    - zerologlint   # Correct use of zerolog (e.g. Send/Msg)
     - promlinter    # Prometheus metrics naming (promlint)
     - importas      # Enforces consistent import aliases (configure alias map in settings)
     - tagliatelle   # Struct tag naming (e.g. json, yaml) case
