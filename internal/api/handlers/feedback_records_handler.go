@@ -23,7 +23,7 @@ type FeedbackRecordsService interface {
 	ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error)
 	UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error
-	BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int64, error)
+	BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int, error)
 }
 
 // FeedbackRecordsHandler handles HTTP requests for feedback records.
@@ -195,7 +195,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 	}
 
 	resp := models.BulkDeleteResponse{
-		DeletedCount: deletedCount,
+		DeletedCount: int64(deletedCount),
 		Message:      fmt.Sprintf("Successfully deleted %d feedback records", deletedCount),
 	}
 

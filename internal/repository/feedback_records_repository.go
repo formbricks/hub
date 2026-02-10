@@ -352,8 +352,11 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 }
 
 // BulkDelete deletes all feedback records matching user_identifier and optional tenant_id.
-func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) (int64, error) {
-	query := `DELETE FROM feedback_records WHERE user_identifier = $1`
+// It returns the deleted IDs (via RETURNING id) so callers can e.g. publish events.
+func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error) {
+	query := `
+		DELETE FROM feedback_records
+		WHERE user_identifier = $1`
 	args := []any{userIdentifier}
 	argCount := 2
 
@@ -362,10 +365,24 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 		args = append(args, *tenantID)
 	}
 
-	result, err := r.db.Exec(ctx, query, args...)
-	if err != nil {
-		return 0, fmt.Errorf("failed to bulk delete feedback records: %w", err)
-	}
+	query += ` RETURNING id`
 
-	return result.RowsAffected(), nil
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to bulk delete feedback records: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan deleted feedback record id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating bulk delete result: %w", err)
+	}
+	return ids, nil
 }

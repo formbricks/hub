@@ -125,7 +125,7 @@ API_KEY=your-secret-key-here
 
 5. Start the server:
 ```bash
-go run ./cmd/api/main.go
+go run ./cmd/api
 ```
 
 ## API Endpoints

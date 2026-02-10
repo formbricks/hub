@@ -102,6 +102,11 @@ jobs:
       - name: Initialize database schema
         run: make init-db
 
+      - name: Run River migrations
+        run: |
+          go install github.com/riverqueue/river/cmd/river@latest
+          make river-migrate
+
       - name: Run integration tests
         run: make tests
 

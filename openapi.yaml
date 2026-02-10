@@ -1,7 +1,12 @@
 openapi: 3.1.0
 info:
     title: Formbricks Hub API
-    description: "Feedback record storage service for the Formbricks ecosystem.\n\n\U0001F4DA Full Documentation: https://hub.formbricks.com\n\U0001F680 Quick Start: https://hub.formbricks.com/quickstart\n\U0001F50C Connector Ecosystem: Coming soon"
+    description: |
+        Feedback record storage and webhook delivery for the Formbricks ecosystem.
+        Store feedback records and subscribe to events via webhooks (Standard Webhooks).
+        Webhook payloads are described by WebhookDeliveryPayload; use the signing_key to verify requests.
+        Full Documentation: https://hub.formbricks.com
+        Quick Start: https://hub.formbricks.com/quickstart
     contact:
         name: Formbricks Team
         url: https://formbricks.com
@@ -526,6 +531,202 @@ paths:
                                             - location: "body.value_text"
                                               message: "Text value cannot be empty"
                                               value: ""
+    /v1/webhooks:
+        get:
+            tags:
+                - Webhooks
+            summary: List webhooks
+            description: Lists webhook endpoints with optional filters and pagination
+            operationId: list-webhooks
+            parameters:
+                - name: enabled
+                  in: query
+                  description: Filter by enabled status
+                  schema:
+                    type: boolean
+                - name: tenant_id
+                  in: query
+                  description: Filter by tenant ID. NULL bytes not allowed.
+                  schema:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                - name: limit
+                  in: query
+                  description: Number of results to return (max 1000)
+                  schema:
+                    type: integer
+                    format: int64
+                    default: 100
+                    minimum: 1
+                    maximum: 1000
+                - name: offset
+                  in: query
+                  description: Number of results to skip
+                  schema:
+                    type: integer
+                    format: int64
+                    default: 0
+                    minimum: 0
+                    maximum: 2147483647
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListWebhooksOutputBody'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        post:
+            tags:
+                - Webhooks
+            summary: Create a webhook
+            description: |
+                Creates a new webhook endpoint. When events occur (e.g. feedback_record.created),
+                the Hub POSTs a signed payload to the webhook URL. If signing_key is omitted,
+                a key is auto-generated (Standard Webhooks format, whsec_...).
+                See WebhookDeliveryPayload for the payload structure sent to your URL.
+            operationId: create-webhook
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateWebhookInputBody'
+                        examples:
+                            feedback_events:
+                                summary: Subscribe to feedback events
+                                value:
+                                    url: "https://example.com/hub-events"
+                                    event_types:
+                                        - "feedback_record.created"
+                                        - "feedback_record.updated"
+                                        - "feedback_record.deleted"
+                                    enabled: true
+                            all_events:
+                                summary: Subscribe to all events
+                                value:
+                                    url: "https://example.com/all-events"
+                                    event_types: []
+                                    tenant_id: "org-123"
+                required: true
+            responses:
+                "201":
+                    description: Created
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/WebhookData'
+                    links:
+                        GetWebhook:
+                            operationId: get-webhook
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Retrieve the created webhook by ID
+                        UpdateWebhook:
+                            operationId: update-webhook
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Update the webhook by ID
+                        DeleteWebhook:
+                            operationId: delete-webhook
+                            parameters:
+                                id: '$response.body#/id'
+                            description: Delete the webhook by ID
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/webhooks/{id}:
+        get:
+            tags:
+                - Webhooks
+            summary: Get a webhook by ID
+            description: Retrieves a single webhook endpoint by its UUID
+            operationId: get-webhook
+            parameters:
+                - name: id
+                  in: path
+                  description: Webhook ID (UUID)
+                  required: true
+                  schema:
+                    type: string
+                    format: uuid
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/WebhookData'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        patch:
+            tags:
+                - Webhooks
+            summary: Update a webhook
+            description: Updates specific fields of a webhook endpoint
+            operationId: update-webhook
+            parameters:
+                - name: id
+                  in: path
+                  description: Webhook ID (UUID)
+                  required: true
+                  schema:
+                    type: string
+                    format: uuid
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpdateWebhookInputBody'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/WebhookData'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        delete:
+            tags:
+                - Webhooks
+            summary: Delete a webhook
+            description: Permanently deletes a webhook endpoint. It will no longer receive events.
+            operationId: delete-webhook
+            parameters:
+                - name: id
+                  in: path
+                  description: Webhook ID (UUID)
+                  required: true
+                  schema:
+                    type: string
+                    format: uuid
+            responses:
+                "204":
+                    description: No Content
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
 components:
     securitySchemes:
         ApiKeyAuth:
@@ -834,6 +1035,209 @@ components:
                 - total
                 - limit
                 - offset
+        CreateWebhookInputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                url:
+                    type: string
+                    description: URL to receive webhook POSTs. NULL bytes not allowed.
+                    minLength: 1
+                    maxLength: 2048
+                    format: uri
+                    pattern: '^[^\x00]*$'
+                    example: "https://example.com/hub-events"
+                signing_key:
+                    type: string
+                    description: Optional. If omitted, a key is auto-generated (whsec_...). Used to sign payloads (Standard Webhooks). When provided, max 255 characters; NULL bytes not allowed.
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                enabled:
+                    type: boolean
+                    description: Whether the webhook is active (default true)
+                tenant_id:
+                    type: string
+                    description: Tenant/organization identifier. NULL bytes not allowed.
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                event_types:
+                    type: array
+                    description: |
+                        Event types this webhook subscribes to. Each value must be one of WebhookEventType.
+                        If empty or null, the webhook receives all event types.
+                    items:
+                        $ref: '#/components/schemas/WebhookEventType'
+            required:
+                - url
+        ListWebhooksOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                data:
+                    type: array
+                    description: List of webhooks
+                    items:
+                        $ref: '#/components/schemas/WebhookData'
+                total:
+                    type: integer
+                    description: Total count matching filters
+                    format: int64
+                limit:
+                    type: integer
+                    description: Limit used in query
+                    format: int64
+                offset:
+                    type: integer
+                    description: Offset used in query
+                    format: int64
+            required:
+                - data
+                - total
+                - limit
+                - offset
+        UpdateWebhookInputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                url:
+                    type: string
+                    description: New webhook URL. NULL bytes not allowed.
+                    minLength: 1
+                    maxLength: 2048
+                    format: uri
+                    pattern: '^[^\x00]*$'
+                signing_key:
+                    type: string
+                    description: New signing key. NULL bytes not allowed.
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                enabled:
+                    type: boolean
+                    description: Enable or disable the webhook
+                tenant_id:
+                    type: string
+                    nullable: true
+                    description: Tenant/organization identifier. NULL bytes not allowed. Send empty string to clear (store as null).
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                event_types:
+                    type: array
+                    description: New list of event types (use empty array to clear). Each value must be one of WebhookEventType.
+                    items:
+                        $ref: '#/components/schemas/WebhookEventType'
+        WebhookData:
+            type: object
+            additionalProperties: false
+            properties:
+                id:
+                    type: string
+                    format: uuid
+                    description: Webhook ID (UUID)
+                url:
+                    type: string
+                    description: URL that receives webhook POSTs
+                signing_key:
+                    type: string
+                    description: Key used to sign payloads (Standard Webhooks)
+                enabled:
+                    type: boolean
+                    description: Whether the webhook is active
+                tenant_id:
+                    type: string
+                    description: Tenant/organization identifier
+                event_types:
+                    type: array
+                    description: Event types this webhook subscribes to (empty = all)
+                    items:
+                        $ref: '#/components/schemas/WebhookEventType'
+                created_at:
+                    type: string
+                    format: date-time
+                    description: When the webhook was created
+                updated_at:
+                    type: string
+                    format: date-time
+                    description: When the webhook was last updated
+                disabled_reason:
+                    type: string
+                    nullable: true
+                    description: Read-only. Set by the system when the webhook was disabled (e.g. after 410 Gone or max delivery failures). Omitted when null.
+                disabled_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Read-only. When the webhook was disabled. Omitted when null. Cleared when the webhook is re-enabled via PATCH.
+            required:
+                - id
+                - url
+                - signing_key
+                - enabled
+                - created_at
+                - updated_at
+        WebhookEventType:
+            type: string
+            description: Valid event type for webhook subscriptions and delivery payloads
+            enum:
+                - feedback_record.created
+                - feedback_record.updated
+                - feedback_record.deleted
+                - webhook.created
+                - webhook.updated
+                - webhook.deleted
+        DeletedIdsPayload:
+            type: array
+            description: |
+                For feedback_record.deleted and webhook.deleted events only.
+                Array of deleted resource IDs (UUID strings). Single delete sends one ID; bulk delete sends all deleted IDs.
+            items:
+                type: string
+                format: uuid
+        WebhookDeliveryPayload:
+            type: object
+            description: |
+                Payload POSTed to your webhook URL when an event occurs. Sent with Content-Type application/json.
+                Requests include Standard Webhooks headers for verification: webhook-id, webhook-signature, webhook-timestamp.
+                Verify the signature using your webhook's signing_key (see Standard Webhooks spec).
+                Outbound request timeout is 15 seconds (per Standard Webhooks recommendation).
+
+                The webhook-id header is a stable identifier per event: the same value is sent for every delivery attempt (all endpoints and all retries) for that event. Use it as an idempotency key (e.g. store seen IDs for a short window and skip duplicate processing).
+            additionalProperties: false
+            properties:
+                type:
+                    type: string
+                    description: Event type that occurred
+                    enum:
+                        - feedback_record.created
+                        - feedback_record.updated
+                        - feedback_record.deleted
+                        - webhook.created
+                        - webhook.updated
+                        - webhook.deleted
+                timestamp:
+                    type: string
+                    format: date-time
+                    description: When the event was published (ISO 8601)
+                data:
+                    description: |
+                        Event payload. Shape depends on event type:
+                        - feedback_record.created / feedback_record.updated: FeedbackRecordData (object).
+                        - feedback_record.deleted: DeletedIdsPayload (array of deleted feedback record IDs).
+                        - webhook.created / webhook.updated: WebhookData (object).
+                        - webhook.deleted: DeletedIdsPayload (array of deleted webhook IDs; one element for single delete).
+                    oneOf:
+                        - $ref: '#/components/schemas/FeedbackRecordData'
+                        - $ref: '#/components/schemas/WebhookData'
+                        - $ref: '#/components/schemas/DeletedIdsPayload'
+                changed_fields:
+                    type: array
+                    description: Present only for update events; list of field names that changed
+                    items:
+                        type: string
+            required:
+                - type
+                - timestamp
+                - data
         UpdateFeedbackRecordInputBody:
             type: object
             additionalProperties: false

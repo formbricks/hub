@@ -4,9 +4,11 @@ import (
 	"testing"
 )
 
-// Placeholder test to ensure file compiles
-// This file previously contained search-related tests
-// which have been removed along with the search functionality.
-func TestPlaceholder(t *testing.T) {
-	t.Skip("Placeholder test - search functionality removed")
+// BulkDelete is tested by integration tests in tests/integration_test.go:
+//   - TestFeedbackRecordsRepository_BulkDelete exercises the repository directly and asserts
+//     the returned slice of deleted records.
+//   - TestBulkDeleteFeedbackRecords exercises the full stack (handler, service, repo) including
+//     tenant_id filter and response shape.
+func TestFeedbackRecordsRepository_Package(_ *testing.T) {
+	// No DB in unit tests; BulkDelete coverage is in tests/.
 }

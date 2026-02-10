@@ -1,29 +1,30 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Default target - show help
 help:
 	@echo "Available targets:"
-	@echo "  make help         - Show this help message"
-	@echo "  make dev-setup    - Set up development environment (docker, deps, tools, schema, hooks)"
-	@echo "  make build        - Build the API server"
-	@echo "  make run          - Run the API server"
-	@echo "  make test-unit    - Run unit tests (fast, no database)"
-	@echo "  make tests        - Run integration tests"
-	@echo "  make test-all     - Run all tests (unit + integration)"
-	@echo "  make tests-coverage - Run tests with coverage report"
-	@echo "  make init-db      - Initialize database schema (run migrations with goose)"
-	@echo "  make migrate-status  - Show migration status"
+	@echo "  make help             - Show this help message"
+	@echo "  make dev-setup        - Set up development environment (docker, deps, tools, schema, hooks)"
+	@echo "  make build            - Build the API server"
+	@echo "  make run              - Run the API server"
+	@echo "  make test-unit        - Run unit tests (fast, no database)"
+	@echo "  make tests            - Run integration tests"
+	@echo "  make test-all         - Run all tests (unit + integration)"
+	@echo "  make tests-coverage   - Run tests with coverage report"
+	@echo "  make init-db          - Initialize database schema (run migrations with goose)"
+	@echo "  make migrate-status   - Show migration status"
 	@echo "  make migrate-validate - Validate migration files (no DB)"
-	@echo "  make fmt          - Format code (golangci-lint run --fix)"
-	@echo "  make lint         - Run linter (includes format checks)"
-	@echo "  make deps         - Install Go dependencies"
-	@echo "  make install-tools - Install development tools (golangci-lint, govulncheck, goose)"
-	@echo "  make install-hooks - Install git hooks"
-	@echo "  make docker-up    - Start Docker containers"
-	@echo "  make docker-down  - Stop Docker containers"
-	@echo "  make docker-clean - Stop Docker containers and remove volumes"
-	@echo "  make clean        - Clean build artifacts"
-	@echo "  make schemathesis - Run Schemathesis API tests (requires API server running)"
+	@echo "  make river-migrate    - Run River job queue migrations (required for webhook delivery)"
+	@echo "  make fmt              - Format code (golangci-lint run --fix)"
+	@echo "  make lint             - Run linter (includes format checks)"
+	@echo "  make deps             - Install Go dependencies"
+	@echo "  make install-tools    - Install development tools (golangci-lint, govulncheck, goose)"
+	@echo "  make install-hooks    - Install git hooks"
+	@echo "  make docker-up        - Start Docker containers"
+	@echo "  make docker-down      - Stop Docker containers"
+	@echo "  make docker-clean     - Stop Docker containers and remove volumes"
+	@echo "  make clean            - Clean build artifacts"
+	@echo "  make schemathesis     - Run Schemathesis API tests (requires API server running)"
 
 # Run all tests (integration tests in tests/ directory)
 tests:
@@ -49,7 +50,7 @@ tests-coverage:
 # Build the API server
 build:
 	@echo "Building API server..."
-	go build -o bin/api cmd/api/main.go
+	go build -o bin/api ./cmd/api
 	@echo "Binary created: bin/api"
 
 # Run the API server
@@ -71,7 +72,7 @@ run:
 		echo ".env file created with default values."; \
 	fi
 	@echo "Starting API server..."
-	go run cmd/api/main.go
+	go run ./cmd/api
 
 # Initialize database schema (run goose migrations up)
 init-db:
@@ -108,6 +109,19 @@ migrate-validate:
 	@command -v goose >/dev/null 2>&1 || { echo "Error: goose not found. Install with: make install-tools"; exit 1; }
 	@goose -dir migrations validate
 	@echo "Migration files are valid"
+
+# Run River job queue migrations (required for webhook delivery)
+river-migrate:
+	@command -v river >/dev/null 2>&1 || { echo "Error: river CLI not found. Install with: go install github.com/riverqueue/river/cmd/river@latest"; exit 1; }
+	@if [ -f .env ]; then \
+		export $$(grep -v '^#' .env | xargs) && \
+		if [ -z "$$DATABASE_URL" ]; then echo "Error: DATABASE_URL not found in .env"; exit 1; fi && \
+		river migrate-up --database-url "$$DATABASE_URL"; \
+	else \
+		if [ -z "$$DATABASE_URL" ]; then echo "Error: DATABASE_URL not set"; exit 1; fi && \
+		river migrate-up --database-url "$$DATABASE_URL"; \
+	fi
+	@echo "River migrations applied"
 
 # Start Docker containers
 docker-up:
