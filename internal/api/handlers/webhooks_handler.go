@@ -52,10 +52,6 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	webhook, err := h.service.CreateWebhook(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrNotFound) {
-			response.RespondNotFound(w, "Webhook not found")
-			return
-		}
 		slog.Error("Failed to create webhook", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 		return
