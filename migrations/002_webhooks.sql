@@ -15,12 +15,15 @@ CREATE TABLE webhooks (
   tenant_id VARCHAR(255),
   event_types VARCHAR(64)[],
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  disabled_reason TEXT,
+  disabled_at TIMESTAMPTZ
 );
 
 CREATE INDEX idx_webhooks_enabled ON webhooks(enabled);
 CREATE INDEX idx_webhooks_tenant_id ON webhooks(tenant_id);
 CREATE INDEX idx_webhooks_event_types ON webhooks USING GIN (event_types);
+CREATE INDEX idx_webhooks_enabled_created_at ON webhooks(enabled, created_at DESC);
 
 -- +goose Down
 DROP TABLE IF EXISTS webhooks;
