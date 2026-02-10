@@ -35,6 +35,9 @@ type Config struct {
 
 	// Graceful shutdown timeout for HTTP server and River; default 30s
 	ShutdownTimeout time.Duration
+
+	// Max total webhooks allowed (creation rejected when count >= this); default 500
+	WebhookMaxCount int
 }
 
 // getEnv retrieves an environment variable or returns a default value.
@@ -103,6 +106,11 @@ func Load() (*Config, error) {
 		return nil, errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
 	}
 
+	webhookMaxCount := getEnvAsInt("WEBHOOK_MAX_COUNT", 500)
+	if webhookMaxCount <= 0 {
+		return nil, errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
+	}
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
@@ -115,6 +123,7 @@ func Load() (*Config, error) {
 		MessagePublisherBufferSize:      messagePublisherBufferSize,
 		MessagePublisherPerEventTimeout: time.Duration(perEventTimeoutSecs) * time.Second,
 		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
+		WebhookMaxCount:                 webhookMaxCount,
 	}
 
 	return cfg, nil

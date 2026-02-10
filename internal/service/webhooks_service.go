@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -26,20 +27,30 @@ type WebhooksRepository interface {
 
 // WebhooksService handles business logic for webhooks.
 type WebhooksService struct {
-	repo      WebhooksRepository
-	publisher MessagePublisher
+	repo        WebhooksRepository
+	publisher   MessagePublisher
+	maxWebhooks int
 }
 
 // NewWebhooksService creates a new webhooks service.
-func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher) *WebhooksService {
+func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher, maxWebhooks int) *WebhooksService {
 	return &WebhooksService{
-		repo:      repo,
-		publisher: publisher,
+		repo:        repo,
+		publisher:   publisher,
+		maxWebhooks: maxWebhooks,
 	}
 }
 
 // CreateWebhook creates a new webhook.
 func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+	count, err := s.repo.Count(ctx, &models.ListWebhooksFilters{})
+	if err != nil {
+		return nil, fmt.Errorf("count webhooks: %w", err)
+	}
+	if count >= int64(s.maxWebhooks) {
+		return nil, huberrors.NewLimitExceededError(fmt.Sprintf("webhook limit reached (max %d)", s.maxWebhooks))
+	}
+
 	if req.SigningKey == "" {
 		key, err := generateSigningKey()
 		if err != nil {

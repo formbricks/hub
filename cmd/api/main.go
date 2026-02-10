@@ -88,7 +88,7 @@ func run() int {
 		}
 	}()
 
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers

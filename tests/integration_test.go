@@ -48,7 +48,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
