@@ -91,9 +91,9 @@ func Load() (*Config, error) {
 		return nil, errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
 	}
 
-	messagePublisherBufferSize := getEnvAsInt("MESSAGE_PUBLISHER_BUFFER_SIZE", 1024)
+	messagePublisherBufferSize := getEnvAsInt("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE", 16384)
 	if messagePublisherBufferSize <= 0 {
-		return nil, errors.New("MESSAGE_PUBLISHER_BUFFER_SIZE must be a positive integer")
+		return nil, errors.New("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE must be a positive integer")
 	}
 
 	perEventTimeoutSecs := getEnvAsInt("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS", 10)
