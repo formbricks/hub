@@ -23,7 +23,8 @@ type WebhookProvider struct {
 	maxFanOut   int
 }
 
-// NewWebhookProvider creates a provider that lists enabled webhooks and enqueues jobs via InsertMany (capped by maxFanOut per event).
+// NewWebhookProvider creates a provider that lists enabled webhooks and enqueues jobs via InsertMany.
+// maxFanOut is the batch size for InsertMany (all matching webhooks are enqueued in batches of maxFanOut).
 func NewWebhookProvider(inserter WebhookDispatchInserter, repo WebhooksRepository, maxAttempts, maxFanOut int) *WebhookProvider {
 	return &WebhookProvider{
 		repo:        repo,
@@ -33,7 +34,8 @@ func NewWebhookProvider(inserter WebhookDispatchInserter, repo WebhooksRepositor
 	}
 }
 
-// PublishEvent lists enabled webhooks for the event type and enqueues jobs via InsertMany (capped by maxFanOut).
+// PublishEvent lists all enabled webhooks for the event type and enqueues one job per webhook,
+// in batches of maxFanOut to avoid oversized InsertMany calls.
 func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	webhooks, err := p.repo.ListEnabledForEventType(ctx, event.Type.String())
 	if err != nil {
@@ -49,17 +51,6 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
-	// Cap fan-out per event to avoid blocking the publisher.
-	if len(webhooks) > p.maxFanOut {
-		slog.Warn("webhook fan-out capped per event",
-			"event_id", event.ID,
-			"event_type", event.Type,
-			"requested", len(webhooks),
-			"capped", p.maxFanOut,
-		)
-		webhooks = webhooks[:p.maxFanOut]
-	}
-
 	opts := &river.InsertOpts{
 		MaxAttempts: p.maxAttempts,
 		UniqueOpts: river.UniqueOpts{
@@ -67,21 +58,26 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 			ByPeriod: 24 * time.Hour,
 		},
 	}
-	params := make([]river.InsertManyParams, 0, len(webhooks))
 	baseArgs := p.eventToArgs(event)
-	for i := range webhooks {
-		args := baseArgs
-		args.WebhookID = webhooks[i].ID
-		params = append(params, river.InsertManyParams{Args: args, InsertOpts: opts})
-	}
 
-	_, err = p.inserter.InsertMany(ctx, params)
-	if err != nil {
-		slog.Error("failed to enqueue webhook jobs",
-			"event_id", event.ID,
-			"event_type", event.Type,
-			"error", err,
-		)
+	for start := 0; start < len(webhooks); start += p.maxFanOut {
+		end := min(start+p.maxFanOut, len(webhooks))
+		chunk := webhooks[start:end]
+		params := make([]river.InsertManyParams, 0, len(chunk))
+		for i := range chunk {
+			args := baseArgs
+			args.WebhookID = chunk[i].ID
+			params = append(params, river.InsertManyParams{Args: args, InsertOpts: opts})
+		}
+		_, err = p.inserter.InsertMany(ctx, params)
+		if err != nil {
+			slog.Error("failed to enqueue webhook jobs",
+				"event_id", event.ID,
+				"event_type", event.Type,
+				"error", err,
+			)
+			return
+		}
 	}
 }
 

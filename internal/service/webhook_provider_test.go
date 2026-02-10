@@ -170,7 +170,7 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		}
 	})
 
-	t.Run("caps fan-out when webhooks exceed maxFanOut", func(t *testing.T) {
+	t.Run("enqueues all webhooks in batches of maxFanOut", func(t *testing.T) {
 		inserter := &mockWebhookInserter{}
 		webhooks := make([]models.Webhook, 501)
 		for i := range webhooks {
@@ -180,11 +180,14 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 		provider := NewWebhookProvider(inserter, repo, 3, 500)
 		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now(), Data: nil}
 		provider.PublishEvent(ctx, event)
-		if len(inserter.insertManyCalls) != 1 {
-			t.Fatalf("InsertMany called %d times, want 1", len(inserter.insertManyCalls))
+		if len(inserter.insertManyCalls) != 2 {
+			t.Fatalf("InsertMany called %d times, want 2 (batches of 500 and 1)", len(inserter.insertManyCalls))
 		}
 		if len(inserter.insertManyCalls[0]) != 500 {
-			t.Errorf("InsertMany params length = %d, want 500 (capped)", len(inserter.insertManyCalls[0]))
+			t.Errorf("first batch params length = %d, want 500", len(inserter.insertManyCalls[0]))
+		}
+		if len(inserter.insertManyCalls[1]) != 1 {
+			t.Errorf("second batch params length = %d, want 1", len(inserter.insertManyCalls[1]))
 		}
 	})
 }

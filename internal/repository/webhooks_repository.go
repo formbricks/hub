@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -343,17 +342,14 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 	return r.List(ctx, filters)
 }
 
-// maxWebhookListLimit caps the number of webhooks returned for delivery to avoid unbounded queries.
-const maxWebhookListLimit = 1000
-
-// ListEnabledForEventType retrieves enabled webhooks that should receive a specific event type.
+// ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
+// Order is deterministic (ORDER BY id) so delivery behavior is consistent.
 func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
-		LIMIT ` + strconv.Itoa(maxWebhookListLimit) + `
 	`
 
 	rows, err := r.db.Query(ctx, query, eventType)
