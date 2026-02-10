@@ -365,8 +365,8 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 }
 
 // BulkDelete deletes all feedback records matching user_identifier and optional tenant_id.
-// It returns the deleted rows (via RETURNING) so callers can e.g. publish events per record.
-func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]models.FeedbackRecord, error) {
+// It returns the deleted IDs (via RETURNING id) so callers can e.g. publish events.
+func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error) {
 	query := `
 		DELETE FROM feedback_records
 		WHERE user_identifier = $1`
@@ -379,12 +379,7 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 		args = append(args, *tenantID)
 	}
 
-	query += `
-		RETURNING id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id`
+	query += ` RETURNING id`
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
@@ -392,28 +387,20 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	}
 	defer rows.Close()
 
-	var records []models.FeedbackRecord
+	var ids []uuid.UUID
 
 	for rows.Next() {
-		var record models.FeedbackRecord
-
-		err := rows.Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan deleted feedback record: %w", err)
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan deleted feedback record id: %w", err)
 		}
 
-		records = append(records, record)
+		ids = append(ids, id)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating bulk delete result: %w", err)
 	}
 
-	return records, nil
+	return ids, nil
 }

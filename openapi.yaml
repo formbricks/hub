@@ -1185,6 +1185,14 @@ components:
                 - webhook.created
                 - webhook.updated
                 - webhook.deleted
+        DeletedIdsPayload:
+            type: array
+            description: |
+                For feedback_record.deleted and webhook.deleted events only.
+                Array of deleted resource IDs (UUID strings). Single delete sends one ID; bulk delete sends all deleted IDs.
+            items:
+                type: string
+                format: uuid
         WebhookDeliveryPayload:
             type: object
             description: |
@@ -1211,10 +1219,16 @@ components:
                     format: date-time
                     description: When the event was published (ISO 8601)
                 data:
-                    description: Event payload. For feedback_record.* events this is FeedbackRecordData; for webhook.* events it is WebhookData.
+                    description: |
+                        Event payload. Shape depends on event type:
+                        - feedback_record.created / feedback_record.updated: FeedbackRecordData (object).
+                        - feedback_record.deleted: DeletedIdsPayload (array of deleted feedback record IDs).
+                        - webhook.created / webhook.updated: WebhookData (object).
+                        - webhook.deleted: DeletedIdsPayload (array of deleted webhook IDs; one element for single delete).
                     oneOf:
                         - $ref: '#/components/schemas/FeedbackRecordData'
                         - $ref: '#/components/schemas/WebhookData'
+                        - $ref: '#/components/schemas/DeletedIdsPayload'
                 changed_fields:
                     type: array
                     description: Present only for update events; list of field names that changed

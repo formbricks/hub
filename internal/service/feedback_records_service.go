@@ -23,7 +23,7 @@ type FeedbackRecordsRepository interface {
 	Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]models.FeedbackRecord, error)
+	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error)
 }
 
 // FeedbackRecordsService handles business logic for feedback records.
@@ -100,39 +100,34 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(ctx context.Context, id uu
 }
 
 // DeleteFeedbackRecord deletes a feedback record by ID.
+// Publishes FeedbackRecordDeleted with data = [id] (array of deleted IDs) for consistency with bulk delete.
 func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error {
-	record, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("get feedback record for delete: %w", err)
-	}
-
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete feedback record: %w", err)
 	}
 
-	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, *record)
+	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, []uuid.UUID{id})
 
 	return nil
 }
 
 // BulkDeleteFeedbackRecords deletes all feedback records matching user_identifier and optional tenant_id.
-// Publishes FeedbackRecordDeleted for each deleted record (same as single delete).
-// The repository uses DELETE ... RETURNING so we get the deleted rows in one query.
+// Publishes a single FeedbackRecordDeleted event with data = [id1, id2, ...] (array of deleted IDs).
 func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int, error) {
 	if userIdentifier == "" {
 		return 0, ErrUserIdentifierRequired
 	}
 
-	records, err := s.repo.BulkDelete(ctx, userIdentifier, tenantID)
+	ids, err := s.repo.BulkDelete(ctx, userIdentifier, tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("bulk delete feedback records: %w", err)
 	}
 
-	for i := range records {
-		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, records[i])
+	if len(ids) > 0 {
+		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, ids)
 	}
 
-	return len(records), nil
+	return len(ids), nil
 }
 
 // getChangedFields extracts which fields were changed from the update request.
