@@ -72,7 +72,7 @@ run:
 		echo ".env file created with default values."; \
 	fi
 	@echo "Starting API server..."
-	go run cmd/api/main.go
+	go run ./cmd/api
 
 # Initialize database schema (run goose migrations up)
 init-db:
