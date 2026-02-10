@@ -60,13 +60,6 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	}
 
 	payload := argsToPayload(args)
-	if payload == nil {
-		slog.Error("webhook dispatch: build payload failed",
-			"event_id", args.EventID,
-			"webhook_id", args.WebhookID,
-		)
-		return nil
-	}
 
 	err = w.sender.Send(ctx, webhook, payload)
 	if err == nil {
