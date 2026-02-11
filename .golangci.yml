@@ -43,7 +43,6 @@ linters:
         linters:
           - nilnil       # mocks often return (nil, nil) for success
           - err113       # mocks and test helpers use dynamic errors
-          - testpackage  # tests use same package (white-box); enable when adopting _test package
   settings:
     lll:
       line-length: 140  # consider 120–140 for new code
@@ -174,7 +173,7 @@ linters:
     - testifylint       # Checks for misuse of testify/require and testify/assert
     - usetesting        # Prefer newer testing APIs (e.g. context.Background vs context.TODO in tests)
     - tparallel         # Flags inappropriate use of t.Parallel()
-    - testpackage       # Encourages _test package for black-box tests
+    # testpackage: not enabled; project uses same-package (white-box) tests — enable when adopting _test package
     - testableexamples  # Example functions should have expected output
 
 issues:
