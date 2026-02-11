@@ -219,8 +219,19 @@ linters-settings:
       - diagnostic
       - style
       - performance
+    enabled-checks:
+      - rangeValCopy      # Avoid copying large structs in for range; use &slice[i] or index
+      - paramTypeCombine
+      - singleCaseSwitch  # Prefer if/else for a single case
+      - emptyFallback     # Empty default in switch
+      - nilValReturn      # Returning nil for concrete types
     disabled-checks:
       - hugeParam # optional: can be noisy, re-enable if you want strict struct passing rules
+
+  # Wrapcheck: require wrapping errors from external packages; allow stdlib unwrapped
+  wrapcheck:
+    ignorePackageGlobs:
+      - stdlib
 
   # Ensure nolint comments explain WHY they are ignoring something
   nolintlint:

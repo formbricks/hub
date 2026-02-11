@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Default target - show help
 help:
@@ -17,6 +17,7 @@ help:
 	@echo "  make river-migrate    - Run River job queue migrations (required for webhook delivery)"
 	@echo "  make fmt              - Format code (golangci-lint run --fix)"
 	@echo "  make lint             - Run linter (includes format checks)"
+	@echo "  make lint-new         - Run linter only on new code since main (for CI; fail on new issues)"
 	@echo "  make deps             - Install Go dependencies"
 	@echo "  make install-tools    - Install development tools (golangci-lint, govulncheck, goose)"
 	@echo "  make install-hooks    - Install git hooks"
@@ -180,6 +181,14 @@ lint:
 	@echo "Linting code..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
 	golangci-lint run ./...
+
+# Lint only new code since base branch (for CI: fail on new issues, not existing ones).
+# Use in CI so the build fails only on new lint issues; fix in same PR and gradually clean legacy ones.
+LINT_BASE_REV ?= main
+lint-new:
+	@echo "Linting new code since $(LINT_BASE_REV)..."
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	golangci-lint run --new-from-rev=$(LINT_BASE_REV) ./...
 
 # Install git hooks from .githooks directory
 install-hooks:
