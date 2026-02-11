@@ -17,7 +17,7 @@ help:
 	@echo "  make river-migrate    - Run River job queue migrations (required for webhook delivery)"
 	@echo "  make fmt              - Format code (golangci-lint run --fix)"
 	@echo "  make lint             - Run linter (includes format checks)"
-	@echo "  make lint-new         - Run linter only on new code since main (for CI; fail on new issues)"
+	@echo "  make lint-new         - Run linter only on new code since base (default origin/main; for CI set LINT_BASE_REV to PR base SHA)"
 	@echo "  make deps             - Install Go dependencies"
 	@echo "  make install-tools    - Install development tools (golangci-lint, govulncheck, goose)"
 	@echo "  make install-hooks    - Install git hooks"
@@ -183,11 +183,14 @@ lint:
 	golangci-lint run ./...
 
 # Lint only new code since base branch (for CI: fail on new issues, not existing ones).
-# Use in CI so the build fails only on new lint issues; fix in same PR and gradually clean legacy ones.
-LINT_BASE_REV ?= main
+# Default: origin/main so results don't depend on stale local main. When LINT_BASE_REV
+# is origin/main we fetch first so the baseline is up to date; in CI set LINT_BASE_REV
+# to the PR base commit SHA (e.g. GITHUB_BASE_SHA) for determinism.
+LINT_BASE_REV ?= origin/main
 lint-new:
 	@echo "Linting new code since $(LINT_BASE_REV)..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	@if [ "$(LINT_BASE_REV)" = "origin/main" ]; then git fetch origin main 2>/dev/null || true; fi
 	golangci-lint run --new-from-rev=$(LINT_BASE_REV) ./...
 
 # Install git hooks from .githooks directory
