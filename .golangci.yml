@@ -156,7 +156,7 @@ linters:
     - sloglint      # Structured logging (log/slog) best practices — you use slog
     - loggercheck   # Key-value pairs for slog, zap, logr, klog, kitlog
     - promlinter    # Prometheus metrics naming (promlint)
-    - importas      # Enforces consistent import aliases (configure alias map in settings)
+    # importas: enable only when linters-settings.importas has an alias map (otherwise no-op)
     - tagliatelle   # Struct tag naming (e.g. json, yaml) case
     - tagalign      # Align and sort struct tags
     - grouper       # Grouping of expressions (e.g. var blocks)
