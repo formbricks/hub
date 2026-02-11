@@ -202,6 +202,7 @@ issues:
         - lll
 
 linters-settings:
+  # Staticcheck: all checks (default exclusions ST1000/ST1003/ST1016 were not triggering).
   staticcheck:
     checks:
       - all
