@@ -26,6 +26,7 @@ func (m *mockDispatchRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webh
 
 func (m *mockDispatchRepo) Update(_ context.Context, _ uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	m.update = req
+
 	return nil, nil
 }
 
@@ -54,6 +55,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 		sender := &mockSender{}
 		worker := NewWebhookDispatchWorker(repo, sender)
 		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: args}
+
 		err := worker.Work(ctx, job)
 		if err != nil {
 			t.Errorf("Work() error = %v, want nil (no retry)", err)
@@ -65,6 +67,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 		sender := &mockSender{}
 		worker := NewWebhookDispatchWorker(repo, sender)
 		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: args}
+
 		err := worker.Work(ctx, job)
 		if err != nil {
 			t.Errorf("Work() error = %v, want nil", err)
@@ -76,10 +79,12 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 		sender := &mockSender{}
 		worker := NewWebhookDispatchWorker(repo, sender)
 		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: args}
+
 		err := worker.Work(ctx, job)
 		if err != nil {
 			t.Errorf("Work() error = %v, want nil", err)
 		}
+
 		if repo.update != nil {
 			t.Error("Update should not be called on success")
 		}
@@ -93,10 +98,12 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 			JobRow: &rivertype.JobRow{Attempt: 1, MaxAttempts: 3},
 			Args:   args,
 		}
+
 		err := worker.Work(ctx, job)
 		if err == nil {
 			t.Error("Work() error = nil, want error")
 		}
+
 		if repo.update != nil {
 			t.Error("Update should not be called when attempt < max")
 		}
@@ -110,19 +117,24 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 			JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
 			Args:   args,
 		}
+
 		err := worker.Work(ctx, job)
 		if err == nil {
 			t.Error("Work() error = nil, want error")
 		}
+
 		if repo.update == nil {
 			t.Fatal("Update should be called on last attempt failure")
 		}
+
 		if repo.update.Enabled == nil || *repo.update.Enabled {
 			t.Error("Update should set Enabled = false")
 		}
+
 		if repo.update.DisabledReason == nil || *repo.update.DisabledReason != "final failure" {
 			t.Errorf("DisabledReason = %v", repo.update.DisabledReason)
 		}
+
 		if repo.update.DisabledAt == nil {
 			t.Error("DisabledAt should be set")
 		}
@@ -132,6 +144,7 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 func TestWebhookDispatchWorker_Timeout(t *testing.T) {
 	worker := NewWebhookDispatchWorker(nil, nil)
 	job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}}
+
 	d := worker.Timeout(job)
 	if d != 25*time.Second {
 		t.Errorf("Timeout() = %v, want 25s", d)

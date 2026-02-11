@@ -26,5 +26,6 @@ func NewPostgresPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, er
 	}
 
 	slog.Info("Successfully connected to PostgreSQL")
+
 	return pool, nil
 }

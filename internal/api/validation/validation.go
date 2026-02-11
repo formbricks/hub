@@ -29,6 +29,9 @@ var (
 	decoder  *form.Decoder
 )
 
+// ErrValidationFailed is returned when struct validation fails (err113).
+var ErrValidationFailed = errors.New("validation failed")
+
 func init() {
 	validate = validator.New()
 	decoder = form.NewDecoder()
@@ -37,6 +40,7 @@ func init() {
 	if err := validate.RegisterValidation("field_type", validateFieldType); err != nil {
 		slog.Error("Failed to register field_type validator", "error", err)
 	}
+
 	if err := validate.RegisterValidation("no_null_bytes", validateNoNullBytes); err != nil {
 		slog.Error("Failed to register no_null_bytes validator", "error", err)
 	}
@@ -47,10 +51,12 @@ func init() {
 		if len(vals) == 0 || vals[0] == "" {
 			return (*time.Time)(nil), nil
 		}
+
 		t, err := time.Parse(time.RFC3339, vals[0])
 		if err != nil {
 			return nil, fmt.Errorf("invalid date format, expected RFC3339 (ISO 8601): %w", err)
 		}
+
 		return &t, nil
 	}, (*time.Time)(nil))
 
@@ -59,10 +65,12 @@ func init() {
 		if len(vals) == 0 || vals[0] == "" {
 			return (*models.FieldType)(nil), nil
 		}
+
 		ft, err := models.ParseFieldType(vals[0])
 		if err != nil {
 			return nil, fmt.Errorf("invalid field type: %w", err)
 		}
+
 		return &ft, nil
 	}, (*models.FieldType)(nil))
 }
@@ -73,6 +81,7 @@ func ValidateStruct(s any) error {
 	if err := validate.Struct(s); err != nil {
 		return formatValidationErrors(err)
 	}
+
 	return nil
 }
 
@@ -85,8 +94,10 @@ func formatValidationErrors(err error) error {
 		for _, fieldError := range validationErrors {
 			messages = append(messages, formatFieldError(fieldError))
 		}
-		return fmt.Errorf("validation failed: %s", strings.Join(messages, "; "))
+
+		return fmt.Errorf("%w: %s", ErrValidationFailed, strings.Join(messages, "; "))
 	}
+
 	return err
 }
 
@@ -140,6 +151,7 @@ func GetValidationErrorDetails(err error) []response.ErrorDetail {
 				Value:    fieldError.Value(),
 			})
 		}
+
 		return details
 	}
 
@@ -149,6 +161,7 @@ func GetValidationErrorDetails(err error) []response.ErrorDetail {
 		if msg == "" {
 			msg = "validation failed"
 		}
+
 		details = append(details, response.ErrorDetail{
 			Location: hubValidation.Field,
 			Message:  msg,
@@ -172,6 +185,7 @@ func RespondValidationError(w http.ResponseWriter, err error) {
 
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusBadRequest)
+
 	if err := json.NewEncoder(w).Encode(problem); err != nil {
 		slog.Error("Failed to encode validation error response", "error", err)
 	}
@@ -182,6 +196,7 @@ func DecodeQueryParams(r *http.Request, dst any) error {
 	if err := decoder.Decode(dst, r.URL.Query()); err != nil {
 		return fmt.Errorf("failed to decode query parameters: %w", err)
 	}
+
 	return nil
 }
 
@@ -190,6 +205,7 @@ func ValidateAndDecodeQueryParams(r *http.Request, dst any) error {
 	if err := DecodeQueryParams(r, dst); err != nil {
 		return err
 	}
+
 	return ValidateStruct(dst)
 }
 
@@ -201,12 +217,14 @@ func validateFieldType(fl validator.FieldLevel) bool {
 	// Handle FieldType enum type directly
 	if field.Type() == reflect.TypeFor[models.FieldType]() {
 		ft := models.FieldType(field.String())
-		return ft.IsValid()
+
+		return (&ft).IsValid()
 	}
 
 	// Handle string type (from JSON/query params)
 	if field.Kind() == reflect.String {
 		_, err := models.ParseFieldType(field.String())
+
 		return err == nil
 	}
 
@@ -223,6 +241,7 @@ func validateNoNullBytes(fl validator.FieldLevel) bool {
 		if field.IsNil() {
 			return true // nil pointer is valid (handled by omitempty)
 		}
+
 		field = field.Elem()
 	}
 
@@ -232,5 +251,6 @@ func validateNoNullBytes(fl validator.FieldLevel) bool {
 	}
 
 	value := field.String()
+
 	return !strings.Contains(value, "\x00")
 }

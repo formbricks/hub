@@ -49,8 +49,11 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
 	`
 
-	var webhook models.Webhook
-	var dbEventTypes []string
+	var (
+		webhook      models.Webhook
+		dbEventTypes []string
+	)
+
 	err := r.db.QueryRow(ctx, query,
 		req.URL, req.SigningKey, enabled, req.TenantID, eventTypes,
 	).Scan(
@@ -65,6 +68,7 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 	if err != nil {
 		return nil, err
 	}
+
 	return &webhook, nil
 }
 
@@ -76,8 +80,11 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 		WHERE id = $1
 	`
 
-	var webhook models.Webhook
-	var dbEventTypes []string
+	var (
+		webhook      models.Webhook
+		dbEventTypes []string
+	)
+
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
 		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
@@ -87,6 +94,7 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
 		}
+
 		return nil, fmt.Errorf("failed to get webhook: %w", err)
 	}
 
@@ -94,6 +102,7 @@ func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models
 	if err != nil {
 		return nil, err
 	}
+
 	return &webhook, nil
 }
 
@@ -133,12 +142,14 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argCount)
+
 		args = append(args, filters.Limit)
 		argCount++
 	}
 
 	if filters.Offset > 0 {
 		query += fmt.Sprintf(" OFFSET $%d", argCount)
+
 		args = append(args, filters.Offset)
 	}
 
@@ -149,9 +160,13 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 	defer rows.Close()
 
 	webhooks := []models.Webhook{}
+
 	for rows.Next() {
-		var webhook models.Webhook
-		var dbEventTypes []string
+		var (
+			webhook      models.Webhook
+			dbEventTypes []string
+		)
+
 		err := rows.Scan(
 			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
 			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
@@ -160,10 +175,12 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan webhook: %w", err)
 		}
+
 		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
 		if err != nil {
 			return nil, err
 		}
+
 		webhooks = append(webhooks, webhook)
 	}
 
@@ -182,6 +199,7 @@ func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebh
 	query += whereClause
 
 	var count int64
+
 	err := r.db.QueryRow(ctx, query, args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count webhooks: %w", err)
@@ -192,8 +210,11 @@ func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebh
 
 // Update updates an existing webhook.
 func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
-	var updates []string
-	var args []any
+	var (
+		updates []string
+		args    []any
+	)
+
 	argCount := 1
 
 	if req.URL != nil {
@@ -226,6 +247,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		} else {
 			val = *req.TenantID
 		}
+
 		updates = append(updates, fmt.Sprintf("tenant_id = $%d", argCount))
 		args = append(args, val)
 		argCount++
@@ -236,6 +258,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		for i, et := range *req.EventTypes {
 			eventTypes[i] = et.String()
 		}
+
 		updates = append(updates, fmt.Sprintf("event_types = $%d", argCount))
 		args = append(args, eventTypes)
 		argCount++
@@ -270,8 +293,11 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 	`, strings.Join(updates, ", "), argCount)
 
-	var webhook models.Webhook
-	var dbEventTypes []string
+	var (
+		webhook      models.Webhook
+		dbEventTypes []string
+	)
+
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
 		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
@@ -281,6 +307,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
 		}
+
 		return nil, fmt.Errorf("failed to update webhook: %w", err)
 	}
 
@@ -288,6 +315,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 	if err != nil {
 		return nil, err
 	}
+
 	return &webhook, nil
 }
 
@@ -312,22 +340,30 @@ func parseDBEventTypes(ss []string) ([]datatypes.EventType, error) {
 	if ss == nil {
 		return nil, nil
 	}
+
 	out := make([]datatypes.EventType, 0, len(ss))
 	for _, s := range ss {
 		et, ok := datatypes.ParseEventType(s)
 		if !ok {
-			return nil, fmt.Errorf("invalid event type in database: %s", s)
+			return nil, fmt.Errorf("%w: %s", datatypes.ErrInvalidEventType, s)
 		}
+
 		out = append(out, et)
 	}
+
 	return out, nil
 }
 
 // ListEnabled retrieves all enabled webhooks.
 func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
 	filters := &models.ListWebhooksFilters{
-		Enabled: func() *bool { b := true; return &b }(),
+		Enabled: func() *bool {
+			b := true
+
+			return &b
+		}(),
 	}
+
 	return r.List(ctx, filters)
 }
 
@@ -348,9 +384,13 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 	defer rows.Close()
 
 	webhooks := []models.Webhook{}
+
 	for rows.Next() {
-		var webhook models.Webhook
-		var dbEventTypes []string
+		var (
+			webhook      models.Webhook
+			dbEventTypes []string
+		)
+
 		err := rows.Scan(
 			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
 			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
@@ -359,10 +399,12 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan webhook: %w", err)
 		}
+
 		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
 		if err != nil {
 			return nil, err
 		}
+
 		webhooks = append(webhooks, webhook)
 	}
 

@@ -22,6 +22,7 @@ func CleanupTestData(t *testing.T) {
 
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	require.NoError(t, err)
+
 	defer db.Close()
 
 	// Delete all feedback records created during tests

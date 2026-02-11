@@ -44,6 +44,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 			"event_type", event.Type,
 			"error", err,
 		)
+
 		return
 	}
 
@@ -51,11 +52,13 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
+	const uniqueByPeriodHours = 24
+
 	opts := &river.InsertOpts{
 		MaxAttempts: p.maxAttempts,
 		UniqueOpts: river.UniqueOpts{
 			ByArgs:   true,
-			ByPeriod: 24 * time.Hour,
+			ByPeriod: uniqueByPeriodHours * time.Hour,
 		},
 	}
 	baseArgs := p.eventToArgs(event)
@@ -63,12 +66,14 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	for start := 0; start < len(webhooks); start += p.maxFanOut {
 		end := min(start+p.maxFanOut, len(webhooks))
 		chunk := webhooks[start:end]
+
 		params := make([]river.InsertManyParams, 0, len(chunk))
 		for i := range chunk {
 			args := baseArgs
 			args.WebhookID = chunk[i].ID
 			params = append(params, river.InsertManyParams{Args: args, InsertOpts: opts})
 		}
+
 		_, err = p.inserter.InsertMany(ctx, params)
 		if err != nil {
 			slog.Error("failed to enqueue webhook jobs",
@@ -76,6 +81,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 				"event_type", event.Type,
 				"error", err,
 			)
+
 			return
 		}
 	}

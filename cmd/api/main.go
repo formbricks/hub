@@ -27,14 +27,18 @@ func run() int {
 	if err != nil {
 		setupLogging("info")
 		slog.Error("Failed to load configuration", "error", err)
+
 		return exitFailure
 	}
+
 	setupLogging(cfg.LogLevel)
 
 	ctx := context.Background()
+
 	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
+
 		return exitFailure
 	}
 	defer db.Close()
@@ -42,6 +46,7 @@ func run() int {
 	app, err := NewApp(cfg, db)
 	if err != nil {
 		slog.Error("Failed to create application", "error", err)
+
 		return exitFailure
 	}
 
@@ -50,27 +55,34 @@ func run() int {
 
 	if err := app.Run(sigCtx); err != nil {
 		slog.Error("Component failed, exiting", "error", err)
+
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
+
 		if shutdownErr := app.Shutdown(shutdownCtx); shutdownErr != nil {
 			slog.Warn("Shutdown error", "error", shutdownErr)
 		}
+
 		return exitFailure
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
+
 	if err := app.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Shutdown failed", "error", err)
+
 		return exitFailure
 	}
 
 	slog.Info("Server stopped")
+
 	return exitSuccess
 }
 
 func setupLogging(level string) {
 	var logLevel slog.Level
+
 	switch strings.ToLower(level) {
 	case "debug":
 		logLevel = slog.LevelDebug
@@ -83,6 +95,7 @@ func setupLogging(level string) {
 	default:
 		logLevel = slog.LevelInfo
 	}
+
 	opts := &slog.HandlerOptions{Level: logLevel}
 	handler := slog.NewTextHandler(os.Stdout, opts)
 	slog.SetDefault(slog.New(handler))

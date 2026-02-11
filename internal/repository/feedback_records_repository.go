@@ -49,6 +49,7 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 	`
 
 	var record models.FeedbackRecord
+
 	err := r.db.QueryRow(ctx, query,
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
@@ -81,6 +82,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	`
 
 	var record models.FeedbackRecord
+
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
@@ -92,6 +94,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
+
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
 	}
 
@@ -102,6 +105,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 // Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice.
 func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereClause string, args []any) {
 	var conditions []string
+
 	argCount := 1
 
 	if filters.TenantID != nil {
@@ -183,12 +187,14 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argCount)
+
 		args = append(args, filters.Limit)
 		argCount++
 	}
 
 	if filters.Offset > 0 {
 		query += fmt.Sprintf(" OFFSET $%d", argCount)
+
 		args = append(args, filters.Offset)
 	}
 
@@ -199,8 +205,10 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	defer rows.Close()
 
 	records := []models.FeedbackRecord{} // Initialize as empty slice, not nil
+
 	for rows.Next() {
 		var record models.FeedbackRecord
+
 		err := rows.Scan(
 			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 			&record.SourceType, &record.SourceID, &record.SourceName,
@@ -211,6 +219,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
 		}
+
 		records = append(records, record)
 	}
 
@@ -229,6 +238,7 @@ func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.L
 	query += whereClause
 
 	var count int64
+
 	err := r.db.QueryRow(ctx, query, args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count feedback records: %w", err)
@@ -239,8 +249,11 @@ func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.L
 
 // buildUpdateQuery builds an UPDATE query with SET clause and arguments.
 // Returns the query string, arguments, and a boolean indicating if any updates were provided.
-func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time) (query string, args []any, hasUpdates bool) {
+func buildUpdateQuery(
+	req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time,
+) (query string, args []any, hasUpdates bool) {
 	var updates []string
+
 	argCount := 1
 
 	if req.ValueText != nil {
@@ -311,13 +324,16 @@ func buildUpdateQuery(req *models.UpdateFeedbackRecordRequest, id uuid.UUID, upd
 
 // Update updates an existing feedback record
 // Only value fields, metadata, language, and user_identifier can be updated.
-func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+func (r *FeedbackRecordsRepository) Update(
+	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
+) (*models.FeedbackRecord, error) {
 	query, args, hasUpdates := buildUpdateQuery(req, id, time.Now())
 	if !hasUpdates {
 		return r.GetByID(ctx, id)
 	}
 
 	var record models.FeedbackRecord
+
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
@@ -329,6 +345,7 @@ func (r *FeedbackRecordsRepository) Update(ctx context.Context, id uuid.UUID, re
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
+
 		return nil, fmt.Errorf("failed to update feedback record: %w", err)
 	}
 
@@ -362,6 +379,7 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 
 	if tenantID != nil {
 		query += fmt.Sprintf(" AND tenant_id = $%d", argCount)
+
 		args = append(args, *tenantID)
 	}
 
@@ -374,15 +392,19 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	defer rows.Close()
 
 	var ids []uuid.UUID
+
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("failed to scan deleted feedback record id: %w", err)
 		}
+
 		ids = append(ids, id)
 	}
+
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating bulk delete result: %w", err)
 	}
+
 	return ids, nil
 }
