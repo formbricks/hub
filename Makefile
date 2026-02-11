@@ -27,10 +27,10 @@ help:
 	@echo "  make clean            - Clean build artifacts"
 	@echo "  make schemathesis     - Run Schemathesis API tests (requires API server running)"
 
-# Run all tests (integration tests in tests/ directory)
+# Run all tests (integration tests in tests/ directory). Loads .env if present so DATABASE_URL (e.g. custom port) is used.
 tests:
 	@echo "Running integration tests..."
-	go test ./tests/... -v
+	@if [ -f .env ]; then set -a && . ./.env && set +a; fi && go test ./tests/... -v
 
 # Run unit tests (fast, no database required)
 test-unit:
@@ -41,10 +41,10 @@ test-unit:
 test-all: test-unit tests
 	@echo "All tests passed!"
 
-# Run tests with coverage (unit + integration)
+# Run tests with coverage (unit + integration). Loads .env if present for integration tests.
 tests-coverage:
 	@echo "Running tests with coverage..."
-	go test ./internal/... ./tests/... -v -cover -coverprofile=coverage.out
+	@if [ -f .env ]; then set -a && . ./.env && set +a; fi && go test ./internal/... ./tests/... -v -cover -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 

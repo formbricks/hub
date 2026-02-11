@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,17 +25,26 @@ import (
 )
 
 // defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
-// Setting it here before config.Load() ensures tests do not use a different DATABASE_URL from .env,
-// which would cause "password authentication failed" when .env points at another database.
+// Tests use DATABASE_URL from the environment when set (e.g. from .env with a custom POSTGRES_PORT);
+// otherwise they use this default so CI and local runs without .env still work.
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+
+func getTestDatabaseURL() string {
+	if u := os.Getenv("DATABASE_URL"); u != "" {
+		return u
+	}
+
+	return defaultTestDatabaseURL
+}
 
 // setupTestServer creates a test HTTP server with all routes configured.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
 
-	// Set test env before loading config so config.Load() uses test values and is not affected by .env.
+	// Set test env before loading config so config.Load() uses test values.
+	// Use DATABASE_URL from environment when set (e.g. custom port); otherwise default.
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	t.Setenv("DATABASE_URL", getTestDatabaseURL())
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -736,7 +746,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	t.Setenv("DATABASE_URL", getTestDatabaseURL())
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
