@@ -17,7 +17,9 @@ RUN go mod download
 
 # Build the application
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /build/bin/api ./cmd/api
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/api ./cmd/api
 
 # =============================================================================
 # Stage 2: Runtime
