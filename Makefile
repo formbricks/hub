@@ -161,6 +161,8 @@ deps:
 GOLANGCI_LINT_VERSION := v2.8.0
 GOVULNCHECK_VERSION := v1.1.4
 GOOSE_VERSION := v3.26.0
+# Use pinned path so lint uses the version from make install-tools, not PATH
+GOLANGCI_LINT ?= $(HOME)/go/bin/golangci-lint
 
 install-tools:
 	@echo "Installing development tools..."
@@ -172,15 +174,15 @@ install-tools:
 # Format code (golangci-lint applies gofumpt + gci from .golangci.yml formatters)
 fmt:
 	@echo "Formatting code..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
-	golangci-lint run --fix ./...
+	@test -x $(GOLANGCI_LINT) || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	$(GOLANGCI_LINT) run --fix ./...
 	@echo "Code formatted"
 
 # Lint code
 lint:
 	@echo "Linting code..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
-	golangci-lint run ./...
+	@test -x $(GOLANGCI_LINT) || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	$(GOLANGCI_LINT) run ./...
 
 # Lint only new code since base branch (for CI: fail on new issues, not existing ones).
 # Default: origin/main so results don't depend on stale local main. When LINT_BASE_REV
@@ -189,9 +191,9 @@ lint:
 LINT_BASE_REV ?= origin/main
 lint-new:
 	@echo "Linting new code since $(LINT_BASE_REV)..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
-	@if [ "$(LINT_BASE_REV)" = "origin/main" ]; then git fetch origin main 2>/dev/null || true; fi
-	golangci-lint run --new-from-rev=$(LINT_BASE_REV) ./...
+	@test -x $(GOLANGCI_LINT) || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	@if [ "$(LINT_BASE_REV)" = "origin/main" ]; then git fetch origin main; fi
+	$(GOLANGCI_LINT) run --new-from-rev=$(LINT_BASE_REV) ./...
 
 # Install git hooks from .githooks directory
 install-hooks:
