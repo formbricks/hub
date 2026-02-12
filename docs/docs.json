@@ -16,7 +16,7 @@
       },
       {
         "group": "Quickstart",
-        "pages": ["quickstart"]
+        "pages": ["quickstart","hub-superset"]
       },
       {
         "group": "Core Concepts",
