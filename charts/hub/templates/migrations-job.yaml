@@ -1,0 +1,68 @@
+{{- if .Values.migrations.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-migrations" (include "hub.fullname" .) | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "hub.labels" . | nindent 4 }}
+  {{- if .Values.migrations.hook.enabled }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: {{ .Values.migrations.hook.weight | quote }}
+    helm.sh/hook-delete-policy: {{ .Values.migrations.hook.deletePolicy | quote }}
+  {{- end }}
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  {{- if .Values.migrations.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.migrations.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "hub.selectorLabels" . | nindent 8 }}
+      annotations:
+        {{- include "hub.checksumAnnotations" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "hub.serviceAccountName" . }}
+      restartPolicy: OnFailure
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrations
+          image: {{ include "hub.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.migrations.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.migrations.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or (and .Values.config.create (not .Values.config.existingConfigMap)) .Values.config.existingConfigMap (and .Values.secrets.create (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecrets.enabled)) .Values.secrets.existingSecret .Values.secrets.externalSecrets.enabled .Values.extraEnvFrom }}
+          envFrom:
+            {{- if or (and .Values.config.create (not .Values.config.existingConfigMap)) .Values.config.existingConfigMap }}
+            - configMapRef:
+                name: {{ include "hub.configMapName" . }}
+            {{- end }}
+            {{- if or (and .Values.secrets.create (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecrets.enabled)) .Values.secrets.existingSecret .Values.secrets.externalSecrets.enabled }}
+            - secretRef:
+                name: {{ include "hub.secretName" . }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+{{- end }}

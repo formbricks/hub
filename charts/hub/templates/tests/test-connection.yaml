@@ -1,0 +1,34 @@
+{{- if .Values.tests.enabled -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ printf "%s-test-connection" (include "hub.fullname" .) | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "hub.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.1
+      imagePullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+          ephemeral-storage: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+          ephemeral-storage: 128Mi
+      args:
+        - -fsS
+        - --retry
+        - "20"
+        - --retry-connrefused
+        - --retry-delay
+        - "3"
+        - {{ printf "http://%s:%d/health" (include "hub.fullname" .) (.Values.service.port | int) | quote }}
+{{- end }}
