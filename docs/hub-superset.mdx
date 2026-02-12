@@ -5,16 +5,23 @@ description: "Connect Formbricks Hub to Apache Superset and build dashboards on 
 
 Hub stores all data in a single PostgreSQL database. You can report on it with **Apache Superset** by giving Superset access to Hub’s database, and start building charts immediately.
 
+![Experience Feedback dashboard in Superset showing feedback by source (pie chart), word cloud, NPS funnel, recent feedback table, feedback by type (pie), and total feedback count.](/images/hub-superset-dashboard.png)
+
+## Summary
+
+| Step | Action |
+|------|--------|
+| 1 | Run Hub + Postgres ([Quick Start](/quickstart)) |
+| 2 | Run Superset ([sample Docker Compose](#option-b-sample-docker-compose-recommended-for-local-setup) below or [Superset docs](https://superset.apache.org/docs/databases)) |
+| 3 | In Superset: add a PostgreSQL connection with Hub's DB credentials (see Step 1 table) |
+| 4 | In Superset: **Data → Datasets → + Dataset** → select DB, schema `public`, table `feedback_records` |
+| 5 | Create charts in the UI or use the [Superset API](https://superset.apache.org/docs/api) to create them programmatically |
+
 ## Why Hub + Superset?
 
 - **Direct access** — Superset connects to Hub’s Postgres database; no data copying or sync.
 - **Open source** — [Apache Superset](https://superset.apache.org/) is free and self-hostable.
 - **SQL-first** — Hub’s [data model](/core-concepts/data-model) uses one row per response in a single table; easy to query and aggregate.
-
-## Prerequisites
-
-- Hub running.
-- Superset installed (see [Superset Quickstart](https://superset.apache.org/docs/quickstart) for Docker, or pip / [Preset](https://preset.io/) from the [installation docs](https://superset.apache.org/docs/intro)).
 
 <Info>
   When running Hub, Postgres, and Superset on the same machine, use **different ports** for the database and the Hub API to avoid port clashes with Superset (e.g. set `PORT` for Hub and, if needed, a different port for Postgres in your `.env` / compose).
@@ -36,6 +43,8 @@ Note the **database connection details** you use for Hub (host, port, database n
 
 ## Step 2: Get Superset running
 
+### Option A: Official Superset installation
+
 Install and run Apache Superset using one of the options in the official docs:
 
 - [Connecting to Databases](https://superset.apache.org/docs/databases) — overview and driver setup
@@ -43,22 +52,88 @@ Install and run Apache Superset using one of the options in the official docs:
 
 Default UI port is often **8088**. Ensure the [PostgreSQL driver is installed](https://superset.apache.org/docs/databases/#installing-database-drivers).
 
+### Option B: Sample Docker Compose (recommended for local setup)
+
+Use this minimal Docker Compose to run Superset and connect it to Hub’s database. It runs only Superset and a small Postgres instance for Superset’s own metadata (users, saved charts); no Redis or Cube.
+
+1. Save the file as `superset-compose.yml` (or next to your Hub setup).
+2. Run: `docker compose -f superset-compose.yml up -d`.
+3. Open **http://localhost:8088**. Log in with `admin` / `admin` (change the password when prompted).
+4. When adding Hub’s database in Step 3, use the same credentials as in the Step 1 table; set **Host** to `host.docker.internal`.
+
+```yaml
+services:
+  superset_db:
+    image: postgres:16-alpine
+    container_name: superset_metadata_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+      POSTGRES_DB: superset
+    volumes:
+      - superset_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U superset -d superset']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - superset
+
+  superset:
+    image: apache/superset:latest
+    container_name: superset_app
+    restart: unless-stopped
+    depends_on:
+      superset_db:
+        condition: service_healthy
+    environment:
+      DATABASE_DIALECT: postgresql
+      DATABASE_DRIVER: psycopg2
+      DATABASE_HOST: superset_db
+      DATABASE_PORT: 5432
+      DATABASE_USER: superset
+      DATABASE_PASSWORD: superset
+      DATABASE_DB: superset
+      SUPERSET_SECRET_KEY: "your-superset-secret-key-change-in-production"
+      SUPERSET_LOAD_EXAMPLES: "no"
+    ports:
+      - "8088:8088"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - superset
+    command: >
+      /bin/sh -c "
+        superset db upgrade &&
+        superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin &&
+        superset init &&
+        superset run -h 0.0.0.0 -p 8088
+      "
+
+volumes:
+  superset_db_data:
+
+networks:
+  superset:
+    driver: bridge
+```
+
+<Info>
+If you already run Hub with Docker Compose, you can add the `superset_db` and `superset` services to the same project and use **Host** `postgres` (Hub’s Postgres service name) when Superset and Hub share a network. Otherwise use `host.docker.internal` to point Superset at Postgres on the host.
+</Info>
+
+
 ## Step 3: Add Hub’s database in Superset
 
 1. In Superset, go to **Settings → Data → Database Connections** (or **+ → Data → Connect Database**).
 2. Click **+ DATABASE** and choose **PostgreSQL**.
-3. Enter the same credentials Hub uses (or paste the **SQLAlchemy URI** from your Hub `DATABASE_URL`):
-   - **Host** — e.g. `localhost` or `host.docker.internal` if Superset runs in Docker and Postgres is on the host
-   - **Port** — e.g. `5432` (use the port your Postgres actually uses)
-   - **Database name** — `hub`
-   - **Username** — e.g. `formbricks`
-   - **Password** — your Postgres password
-   - **Display Name** — e.g. `Formbricks Hub` (optional; how it appears in Superset)
-   - **Alternatively:** use **Connect using SQLAlchemy URI** and paste the same URL as `DATABASE_URL`, e.g. `postgresql://formbricks:PASSWORD@host.docker.internal:5432/hub?sslmode=disable` when Superset is in Docker.
-4. Click **Test Connection**. If it succeeds, click **Connect**.
+3. Enter the same credentials as in the [Step 1 table](#step-1-get-hub-running) (host, port, database `hub`, user, password). If Superset runs in Docker and Postgres is on the host, use **Host** `host.docker.internal`. Optionally set **Display Name** (e.g. *Formbricks Hub*). Or use **Connect using SQLAlchemy URI** and paste your Hub `DATABASE_URL` (use `host.docker.internal` instead of `localhost` if Superset is in Docker).
+4. Click **Test Connection**, then **Connect**.
 
 <Info>
-  If you get "The port is closed" when connecting from Superset in Docker to Postgres on the host, set **Host** to `host.docker.internal` (see [Superset: Creating your first dashboard](https://superset.apache.org/docs/using-superset/creating-your-first-dashboard)).
+  If you see "The port is closed" from Superset in Docker, use **Host** `host.docker.internal`. See [Superset: Creating your first dashboard](https://superset.apache.org/docs/using-superset/creating-your-first-dashboard) for more.
 </Info>
 
 ## Step 4: Create the `feedback_records` dataset
@@ -145,16 +220,6 @@ For the complete list of columns and field types, see the [Data Model](/core-con
 | Score by question       | `field_id` or `field_label`          | AVG(value_number)         |
 | Categorical breakdown   | `value_text` (e.g. device, segment)  | COUNT(\*)                 |
 | Multi-tenant            | Filter `tenant_id`                   | any                       |
-
-## Summary
-
-| Step | Action |
-|------|--------|
-| 1 | Run Hub + Postgres ([Quick Start](/quickstart)) |
-| 2 | Run Superset ([Superset docs](https://superset.apache.org/docs/databases)) |
-| 3 | In Superset: add a PostgreSQL connection using Hub’s DB host, port, database `hub`, user, and password |
-| 4 | In Superset: **Data → Datasets → + Dataset** → select DB, schema `public`, table `feedback_records` |
-| 5 | Create charts in the UI or use the [Superset API](https://superset.apache.org/docs/api) to create them programmatically |
 
 That’s it. Once Superset has access to Hub’s database, your feedback data is immediately available for reporting with no extra integration work.
 
