@@ -1,0 +1,12 @@
+{{- if and .Values.config.create (not .Values.config.existingConfigMap) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hub.configMapName" . }}
+  labels:
+    {{- include "hub.labels" . | nindent 4 }}
+data:
+  {{- range $key, $val := .Values.config.data }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- end }}

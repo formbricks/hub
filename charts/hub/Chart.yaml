@@ -1,0 +1,18 @@
+apiVersion: v2
+name: hub
+description: Formbricks Hub - Experience Management API
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - formbricks
+  - hub
+  - xm
+  - go
+home: https://github.com/formbricks/hub
+maintainers:
+  - name: Formbricks
+annotations:
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial chart for Hub API service

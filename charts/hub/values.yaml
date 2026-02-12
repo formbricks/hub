@@ -1,0 +1,156 @@
+# Default values for hub.
+# This is a YAML-formatted file.
+
+replicaCount: 2
+
+image:
+  repository: formbricks/hub
+  # If empty, Chart.appVersion is used
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+
+containerPort: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: hub.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: null
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  ingressFrom: []
+  egressTo: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+terminationGracePeriodSeconds: 30
+
+probes:
+  startup:
+    enabled: true
+    failureThreshold: 30
+    periodSeconds: 5
+  readiness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    enabled: true
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+config:
+  create: true
+  existingConfigMap: ""
+  data:
+    PORT: "8080"
+    LOG_LEVEL: "info"
+    SHUTDOWN_TIMEOUT_SECONDS: "30"
+    MESSAGE_PUBLISHER_QUEUE_MAX_SIZE: "16384"
+    MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS: "10"
+    WEBHOOK_DELIVERY_MAX_CONCURRENT: "100"
+    WEBHOOK_DELIVERY_MAX_ATTEMPTS: "3"
+    WEBHOOK_MAX_FAN_OUT_PER_EVENT: "500"
+    WEBHOOK_MAX_COUNT: "500"
+
+secrets:
+  create: true
+  existingSecret: ""
+  annotations: {}
+  stringData:
+    # REQUIRED
+    DATABASE_URL: ""
+    # REQUIRED
+    API_KEY: ""
+  externalSecrets:
+    enabled: false
+    # Name of existing SecretStore resource for AWS Secrets Manager
+    secretStore: ""
+    # AWS Secrets Manager secret name or ARN (JSON format expected)
+    awsSecretName: ""
+    # How often to sync from AWS Secrets Manager
+    refreshInterval: 1h
+    # Keys to extract from the JSON secret
+    keys:
+      - DATABASE_URL
+      - API_KEY
+
+extraEnv: []
+extraEnvFrom: []
+
+migrations:
+  enabled: true
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  hook:
+    enabled: true
+    deletePolicy: before-hook-creation,hook-succeeded
+    weight: -5
+  command:
+    - sh
+    - -c
+  args:
+    - goose -dir /app/migrations postgres "$DATABASE_URL" up && river migrate-up --database-url "$DATABASE_URL"
+
+tests:
+  enabled: true
