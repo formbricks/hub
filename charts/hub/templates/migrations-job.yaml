@@ -23,7 +23,7 @@ spec:
       annotations:
         {{- include "hub.checksumAnnotations" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "hub.serviceAccountName" . }}
+      serviceAccountName: default
       restartPolicy: OnFailure
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
