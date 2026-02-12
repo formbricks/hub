@@ -9,7 +9,7 @@ WORKDIR /build
 
 # Install goose and river CLI for migrations
 RUN go install github.com/pressly/goose/v3/cmd/goose@v3.26.0 && \
-    go install github.com/riverqueue/river/cmd/river@latest
+    go install github.com/riverqueue/river/cmd/river@v0.30.2
 
 # Cache dependencies
 COPY go.mod go.sum ./
