@@ -5,6 +5,8 @@ metadata:
   name: {{ include "hub.configMapName" . }}
   labels:
     {{- include "hub.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
 data:
   {{- range $key, $val := .Values.config.data }}
   {{ $key }}: {{ $val | quote }}
