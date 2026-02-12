@@ -2,15 +2,13 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ printf "%s-migrations" (include "hub.fullname" .) | trunc 63 | trimSuffix "-" }}
+  name: {{ printf "%s-migrations-%s" (include "hub.fullname" .) (.Values.image.tag | default .Chart.AppVersion) | trunc 63 | trimSuffix "-" }}
   labels:
     {{- include "hub.labels" . | nindent 4 }}
-  {{- if .Values.migrations.hook.enabled }}
   annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: {{ .Values.migrations.hook.weight | quote }}
-    helm.sh/hook-delete-policy: {{ .Values.migrations.hook.deletePolicy | quote }}
-  {{- end }}
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   backoffLimit: {{ .Values.migrations.backoffLimit }}
   {{- if .Values.migrations.ttlSecondsAfterFinished }}
@@ -20,8 +18,6 @@ spec:
     metadata:
       labels:
         {{- include "hub.selectorLabels" . | nindent 8 }}
-      annotations:
-        {{- include "hub.checksumAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: default
       restartPolicy: OnFailure
@@ -43,24 +39,12 @@ spec:
           args:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or (and .Values.config.create (not .Values.config.existingConfigMap)) .Values.config.existingConfigMap (and .Values.secrets.create (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecrets.enabled)) .Values.secrets.existingSecret .Values.secrets.externalSecrets.enabled .Values.extraEnvFrom }}
-          envFrom:
-            {{- if or (and .Values.config.create (not .Values.config.existingConfigMap)) .Values.config.existingConfigMap }}
-            - configMapRef:
-                name: {{ include "hub.configMapName" . }}
-            {{- end }}
-            {{- if or (and .Values.secrets.create (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecrets.enabled)) .Values.secrets.existingSecret .Values.secrets.externalSecrets.enabled }}
-            - secretRef:
-                name: {{ include "hub.secretName" . }}
-            {{- end }}
-            {{- with .Values.extraEnvFrom }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          {{- end }}
-          {{- with .Values.extraEnv }}
           env:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hub.secretName" . }}
+                  key: DATABASE_URL
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
