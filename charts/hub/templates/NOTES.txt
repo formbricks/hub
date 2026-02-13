@@ -1,0 +1,40 @@
+Thank you for installing {{ .Chart.Name }}.
+
+The Hub API service is now deploying.
+
+Required configuration
+----------------------
+- DATABASE_URL (Secret): PostgreSQL connection string (requires pgvector extension)
+- API_KEY (Secret): protects all /v1/* endpoints
+
+Secret management options (choose one):
+1) Chart-managed Secret:
+  values.secrets.create=true and set:
+    values.secrets.stringData.DATABASE_URL
+    values.secrets.stringData.API_KEY
+
+2) Existing Secret:
+  values.secrets.existingSecret=<name>
+
+3) External Secrets Operator (AWS Secrets Manager):
+  values.secrets.create=false
+  values.secrets.externalSecrets.enabled=true
+  values.secrets.externalSecrets.secretStore=<secretstore-name>
+  values.secrets.externalSecrets.awsSecretName=<aws-secret-name>
+
+Migrations
+----------
+By default, this chart runs goose + river migrations as a Helm hook Job on install/upgrade:
+  values.migrations.enabled=true
+
+Health
+------
+Probes hit GET /health (returns "OK" with 200 status).
+
+Useful commands
+--------------
+1) Install/upgrade:
+  helm upgrade --install {{ .Release.Name }} ./charts/hub -n {{ .Release.Namespace }} --create-namespace
+
+2) Run Helm test:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
