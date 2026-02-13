@@ -220,7 +220,10 @@ func newHTTPServer(
 		otelOpts = append(otelOpts, otelhttp.WithTracerProvider(tracerProvider))
 	}
 
-	handler := middleware.RequestID(middleware.Logging(otelhttp.NewHandler(mux, "hub-api", otelOpts...)))
+	// Handler chain: built bottom-to-top; request flows RequestID -> Logging -> otelhttp -> mux.
+	handler := otelhttp.NewHandler(mux, "hub-api", otelOpts...)
+	handler = middleware.Logging(handler)
+	handler = middleware.RequestID(handler)
 
 	const (
 		readTimeout  = 15 * time.Second
