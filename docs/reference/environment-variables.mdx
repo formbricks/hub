@@ -96,6 +96,52 @@ LOG_LEVEL=warn   # Quiet production
 
 ---
 
+## Observability
+
+When these variables are empty or unset, the corresponding feature is disabled and a startup warning is logged (e.g. "metrics not enabled", "tracing not enabled"). See [Metrics and Observability](/reference/metrics) for full details.
+
+### `OTEL_METRICS_EXPORTER`
+
+Set to `prometheus` to enable Prometheus metrics and expose `GET /metrics`. Empty or unset = metrics disabled.
+
+**Example:**
+
+```bash
+OTEL_METRICS_EXPORTER=prometheus
+```
+
+**Default:** Empty (metrics disabled)
+
+---
+
+### `OTEL_TRACES_EXPORTER`
+
+Set to `otlp` or `stdout` to enable distributed tracing. Empty or unset = tracing disabled. When enabled, trace context (`trace_id`, `span_id`) and `request_id` are added to structured log records when the slog handler receives a context with an active span or request ID.
+
+**Options:**
+
+- `otlp` — Export traces via OTLP (e.g. to a collector). Optionally set `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- `stdout` — Print traces to stdout (useful for local development).
+
+**Example:**
+
+```bash
+OTEL_TRACES_EXPORTER=otlp
+# OTEL_EXPORTER_OTLP_ENDPOINT=https://localhost:4318  # optional
+```
+
+**Default:** Empty (tracing disabled)
+
+---
+
+### `OTEL_EXPORTER_OTLP_ENDPOINT`
+
+Optional. Base URL for the OTLP exporter when `OTEL_TRACES_EXPORTER=otlp` (e.g. `https://localhost:4318`). The path `/v1/traces` is appended by the client.
+
+**Default:** Empty (exporter uses its default, e.g. localhost:4318)
+
+---
+
 ## Complete Example: Development
 
 ```bash
@@ -112,6 +158,10 @@ PORT=8080
 
 # Logging
 LOG_LEVEL=debug
+
+# Optional: metrics and tracing
+# OTEL_METRICS_EXPORTER=prometheus
+# OTEL_TRACES_EXPORTER=stdout
 ```
 
 ## Complete Example: Production
@@ -130,6 +180,11 @@ PORT=8080
 
 # Logging
 LOG_LEVEL=info
+
+# Optional: metrics and tracing (e.g. Prometheus + OTLP collector)
+# OTEL_METRICS_EXPORTER=prometheus
+# OTEL_TRACES_EXPORTER=otlp
+# OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4318
 ```
 
 ## Loading Environment Variables

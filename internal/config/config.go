@@ -50,6 +50,13 @@ type Config struct {
 
 	// Max total webhooks allowed (creation rejected when count >= this); default 500
 	WebhookMaxCount int
+
+	// OpenTelemetry: metrics exporter (e.g. "prometheus"); empty = metrics disabled
+	OtelMetricsExporter string
+	// OpenTelemetry: traces exporter (e.g. "otlp", "stdout"); empty = tracing disabled
+	OtelTracesExporter string
+	// OpenTelemetry: OTLP endpoint for trace exporter (optional)
+	OtelExporterOtlpEndpoint string
 }
 
 // getEnv retrieves an environment variable or returns a default value.
@@ -149,6 +156,10 @@ func Load() (*Config, error) {
 		MessagePublisherPerEventTimeout: time.Duration(perEventTimeoutSecs) * time.Second,
 		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
 		WebhookMaxCount:                 webhookMaxCount,
+
+		OtelMetricsExporter:      getEnv("OTEL_METRICS_EXPORTER", ""),
+		OtelTracesExporter:       getEnv("OTEL_TRACES_EXPORTER", ""),
+		OtelExporterOtlpEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 	}
 
 	return cfg, nil

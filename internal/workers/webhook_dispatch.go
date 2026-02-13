@@ -11,6 +11,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
 
@@ -18,8 +19,9 @@ import (
 type WebhookDispatchWorker struct {
 	river.WorkerDefaults[service.WebhookDispatchArgs]
 
-	repo   webhookDispatchRepo
-	sender service.WebhookSender
+	repo    webhookDispatchRepo
+	sender  service.WebhookSender
+	metrics observability.WebhookMetrics
 }
 
 // webhookDispatchRepo is the minimal repo interface needed by the worker.
@@ -29,8 +31,11 @@ type webhookDispatchRepo interface {
 }
 
 // NewWebhookDispatchWorker creates a worker that uses the given repo and sender.
-func NewWebhookDispatchWorker(repo webhookDispatchRepo, sender service.WebhookSender) *WebhookDispatchWorker {
-	return &WebhookDispatchWorker{repo: repo, sender: sender}
+// metrics may be nil when metrics are disabled.
+func NewWebhookDispatchWorker(
+	repo webhookDispatchRepo, sender service.WebhookSender, metrics observability.WebhookMetrics,
+) *WebhookDispatchWorker {
+	return &WebhookDispatchWorker{repo: repo, sender: sender, metrics: metrics}
 }
 
 // WebhookDeliveryTimeout is the max duration for a single webhook delivery (align with HTTP client timeout).
@@ -44,9 +49,16 @@ func (w *WebhookDispatchWorker) Timeout(*river.Job[service.WebhookDispatchArgs])
 // Work loads the webhook, builds the payload, and sends once.
 func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service.WebhookDispatchArgs]) error {
 	args := job.Args
+	start := time.Now()
 
 	webhook, err := w.repo.GetByID(ctx, args.WebhookID)
 	if err != nil {
+		if w.metrics != nil {
+			w.metrics.RecordDispatchError("get_webhook_failed")
+			w.metrics.RecordDelivery(args.EventType, "failed_final")
+			w.metrics.RecordWebhookDeliveryDuration(time.Since(start), args.EventType, "failed_final")
+		}
+
 		slog.Error("webhook dispatch: get webhook failed",
 			"event_id", args.EventID,
 			"webhook_id", args.WebhookID,
@@ -69,12 +81,23 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 
 	err = w.sender.Send(ctx, webhook, payload)
 	if err == nil {
+		if w.metrics != nil {
+			w.metrics.RecordDelivery(args.EventType, "success")
+			w.metrics.RecordWebhookDeliveryDuration(time.Since(start), args.EventType, "success")
+		}
+
 		return nil
 	}
 
 	// Send failed
 	isLastAttempt := job.Attempt >= job.MaxAttempts
 	if isLastAttempt {
+		if w.metrics != nil {
+			w.metrics.RecordWebhookDisabled("max_attempts")
+			w.metrics.RecordDelivery(args.EventType, "failed_final")
+			w.metrics.RecordWebhookDeliveryDuration(time.Since(start), args.EventType, "failed_final")
+		}
+
 		enabled := false
 		reason := err.Error()
 		now := time.Now()
@@ -99,6 +122,11 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		)
 
 		return fmt.Errorf("webhook send (final attempt): %w", err)
+	}
+
+	if w.metrics != nil {
+		w.metrics.RecordDelivery(args.EventType, "retry")
+		w.metrics.RecordWebhookDeliveryDuration(time.Since(start), args.EventType, "retry")
 	}
 
 	slog.Warn("webhook delivery failed, will retry",

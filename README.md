@@ -133,7 +133,7 @@ go run ./cmd/api
 ### Health Check
 - `GET /health` - Health check endpoint
 
-The OpenAPI 3.1 spec lives in **`openapi.yaml`** at the repo root and is used by Schemathesis for API contract tests (`make schemathesis`). Serving the spec (e.g. `GET /openapi.json` or Swagger UI) is planned; see [todo.md](todo.md) § OpenAPI.
+The OpenAPI 3.1 spec lives in **`openapi.yaml`** at the repo root and is used by Schemathesis for API contract tests (`make schemathesis`). Serving the spec (e.g. `GET /openapi.json` or Swagger UI) is planned.
 
 ### Feedback Records
 
@@ -374,4 +374,4 @@ Apache 2.0
 
 ## Related Documentation
 
-- [OpenAPI spec](openapi.yaml) - API contract (used by Schemathesis); serving it from the server is planned (see [todo.md](todo.md)).
+- [OpenAPI spec](openapi.yaml) - API contract (used by Schemathesis); serving it from the server is planned.

@@ -14,6 +14,7 @@ import (
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // Sentinel errors for webhook delivery (err113).
@@ -34,11 +35,13 @@ type WebhookSender interface {
 type WebhookSenderImpl struct {
 	repo       WebhooksRepository
 	httpClient *http.Client
+	metrics    observability.WebhookMetrics
 }
 
 // NewWebhookSenderImpl creates a sender that uses the given repo.
 // HTTP client uses 15s timeout and does not follow redirects.
-func NewWebhookSenderImpl(repo WebhooksRepository) *WebhookSenderImpl {
+// metrics may be nil when metrics are disabled.
+func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.WebhookMetrics) *WebhookSenderImpl {
 	client := &http.Client{
 		Timeout: webhookHTTPTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -49,6 +52,7 @@ func NewWebhookSenderImpl(repo WebhooksRepository) *WebhookSenderImpl {
 	return &WebhookSenderImpl{
 		repo:       repo,
 		httpClient: client,
+		metrics:    metrics,
 	}
 }
 
@@ -95,6 +99,10 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	}()
 
 	if resp.StatusCode == http.StatusGone {
+		if s.metrics != nil {
+			s.metrics.RecordWebhookDisabled("410_gone")
+		}
+
 		enabled := false
 		reason := "Endpoint returned 410 Gone"
 		now := time.Now()
