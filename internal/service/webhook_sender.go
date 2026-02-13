@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,15 @@ import (
 
 	"github.com/formbricks/hub/internal/models"
 )
+
+// Sentinel errors for webhook delivery (err113).
+var (
+	ErrWebhookGone   = errors.New("webhook returned 410 Gone (endpoint disabled)")
+	ErrWebhookNon2xx = errors.New("webhook returned non-2xx status")
+)
+
+// HTTP client timeout for webhook delivery.
+const webhookHTTPTimeout = 15 * time.Second
 
 // WebhookSender sends a single webhook payload to an endpoint (Standard Webhooks: signing, headers, 410 handling).
 type WebhookSender interface {
@@ -30,11 +40,12 @@ type WebhookSenderImpl struct {
 // HTTP client uses 15s timeout and does not follow redirects.
 func NewWebhookSenderImpl(repo WebhooksRepository) *WebhookSenderImpl {
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout: webhookHTTPTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
+
 	return &WebhookSenderImpl{
 		repo:       repo,
 		httpClient: client,
@@ -56,6 +67,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	}
 
 	timestamp := time.Now()
+
 	signature, err := wh.Sign(messageID, timestamp, payloadJSON)
 	if err != nil {
 		return fmt.Errorf("sign webhook: %w", err)
@@ -75,6 +87,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	if err != nil {
 		return fmt.Errorf("send webhook: %w", err)
 	}
+
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			slog.Warn("failed to close webhook response body", "webhook_id", webhook.ID, "error", closeErr)
@@ -85,6 +98,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 		enabled := false
 		reason := "Endpoint returned 410 Gone"
 		now := time.Now()
+
 		_, updateErr := s.repo.Update(ctx, webhook.ID, &models.UpdateWebhookRequest{
 			Enabled:        &enabled,
 			DisabledReason: &reason,
@@ -102,11 +116,12 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 				"url", webhook.URL,
 			)
 		}
-		return fmt.Errorf("webhook returned 410 Gone (endpoint disabled): %s", webhook.URL)
+
+		return fmt.Errorf("%w: %s", ErrWebhookGone, webhook.URL)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook returned non-2xx status: %d", resp.StatusCode)
+		return fmt.Errorf("%w: %d", ErrWebhookNon2xx, resp.StatusCode)
 	}
 
 	return nil

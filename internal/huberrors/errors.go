@@ -11,29 +11,32 @@ type NotFoundError struct {
 	Message  string
 }
 
-// Error implements the error interface.
-func (e *NotFoundError) Error() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	if e.Resource != "" {
-		return e.Resource + " not found"
-	}
-	return "resource not found"
-}
-
-// Is implements the error interface for error comparison.
-func (e *NotFoundError) Is(target error) bool {
-	_, ok := target.(*NotFoundError)
-	return ok
-}
-
 // NewNotFoundError creates a new NotFoundError with a custom message.
 func NewNotFoundError(resource, message string) *NotFoundError {
 	return &NotFoundError{
 		Resource: resource,
 		Message:  message,
 	}
+}
+
+// Error implements the error interface.
+func (e *NotFoundError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+
+	if e.Resource != "" {
+		return e.Resource + " not found"
+	}
+
+	return "resource not found"
+}
+
+// Is implements the error interface for error comparison.
+func (e *NotFoundError) Is(target error) bool {
+	_, ok := target.(*NotFoundError)
+
+	return ok
 }
 
 // ErrValidation represents a validation error.
@@ -46,29 +49,32 @@ type ValidationError struct {
 	Message string
 }
 
-// Error implements the error interface.
-func (e *ValidationError) Error() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	if e.Field != "" {
-		return "validation failed for field: " + e.Field
-	}
-	return "validation error"
-}
-
-// Is implements the error interface for error comparison.
-func (e *ValidationError) Is(target error) bool {
-	_, ok := target.(*ValidationError)
-	return ok
-}
-
 // NewValidationError creates a new ValidationError with a custom message.
 func NewValidationError(field, message string) *ValidationError {
 	return &ValidationError{
 		Field:   field,
 		Message: message,
 	}
+}
+
+// Error implements the error interface.
+func (e *ValidationError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+
+	if e.Field != "" {
+		return "validation failed for field: " + e.Field
+	}
+
+	return "validation error"
+}
+
+// Is implements the error interface for error comparison.
+func (e *ValidationError) Is(target error) bool {
+	_, ok := target.(*ValidationError)
+
+	return ok
 }
 
 // ErrLimitExceeded is the sentinel for limit-exceeded errors (e.g. webhook max count).
@@ -80,21 +86,23 @@ type LimitExceededError struct {
 	Message string
 }
 
+// NewLimitExceededError creates a LimitExceededError with a custom message.
+func NewLimitExceededError(message string) *LimitExceededError {
+	return &LimitExceededError{Message: message}
+}
+
 // Error implements the error interface.
 func (e *LimitExceededError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
+
 	return "limit exceeded"
 }
 
 // Is implements the error interface for error comparison.
 func (e *LimitExceededError) Is(target error) bool {
 	_, ok := target.(*LimitExceededError)
-	return ok
-}
 
-// NewLimitExceededError creates a LimitExceededError with a custom message.
-func NewLimitExceededError(message string) *LimitExceededError {
-	return &LimitExceededError{Message: message}
+	return ok
 }

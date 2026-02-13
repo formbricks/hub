@@ -48,6 +48,7 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 	if err != nil {
 		return nil, fmt.Errorf("count webhooks: %w", err)
 	}
+
 	if count >= int64(s.maxWebhooks) {
 		return nil, huberrors.NewLimitExceededError(fmt.Sprintf("webhook limit reached (max %d)", s.maxWebhooks))
 	}
@@ -57,6 +58,7 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 		if err != nil {
 			return nil, fmt.Errorf("generate signing key: %w", err)
 		}
+
 		req.SigningKey = key
 	} else {
 		if err := validateSigningKey(req.SigningKey); err != nil {
@@ -80,18 +82,24 @@ func validateSigningKey(key string) error {
 	_, err := standardwebhooks.NewWebhook(key)
 	if err != nil {
 		msg := "invalid for Standard Webhooks: must be base64-decodable with correct prefix and length (e.g. whsec_...): " + err.Error()
+
 		return huberrors.NewValidationError("signing_key", msg)
 	}
+
 	return nil
 }
+
+// SigningKeySize is the number of random bytes for Standard Webhooks signing keys.
+const SigningKeySize = 32
 
 // generateSigningKey generates a cryptographically secure signing key
 // in the format expected by Standard Webhooks: "whsec_" + base64(32 random bytes).
 func generateSigningKey() (string, error) {
-	key := make([]byte, 32)
+	key := make([]byte, SigningKeySize)
 	if _, err := rand.Read(key); err != nil {
 		return "", fmt.Errorf("rand read: %w", err)
 	}
+
 	return "whsec_" + base64.StdEncoding.EncodeToString(key), nil
 }
 
@@ -101,6 +109,7 @@ func (s *WebhooksService) GetWebhook(ctx context.Context, id uuid.UUID) (*models
 	if err != nil {
 		return nil, fmt.Errorf("get webhook: %w", err)
 	}
+
 	return webhook, nil
 }
 
@@ -135,6 +144,7 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 			return nil, err
 		}
 	}
+
 	webhook, err := s.repo.Update(ctx, id, req)
 	if err != nil {
 		return nil, fmt.Errorf("update webhook: %w", err)
@@ -151,6 +161,8 @@ func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
+
 	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, []uuid.UUID{id})
+
 	return nil
 }

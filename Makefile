@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Default target - show help
 help:
@@ -17,6 +17,7 @@ help:
 	@echo "  make river-migrate    - Run River job queue migrations (required for webhook delivery)"
 	@echo "  make fmt              - Format code (golangci-lint run --fix)"
 	@echo "  make lint             - Run linter (includes format checks)"
+	@echo "  make lint-new         - Run linter only on new code since base (default origin/main; for CI set LINT_BASE_REV to PR base SHA)"
 	@echo "  make deps             - Install Go dependencies"
 	@echo "  make install-tools    - Install development tools (golangci-lint, govulncheck, goose)"
 	@echo "  make install-hooks    - Install git hooks"
@@ -160,6 +161,8 @@ deps:
 GOLANGCI_LINT_VERSION := v2.8.0
 GOVULNCHECK_VERSION := v1.1.4
 GOOSE_VERSION := v3.26.0
+# Use pinned path so lint uses the version from make install-tools, not PATH
+GOLANGCI_LINT ?= $(HOME)/go/bin/golangci-lint
 
 install-tools:
 	@echo "Installing development tools..."
@@ -171,15 +174,26 @@ install-tools:
 # Format code (golangci-lint applies gofumpt + gci from .golangci.yml formatters)
 fmt:
 	@echo "Formatting code..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
-	golangci-lint run --fix ./...
+	@test -x $(GOLANGCI_LINT) || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	$(GOLANGCI_LINT) run --fix ./...
 	@echo "Code formatted"
 
 # Lint code
 lint:
 	@echo "Linting code..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
-	golangci-lint run ./...
+	@test -x $(GOLANGCI_LINT) || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	$(GOLANGCI_LINT) run ./...
+
+# Lint only new code since base branch (for CI: fail on new issues, not existing ones).
+# Default: origin/main so results don't depend on stale local main. When LINT_BASE_REV
+# is origin/main we fetch first so the baseline is up to date; in CI set LINT_BASE_REV
+# to the PR base commit SHA (e.g. GITHUB_BASE_SHA) for determinism.
+LINT_BASE_REV ?= origin/main
+lint-new:
+	@echo "Linting new code since $(LINT_BASE_REV)..."
+	@test -x $(GOLANGCI_LINT) || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
+	@if [ "$(LINT_BASE_REV)" = "origin/main" ]; then git fetch origin main; fi
+	$(GOLANGCI_LINT) run --new-from-rev=$(LINT_BASE_REV) ./...
 
 # Install git hooks from .githooks directory
 install-hooks:

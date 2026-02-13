@@ -20,6 +20,7 @@ type mockSenderRepo struct {
 
 func (m *mockSenderRepo) Update(_ context.Context, _ uuid.UUID, _ *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	m.updateCalled = true
+
 	return nil, m.updateErr
 }
 
@@ -67,21 +68,27 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Errorf("method = %s, want POST", r.Method)
 			}
+
 			if r.Header.Get("Content-Type") != "application/json" {
 				t.Errorf("Content-Type = %q", r.Header.Get("Content-Type"))
 			}
+
 			if r.Header.Get(standardwebhooks.HeaderWebhookID) == "" {
 				t.Error("webhook-id header missing")
 			}
+
 			if r.Header.Get(standardwebhooks.HeaderWebhookSignature) == "" {
 				t.Error("webhook-signature header missing")
 			}
+
 			if r.Header.Get(standardwebhooks.HeaderWebhookTimestamp) == "" {
 				t.Error("webhook-timestamp header missing")
 			}
+
 			w.WriteHeader(http.StatusOK)
 		}))
 		defer server.Close()
+
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
@@ -97,6 +104,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		if err != nil {
 			t.Errorf("Send() error = %v", err)
 		}
+
 		if repo.updateCalled {
 			t.Error("Update should not be called on 200")
 		}
@@ -107,6 +115,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 			w.WriteHeader(http.StatusGone)
 		}))
 		defer server.Close()
+
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
@@ -117,6 +126,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		if err == nil {
 			t.Error("Send() error = nil, want error on 410")
 		}
+
 		if !repo.updateCalled {
 			t.Error("Update should be called on 410 to disable webhook")
 		}
@@ -127,6 +137,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		defer server.Close()
+
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
@@ -137,6 +148,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		if err == nil {
 			t.Error("Send() error = nil, want error on 500")
 		}
+
 		if repo.updateCalled {
 			t.Error("Update should not be called on 500")
 		}

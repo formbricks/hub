@@ -39,16 +39,20 @@ func NewFeedbackRecordsHandler(service FeedbackRecordsService) *FeedbackRecordsH
 // Create handles POST /v1/feedback-records.
 func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateFeedbackRecordRequest
+
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(&req); err != nil {
 		response.RespondBadRequest(w, "Invalid request body")
+
 		return
 	}
 
 	// Validate request
 	if err := validation.ValidateStruct(&req); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -56,9 +60,12 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
+
 			return
 		}
+
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -70,12 +77,14 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Feedback Record ID is required")
+
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
@@ -83,9 +92,12 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
+
 			return
 		}
+
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -99,12 +111,14 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Decode and validate query parameters
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
 	if err != nil {
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -116,26 +130,32 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Feedback Record ID is required")
+
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
 	var req models.UpdateFeedbackRecordRequest
+
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(&req); err != nil {
 		response.RespondBadRequest(w, "Invalid request body")
+
 		return
 	}
 
 	// Validate request (all fields are optional for update, but validate if provided)
 	if err := validation.ValidateStruct(&req); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
@@ -143,9 +163,12 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
+
 			return
 		}
+
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -157,21 +180,26 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		response.RespondBadRequest(w, "Feedback Record ID is required")
+
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		response.RespondBadRequest(w, "Invalid UUID format")
+
 		return
 	}
 
 	if err := h.service.DeleteFeedbackRecord(r.Context(), id); err != nil {
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
+
 			return
 		}
+
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 
@@ -185,12 +213,14 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 	// Decode and validate query parameters
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
 		validation.RespondValidationError(w, err)
+
 		return
 	}
 
 	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters.UserIdentifier, filters.TenantID)
 	if err != nil {
 		response.RespondInternalServerError(w, "An unexpected error occurred")
+
 		return
 	}
 

@@ -1,4 +1,3 @@
-// Package main provides the application lifecycle: bootstrap, run, and shutdown.
 package main
 
 import (
@@ -29,15 +28,11 @@ type App struct {
 	server  *http.Server
 	river   *river.Client[pgx.Tx]
 	message *service.MessagePublisherManager
-	runCtx  context.Context
-	cancel  context.CancelFunc
 }
 
 // NewApp builds and wires all components. It does not start the HTTP server or River;
 // call Run to start and block until shutdown or failure.
 func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout)
 
 	webhooksRepo := repository.NewWebhooksRepository(db)
@@ -53,8 +48,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		Workers: riverWorkers,
 	})
 	if err != nil {
-		cancel()
 		messageManager.Shutdown()
+
 		return nil, fmt.Errorf("create River client: %w", err)
 	}
 
@@ -77,13 +72,16 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		server:  server,
 		river:   riverClient,
 		message: messageManager,
-		runCtx:  ctx,
-		cancel:  cancel,
 	}, nil
 }
 
 // newHTTPServer builds the HTTP server and muxes (no auth on /health, API key on /v1/).
-func newHTTPServer(cfg *config.Config, health *handlers.HealthHandler, feedback *handlers.FeedbackRecordsHandler, webhooks *handlers.WebhooksHandler) *http.Server {
+func newHTTPServer(
+	cfg *config.Config,
+	health *handlers.HealthHandler,
+	feedback *handlers.FeedbackRecordsHandler,
+	webhooks *handlers.WebhooksHandler,
+) *http.Server {
 	public := http.NewServeMux()
 	public.HandleFunc("GET /health", health.Check)
 
@@ -105,12 +103,18 @@ func newHTTPServer(cfg *config.Config, health *handlers.HealthHandler, feedback 
 	mux.Handle("/v1/", protectedWithAuth)
 	mux.Handle("/", public)
 
+	const (
+		readTimeout  = 15 * time.Second
+		writeTimeout = 15 * time.Second
+		idleTimeout  = 60 * time.Second
+	)
+
 	return &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      middleware.Logging(mux),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+		IdleTimeout:  idleTimeout,
 	}
 }
 
@@ -120,8 +124,11 @@ func newHTTPServer(cfg *config.Config, health *handlers.HealthHandler, feedback 
 func (a *App) Run(ctx context.Context) error {
 	runErr := make(chan error, 1)
 
+	riverCtx, cancelRiver := context.WithCancel(ctx)
+	defer cancelRiver()
+
 	go func() {
-		if err := a.river.Start(a.runCtx); err != nil && !errors.Is(err, context.Canceled) {
+		if err := a.river.Start(riverCtx); err != nil && !errors.Is(err, context.Canceled) {
 			select {
 			case runErr <- fmt.Errorf("river: %w", err):
 			default:
@@ -131,7 +138,8 @@ func (a *App) Run(ctx context.Context) error {
 
 	go func() {
 		slog.Info("Starting server", "port", a.cfg.Port)
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+
+		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			select {
 			case runErr <- fmt.Errorf("server: %w", err):
 			default:
@@ -141,7 +149,8 @@ func (a *App) Run(ctx context.Context) error {
 
 	select {
 	case err := <-runErr:
-		a.cancel()
+		cancelRiver()
+
 		return err
 	case <-ctx.Done():
 		return nil
@@ -151,12 +160,16 @@ func (a *App) Run(ctx context.Context) error {
 // Shutdown stops the server, message publisher, and River in order. Call after Run returns.
 func (a *App) Shutdown(ctx context.Context) error {
 	defer a.message.Shutdown()
+
 	if err := a.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		_ = a.river.Stop(ctx)
+
 		return fmt.Errorf("server shutdown: %w", err)
 	}
+
 	if err := a.river.Stop(ctx); err != nil {
 		return fmt.Errorf("river stop: %w", err)
 	}
+
 	return nil
 }

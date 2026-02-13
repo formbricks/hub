@@ -1,7 +1,17 @@
 // Package datatypes defines shared types for events (e.g. webhook event types).
 package datatypes
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// Sentinel errors for event type parsing (err113).
+var (
+	ErrEventTypeTooLong   = errors.New("event type exceeds 64 characters")
+	ErrInvalidEventType   = errors.New("invalid event type")
+	ErrDuplicateEventType = errors.New("duplicate event type")
+)
 
 // EventType represents a webhook event type as an enum.
 // Use String() to get the string representation for API/database.
@@ -48,6 +58,7 @@ func (et EventType) String() string {
 	if !ok {
 		return "" // Invalid event type
 	}
+
 	return str
 }
 
@@ -55,6 +66,7 @@ func (et EventType) String() string {
 // Returns the EventType and true if valid, or 0 and false if invalid.
 func ParseEventType(s string) (EventType, bool) {
 	et, ok := eventTypeMap[s]
+
 	return et, ok
 }
 
@@ -65,14 +77,19 @@ func GetAllEventTypes() []string {
 	for k := range eventTypeMap {
 		types = append(types, k)
 	}
+
 	return types
 }
 
 // IsValidEventType checks if an event type string is valid.
 func IsValidEventType(eventType string) bool {
 	_, ok := eventTypeMap[eventType]
+
 	return ok
 }
+
+// MaxEventTypeLength is the maximum allowed length for an event type string.
+const MaxEventTypeLength = 64
 
 // ParseEventTypes converts a slice of strings to []EventType.
 // Returns an error if any string is invalid, exceeds 64 chars, or is duplicated.
@@ -80,22 +97,28 @@ func ParseEventTypes(ss []string) ([]EventType, error) {
 	if len(ss) == 0 {
 		return nil, nil
 	}
+
 	out := make([]EventType, 0, len(ss))
+
 	seen := make(map[string]bool, len(ss))
 	for _, s := range ss {
-		if len(s) > 64 {
-			return nil, fmt.Errorf("event type exceeds 64 characters: %s", s)
+		if len(s) > MaxEventTypeLength {
+			return nil, fmt.Errorf("%w: %s", ErrEventTypeTooLong, s)
 		}
+
 		if !IsValidEventType(s) {
-			return nil, fmt.Errorf("invalid event type: %s", s)
+			return nil, fmt.Errorf("%w: %s", ErrInvalidEventType, s)
 		}
+
 		if seen[s] {
-			return nil, fmt.Errorf("duplicate event type: %s", s)
+			return nil, fmt.Errorf("%w: %s", ErrDuplicateEventType, s)
 		}
+
 		seen[s] = true
 		et, _ := ParseEventType(s)
 		out = append(out, et)
 	}
+
 	return out, nil
 }
 
@@ -104,9 +127,11 @@ func EventTypeStrings(types []EventType) []string {
 	if len(types) == 0 {
 		return nil
 	}
+
 	out := make([]string, len(types))
 	for i, et := range types {
 		out[i] = et.String()
 	}
+
 	return out
 }

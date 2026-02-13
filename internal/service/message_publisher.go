@@ -52,6 +52,7 @@ func NewMessagePublisherManager(bufferSize int, perEventTimeout time.Duration) *
 
 	// Start the worker in a dedicated goroutine
 	m.wg.Add(1)
+
 	go m.startWorker()
 
 	return m
@@ -69,7 +70,9 @@ func (m *MessagePublisherManager) PublishEvent(ctx context.Context, eventType da
 }
 
 // PublishEventWithChangedFields publishes an event with data to all registered providers.
-func (m *MessagePublisherManager) PublishEventWithChangedFields(_ context.Context, eventType datatypes.EventType, data any, changedFields []string) {
+func (m *MessagePublisherManager) PublishEventWithChangedFields(
+	_ context.Context, eventType datatypes.EventType, data any, changedFields []string,
+) {
 	event := Event{
 		ID:            uuid.Must(uuid.NewV7()),
 		Type:          eventType,
@@ -86,11 +89,18 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(_ context.Contex
 	}
 }
 
+// Shutdown stops the background worker and waits for the buffer to drain.
+func (m *MessagePublisherManager) Shutdown() {
+	close(m.eventChan)
+	m.wg.Wait()
+}
+
 // startWorker runs in a dedicated goroutine, reading events from the channel
 // and fanning out each event to all registered providers. It is started with go
 // in NewMessagePublisherManager and runs for the lifetime of the manager.
 func (m *MessagePublisherManager) startWorker() {
 	defer m.wg.Done()
+
 	bgCtx := context.Background()
 
 	// This loop automatically breaks when m.eventChan is closed
@@ -101,12 +111,7 @@ func (m *MessagePublisherManager) startWorker() {
 		for _, provider := range m.providers {
 			provider.PublishEvent(ctx, event)
 		}
+
 		cancel()
 	}
-}
-
-// Shutdown stops the background worker and waits for the buffer to drain.
-func (m *MessagePublisherManager) Shutdown() {
-	close(m.eventChan)
-	m.wg.Wait()
 }

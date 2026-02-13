@@ -17,6 +17,7 @@ import (
 // WebhookDispatchWorker delivers one event to one webhook endpoint.
 type WebhookDispatchWorker struct {
 	river.WorkerDefaults[service.WebhookDispatchArgs]
+
 	repo   webhookDispatchRepo
 	sender service.WebhookSender
 }
@@ -32,9 +33,12 @@ func NewWebhookDispatchWorker(repo webhookDispatchRepo, sender service.WebhookSe
 	return &WebhookDispatchWorker{repo: repo, sender: sender}
 }
 
+// WebhookDeliveryTimeout is the max duration for a single webhook delivery (align with HTTP client timeout).
+const WebhookDeliveryTimeout = 25 * time.Second
+
 // Timeout limits how long a single delivery can run (align with HTTP client timeout).
 func (w *WebhookDispatchWorker) Timeout(*river.Job[service.WebhookDispatchArgs]) time.Duration {
-	return 25 * time.Second
+	return WebhookDeliveryTimeout
 }
 
 // Work loads the webhook, builds the payload, and sends once.
@@ -48,6 +52,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			"webhook_id", args.WebhookID,
 			"error", err,
 		)
+
 		return nil // no retry if webhook not found
 	}
 
@@ -56,6 +61,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			"event_id", args.EventID,
 			"webhook_id", args.WebhookID,
 		)
+
 		return nil
 	}
 
@@ -72,6 +78,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		enabled := false
 		reason := err.Error()
 		now := time.Now()
+
 		_, updateErr := w.repo.Update(ctx, webhook.ID, &models.UpdateWebhookRequest{
 			Enabled:        &enabled,
 			DisabledReason: &reason,
@@ -84,11 +91,13 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 				"error", updateErr,
 			)
 		}
+
 		slog.Error("webhook disabled after max delivery attempts",
 			"webhook_id", webhook.ID,
 			"event_id", args.EventID,
 			"error", err,
 		)
+
 		return fmt.Errorf("webhook send (final attempt): %w", err)
 	}
 
@@ -99,6 +108,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		"event_type", args.EventType,
 		"error", err,
 	)
+
 	return fmt.Errorf("webhook send: %w", err)
 }
 
