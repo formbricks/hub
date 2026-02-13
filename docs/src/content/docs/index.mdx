@@ -1,0 +1,78 @@
+---
+title: Introduction
+description: Get started building your docs site with Stainless.
+---
+
+import { Callout, Accordion } from "@stainless-api/docs/components";
+
+Welcome to your <strong>Stainless Docs</strong> site! Your site has a few example pages pre-built, but everything in your site is configurable. In addition to auto-generated API and SDK reference pages, you can add custom prose pages like the one you're reading now.
+
+## Built-in components
+
+Stainless components are available as imports from `@stainless-api/docs/components`. Here are a few examples along with code samples showing how to use them:
+
+### Callout
+
+```mdx
+import { Callout } from "@stainless-api/docs/components";
+
+<Callout variant="info">This is an info callout.</Callout>
+```
+
+<Callout variant="note">This is a note callout.</Callout>
+
+### Accordion
+
+```mdx
+import { Accordion } from "@stainless-api/docs/components";
+
+<Accordion>
+  <Accordion.Summary>Example Accordion</Accordion.Summary>
+  This is some example content inside the details element. It is hidden by
+  default and will be shown when the summary is clicked.
+</Accordion>
+```
+
+<Accordion>
+  <Accordion.Summary>Example Accordion</Accordion.Summary>
+
+This is some example content inside the details element. It is hidden by default and will be shown
+when the summary is clicked.
+
+</Accordion>
+
+### Accordion.Group
+
+```mdx
+import { Accordion } from "@stainless-api/docs/components";
+
+<Accordion.Group>
+  <Accordion>
+    <Accordion.Summary>First Accordion in Group</Accordion.Summary>
+    This is some example content inside the first details element in the group.
+  </Accordion>
+  <Accordion open>
+    <Accordion.Summary>Second Accordion in Group</Accordion.Summary>
+    This is some example content inside the second details element in the group.
+  </Accordion>
+  <Accordion>
+    <Accordion.Summary>Third Accordion in Group</Accordion.Summary>
+    This is some example content inside the third details element in the group.
+  </Accordion>
+</Accordion.Group>
+```
+
+<Accordion.Group>
+  <Accordion>
+    <Accordion.Summary>First Accordion in Group</Accordion.Summary>
+    This is some example content inside the first details element in the group.
+  </Accordion>
+  <Accordion open>
+    <Accordion.Summary>Second Accordion in Group</Accordion.Summary>
+    This is some example content inside the second details element in the group.
+  </Accordion>
+  <Accordion>
+    <Accordion.Summary>Third Accordion in Group</Accordion.Summary>
+    This is some example content inside the third details element in the group.
+  </Accordion>
+</Accordion.Group>

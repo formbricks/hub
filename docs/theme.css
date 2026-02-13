@@ -1,0 +1,10 @@
+/*
+ * Update the core accent colors that drive the accent theming.
+ * If you wish to apply your own theme, these are the base variables to override
+ */
+
+:root {
+  --stl-color-accent: light-dark(#155dfc, #2b7fff);
+  /* --stl-color-background: light-dark(#ffffff, #0a0a0a); */
+  /* --stl-color-foreground: light-dark(#262626, #f5f5f5); */
+}
