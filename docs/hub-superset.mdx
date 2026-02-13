@@ -1,0 +1,240 @@
+---
+title: "Connecting Hub to Superset"
+description: "Connect Formbricks Hub to Apache Superset and build dashboards on your feedback data in minutes—no ETL, just point Superset at Hub's database."
+---
+
+Hub stores all data in a single PostgreSQL database. You can report on it with **Apache Superset** by giving Superset access to Hub’s database, and start building charts immediately.
+
+![Experience Feedback dashboard in Superset showing feedback by source (pie chart), word cloud, NPS funnel, recent feedback table, feedback by type (pie), and total feedback count.](/images/hub-superset-dashboard.png)
+
+## Summary
+
+| Step | Action |
+|------|--------|
+| 1 | Run Hub + Postgres ([Quick Start](/quickstart)) |
+| 2 | Run Superset ([sample Docker Compose](#option-b-sample-docker-compose-recommended-for-local-setup) below or [Superset docs](https://superset.apache.org/docs/databases)) |
+| 3 | In Superset: add a PostgreSQL connection with Hub's DB credentials (see Step 1 table) |
+| 4 | In Superset: **Data → Datasets → + Dataset** → select DB, schema `public`, table `feedback_records` |
+| 5 | Create charts in the UI or use the [Superset API](https://superset.apache.org/docs/api) to create them programmatically |
+
+## Why Hub + Superset?
+
+- **Direct access** — Superset connects to Hub’s Postgres database; no data copying or sync.
+- **Open source** — [Apache Superset](https://superset.apache.org/) is free and self-hostable.
+- **SQL-first** — Hub’s [data model](/core-concepts/data-model) uses one row per response in a single table; easy to query and aggregate.
+
+<Info>
+  When running Hub, Postgres, and Superset on the same machine, use **different ports** for the database and the Hub API to avoid port clashes with Superset (e.g. set `PORT` for Hub and, if needed, a different port for Postgres in your `.env` / compose).
+</Info>
+
+## Step 1: Get Hub running
+
+If Formbricks Hub isn’t running yet follow the [Quick Start Guide](/quickstart) to start Hub and Postgres (e.g. `docker compose up -d`).
+
+Note the **database connection details** you use for Hub (host, port, database name, user, password). You’ll need them for Superset. If you use the [compose file](/quickstart#option-1-docker-compose-recommended) from the docs, that’s typically:
+
+| Setting        | Example value        |
+|----------------|----------------------|
+| Host           | `localhost` or `host.docker.internal` (if Superset runs in Docker) |
+| Port           | `5432`               |
+| Database name  | `hub`                |
+| Username       | `formbricks`         |
+| Password       | Your Postgres password (in the [Quick Start](/quickstart) compose setup this is `POSTGRES_PASSWORD` in `.env`; default is `formbricks_dev`) |
+
+## Step 2: Get Superset running
+
+### Option A: Official Superset installation
+
+Install and run Apache Superset using one of the options in the official docs:
+
+- [Connecting to Databases](https://superset.apache.org/docs/databases) — overview and driver setup
+- [Installation](https://superset.apache.org/docs/intro) — Docker, pip, etc.
+
+Default UI port is often **8088**. Ensure the [PostgreSQL driver is installed](https://superset.apache.org/docs/databases/#installing-database-drivers).
+
+### Option B: Sample Docker Compose (recommended for local setup)
+
+Use this minimal Docker Compose to run Superset and connect it to Hub’s database. It runs only Superset and a small Postgres instance for Superset’s own metadata (users, saved charts); no Redis or Cube.
+
+1. Save the file as `superset-compose.yml` (or next to your Hub setup).
+2. Run: `docker compose -f superset-compose.yml up -d`.
+3. Open **http://localhost:8088**. Log in with `admin` / `admin` (change the password when prompted).
+4. When adding Hub’s database in Step 3, use the same credentials as in the Step 1 table; set **Host** to `host.docker.internal`.
+
+```yaml
+services:
+  superset_db:
+    image: postgres:16-alpine
+    container_name: superset_metadata_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+      POSTGRES_DB: superset
+    volumes:
+      - superset_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U superset -d superset']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - superset
+
+  superset:
+    image: apache/superset:latest
+    container_name: superset_app
+    restart: unless-stopped
+    depends_on:
+      superset_db:
+        condition: service_healthy
+    environment:
+      DATABASE_DIALECT: postgresql
+      DATABASE_DRIVER: psycopg2
+      DATABASE_HOST: superset_db
+      DATABASE_PORT: 5432
+      DATABASE_USER: superset
+      DATABASE_PASSWORD: superset
+      DATABASE_DB: superset
+      SUPERSET_SECRET_KEY: "your-superset-secret-key-change-in-production"
+      SUPERSET_LOAD_EXAMPLES: "no"
+    ports:
+      - "8088:8088"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - superset
+    command: >
+      /bin/sh -c "
+        superset db upgrade &&
+        superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password admin &&
+        superset init &&
+        superset run -h 0.0.0.0 -p 8088
+      "
+
+volumes:
+  superset_db_data:
+
+networks:
+  superset:
+    driver: bridge
+```
+
+<Info>
+If you already run Hub with Docker Compose, you can add the `superset_db` and `superset` services to the same project and use **Host** `postgres` (Hub’s Postgres service name) when Superset and Hub share a network. Otherwise use `host.docker.internal` to point Superset at Postgres on the host.
+</Info>
+
+
+## Step 3: Add Hub’s database in Superset
+
+1. In Superset, go to **Settings → Data → Database Connections** (or **+ → Data → Connect Database**).
+2. Click **+ DATABASE** and choose **PostgreSQL**.
+3. Enter the same credentials as in the [Step 1 table](#step-1-get-hub-running) (host, port, database `hub`, user, password). If Superset runs in Docker and Postgres is on the host, use **Host** `host.docker.internal`. Optionally set **Display Name** (e.g. *Formbricks Hub*). Or use **Connect using SQLAlchemy URI** and paste your Hub `DATABASE_URL` (use `host.docker.internal` instead of `localhost` if Superset is in Docker).
+4. Click **Test Connection**, then **Connect**.
+
+<Info>
+  If you see "The port is closed" from Superset in Docker, use **Host** `host.docker.internal`. See [Superset: Creating your first dashboard](https://superset.apache.org/docs/using-superset/creating-your-first-dashboard) for more.
+</Info>
+
+## Step 4: Create the `feedback_records` dataset
+
+Superset needs a **dataset** (a table or view) to build charts from.
+
+1. Go to **Data → Datasets**.
+2. Click **+ Dataset**.
+3. Choose:
+   - **Database**: the connection you just added (e.g. *Formbricks Hub*).
+   - **Schema**: `public`.
+   - **Table**: `feedback_records`.
+4. Click **Add**. Optionally give the dataset a display name (e.g. *Hub Feedback Records*) when saving.
+
+For the full table schema—column names, types, and field semantics (e.g. `field_type`, `value_number`, `value_text`)—see the [Data Model](/core-concepts/data-model) doc.
+
+You can optionally open the dataset and set **column properties** (e.g. mark `collected_at` as temporal for time-series charts). See [Creating your first dashboard](https://superset.apache.org/docs/using-superset/creating-your-first-dashboard#registering-a-new-table) and [Exploring data](https://superset.apache.org/docs/using-superset/exploring-data/) for details.
+
+## Step 5: Build charts and dashboards
+
+### Create charts and dashboards in the UI
+
+1. **Charts** — Go to **+ → Chart**, select the `feedback_records` dataset (or *Hub Feedback Records* if you named it), pick a visualization type, then set dimensions and metrics.
+2. **Dashboards** — Go to **Dashboards → + Dashboard**, then add your saved charts by dragging them onto the grid.
+
+**Example: NPS over time (time-series chart)** — Choose a **Time-series line** or **Time-series bar** chart; set **Time column** to `collected_at`, **Time grain** to Week or Month; add metric **AVG(value_number)**; add a filter **field_type** equals `nps`; then **Run** and **Save**.
+
+**Example: Count by source (bar or pie)** — Choose **Bar** or **Pie**; set **Dimensions** to `source_type`, **Metrics** to **COUNT(\*)**; **Run** and **Save**.
+
+You can also create dashboards and charts **programmatically** using the [Superset REST API](https://superset.apache.org/docs/api) (e.g. create dashboard, create chart, attach to dataset).
+
+### Simple SQL examples
+
+You can build charts in Superset from the `feedback_records` dataset, or run these in **SQL Lab** and then visualize the result.
+
+**NPS trend over time (Line chart)** — average NPS per week:
+
+```sql
+SELECT
+  date_trunc('week', collected_at) AS week,
+  ROUND(AVG(value_number)::numeric, 2) AS avg_nps,
+  COUNT(*) AS responses
+FROM feedback_records
+WHERE field_type = 'nps' AND value_number IS NOT NULL
+GROUP BY date_trunc('week', collected_at)
+ORDER BY week;
+```
+
+**Feedback count by source (Pie or Bar)** — volume per source:
+
+```sql
+SELECT source_type, COUNT(*) AS count
+FROM feedback_records
+GROUP BY source_type
+ORDER BY count DESC;
+```
+
+**NPS promoters / passives / detractors (Pie or Bar)** — bucket scores 0–6, 7–8, 9–10:
+
+```sql
+SELECT
+  CASE
+    WHEN value_number <= 6 THEN 'Detractor (0-6)'
+    WHEN value_number <= 8 THEN 'Passive (7-8)'
+    ELSE 'Promoter (9-10)'
+  END AS nps_bucket,
+  COUNT(*) AS count
+FROM feedback_records
+WHERE field_type = 'nps' AND value_number IS NOT NULL
+GROUP BY 1
+ORDER BY MIN(value_number);
+```
+
+More SQL and chart ideas:
+
+### Quick reference: dimensions and metrics
+
+For the complete list of columns and field types, see the [Data Model](/core-concepts/data-model).
+
+| Use case                | Dimension / filter                    | Metric                    |
+|-------------------------|--------------------------------------|---------------------------|
+| NPS/CSAT over time      | `collected_at`; filter `field_type = nps` | AVG(value_number) or custom NPS % (see [Superset examples](superset-examples.md)) |
+| Count by source         | `source_type`                        | COUNT(\*)                 |
+| Score by question       | `field_id` or `field_label`          | AVG(value_number)         |
+| Categorical breakdown   | `value_text` (e.g. device, segment)  | COUNT(\*)                 |
+| Multi-tenant            | Filter `tenant_id`                   | any                       |
+
+That’s it. Once Superset has access to Hub’s database, your feedback data is immediately available for reporting with no extra integration work.
+
+## References
+
+**Hub**
+
+- [Quick Start](/quickstart) — Run Hub and Postgres
+- [Data Model](/core-concepts/data-model) — Table schema, columns, and field types for `feedback_records`
+- [Superset examples](superset-examples.md) — More SQL and chart ideas
+
+**Superset**
+
+- [Connecting to databases](https://superset.apache.org/docs/databases) — Driver setup and connection overview
+- [Installation](https://superset.apache.org/docs/intro) — Docker, pip, Preset
+- [Creating your first dashboard](https://superset.apache.org/docs/using-superset/creating-your-first-dashboard)
+- [Exploring data](https://superset.apache.org/docs/using-superset/exploring-data/)
+- [REST API](https://superset.apache.org/docs/api)
