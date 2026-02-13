@@ -135,6 +135,48 @@ Metrics not in the initial implementation but useful for future work:
 
 ---
 
+## Integrating with SigNoz
+
+[SigNoz](https://signoz.io/) is an open-source, OpenTelemetry-native observability platform (logs, metrics, traces). The Hub fits in with minimal configuration.
+
+### Traces
+
+Hub exports traces via **OTLP over HTTP**. Point the Hub at SigNoz’s OTLP HTTP endpoint (default port **4318**):
+
+```bash
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=http://<signoz-otel-collector>:4318
+```
+
+Replace `<signoz-otel-collector>` with your SigNoz collector host (e.g. `localhost` for local, or the collector service name in Kubernetes/Docker). OTLP HTTP uses port **4318**; use **4317** only if your collector exposes OTLP gRPC and you switch the Hub to an OTLP gRPC exporter. No path is required; the client sends to `/v1/traces`.
+
+After this, traces appear in SigNoz under the service name `hub-api` (from otelhttp).
+
+### Metrics
+
+Hub exposes **Prometheus** metrics at `GET /metrics`. Enable them and have SigNoz scrape the Hub:
+
+1. Enable metrics on the Hub:
+
+   ```bash
+   OTEL_METRICS_EXPORTER=prometheus
+   ```
+
+2. In your SigNoz deployment, configure the OpenTelemetry Collector to scrape the Hub’s `/metrics` endpoint using the [Prometheus receiver](https://signoz.io/docs/instrumentation/opentelemetry-collector/#prometheus-receiver). Add a scrape config targeting the Hub URL (e.g. `http://hub:8080/metrics` in Docker/Kubernetes, or `http://localhost:8080/metrics` for local).
+
+SigNoz will then ingest both Hub application metrics (`hub_*`) and the HTTP request metrics produced by otelhttp.
+
+### Summary
+
+| Signal  | Hub setting | SigNoz side |
+|--------|-------------|-------------|
+| Traces | `OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://<collector>:4318` | Collector receives OTLP HTTP on 4318 |
+| Metrics | `OTEL_METRICS_EXPORTER=prometheus` | Collector scrapes `http://<hub>:8080/metrics` (Prometheus receiver) |
+
+For full SigNoz setup (collector, query service, UI), see [SigNoz docs](https://signoz.io/docs/) and [OpenTelemetry Collector guide](https://signoz.io/docs/instrumentation/opentelemetry-collector/).
+
+---
+
 ## Related
 
 - [Environment Variables](/reference/environment-variables) — `OTEL_*` and all configuration.
