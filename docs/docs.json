@@ -16,7 +16,7 @@
       },
       {
         "group": "Quickstart",
-        "pages": ["quickstart", "hub-superset"]
+        "pages": ["quickstart", "hub-superset", "hub-powerbi"]
       },
       {
         "group": "Core Concepts",
