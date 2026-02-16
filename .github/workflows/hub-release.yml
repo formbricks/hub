@@ -1,0 +1,147 @@
+name: Build & release Formbricks Hub Docker images
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  check-release:
+    name: Verify stable release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      is_stable: ${{ steps.check_stable.outputs.is_stable }}
+      is_latest: ${{ steps.compare_tags.outputs.is_latest }}
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.13.0
+        with:
+          egress-policy: audit
+
+      - name: Check if stable release
+        id: check_stable
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
+            echo "Skipping: this is a prerelease"
+            echo "is_stable=false" >> $GITHUB_OUTPUT
+          else
+            echo "This is a stable release"
+            echo "is_stable=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get latest release tag from API
+        if: steps.check_stable.outputs.is_stable == 'true'
+        id: get_latest_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          echo "Fetching latest release from GitHub API..."
+
+          http_code=$(curl -s -w "%{http_code}" -H "Authorization: token ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${REPO}/releases/latest" -o /tmp/latest_release.json)
+
+          if [[ "$http_code" == "404" ]]; then
+            echo "No previous releases found (404). This appears to be the first release."
+            echo "latest_release=" >> $GITHUB_OUTPUT
+          elif [[ "$http_code" == "200" ]]; then
+            latest_release=$(jq -r .tag_name /tmp/latest_release.json)
+            if [[ "$latest_release" == "null" || -z "$latest_release" ]]; then
+              echo "API returned null/empty tag_name. Treating as first release."
+              echo "latest_release=" >> $GITHUB_OUTPUT
+            else
+              echo "Latest release from API: ${latest_release}"
+              echo "latest_release=${latest_release}" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "GitHub API error (HTTP ${http_code}). Treating as first release."
+            echo "latest_release=" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Current release tag: ${{ github.event.release.tag_name }}"
+
+      - name: Compare release tags
+        if: steps.check_stable.outputs.is_stable == 'true'
+        id: compare_tags
+        env:
+          CURRENT_TAG: ${{ github.event.release.tag_name }}
+          LATEST_TAG: ${{ steps.get_latest_release.outputs.latest_release }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${LATEST_TAG}" ]]; then
+            echo "This is the first release (${CURRENT_TAG}) - treating as latest"
+            echo "is_latest=true" >> $GITHUB_OUTPUT
+          elif [[ "${CURRENT_TAG}" == "${LATEST_TAG}" ]]; then
+            echo "This release (${CURRENT_TAG}) is marked as the latest release"
+            echo "is_latest=true" >> $GITHUB_OUTPUT
+          else
+            echo "This release (${CURRENT_TAG}) is not the latest release (latest: ${LATEST_TAG})"
+            echo "is_latest=false" >> $GITHUB_OUTPUT
+          fi
+
+  docker-build-ghcr:
+    name: Build & push to GitHub Container Registry
+    needs: check-release
+    if: needs.check-release.outputs.is_stable == 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/release-docker-ghcr.yml
+    secrets: inherit
+    with:
+      MAKE_LATEST: ${{ needs.check-release.outputs.is_latest == 'true' }}
+
+  docker-build-ecr:
+    name: Build & push to AWS ECR
+    needs:
+      - check-release
+      - docker-build-ghcr
+    if: needs.check-release.outputs.is_stable == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/build-and-push-ecr.yml
+    secrets: inherit
+    with:
+      image_tag: ${{ needs.docker-build-ghcr.outputs.VERSION }}
+      MAKE_LATEST: ${{ needs.check-release.outputs.is_latest == 'true' }}
+
+  verify-release:
+    name: Verify release outputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - docker-build-ghcr
+      - docker-build-ecr
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.13.0
+        with:
+          egress-policy: audit
+
+      - name: Display release summary
+        env:
+          GHCR_VERSION: ${{ needs.docker-build-ghcr.outputs.VERSION }}
+          ECR_IMAGE_TAG: ${{ needs.docker-build-ecr.outputs.IMAGE_TAG }}
+          ECR_TAGS: ${{ needs.docker-build-ecr.outputs.TAGS }}
+        run: |
+          set -euo pipefail
+
+          echo "✅ Formbricks Hub Release Completed Successfully"
+          echo ""
+          echo "GHCR Version: ${GHCR_VERSION}"
+          echo ""
+          echo "ECR Image Tag: ${ECR_IMAGE_TAG}"
+          echo "ECR Tags:"
+          printf '%s\n' "${ECR_TAGS}"
