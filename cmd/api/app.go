@@ -357,24 +357,27 @@ func shutdownObservability(ctx context.Context, tracer *sdktrace.TracerProvider,
 }
 
 // Shutdown stops the server, message publisher, and River in order. Call after Run returns.
-func (a *App) Shutdown(ctx context.Context) error {
+// Observability is shut down once via defer; its error is returned only when server and River shut down successfully.
+func (a *App) Shutdown(ctx context.Context) (err error) {
 	defer a.message.Shutdown()
 
-	if err := a.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	defer func() {
+		obsErr := shutdownObservability(ctx, a.tracerProvider, a.meterProvider)
+		if err == nil {
+			err = obsErr
+		} else if obsErr != nil {
+			slog.Error("shutdown observability", "error", obsErr)
+		}
+	}()
+
+	if err = a.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		_ = a.river.Stop(ctx)
-		_ = shutdownObservability(ctx, a.tracerProvider, a.meterProvider)
 
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 
-	if err := a.river.Stop(ctx); err != nil {
-		_ = shutdownObservability(ctx, a.tracerProvider, a.meterProvider)
-
+	if err = a.river.Stop(ctx); err != nil {
 		return fmt.Errorf("river stop: %w", err)
-	}
-
-	if err := shutdownObservability(ctx, a.tracerProvider, a.meterProvider); err != nil {
-		return err
 	}
 
 	return nil
