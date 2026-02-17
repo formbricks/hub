@@ -14,6 +14,7 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
@@ -40,13 +41,18 @@ type App struct {
 
 const riverQueueDepthInterval = 15 * time.Second
 
-// setupMetrics creates meter provider, handler, event metrics, and webhook metrics when metrics are enabled.
+// setupMetrics creates meter provider, event metrics, and webhook metrics when metrics are enabled.
+// When NewMeterProvider returns nil (unsupported or disabled exporter), returns all nils (metrics disabled).
 func setupMetrics(cfg *config.Config) (
-	*sdkmetric.MeterProvider, http.Handler, observability.EventMetrics, observability.WebhookMetrics, error,
+	*sdkmetric.MeterProvider, observability.EventMetrics, observability.WebhookMetrics, error,
 ) {
-	mp, handler, err := observability.NewMeterProvider(cfg)
+	mp, err := observability.NewMeterProvider(cfg)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("create meter provider: %w", err)
+		return nil, nil, nil, fmt.Errorf("create meter provider: %w", err)
+	}
+
+	if mp == nil {
+		return nil, nil, nil, nil
 	}
 
 	meter := mp.Meter("hub")
@@ -58,7 +64,7 @@ func setupMetrics(cfg *config.Config) (
 			slog.Error("shutdown meter provider after event metrics error", "error", err2)
 		}
 
-		return nil, nil, nil, nil, fmt.Errorf("create event metrics: %w", err)
+		return nil, nil, nil, fmt.Errorf("create event metrics: %w", err)
 	}
 
 	webhookMetrics, err := observability.NewWebhookMetrics(meter)
@@ -68,10 +74,10 @@ func setupMetrics(cfg *config.Config) (
 			slog.Error("shutdown meter provider after webhook metrics error", "error", err2)
 		}
 
-		return nil, nil, nil, nil, fmt.Errorf("create webhook metrics: %w", err)
+		return nil, nil, nil, fmt.Errorf("create webhook metrics: %w", err)
 	}
 
-	return mp, handler, eventMetrics, webhookMetrics, nil
+	return mp, eventMetrics, webhookMetrics, nil
 }
 
 // NewApp builds and wires all components. It does not start the HTTP server or River;
@@ -80,7 +86,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	var (
 		err            error
 		meterProvider  *sdkmetric.MeterProvider
-		metricsHandler http.Handler
 		eventMetrics   observability.EventMetrics
 		webhookMetrics observability.WebhookMetrics
 	)
@@ -88,7 +93,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	if cfg.OtelMetricsExporter == "" {
 		slog.Warn("metrics not enabled (OTEL_METRICS_EXPORTER empty or unset)")
 	} else {
-		meterProvider, metricsHandler, eventMetrics, webhookMetrics, err = setupMetrics(cfg)
+		meterProvider, eventMetrics, webhookMetrics, err = setupMetrics(cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -109,9 +114,18 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 			return nil, fmt.Errorf("create tracer provider: %w", err)
 		}
+	}
 
-		defaultHandler := slog.Default().Handler()
-		slog.SetDefault(slog.New(observability.NewTraceContextHandler(defaultHandler)))
+	// Install TraceContextHandler unconditionally so request_id (and trace_id/span_id when tracing is on) appear in logs.
+	defaultHandler := slog.Default().Handler()
+	slog.SetDefault(slog.New(observability.NewTraceContextHandler(defaultHandler)))
+
+	if tracerProvider != nil {
+		otel.SetTracerProvider(tracerProvider)
+	}
+
+	if meterProvider != nil {
+		otel.SetMeterProvider(meterProvider)
 	}
 
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, eventMetrics)
@@ -161,7 +175,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
-	server := newHTTPServer(cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, meterProvider, tracerProvider, metricsHandler)
+	server := newHTTPServer(cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, meterProvider, tracerProvider)
 
 	return &App{
 		cfg:            cfg,
@@ -176,7 +190,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 }
 
 // newHTTPServer builds the HTTP server and muxes (no auth on /health, API key on /v1/).
-// When metricsHandler is non-nil, GET /metrics is registered. Handler chain: RequestID -> Logging -> otelhttp -> mux.
+// Handler chain: RequestID -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
 func newHTTPServer(
 	cfg *config.Config,
 	health *handlers.HealthHandler,
@@ -184,14 +198,9 @@ func newHTTPServer(
 	webhooks *handlers.WebhooksHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
-	metricsHandler http.Handler,
 ) *http.Server {
 	public := http.NewServeMux()
 	public.HandleFunc("GET /health", health.Check)
-
-	if metricsHandler != nil {
-		public.Handle("GET /metrics", metricsHandler)
-	}
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("POST /v1/feedback-records", feedback.Create)
@@ -220,9 +229,9 @@ func newHTTPServer(
 		otelOpts = append(otelOpts, otelhttp.WithTracerProvider(tracerProvider))
 	}
 
-	// Handler chain: built bottom-to-top; request flows RequestID -> Logging -> otelhttp -> mux.
-	handler := otelhttp.NewHandler(mux, "hub-api", otelOpts...)
-	handler = middleware.Logging(handler)
+	// Logging runs inside otelhttp so r.Context() has the span when we log (trace_id/span_id in access logs).
+	inner := middleware.Logging(mux)
+	handler := otelhttp.NewHandler(inner, "hub-api", otelOpts...)
 	handler = middleware.RequestID(handler)
 
 	const (
@@ -319,56 +328,48 @@ func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetric
 	}
 }
 
+// shutdownObservability shuts down tracer and meter providers. Logs secondary errors, returns the first.
+func shutdownObservability(ctx context.Context, tracer *sdktrace.TracerProvider, meter *sdkmetric.MeterProvider) error {
+	var first error
+
+	if tracer != nil {
+		if err := observability.ShutdownTracerProvider(ctx, tracer); err != nil {
+			first = err
+		}
+	}
+
+	if meter != nil {
+		if err := observability.ShutdownMeterProvider(ctx, meter); err != nil {
+			if first == nil {
+				first = err
+			} else {
+				slog.Error("shutdown meter provider", "error", err)
+			}
+		}
+	}
+
+	return first
+}
+
 // Shutdown stops the server, message publisher, and River in order. Call after Run returns.
 func (a *App) Shutdown(ctx context.Context) error {
 	defer a.message.Shutdown()
 
 	if err := a.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		if err2 := a.river.Stop(ctx); err2 != nil {
-			slog.Error("river stop after server shutdown error", "error", err2)
-		}
-
-		if a.tracerProvider != nil {
-			if err2 := observability.ShutdownTracerProvider(ctx, a.tracerProvider); err2 != nil {
-				slog.Error("shutdown tracer provider after server shutdown error", "error", err2)
-			}
-		}
-
-		if a.meterProvider != nil {
-			if err2 := observability.ShutdownMeterProvider(ctx, a.meterProvider); err2 != nil {
-				slog.Error("shutdown meter provider after server shutdown error", "error", err2)
-			}
-		}
+		_ = a.river.Stop(ctx)
+		_ = shutdownObservability(ctx, a.tracerProvider, a.meterProvider)
 
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 
 	if err := a.river.Stop(ctx); err != nil {
-		if a.tracerProvider != nil {
-			if err2 := observability.ShutdownTracerProvider(ctx, a.tracerProvider); err2 != nil {
-				slog.Error("shutdown tracer provider after river stop error", "error", err2)
-			}
-		}
-
-		if a.meterProvider != nil {
-			if err2 := observability.ShutdownMeterProvider(ctx, a.meterProvider); err2 != nil {
-				slog.Error("shutdown meter provider after river stop error", "error", err2)
-			}
-		}
+		_ = shutdownObservability(ctx, a.tracerProvider, a.meterProvider)
 
 		return fmt.Errorf("river stop: %w", err)
 	}
 
-	if a.tracerProvider != nil {
-		if err := observability.ShutdownTracerProvider(ctx, a.tracerProvider); err != nil {
-			return fmt.Errorf("tracer provider shutdown: %w", err)
-		}
-	}
-
-	if a.meterProvider != nil {
-		if err := observability.ShutdownMeterProvider(ctx, a.meterProvider); err != nil {
-			return fmt.Errorf("meter provider shutdown: %w", err)
-		}
+	if err := shutdownObservability(ctx, a.tracerProvider, a.meterProvider); err != nil {
+		return err
 	}
 
 	return nil

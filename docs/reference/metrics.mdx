@@ -1,17 +1,17 @@
 ---
 title: "Metrics and Observability"
-description: "Prometheus metrics, distributed tracing, and correlation (X-Request-ID, trace_id in logs)."
+description: "OTLP push metrics, distributed tracing, and correlation (X-Request-ID, trace_id in logs)."
 ---
 
 ## Overview
 
 When enabled via environment variables, the Hub API exposes:
 
-- **Prometheus metrics** at `GET /metrics` (HTTP request metrics, event pipeline, webhook delivery).
+- **Metrics via OTLP push** (HTTP request metrics, event pipeline, webhook delivery). No scrape endpoint; metrics are pushed to the same OTLP endpoint as traces (e.g. every 60 seconds).
 - **Distributed tracing** (HTTP and optional pipeline spans) when an OTLP or stdout exporter is configured.
-- **Structured log correlation**: `trace_id`, `span_id`, and `request_id` are added to log records when tracing is enabled and when the request passes through the Request ID middleware.
+- **Structured log correlation**: `trace_id`, `span_id`, and `request_id` are added to log records when the request passes through the Request ID middleware (and trace context when tracing is enabled).
 
-When metrics or tracing are disabled (env vars empty or unset), a startup warning is logged and the corresponding providers are not created. The `/metrics` endpoint is not registered when metrics are disabled.
+When metrics or tracing are disabled (env vars empty or unset), a startup warning is logged and the corresponding providers are not created.
 
 ---
 
@@ -19,9 +19,9 @@ When metrics or tracing are disabled (env vars empty or unset), a startup warnin
 
 | Variable | Description | Enable behavior |
 |----------|-------------|-----------------|
-| `OTEL_METRICS_EXPORTER` | Set to `prometheus` to enable metrics and expose `GET /metrics`. Empty/unset = metrics disabled; a warning is logged at startup. | Metrics enabled |
+| `OTEL_METRICS_EXPORTER` | Set to `otlp` to enable metrics via OTLP push to the same endpoint as traces. Empty/unset = metrics disabled; a warning is logged at startup. | Metrics enabled |
 | `OTEL_TRACES_EXPORTER` | Set to `otlp` or `stdout` to enable tracing. Empty/unset = tracing disabled; a warning is logged at startup. | Tracing enabled |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional. OTLP endpoint (e.g. `https://localhost:4318`) for trace export when `OTEL_TRACES_EXPORTER=otlp`. | Used only when tracing is enabled with OTLP |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional. OTLP endpoint (e.g. `http://localhost:4318`) for both metrics and traces when using OTLP. The SDK reads this from the environment. | Used when metrics or tracing is enabled with OTLP |
 
 See [Environment Variables](/reference/environment-variables#observability) for full details.
 
@@ -86,7 +86,7 @@ Span names and attributes use bounded values (e.g. `event_type`, method, route, 
 
 ## Trace context in logs
 
-When tracing is enabled, the default slog handler is wrapped so that each log record that receives a context with an active span gets **`trace_id`** and **`span_id`** (W3C string format) added automatically. The same wrapper adds **`request_id`** when the context contains the request ID (set by the Request ID middleware). Use `slog.InfoContext(ctx, ...)` (and other `*Context` variants) in request and worker paths so that the context carries the span and request ID.
+The default slog handler is wrapped so that **`request_id`** is added to log records when the context contains the request ID (set by the Request ID middleware). When tracing is enabled, **`trace_id`** and **`span_id`** (W3C string format) are also added when the context has an active span. Use `slog.InfoContext(ctx, ...)` (and other `*Context` variants) in request and worker paths so that the context carries the request ID and span.
 
 ---
 
@@ -154,15 +154,16 @@ After this, traces appear in SigNoz under the service name `hub-api` (from otelh
 
 ### Metrics
 
-Hub exposes **Prometheus** metrics at `GET /metrics`. Enable them and have SigNoz scrape the Hub:
+Hub pushes **metrics via OTLP** (same collector endpoint as traces). Enable metrics and ensure the collector receives OTLP metrics:
 
 1. Enable metrics on the Hub:
 
    ```bash
-   OTEL_METRICS_EXPORTER=prometheus
+   OTEL_METRICS_EXPORTER=otlp
+   OTEL_EXPORTER_OTLP_ENDPOINT=http://<signoz-otel-collector>:4318
    ```
 
-2. In your SigNoz deployment, configure the OpenTelemetry Collector to scrape the Hub’s `/metrics` endpoint using the [Prometheus receiver](https://signoz.io/docs/instrumentation/opentelemetry-collector/#prometheus-receiver). Add a scrape config targeting the Hub URL (e.g. `http://hub:8080/metrics` in Docker/Kubernetes, or `http://localhost:8080/metrics` for local).
+2. Ensure your SigNoz/OpenTelemetry Collector is configured to receive OTLP metrics (same endpoint as traces; the client uses `/v1/metrics`). No Prometheus scrape is required.
 
 SigNoz will then ingest both Hub application metrics (`hub_*`) and the HTTP request metrics produced by otelhttp.
 
@@ -171,7 +172,7 @@ SigNoz will then ingest both Hub application metrics (`hub_*`) and the HTTP requ
 | Signal  | Hub setting | SigNoz side |
 |--------|-------------|-------------|
 | Traces | `OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://<collector>:4318` | Collector receives OTLP HTTP on 4318 |
-| Metrics | `OTEL_METRICS_EXPORTER=prometheus` | Collector scrapes `http://<hub>:8080/metrics` (Prometheus receiver) |
+| Metrics | `OTEL_METRICS_EXPORTER=otlp`, same endpoint as traces | Collector receives OTLP metrics (push); no scrape |
 
 For full SigNoz setup (collector, query service, UI), see [SigNoz docs](https://signoz.io/docs/) and [OpenTelemetry Collector guide](https://signoz.io/docs/instrumentation/opentelemetry-collector/).
 

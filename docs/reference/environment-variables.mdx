@@ -102,12 +102,12 @@ When these variables are empty or unset, the corresponding feature is disabled a
 
 ### `OTEL_METRICS_EXPORTER`
 
-Set to `prometheus` to enable Prometheus metrics and expose `GET /metrics`. Empty or unset = metrics disabled.
+Set to `otlp` to enable metrics via OTLP push to the same endpoint as traces (`OTEL_EXPORTER_OTLP_ENDPOINT`). Empty or unset = metrics disabled.
 
 **Example:**
 
 ```bash
-OTEL_METRICS_EXPORTER=prometheus
+OTEL_METRICS_EXPORTER=otlp
 ```
 
 **Default:** Empty (metrics disabled)
@@ -160,7 +160,7 @@ PORT=8080
 LOG_LEVEL=debug
 
 # Optional: metrics and tracing
-# OTEL_METRICS_EXPORTER=prometheus
+# OTEL_METRICS_EXPORTER=otlp
 # OTEL_TRACES_EXPORTER=stdout
 ```
 
@@ -181,10 +181,10 @@ PORT=8080
 # Logging
 LOG_LEVEL=info
 
-# Optional: metrics and tracing (e.g. Prometheus + OTLP collector)
-# OTEL_METRICS_EXPORTER=prometheus
+# Optional: metrics and tracing (OTLP push to collector)
+# OTEL_METRICS_EXPORTER=otlp
 # OTEL_TRACES_EXPORTER=otlp
-# OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4318
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
 ```
 
 ## Loading Environment Variables

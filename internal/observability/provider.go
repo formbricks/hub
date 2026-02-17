@@ -3,11 +3,9 @@ package observability
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	prometheusexporter "go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -16,22 +14,8 @@ import (
 	"github.com/formbricks/hub/internal/config"
 )
 
-// NewMeterProvider creates a MeterProvider and an HTTP handler for /metrics when metrics are enabled.
-// When cfg.OtelMetricsExporter is not "prometheus", returns (nil, nil, nil).
-func NewMeterProvider(cfg *config.Config) (*sdkmetric.MeterProvider, http.Handler, error) {
-	if cfg == nil || (cfg.OtelMetricsExporter != "prometheus") {
-		return nil, nil, nil
-	}
-
-	reg := prometheus.NewRegistry()
-
-	exporter, err := prometheusexporter.New(
-		prometheusexporter.WithRegisterer(reg),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create prometheus exporter: %w", err)
-	}
-
+// newResource returns a resource with service name "hub-api" merged with default.
+func newResource() (*resource.Resource, error) {
 	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
@@ -40,8 +24,36 @@ func NewMeterProvider(cfg *config.Config) (*sdkmetric.MeterProvider, http.Handle
 		),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create resource: %w", err)
+		return nil, fmt.Errorf("merge resource: %w", err)
 	}
+
+	return res, nil
+}
+
+// NewMeterProvider creates a MeterProvider when metrics are enabled via OTLP push.
+// When cfg.OtelMetricsExporter is not "otlp" (or empty), returns (nil, nil).
+func NewMeterProvider(cfg *config.Config) (*sdkmetric.MeterProvider, error) {
+	if cfg == nil || cfg.OtelMetricsExporter != "otlp" {
+		//nolint:nilnil // intentional: metrics disabled or unsupported exporter, caller checks for nil
+		return nil, nil
+	}
+
+	res, err := newResource()
+	if err != nil {
+		return nil, fmt.Errorf("create resource: %w", err)
+	}
+
+	// SDK reads OTEL_EXPORTER_OTLP_ENDPOINT (and scheme/insecure) from env.
+	exp, err := otlpmetrichttp.New(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("create OTLP metric exporter: %w", err)
+	}
+
+	const metricExportInterval = 60 * time.Second
+
+	reader := sdkmetric.NewPeriodicReader(exp,
+		sdkmetric.WithInterval(metricExportInterval),
+	)
 
 	// Duration histograms record in seconds; use second-based buckets so quantiles and SLOs
 	// (e.g. "95% under 300ms") are accurate. OTel default boundaries are millisecond-oriented.
@@ -53,13 +65,11 @@ func NewMeterProvider(cfg *config.Config) (*sdkmetric.MeterProvider, http.Handle
 
 	provider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
-		sdkmetric.WithReader(exporter),
+		sdkmetric.WithReader(reader),
 		sdkmetric.WithView(view),
 	)
 
-	handler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
-
-	return provider, handler, nil
+	return provider, nil
 }
 
 // ShutdownMeterProvider flushes and shuts down the MeterProvider. Safe to call with nil.
@@ -83,13 +93,7 @@ func NewTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
 		return nil, nil
 	}
 
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName("hub-api"),
-		),
-	)
+	res, err := newResource()
 	if err != nil {
 		return nil, fmt.Errorf("create resource: %w", err)
 	}
@@ -100,7 +104,7 @@ func NewTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
 
 	switch cfg.OtelTracesExporter {
 	case "otlp":
-		exp, err := newOTLPTraceExporter(context.Background(), cfg)
+		exp, err := newOTLPTraceExporter(context.Background())
 		if err != nil {
 			return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 		}

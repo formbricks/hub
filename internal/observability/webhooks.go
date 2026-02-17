@@ -101,7 +101,7 @@ func (wm *webhookMetrics) RecordJobsEnqueued(eventType string, count int64) {
 }
 
 func (wm *webhookMetrics) RecordProviderError(reason string) {
-	reason = NormalizeReason(reason, AllowedProviderReasons)
+	reason = NormalizeReason(reason, AllowedProviderReason)
 	wm.providerErrors.Add(context.Background(), 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
 }
 
@@ -113,12 +113,12 @@ func (wm *webhookMetrics) RecordDelivery(eventType, status string) {
 }
 
 func (wm *webhookMetrics) RecordWebhookDisabled(reason string) {
-	reason = NormalizeReason(reason, AllowedDisabledReasons)
+	reason = NormalizeReason(reason, AllowedDisabledReason)
 	wm.disabled.Add(context.Background(), 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
 }
 
 func (wm *webhookMetrics) RecordDispatchError(reason string) {
-	reason = NormalizeReason(reason, AllowedDispatchReasons)
+	reason = NormalizeReason(reason, AllowedDispatchReason)
 	wm.dispatchErrors.Add(context.Background(), 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
 }
 

@@ -31,29 +31,41 @@ func AllowedEventTypes() []string {
 	return datatypes.GetAllEventTypes()
 }
 
-// AllowedProviderReasons for hub_webhook_provider_errors_total.
-var AllowedProviderReasons = map[string]bool{
+// allowedProviderReasons for hub_webhook_provider_errors_total (bounded cardinality).
+var allowedProviderReasons = map[string]bool{
 	"list_failed":    true,
 	"enqueue_failed": true,
 }
 
-// AllowedDeliveryStatuses for hub_webhook_deliveries_total and hub_webhook_delivery_duration_seconds.
-var AllowedDeliveryStatuses = map[string]bool{
+// allowedDeliveryStatuses for hub_webhook_deliveries_total and hub_webhook_delivery_duration_seconds.
+var allowedDeliveryStatuses = map[string]bool{
 	"success":      true,
 	"retry":        true,
 	"failed_final": true,
 }
 
-// AllowedDisabledReasons for hub_webhook_disabled_total.
-var AllowedDisabledReasons = map[string]bool{
+// allowedDisabledReasons for hub_webhook_disabled_total.
+var allowedDisabledReasons = map[string]bool{
 	"410_gone":     true,
 	"max_attempts": true,
 }
 
-// AllowedDispatchReasons for hub_webhook_dispatch_errors_total.
-var AllowedDispatchReasons = map[string]bool{
+// allowedDispatchReasons for hub_webhook_dispatch_errors_total.
+var allowedDispatchReasons = map[string]bool{
 	"get_webhook_failed": true,
 }
+
+// AllowedProviderReason returns true if reason is an allowed provider error reason.
+func AllowedProviderReason(reason string) bool { return allowedProviderReasons[reason] }
+
+// AllowedDeliveryStatus returns true if status is an allowed delivery status.
+func AllowedDeliveryStatus(status string) bool { return allowedDeliveryStatuses[status] }
+
+// AllowedDisabledReason returns true if reason is an allowed disabled reason.
+func AllowedDisabledReason(reason string) bool { return allowedDisabledReasons[reason] }
+
+// AllowedDispatchReason returns true if reason is an allowed dispatch error reason.
+func AllowedDispatchReason(reason string) bool { return allowedDispatchReasons[reason] }
 
 // NormalizeEventType returns eventType if allowed, otherwise "unknown".
 func NormalizeEventType(eventType string) string {
@@ -64,18 +76,18 @@ func NormalizeEventType(eventType string) string {
 	return "unknown"
 }
 
-// NormalizeReason returns reason if in allowed, otherwise "other".
-func NormalizeReason(reason string, allowed map[string]bool) string {
-	if allowed[reason] {
+// NormalizeReason returns reason if allowed(reason), otherwise "other".
+func NormalizeReason(reason string, allowed func(string) bool) string {
+	if allowed(reason) {
 		return reason
 	}
 
 	return "other"
 }
 
-// NormalizeStatus returns status if in AllowedDeliveryStatuses, otherwise "other".
+// NormalizeStatus returns status if in allowed delivery statuses, otherwise "other".
 func NormalizeStatus(status string) string {
-	if AllowedDeliveryStatuses[status] {
+	if AllowedDeliveryStatus(status) {
 		return status
 	}
 
