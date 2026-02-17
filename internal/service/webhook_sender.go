@@ -100,7 +100,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 
 	if resp.StatusCode == http.StatusGone {
 		if s.metrics != nil {
-			s.metrics.RecordWebhookDisabled("410_gone")
+			s.metrics.RecordWebhookDisabled(ctx, "410_gone")
 		}
 
 		enabled := false

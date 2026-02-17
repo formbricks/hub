@@ -10,13 +10,14 @@ import (
 )
 
 // WebhookMetrics records webhook pipeline metrics (provider, worker, sender).
+// Methods accept ctx for future exemplar support (linking metric samples to trace IDs).
 type WebhookMetrics interface {
-	RecordJobsEnqueued(eventType string, count int64)
-	RecordProviderError(reason string)
-	RecordDelivery(eventType, status string)
-	RecordWebhookDisabled(reason string)
-	RecordDispatchError(reason string)
-	RecordWebhookDeliveryDuration(duration time.Duration, eventType, status string)
+	RecordJobsEnqueued(ctx context.Context, eventType string, count int64)
+	RecordProviderError(ctx context.Context, reason string)
+	RecordDelivery(ctx context.Context, eventType, status string)
+	RecordWebhookDisabled(ctx context.Context, reason string)
+	RecordDispatchError(ctx context.Context, reason string)
+	RecordWebhookDeliveryDuration(ctx context.Context, duration time.Duration, eventType, status string)
 }
 
 // webhookMetrics implements WebhookMetrics.
@@ -95,36 +96,36 @@ func NewWebhookMetrics(meter metric.Meter) (WebhookMetrics, error) {
 	}, nil
 }
 
-func (wm *webhookMetrics) RecordJobsEnqueued(eventType string, count int64) {
+func (wm *webhookMetrics) RecordJobsEnqueued(ctx context.Context, eventType string, count int64) {
 	eventType = NormalizeEventType(eventType)
-	wm.jobsEnqueued.Add(context.Background(), count, metric.WithAttributes(attrEventType(eventType)))
+	wm.jobsEnqueued.Add(ctx, count, metric.WithAttributes(attrEventType(eventType)))
 }
 
-func (wm *webhookMetrics) RecordProviderError(reason string) {
+func (wm *webhookMetrics) RecordProviderError(ctx context.Context, reason string) {
 	reason = NormalizeReason(reason, AllowedProviderReason)
-	wm.providerErrors.Add(context.Background(), 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
+	wm.providerErrors.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
 }
 
-func (wm *webhookMetrics) RecordDelivery(eventType, status string) {
+func (wm *webhookMetrics) RecordDelivery(ctx context.Context, eventType, status string) {
 	eventType = NormalizeEventType(eventType)
 	status = NormalizeStatus(status)
-	wm.deliveries.Add(context.Background(), 1,
+	wm.deliveries.Add(ctx, 1,
 		metric.WithAttributes(attrEventType(eventType), attribute.String(AttrStatus, status)))
 }
 
-func (wm *webhookMetrics) RecordWebhookDisabled(reason string) {
+func (wm *webhookMetrics) RecordWebhookDisabled(ctx context.Context, reason string) {
 	reason = NormalizeReason(reason, AllowedDisabledReason)
-	wm.disabled.Add(context.Background(), 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
+	wm.disabled.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
 }
 
-func (wm *webhookMetrics) RecordDispatchError(reason string) {
+func (wm *webhookMetrics) RecordDispatchError(ctx context.Context, reason string) {
 	reason = NormalizeReason(reason, AllowedDispatchReason)
-	wm.dispatchErrors.Add(context.Background(), 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
+	wm.dispatchErrors.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrReason, reason)))
 }
 
-func (wm *webhookMetrics) RecordWebhookDeliveryDuration(duration time.Duration, eventType, status string) {
+func (wm *webhookMetrics) RecordWebhookDeliveryDuration(ctx context.Context, duration time.Duration, eventType, status string) {
 	eventType = NormalizeEventType(eventType)
 	status = NormalizeStatus(status)
-	wm.deliveryDuration.Record(context.Background(), duration.Seconds(),
+	wm.deliveryDuration.Record(ctx, duration.Seconds(),
 		metric.WithAttributes(attrEventType(eventType), attribute.String(AttrStatus, status)))
 }

@@ -11,9 +11,10 @@ import (
 )
 
 // EventMetrics records event-pipeline and message-publisher metrics.
+// Methods accept ctx for future exemplar support (linking metric samples to trace IDs).
 type EventMetrics interface {
-	RecordEventDiscarded(eventType string)
-	RecordFanOutDuration(duration time.Duration, eventType string)
+	RecordEventDiscarded(ctx context.Context, eventType string)
+	RecordFanOutDuration(ctx context.Context, duration time.Duration, eventType string)
 	SetChannelDepth(depth int)
 	SetRiverQueueDepth(depth int)
 }
@@ -94,14 +95,14 @@ func attrEventType(v string) attribute.KeyValue {
 	return attribute.String(AttrEventType, v)
 }
 
-func (e *eventMetrics) RecordEventDiscarded(eventType string) {
+func (e *eventMetrics) RecordEventDiscarded(ctx context.Context, eventType string) {
 	eventType = NormalizeEventType(eventType)
-	e.eventsDiscarded.Add(context.Background(), 1, metric.WithAttributes(attrEventType(eventType)))
+	e.eventsDiscarded.Add(ctx, 1, metric.WithAttributes(attrEventType(eventType)))
 }
 
-func (e *eventMetrics) RecordFanOutDuration(duration time.Duration, eventType string) {
+func (e *eventMetrics) RecordFanOutDuration(ctx context.Context, duration time.Duration, eventType string) {
 	eventType = NormalizeEventType(eventType)
-	e.fanOutDuration.Record(context.Background(), duration.Seconds(), metric.WithAttributes(attrEventType(eventType)))
+	e.fanOutDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrEventType(eventType)))
 }
 
 func (e *eventMetrics) SetChannelDepth(depth int) {

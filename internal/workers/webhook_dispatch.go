@@ -54,9 +54,9 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	webhook, err := w.repo.GetByID(ctx, args.WebhookID)
 	if err != nil {
 		if w.metrics != nil {
-			w.metrics.RecordDispatchError("get_webhook_failed")
-			w.metrics.RecordDelivery(args.EventType, "failed_final")
-			w.metrics.RecordWebhookDeliveryDuration(time.Since(start), args.EventType, "failed_final")
+			w.metrics.RecordDispatchError(ctx, "get_webhook_failed")
+			w.metrics.RecordDelivery(ctx, args.EventType, "failed_final")
+			w.metrics.RecordWebhookDeliveryDuration(ctx, time.Since(start), args.EventType, "failed_final")
 		}
 
 		slog.Error("webhook dispatch: get webhook failed",
@@ -82,8 +82,8 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	err = w.sender.Send(ctx, webhook, payload)
 	if err == nil {
 		if w.metrics != nil {
-			w.metrics.RecordDelivery(args.EventType, "success")
-			w.metrics.RecordWebhookDeliveryDuration(time.Since(start), args.EventType, "success")
+			w.metrics.RecordDelivery(ctx, args.EventType, "success")
+			w.metrics.RecordWebhookDeliveryDuration(ctx, time.Since(start), args.EventType, "success")
 		}
 
 		return nil
@@ -93,9 +93,9 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	isLastAttempt := job.Attempt >= job.MaxAttempts
 	if isLastAttempt {
 		if w.metrics != nil {
-			w.metrics.RecordWebhookDisabled("max_attempts")
-			w.metrics.RecordDelivery(args.EventType, "failed_final")
-			w.metrics.RecordWebhookDeliveryDuration(time.Since(start), args.EventType, "failed_final")
+			w.metrics.RecordWebhookDisabled(ctx, "max_attempts")
+			w.metrics.RecordDelivery(ctx, args.EventType, "failed_final")
+			w.metrics.RecordWebhookDeliveryDuration(ctx, time.Since(start), args.EventType, "failed_final")
 		}
 
 		enabled := false
@@ -125,8 +125,8 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	}
 
 	if w.metrics != nil {
-		w.metrics.RecordDelivery(args.EventType, "retry")
-		w.metrics.RecordWebhookDeliveryDuration(time.Since(start), args.EventType, "retry")
+		w.metrics.RecordDelivery(ctx, args.EventType, "retry")
+		w.metrics.RecordWebhookDeliveryDuration(ctx, time.Since(start), args.EventType, "retry")
 	}
 
 	slog.Warn("webhook delivery failed, will retry",

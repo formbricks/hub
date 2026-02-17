@@ -48,7 +48,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	webhooks, err := p.repo.ListEnabledForEventType(ctx, event.Type.String())
 	if err != nil {
 		if p.metrics != nil {
-			p.metrics.RecordProviderError("list_failed")
+			p.metrics.RecordProviderError(ctx, "list_failed")
 		}
 
 		slog.Error("failed to list enabled webhooks for event type",
@@ -89,7 +89,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 		_, err = p.inserter.InsertMany(ctx, params)
 		if err != nil {
 			if p.metrics != nil {
-				p.metrics.RecordProviderError("enqueue_failed")
+				p.metrics.RecordProviderError(ctx, "enqueue_failed")
 			}
 
 			slog.Error("failed to enqueue webhook jobs",
@@ -103,7 +103,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	}
 
 	if p.metrics != nil {
-		p.metrics.RecordJobsEnqueued(event.Type.String(), int64(len(webhooks)))
+		p.metrics.RecordJobsEnqueued(ctx, event.Type.String(), int64(len(webhooks)))
 	}
 }
 

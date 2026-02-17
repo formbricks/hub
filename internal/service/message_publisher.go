@@ -77,7 +77,7 @@ func (m *MessagePublisherManager) PublishEvent(ctx context.Context, eventType da
 
 // PublishEventWithChangedFields publishes an event with data to all registered providers.
 func (m *MessagePublisherManager) PublishEventWithChangedFields(
-	_ context.Context, eventType datatypes.EventType, data any, changedFields []string,
+	ctx context.Context, eventType datatypes.EventType, data any, changedFields []string,
 ) {
 	event := Event{
 		ID:            uuid.Must(uuid.NewV7()),
@@ -92,7 +92,7 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(
 		slog.Debug("Event published to channel", "event_id", event.ID, "event_type", event.Type)
 	default:
 		if m.metrics != nil {
-			m.metrics.RecordEventDiscarded(event.Type.String())
+			m.metrics.RecordEventDiscarded(ctx, event.Type.String())
 		}
 
 		slog.Warn("Event channel full, event dropped", "event_id", event.ID, "event_type", event.Type)
@@ -134,7 +134,7 @@ func (m *MessagePublisherManager) startWorker() {
 		cancel()
 
 		if m.metrics != nil {
-			m.metrics.RecordFanOutDuration(time.Since(start), event.Type.String())
+			m.metrics.RecordFanOutDuration(ctx, time.Since(start), event.Type.String())
 		}
 	}
 }
