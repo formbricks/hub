@@ -134,7 +134,7 @@ func (m *MessagePublisherManager) startWorker() {
 		cancel()
 
 		if m.metrics != nil {
-			m.metrics.RecordFanOutDuration(ctx, time.Since(start), event.Type.String())
+			m.metrics.RecordFanOutDuration(bgCtx, time.Since(start), event.Type.String())
 		}
 	}
 }
