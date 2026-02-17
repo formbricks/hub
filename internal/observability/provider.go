@@ -100,7 +100,7 @@ func NewTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
 
 	var opts []sdktrace.TracerProviderOption
 
-	opts = append(opts, sdktrace.WithResource(res))
+	opts = append(opts, sdktrace.WithResource(res), sdktrace.WithSampler(newSampler()))
 
 	switch cfg.OtelTracesExporter {
 	case "otlp":

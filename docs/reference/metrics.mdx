@@ -82,6 +82,8 @@ When `OTEL_TRACES_EXPORTER` is set (e.g. `otlp` or `stdout`):
 
 Span names and attributes use bounded values (e.g. `event_type`, method, route, status) to avoid high cardinality. Tracing is disabled when `OTEL_TRACES_EXPORTER` is empty or unset.
 
+**Sampling:** By default all traces are sampled. In production with high traffic, set `OTEL_TRACES_SAMPLER=parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG=0.1` (or another ratio) to reduce volume. See [Environment Variables](/reference/environment-variables#otel_traces_sampler).
+
 ---
 
 ## Trace context in logs

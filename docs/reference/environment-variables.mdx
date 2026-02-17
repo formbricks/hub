@@ -134,6 +134,29 @@ OTEL_TRACES_EXPORTER=otlp
 
 ---
 
+### `OTEL_TRACES_SAMPLER`
+
+Optional. When tracing is enabled, controls which traces are sampled. Use in production to reduce volume and cost (e.g. `parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG=0.1` for 10% sampling).
+
+**Options:**
+
+- `always_on` — Sample every trace (default behavior; high volume in production).
+- `always_off` — Sample no traces.
+- `traceidratio` — Sample a fraction of traces; set `OTEL_TRACES_SAMPLER_ARG` to a number between 0 and 1 (e.g. `0.1` for 10%).
+- `parentbased_traceidratio` — Like traceidratio but respects parent sampling decision; set `OTEL_TRACES_SAMPLER_ARG` (e.g. `0.1`).
+- `parentbased_always_on` — Same as default: sample when no parent or parent is sampled.
+- `parentbased_always_off` — Do not sample root spans; follow parent otherwise.
+
+**Default:** Empty (treated as `parentbased_always_on`)
+
+---
+
+### `OTEL_TRACES_SAMPLER_ARG`
+
+Optional. Used when `OTEL_TRACES_SAMPLER` is `traceidratio` or `parentbased_traceidratio`. A number between 0 and 1 (e.g. `0.1` for 10% of traces). Invalid or missing is treated as 1.0 (sample all).
+
+---
+
 ### `OTEL_EXPORTER_OTLP_ENDPOINT`
 
 Optional. Base URL for the OTLP exporter when `OTEL_TRACES_EXPORTER=otlp` (e.g. `https://localhost:4318`). The path `/v1/traces` is appended by the client.
