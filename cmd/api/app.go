@@ -220,7 +220,12 @@ func newHTTPServer(
 	mux.Handle("/v1/", protectedWithAuth)
 	mux.Handle("/", public)
 
-	otelOpts := []otelhttp.Option{}
+	otelOpts := []otelhttp.Option{
+		// Skip tracing and HTTP metrics for health checks to reduce noise.
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			return r.URL.Path != "/health"
+		}),
+	}
 	if meterProvider != nil {
 		otelOpts = append(otelOpts, otelhttp.WithMeterProvider(meterProvider))
 	}
