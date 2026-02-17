@@ -75,6 +75,8 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	}
 	baseArgs := p.eventToArgs(event)
 
+	var enqueued int64
+
 	for start := 0; start < len(webhooks); start += p.maxFanOut {
 		end := min(start+p.maxFanOut, len(webhooks))
 		chunk := webhooks[start:end]
@@ -98,12 +100,19 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 				"error", err,
 			)
 
+			// Record partial success so far before returning
+			if p.metrics != nil && enqueued > 0 {
+				p.metrics.RecordJobsEnqueued(ctx, event.Type.String(), enqueued)
+			}
+
 			return
 		}
+
+		enqueued += int64(len(chunk))
 	}
 
 	if p.metrics != nil {
-		p.metrics.RecordJobsEnqueued(ctx, event.Type.String(), int64(len(webhooks)))
+		p.metrics.RecordJobsEnqueued(ctx, event.Type.String(), enqueued)
 	}
 }
 
