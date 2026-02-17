@@ -96,6 +96,75 @@ LOG_LEVEL=warn   # Quiet production
 
 ---
 
+## Observability
+
+When these variables are empty or unset, the corresponding feature is disabled and a startup warning is logged (e.g. "metrics not enabled", "tracing not enabled"). See [Metrics and Observability](/reference/metrics) for full details.
+
+### `OTEL_METRICS_EXPORTER`
+
+Set to `otlp` to enable metrics via OTLP push to the same endpoint as traces (`OTEL_EXPORTER_OTLP_ENDPOINT`). Empty or unset = metrics disabled.
+
+**Example:**
+
+```bash
+OTEL_METRICS_EXPORTER=otlp
+```
+
+**Default:** Empty (metrics disabled)
+
+---
+
+### `OTEL_TRACES_EXPORTER`
+
+Set to `otlp` or `stdout` to enable distributed tracing. Empty or unset = tracing disabled. When enabled, trace context (`trace_id`, `span_id`) and `request_id` are added to structured log records when the slog handler receives a context with an active span or request ID.
+
+**Options:**
+
+- `otlp` — Export traces via OTLP (e.g. to a collector). Optionally set `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- `stdout` — Print traces to stdout (useful for local development).
+
+**Example:**
+
+```bash
+OTEL_TRACES_EXPORTER=otlp
+# OTEL_EXPORTER_OTLP_ENDPOINT=https://localhost:4318  # optional
+```
+
+**Default:** Empty (tracing disabled)
+
+---
+
+### `OTEL_TRACES_SAMPLER`
+
+Optional. When tracing is enabled, controls which traces are sampled. Use in production to reduce volume and cost (e.g. `parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG=0.1` for 10% sampling).
+
+**Options:**
+
+- `always_on` — Sample every trace (default behavior; high volume in production).
+- `always_off` — Sample no traces.
+- `traceidratio` — Sample a fraction of traces; set `OTEL_TRACES_SAMPLER_ARG` to a number between 0 and 1 (e.g. `0.1` for 10%).
+- `parentbased_traceidratio` — Like traceidratio but respects parent sampling decision; set `OTEL_TRACES_SAMPLER_ARG` (e.g. `0.1`).
+- `parentbased_always_on` — Same as default: sample when no parent or parent is sampled.
+- `parentbased_always_off` — Do not sample root spans; follow parent otherwise.
+
+**Default:** Empty (treated as `parentbased_always_on`)
+
+---
+
+### `OTEL_TRACES_SAMPLER_ARG`
+
+Optional. Used when `OTEL_TRACES_SAMPLER` is `traceidratio` or `parentbased_traceidratio`. A number between 0 and 1 (e.g. `0.1` for 10% of traces). Invalid or missing is treated as 1.0 (sample all).
+
+---
+
+### `OTEL_EXPORTER_OTLP_ENDPOINT`
+
+Optional. Base URL for the OTLP exporter when `OTEL_TRACES_EXPORTER=otlp` (e.g. `https://localhost:4318`). The path `/v1/traces` is appended by the client.
+
+**Default:** Empty (exporter uses its default, e.g. localhost:4318)
+
+---
+
 ## Complete Example: Development
 
 ```bash
@@ -112,6 +181,10 @@ PORT=8080
 
 # Logging
 LOG_LEVEL=debug
+
+# Optional: metrics and tracing
+# OTEL_METRICS_EXPORTER=otlp
+# OTEL_TRACES_EXPORTER=stdout
 ```
 
 ## Complete Example: Production
@@ -130,6 +203,11 @@ PORT=8080
 
 # Logging
 LOG_LEVEL=info
+
+# Optional: metrics and tracing (OTLP push to collector)
+# OTEL_METRICS_EXPORTER=otlp
+# OTEL_TRACES_EXPORTER=otlp
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
 ```
 
 ## Loading Environment Variables

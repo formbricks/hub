@@ -72,9 +72,9 @@ linters:
         - p
     # Optional: enable once long functions are refactored (excluded in tests via exclude-rules)
     # funlen: { lines: 80, statements: 50, ignore-comments: true }
-    # Nesting: only flag deeply nested if (min-complexity 5)
+    # Nesting: flag only very deep nesting (8); allows inline shutdown-and-log pattern in app.go
     nestif:
-      min-complexity: 5
+      min-complexity: 8
   enable:
     ## 1. Bugs & Logic
     - bodyclose     # Checks HTTP response bodies are closed

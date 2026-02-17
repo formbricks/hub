@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // WebhookDispatchInserter inserts webhook_dispatch jobs in batch (e.g. River client).
@@ -21,16 +23,22 @@ type WebhookProvider struct {
 	inserter    WebhookDispatchInserter
 	maxAttempts int
 	maxFanOut   int
+	metrics     observability.WebhookMetrics
 }
 
 // NewWebhookProvider creates a provider that lists enabled webhooks and enqueues jobs via InsertMany.
 // maxFanOut is the batch size for InsertMany (all matching webhooks are enqueued in batches of maxFanOut).
-func NewWebhookProvider(inserter WebhookDispatchInserter, repo WebhooksRepository, maxAttempts, maxFanOut int) *WebhookProvider {
+// metrics may be nil when metrics are disabled.
+func NewWebhookProvider(
+	inserter WebhookDispatchInserter, repo WebhooksRepository, maxAttempts, maxFanOut int,
+	metrics observability.WebhookMetrics,
+) *WebhookProvider {
 	return &WebhookProvider{
 		repo:        repo,
 		inserter:    inserter,
 		maxAttempts: maxAttempts,
 		maxFanOut:   maxFanOut,
+		metrics:     metrics,
 	}
 }
 
@@ -39,6 +47,10 @@ func NewWebhookProvider(inserter WebhookDispatchInserter, repo WebhooksRepositor
 func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	webhooks, err := p.repo.ListEnabledForEventType(ctx, event.Type.String())
 	if err != nil {
+		if p.metrics != nil {
+			p.metrics.RecordProviderError(ctx, "list_failed")
+		}
+
 		slog.Error("failed to list enabled webhooks for event type",
 			"event_id", event.ID,
 			"event_type", event.Type,
@@ -63,6 +75,8 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	}
 	baseArgs := p.eventToArgs(event)
 
+	var enqueued int64
+
 	for start := 0; start < len(webhooks); start += p.maxFanOut {
 		end := min(start+p.maxFanOut, len(webhooks))
 		chunk := webhooks[start:end]
@@ -76,14 +90,29 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 
 		_, err = p.inserter.InsertMany(ctx, params)
 		if err != nil {
+			if p.metrics != nil {
+				p.metrics.RecordProviderError(ctx, "enqueue_failed")
+			}
+
 			slog.Error("failed to enqueue webhook jobs",
 				"event_id", event.ID,
 				"event_type", event.Type,
 				"error", err,
 			)
 
+			// Record partial success so far before returning
+			if p.metrics != nil && enqueued > 0 {
+				p.metrics.RecordJobsEnqueued(ctx, event.Type.String(), enqueued)
+			}
+
 			return
 		}
+
+		enqueued += int64(len(chunk))
+	}
+
+	if p.metrics != nil {
+		p.metrics.RecordJobsEnqueued(ctx, event.Type.String(), enqueued)
 	}
 }
 

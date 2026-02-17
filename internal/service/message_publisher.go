@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // Event represents an event that can be published to message providers (webhooks, email, etc.)
@@ -38,16 +39,21 @@ type MessagePublisherManager struct {
 	eventChan       chan Event
 	providers       []eventPublisher
 	perEventTimeout time.Duration
+	metrics         observability.EventMetrics
 	wg              sync.WaitGroup
 }
 
 // NewMessagePublisherManager creates a new message publisher manager.
-// bufferSize is the event channel capacity; perEventTimeout limits how long processing one event across all providers may take.
-func NewMessagePublisherManager(bufferSize int, perEventTimeout time.Duration) *MessagePublisherManager {
+// bufferSize is the event channel capacity; perEventTimeout limits how long processing one event may take.
+// metrics may be nil when metrics are disabled.
+func NewMessagePublisherManager(
+	bufferSize int, perEventTimeout time.Duration, metrics observability.EventMetrics,
+) *MessagePublisherManager {
 	m := &MessagePublisherManager{
 		eventChan:       make(chan Event, bufferSize),
 		providers:       make([]eventPublisher, 0),
 		perEventTimeout: perEventTimeout,
+		metrics:         metrics,
 	}
 
 	// Start the worker in a dedicated goroutine
@@ -71,7 +77,7 @@ func (m *MessagePublisherManager) PublishEvent(ctx context.Context, eventType da
 
 // PublishEventWithChangedFields publishes an event with data to all registered providers.
 func (m *MessagePublisherManager) PublishEventWithChangedFields(
-	_ context.Context, eventType datatypes.EventType, data any, changedFields []string,
+	ctx context.Context, eventType datatypes.EventType, data any, changedFields []string,
 ) {
 	event := Event{
 		ID:            uuid.Must(uuid.NewV7()),
@@ -85,7 +91,15 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(
 	case m.eventChan <- event:
 		slog.Debug("Event published to channel", "event_id", event.ID, "event_type", event.Type)
 	default:
+		if m.metrics != nil {
+			m.metrics.RecordEventDiscarded(ctx, event.Type.String())
+		}
+
 		slog.Warn("Event channel full, event dropped", "event_id", event.ID, "event_type", event.Type)
+	}
+
+	if m.metrics != nil {
+		m.metrics.SetChannelDepth(len(m.eventChan))
 	}
 }
 
@@ -105,6 +119,11 @@ func (m *MessagePublisherManager) startWorker() {
 
 	// This loop automatically breaks when m.eventChan is closed
 	for event := range m.eventChan {
+		if m.metrics != nil {
+			m.metrics.SetChannelDepth(len(m.eventChan))
+		}
+
+		start := time.Now()
 		// Timeout per event so one stuck provider doesn't freeze the worker
 		ctx, cancel := context.WithTimeout(bgCtx, m.perEventTimeout)
 
@@ -113,5 +132,9 @@ func (m *MessagePublisherManager) startWorker() {
 		}
 
 		cancel()
+
+		if m.metrics != nil {
+			m.metrics.RecordFanOutDuration(bgCtx, time.Since(start), event.Type.String())
+		}
 	}
 }
