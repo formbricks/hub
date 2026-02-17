@@ -51,6 +51,10 @@ export default defineConfig({
                   label: "Authentication",
                   slug: "core-concepts/authentication",
                 },
+                {
+                  label: "Webhooks",
+                  slug: "core-concepts/webhooks",
+                },
               ],
             },
             {
