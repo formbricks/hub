@@ -1,15 +1,18 @@
 # =============================================================================
 # Stage 1: Build
 # =============================================================================
+# TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
 FROM golang:1.25.7-alpine AS builder
+ARG TARGETOS=linux
+ARG TARGETARCH
 
 RUN apk add --no-cache git ca-certificates
 
 WORKDIR /build
 
-# Install goose and river CLI for migrations
-RUN go install github.com/pressly/goose/v3/cmd/goose@v3.26.0 && \
-    go install github.com/riverqueue/river/cmd/river@v0.30.2
+# Install goose and river CLI for migrations (for target platform)
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/pressly/goose/v3/cmd/goose@v3.26.0 && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/riverqueue/river/cmd/river@v0.30.2
 
 # Cache dependencies
 COPY go.mod go.sum ./
@@ -17,7 +20,7 @@ RUN go mod download
 
 # Build the application
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /build/bin/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/api ./cmd/api
 
 # =============================================================================
 # Stage 2: Runtime
