@@ -5,7 +5,7 @@ import (
 	"github.com/formbricks/hub/internal/datatypes"
 )
 
-// Metric names (Prometheus / OpenTelemetry).
+// Metric names (OpenTelemetry).
 const (
 	MetricNameEventsDiscarded         = "hub_events_discarded_total"
 	MetricNameFanOutDuration          = "hub_message_publisher_fan_out_duration_seconds"
