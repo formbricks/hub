@@ -1,78 +1,96 @@
 ---
-title: Introduction
-description: Get started building your docs site with Stainless.
+title: Formbricks Hub
+description: Standalone, fully open-source Feedback Record Hub built for analytics.
 ---
 
 import { Callout, Accordion } from "@stainless-api/docs/components";
 
-Welcome to your <strong>Stainless Docs</strong> site! Your site has a few example pages pre-built, but everything in your site is configurable. In addition to auto-generated API and SDK reference pages, you can add custom prose pages like the one you're reading now.
+## What is it?
 
-## Built-in components
+Hub is an open-source, self-hostable microservice for **collecting and serving** feedback records: survey responses, NPS scores, product reviews, support feedback, and more. Built entirely in Go for performance and simplicity.
 
-Stainless components are available as imports from `@stainless-api/docs/components`. Here are a few examples along with code samples showing how to use them:
+## Why should you use Hub?
 
-### Callout
+- **High performance**: Go-powered microservice handles high write volume
+- **Analytics-ready**: Plug-and-play integrations for Apache Superset, Power BI, Tableau, Looker, Snowflake, and more
+- **Self-hostable**: Run in a single Docker container with PostgreSQL
+- **Developer-friendly**: OpenAPI spec and clean REST API
+- **Multi-tenant**: Built-in support for tenant isolation
+- **Fully open-source**: The full Hub is and will be available open-source
 
-```mdx
-import { Callout } from "@stainless-api/docs/components";
+## Why are we building the Hub?
 
-<Callout variant="info">This is an info callout.</Callout>
-```
+We, like you, are passionate about living enjoyable lives. And we, like you, live in organized, highly structured societies where organizations shape the experiences we have day-to-day: taking public transport, going to the gym, seeing the doctor, purchasing something, etc. Behind each of these experiences sits an organization that tries to provide you with the best possible experience, and more often than not, simply fails to do so.
 
-<Callout variant="note">This is a note callout.</Callout>
+We do not think they fail because they do not try hard enough or are incapable, quite the opposite: over the years, we have seen from the inside that many want to do better and try to make your life better, but they are stuck with closed, scattered systems and a lot of "we have always done it like that" and "we do not have money for that" from their bosses.
 
-### Accordion
+The Hub is a cornerstone of our work at Formbricks to help alleviate that burden and, ultimately, make your life better.
 
-```mdx
-import { Accordion } from "@stainless-api/docs/components";
+We are engineers, not consultants, and we bring open-source tooling to the table. We work closely with organizations and consultants to get them implemented and improve experiences. The past few years have been fun and challenging and we now understand one thing: 10 organizations do Experience Management in 10 different ways. It does not really work to force-feed them this new way of gathering data, that new tool to see their data in, another approach to convince your peers to now actually make decisions based on experience data. It is simply too costly to set up and too complicated to weave into existing processes and workflows.
 
-<Accordion>
-  <Accordion.Summary>Example Accordion</Accordion.Summary>
-  This is some example content inside the details element. It is hidden by
-  default and will be shown when the summary is clicked.
-</Accordion>
-```
+This is where the Hub comes in: it is free, it is simple, and, most importantly, it is built for the people who have to carry a lot of the burden around wrestling with feedback data: software engineers.
 
-<Accordion>
-  <Accordion.Summary>Example Accordion</Accordion.Summary>
-
-This is some example content inside the details element. It is hidden by default and will be shown
-when the summary is clicked.
-
-</Accordion>
-
-### Accordion.Group
-
-```mdx
-import { Accordion } from "@stainless-api/docs/components";
+## Use Cases
 
 <Accordion.Group>
-  <Accordion>
-    <Accordion.Summary>First Accordion in Group</Accordion.Summary>
-    This is some example content inside the first details element in the group.
-  </Accordion>
   <Accordion open>
-    <Accordion.Summary>Second Accordion in Group</Accordion.Summary>
-    This is some example content inside the second details element in the group.
+    <Accordion.Summary>Centralize Feedback Data</Accordion.Summary>
+    <p>
+      Collect feedback records from multiple sources into one unified data hub:
+    </p>
+    <ul>
+      <li>Survey responses from your app or website</li>
+      <li>App Store and Google Play reviews</li>
+      <li>Trustpilot and other review platforms</li>
+      <li>Support ticket feedback (Intercom, Zendesk)</li>
+      <li>Social media sentiment</li>
+    </ul>
   </Accordion>
   <Accordion>
-    <Accordion.Summary>Third Accordion in Group</Accordion.Summary>
-    This is some example content inside the third details element in the group.
+    <Accordion.Summary>Power Analytics Dashboards</Accordion.Summary>
+    <p>
+      Hub's schema is optimized for direct SQL queries and BI tool integration:
+    </p>
+    <ul>
+      <li>Connect Apache Superset for real-time dashboards</li>
+      <li>Build Power BI or Tableau reports without complex ETL</li>
+      <li>Export to Snowflake or Redshift for data warehousing</li>
+      <li>Perform time-series analysis on feedback trends</li>
+    </ul>
   </Accordion>
 </Accordion.Group>
-```
 
-<Accordion.Group>
-  <Accordion>
-    <Accordion.Summary>First Accordion in Group</Accordion.Summary>
-    This is some example content inside the first details element in the group.
-  </Accordion>
-  <Accordion open>
-    <Accordion.Summary>Second Accordion in Group</Accordion.Summary>
-    This is some example content inside the second details element in the group.
-  </Accordion>
-  <Accordion>
-    <Accordion.Summary>Third Accordion in Group</Accordion.Summary>
-    This is some example content inside the third details element in the group.
-  </Accordion>
-</Accordion.Group>
+## Coming Soon
+
+<Callout variant="note">
+  <p>We're actively working on new features:</p>
+  <ul>
+    <li>
+      <strong>AI enrichment</strong>: Automatic sentiment analysis, emotion
+      detection, and topic extraction
+    </li>
+    <li>
+      <strong>Semantic search</strong>: Find similar feedback using natural
+      language queries
+    </li>
+    <li>
+      <strong>Webhooks</strong>: Real-time notifications for feedback events
+    </li>
+    <li>
+      <strong>Connectors</strong>: Import and export data from external
+      platforms
+    </li>
+  </ul>
+</Callout>
+
+## Quick Links
+
+- [Get started](./quickstart): Set up Hub locally in minutes
+- [Learn the basics](./core-concepts/data-model): Understand Hub's data model and concepts
+- [Configuration](./reference/environment-variables): Environment variables and settings reference
+
+## Community & Support
+
+- **GitHub**: [formbricks/hub](https://github.com/formbricks/hub)
+- **Discussions**: [Ask questions and share ideas](https://github.com/formbricks/hub/discussions)
+- **Issues**: [Report bugs or request features](https://github.com/formbricks/hub/issues)

@@ -13,7 +13,7 @@ export default defineConfig({
           expandDepth: 2,
         },
       },
-      title: "hub",
+      title: "Formbricks Hub",
       customCss: ["./theme.css"],
       header: {
         layout: "stacked",
@@ -33,8 +33,25 @@ export default defineConfig({
           link: "/",
           sidebar: [
             {
-              label: "Getting started",
-              items: [""], // "" links to the index page
+              label: "Introduction",
+              slug: "",
+            },
+            {
+              label: "Quick Start Guide",
+              slug: "quickstart",
+            },
+            {
+              label: "Core concepts",
+              items: [
+                {
+                  label: "Data Model",
+                  slug: "core-concepts/data-model",
+                },
+                {
+                  label: "Authentication",
+                  slug: "core-concepts/authentication",
+                },
+              ],
             },
             {
               label: "Guides",
