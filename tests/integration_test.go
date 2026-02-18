@@ -51,7 +51,10 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	require.NoError(t, err, "Failed to load configuration")
 
 	// Initialize database connection
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL, &database.PoolConfig{
+		MaxConns: cfg.DatabaseMaxConns, MinConns: cfg.DatabaseMinConns,
+		MaxConnLifetime: cfg.DatabaseMaxConnLifetime,
+	})
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize message publisher manager for tests (no providers required)
@@ -750,7 +753,10 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL, &database.PoolConfig{
+		MaxConns: cfg.DatabaseMaxConns, MinConns: cfg.DatabaseMinConns,
+		MaxConnLifetime: cfg.DatabaseMaxConnLifetime,
+	})
 	require.NoError(t, err)
 
 	defer db.Close()
