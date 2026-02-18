@@ -161,6 +161,7 @@ deps:
 GOLANGCI_LINT_VERSION := v2.8.0
 GOVULNCHECK_VERSION := v1.1.4
 GOOSE_VERSION := v3.26.0
+RIVER_VERSION := v0.30.2
 # Use pinned path so lint uses the version from make install-tools, not PATH
 GOLANGCI_LINT ?= $(HOME)/go/bin/golangci-lint
 
@@ -169,7 +170,8 @@ install-tools:
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	go install github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
-	@echo "Tools installed (golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION), goose $(GOOSE_VERSION))"
+	go install github.com/riverqueue/river/cmd/river@$(RIVER_VERSION)
+	@echo "Tools installed (golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION), goose $(GOOSE_VERSION), river $(RIVER_VERSION))"
 
 # Format code (golangci-lint applies gofumpt + gci from .golangci.yml formatters)
 fmt:
