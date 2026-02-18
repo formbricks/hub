@@ -57,6 +57,7 @@ All Hub-specific metrics use the `hub_` prefix. Attribute values are bounded (al
 | `hub_webhook_enqueue_retries_total` | — | Total enqueue retry attempts (InsertMany failed, then slept and retried). Use with `hub_webhook_provider_errors_total{reason="enqueue_failed"}` to see retries vs final failures. |
 | `hub_cache_hits_total` | `cache` | Number of lookups that returned a cached value (`webhook_list`, `webhook_get_by_id`). Hit ratio = `rate(hub_cache_hits_total) / (rate(hub_cache_hits_total) + rate(hub_cache_misses_total))` per cache. |
 | `hub_cache_misses_total` | `cache` | Number of lookups that missed and triggered a load (`webhook_list`, `webhook_get_by_id`). |
+| `hub_request_body_too_large_total` | — | Number of requests rejected because the body exceeded `MAX_REQUEST_BODY_BYTES` (413 Request Entity Too Large). |
 
 ### Gauges
 

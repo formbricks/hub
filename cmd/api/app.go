@@ -201,7 +201,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
-	server := newHTTPServer(cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, meterProvider, tracerProvider)
+	server := newHTTPServer(cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, meterProvider, tracerProvider, metrics)
 
 	return &App{
 		cfg:            cfg,
@@ -216,7 +216,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 }
 
 // newHTTPServer builds the HTTP server and muxes (no auth on /health, API key on /v1/).
-// Handler chain: RequestID -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
+// Handler chain: RequestID -> MaxBody -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
 func newHTTPServer(
 	cfg *config.Config,
 	health *handlers.HealthHandler,
@@ -224,6 +224,7 @@ func newHTTPServer(
 	webhooks *handlers.WebhooksHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
+	metrics *observability.Metrics,
 ) *http.Server {
 	public := http.NewServeMux()
 	public.HandleFunc("GET /health", health.Check)
@@ -264,6 +265,13 @@ func newHTTPServer(
 	inner := middleware.Logging(mux)
 	handler := otelhttp.NewHandler(inner, "hub-api", otelOpts...)
 	handler = middleware.RequestID(handler)
+
+	var apiMetrics observability.APIMetrics
+	if metrics != nil {
+		apiMetrics = metrics.API
+	}
+
+	handler = middleware.MaxBody(cfg.MaxRequestBodyBytes, apiMetrics)(handler)
 
 	const (
 		readTimeout  = 15 * time.Second

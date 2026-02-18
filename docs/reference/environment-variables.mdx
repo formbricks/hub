@@ -71,6 +71,16 @@ PORT=3000  # Custom port
 
 ---
 
+## Request limits
+
+### `MAX_REQUEST_BODY_BYTES`
+
+Maximum size of the request body in bytes (global limit for all endpoints). Requests whose body exceeds this limit receive `413 Request Entity Too Large`. Helps prevent OOM and DoS from oversized payloads.
+
+**Default:** `10485760` (10 MiB)
+
+---
+
 ## Logging
 
 ### `LOG_LEVEL`
