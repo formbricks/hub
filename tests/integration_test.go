@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,17 +25,26 @@ import (
 )
 
 // defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
-// Setting it here before config.Load() ensures tests do not use a different DATABASE_URL from .env,
-// which would cause "password authentication failed" when .env points at another database.
+// If DATABASE_URL is already set (e.g. by .env when running "make tests"), it is used so tests
+// hit the same DB as local dev (e.g. hub Postgres on 5433 when POSTGRES_PORT=5433).
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+
+// getTestDatabaseURL returns DATABASE_URL from env if set, otherwise the default (for CI).
+func getTestDatabaseURL() string {
+	if u := os.Getenv("DATABASE_URL"); u != "" {
+		return u
+	}
+
+	return defaultTestDatabaseURL
+}
 
 // setupTestServer creates a test HTTP server with all routes configured.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
 
-	// Set test env before loading config so config.Load() uses test values and is not affected by .env.
+	// Set test env before loading config. Use DATABASE_URL from env when set (e.g. make tests with .env).
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	t.Setenv("DATABASE_URL", getTestDatabaseURL())
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -48,12 +58,12 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, nil)
 
 	// Webhooks
-	webhooksRepo := repository.NewWebhooksRepository(db)
+	webhooksRepo := repository.NewDBWebhooksRepository(db)
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
-	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	feedbackRecordsRepo := repository.NewDBFeedbackRecordsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
@@ -736,7 +746,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	t.Setenv("DATABASE_URL", getTestDatabaseURL())
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -745,7 +755,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	defer db.Close()
 
-	repo := repository.NewFeedbackRecordsRepository(db)
+	repo := repository.NewDBFeedbackRecordsRepository(db)
 	userID := "repo-bulk-delete-user"
 	sourceType := "formbricks"
 

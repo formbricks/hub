@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -21,10 +22,12 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
+	"github.com/formbricks/hub/pkg/cache"
 )
 
 // App holds all server dependencies and coordinates startup and shutdown.
@@ -36,64 +39,49 @@ type App struct {
 	message        *service.MessagePublisherManager
 	meterProvider  *sdkmetric.MeterProvider
 	tracerProvider *sdktrace.TracerProvider
-	eventMetrics   observability.EventMetrics
+	metrics        *observability.Metrics
 }
 
 const riverQueueDepthInterval = 15 * time.Second
 
-// setupMetrics creates meter provider, event metrics, and webhook metrics when metrics are enabled.
-// When NewMeterProvider returns nil (unsupported or disabled exporter), returns all nils (metrics disabled).
-func setupMetrics(cfg *config.Config) (
-	*sdkmetric.MeterProvider, observability.EventMetrics, observability.WebhookMetrics, error,
-) {
+// setupMetrics creates the meter provider and all hub metrics when metrics are enabled.
+// Returns (nil, nil, nil) when metrics are disabled (unsupported or disabled exporter).
+func setupMetrics(cfg *config.Config) (*sdkmetric.MeterProvider, *observability.Metrics, error) {
 	mp, err := observability.NewMeterProvider(cfg)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create meter provider: %w", err)
+		return nil, nil, fmt.Errorf("create meter provider: %w", err)
 	}
 
 	if mp == nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil
 	}
 
-	meter := mp.Meter("hub")
-
-	eventMetrics, err := observability.NewEventMetrics(meter)
+	metrics, err := observability.NewMetrics(mp.Meter("hub"))
 	if err != nil {
 		err2 := observability.ShutdownMeterProvider(context.Background(), mp)
 		if err2 != nil {
-			slog.Error("shutdown meter provider after event metrics error", "error", err2)
+			slog.Error("shutdown meter provider after metrics error", "error", err2)
 		}
 
-		return nil, nil, nil, fmt.Errorf("create event metrics: %w", err)
+		return nil, nil, fmt.Errorf("create metrics: %w", err)
 	}
 
-	webhookMetrics, err := observability.NewWebhookMetrics(meter)
-	if err != nil {
-		err2 := observability.ShutdownMeterProvider(context.Background(), mp)
-		if err2 != nil {
-			slog.Error("shutdown meter provider after webhook metrics error", "error", err2)
-		}
-
-		return nil, nil, nil, fmt.Errorf("create webhook metrics: %w", err)
-	}
-
-	return mp, eventMetrics, webhookMetrics, nil
+	return mp, metrics, nil
 }
 
 // NewApp builds and wires all components. It does not start the HTTP server or River;
 // call Run to start and block until shutdown or failure.
 func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	var (
-		err            error
-		meterProvider  *sdkmetric.MeterProvider
-		eventMetrics   observability.EventMetrics
-		webhookMetrics observability.WebhookMetrics
+		err           error
+		meterProvider *sdkmetric.MeterProvider
+		metrics       *observability.Metrics
 	)
 
 	if cfg.OtelMetricsExporter == "" {
 		slog.Warn("metrics not enabled (OTEL_METRICS_EXPORTER empty or unset)")
 	} else {
-		meterProvider, eventMetrics, webhookMetrics, err = setupMetrics(cfg)
+		meterProvider, metrics, err = setupMetrics(cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -128,9 +116,41 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		otel.SetMeterProvider(meterProvider)
 	}
 
+	var eventMetrics observability.EventMetrics
+	if metrics != nil {
+		eventMetrics = metrics.Events
+	}
+
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, eventMetrics)
 
-	webhooksRepo := repository.NewWebhooksRepository(db)
+	webhooksRepoBase := repository.NewDBWebhooksRepository(db)
+
+	webhookCacheSize := cfg.WebhookCacheSize
+
+	webhookListCache, err := cache.NewLoaderCache[string, []models.Webhook](webhookCacheSize, func(s string) string { return s })
+	if err != nil {
+		return nil, fmt.Errorf("create webhook list cache: %w", err)
+	}
+
+	webhookGetByIDCache, err := cache.NewLoaderCache[uuid.UUID, *models.Webhook](
+		webhookCacheSize,
+		func(id uuid.UUID) string { return id.String() },
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create webhook getbyid cache: %w", err)
+	}
+
+	var (
+		webhookMetrics observability.WebhookMetrics
+		cacheMetrics   observability.CacheMetrics
+	)
+
+	if metrics != nil {
+		webhookMetrics = metrics.Webhooks
+		cacheMetrics = metrics.Cache
+	}
+
+	webhooksRepo := service.NewCachingWebhooksRepository(webhooksRepoBase, webhookListCache, webhookGetByIDCache, cacheMetrics)
 	webhookSender := service.NewWebhookSenderImpl(webhooksRepo, webhookMetrics)
 	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender, webhookMetrics)
 	riverWorkers := river.NewWorkers()
@@ -160,8 +180,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		return nil, fmt.Errorf("create River client: %w", err)
 	}
 
+	webhookInserter := service.NewRetryingWebhookDispatchInserter(riverClient, service.RetryingWebhookDispatchInserterConfig{
+		MaxRetries:     cfg.WebhookEnqueueMaxRetries,
+		InitialBackoff: cfg.WebhookEnqueueInitialBackoff,
+		MaxBackoff:     cfg.WebhookEnqueueMaxBackoff,
+		Metrics:        webhookMetrics,
+	})
 	webhookProvider := service.NewWebhookProvider(
-		riverClient, webhooksRepo,
+		webhookInserter, webhooksRepo,
 		cfg.WebhookDeliveryMaxAttempts, cfg.WebhookMaxFanOutPerEvent,
 		webhookMetrics,
 	)
@@ -170,7 +196,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
-	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	feedbackRecordsRepo := repository.NewDBFeedbackRecordsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
@@ -185,7 +211,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		message:        messageManager,
 		meterProvider:  meterProvider,
 		tracerProvider: tracerProvider,
-		eventMetrics:   eventMetrics,
+		metrics:        metrics,
 	}, nil
 }
 
@@ -263,8 +289,8 @@ func (a *App) Run(ctx context.Context) error {
 	riverCtx, cancelRiver := context.WithCancel(ctx)
 	defer cancelRiver()
 
-	if a.eventMetrics != nil {
-		go runRiverQueueDepthPoller(riverCtx, a.db, a.eventMetrics)
+	if a.metrics != nil {
+		go runRiverQueueDepthPoller(riverCtx, a.db, a.metrics.Events)
 	}
 
 	go func() {

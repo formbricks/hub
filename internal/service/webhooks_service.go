@@ -14,7 +14,8 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
-// WebhooksRepository defines the interface for webhooks data access.
+// WebhooksRepository is the port for webhooks data access. Implementations:
+// - repository.DBWebhooksRepository (DB); in production wrapped by NewCachingWebhooksRepository for cache.
 type WebhooksRepository interface {
 	Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error)

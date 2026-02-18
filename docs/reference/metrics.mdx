@@ -54,6 +54,9 @@ All Hub-specific metrics use the `hub_` prefix. Attribute values are bounded (al
 | `hub_webhook_deliveries_total` | `event_type`, `status` | Total delivery outcomes by status: `success`, `retry`, `failed_final`. |
 | `hub_webhook_disabled_total` | `reason` | Total webhooks disabled (`410_gone`, `max_attempts`). |
 | `hub_webhook_dispatch_errors_total` | `reason` | Total dispatch errors (e.g. `get_webhook_failed`). |
+| `hub_webhook_enqueue_retries_total` | — | Total enqueue retry attempts (InsertMany failed, then slept and retried). Use with `hub_webhook_provider_errors_total{reason="enqueue_failed"}` to see retries vs final failures. |
+| `hub_cache_hits_total` | `cache` | Number of lookups that returned a cached value (`webhook_list`, `webhook_get_by_id`). Hit ratio = `rate(hub_cache_hits_total) / (rate(hub_cache_hits_total) + rate(hub_cache_misses_total))` per cache. |
+| `hub_cache_misses_total` | `cache` | Number of lookups that missed and triggered a load (`webhook_list`, `webhook_get_by_id`). |
 
 ### Gauges
 
@@ -102,7 +105,9 @@ These are suggested alert rules and descriptions for operators using Prometheus 
 | HTTP 5xx rate or error ratio above threshold | Critical | Investigate server errors and dependencies. |
 | `hub_webhook_deliveries_total{status="failed_final"}` rate high or success rate drops | Warning | Many webhooks are failing finally; check endpoints and disabled webhooks. |
 | `hub_webhook_provider_errors_total` or `hub_webhook_dispatch_errors_total` increases | Warning | List/enqueue or dispatch failures; check DB and River. |
+| `hub_webhook_enqueue_retries_total` rate high (optional) | Info | Enqueue is often retrying; may indicate transient DB/River load; consider tuning backoff or capacity. |
 | `hub_event_channel_depth` or `hub_river_queue_depth` persistently high | Warning | Pipeline saturation; may lead to discarded events or slow delivery. |
+| Cache hit ratio low for `webhook_list` or `webhook_get_by_id` (optional) | Info | If hit ratio drops, consider increasing `WEBHOOK_CACHE_SIZE` or investigate hot keys. |
 
 Severity and thresholds (e.g. rate, ratio) should be tuned for your environment. Use these as a starting point and adapt to your runbooks.
 

@@ -91,6 +91,7 @@ func (m *MessagePublisherManager) PublishEventWithChangedFields(
 	case m.eventChan <- event:
 		slog.Debug("Event published to channel", "event_id", event.ID, "event_type", event.Type)
 	default:
+		// At-most-once: API already returned success; dropped events are not retried.
 		if m.metrics != nil {
 			m.metrics.RecordEventDiscarded(ctx, event.Type.String())
 		}
@@ -124,7 +125,8 @@ func (m *MessagePublisherManager) startWorker() {
 		}
 
 		start := time.Now()
-		// Timeout per event so one stuck provider doesn't freeze the worker
+		// Per-event timeout is best-effort: it limits how long we block before moving to the next event.
+		// It does not cancel already-started provider work; a slow provider can still delay the loop.
 		ctx, cancel := context.WithTimeout(bgCtx, m.perEventTimeout)
 
 		for _, provider := range m.providers {

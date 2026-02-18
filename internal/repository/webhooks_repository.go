@@ -16,18 +16,20 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
-// WebhooksRepository handles data access for webhooks.
-type WebhooksRepository struct {
+// DBWebhooksRepository is the database implementation of webhook data access.
+// It satisfies service.WebhooksRepository; in production it is usually wrapped
+// by service.NewCachingWebhooksRepository for ListEnabledForEventType and GetByID.
+type DBWebhooksRepository struct {
 	db *pgxpool.Pool
 }
 
-// NewWebhooksRepository creates a new webhooks repository.
-func NewWebhooksRepository(db *pgxpool.Pool) *WebhooksRepository {
-	return &WebhooksRepository{db: db}
+// NewDBWebhooksRepository creates a new webhooks repository that reads and writes to the DB.
+func NewDBWebhooksRepository(db *pgxpool.Pool) *DBWebhooksRepository {
+	return &DBWebhooksRepository{db: db}
 }
 
 // Create inserts a new webhook.
-func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+func (r *DBWebhooksRepository) Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -73,7 +75,7 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 }
 
 // GetByID retrieves a single webhook by ID.
-func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
+func (r *DBWebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
@@ -128,7 +130,7 @@ func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (whereCla
 }
 
 // List retrieves webhooks with optional filters.
-func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
+func (r *DBWebhooksRepository) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
@@ -192,7 +194,7 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 }
 
 // Count returns the total count of webhooks matching the filters.
-func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error) {
+func (r *DBWebhooksRepository) Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error) {
 	query := `SELECT COUNT(*) FROM webhooks`
 
 	whereClause, args := buildWebhookFilterConditions(filters)
@@ -209,7 +211,7 @@ func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebh
 }
 
 // Update updates an existing webhook.
-func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+func (r *DBWebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	var (
 		updates []string
 		args    []any
@@ -320,7 +322,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 }
 
 // Delete removes a webhook.
-func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *DBWebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM webhooks WHERE id = $1`
 
 	result, err := r.db.Exec(ctx, query, id)
@@ -355,7 +357,7 @@ func parseDBEventTypes(ss []string) ([]datatypes.EventType, error) {
 }
 
 // ListEnabled retrieves all enabled webhooks.
-func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
+func (r *DBWebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
 	filters := &models.ListWebhooksFilters{
 		Enabled: func() *bool {
 			b := true
@@ -369,7 +371,7 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 
 // ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
 // Order is deterministic (ORDER BY id) so delivery behavior is consistent.
-func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
+func (r *DBWebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks

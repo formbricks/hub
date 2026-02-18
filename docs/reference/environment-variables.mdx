@@ -96,6 +96,98 @@ LOG_LEVEL=warn   # Quiet production
 
 ---
 
+## Webhooks and event pipeline
+
+These variables control the in-memory event channel, webhook delivery, and graceful shutdown. See [Event pipeline](/reference/event-pipeline) for behavior when the channel is full and River queue semantics.
+
+### `MESSAGE_PUBLISHER_QUEUE_MAX_SIZE`
+
+Event channel capacity. When full, new events are dropped (non-blocking); the API still returns success. Increase if you see `hub_events_discarded_total` increasing.
+
+**Default:** `16384`
+
+---
+
+### `MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS`
+
+Maximum time in seconds to process one event across all providers (e.g. webhook enqueue). Limits how long the single worker can block before reading the next event from the channel.
+
+**Default:** `10`
+
+---
+
+### `WEBHOOK_DELIVERY_MAX_CONCURRENT`
+
+Maximum concurrent webhook HTTP deliveries (River default queue workers).
+
+**Default:** `100`
+
+---
+
+### `WEBHOOK_DELIVERY_MAX_ATTEMPTS`
+
+Maximum River job attempts per webhook delivery before the webhook is disabled.
+
+**Default:** `3`
+
+---
+
+### `WEBHOOK_MAX_FAN_OUT_PER_EVENT`
+
+Maximum webhook jobs enqueued per event in one InsertMany batch (events with more subscribers use multiple batches).
+
+**Default:** `500`
+
+---
+
+### `WEBHOOK_ENQUEUE_MAX_RETRIES`
+
+Number of retries when enqueueing webhook jobs to River fails (e.g. transient DB error). Total attempts = 1 + this value. Each retry uses exponential backoff with jitter. Set to `0` to disable retries.
+
+**Default:** `3`
+
+---
+
+### `WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS`
+
+Initial backoff in milliseconds after the first enqueue failure. Backoff doubles each attempt, capped by `WEBHOOK_ENQUEUE_MAX_BACKOFF_MS`. Jitter is applied to avoid thundering herd. With defaults (500, 5000, 3 retries), total wait before failing is about 3.5 seconds.
+
+**Default:** `500`
+
+---
+
+### `WEBHOOK_ENQUEUE_MAX_BACKOFF_MS`
+
+Maximum backoff in milliseconds between enqueue retries.
+
+**Default:** `5000`
+
+---
+
+### `WEBHOOK_MAX_COUNT`
+
+Maximum total webhooks allowed; creation returns 403 when count reaches this limit.
+
+**Default:** `500`
+
+---
+
+### `WEBHOOK_CACHE_SIZE`
+
+Max entries for webhook caches (shared by the list-by-event-type cache and the GetByID cache). Increase if you have many event types or many webhooks and want more cache capacity.
+
+**Default:** `4096`
+
+---
+
+### `SHUTDOWN_TIMEOUT_SECONDS`
+
+Graceful shutdown timeout for the HTTP server and River. The event channel is drained before River stops.
+
+**Default:** `30`
+
+---
+
 ## Observability
 
 When these variables are empty or unset, the corresponding feature is disabled and a startup warning is logged (e.g. "metrics not enabled", "tracing not enabled"). See [Metrics and Observability](/reference/metrics) for full details.
