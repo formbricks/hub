@@ -63,7 +63,8 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, huberrors.ErrLimitExceeded) {
-			response.RespondError(w, http.StatusForbidden, "Forbidden", err.Error())
+			slog.Info("Webhook limit exceeded", "method", r.Method, "path", r.URL.Path, "error", err)
+			response.RespondError(w, http.StatusForbidden, "Forbidden", "Maximum number of webhooks reached")
 
 			return
 		}
