@@ -54,6 +54,30 @@ DATABASE_URL=postgres://user:pass@db.example.com:5432/hub_prod?sslmode=require
 
 ---
 
+### `DATABASE_MAX_CONNS`
+
+Maximum number of connections in the pool. Size the pool for your expected concurrency and DB limits.
+
+**Default:** `25`
+
+---
+
+### `DATABASE_MIN_CONNS`
+
+Minimum number of connections to keep open. Use `0` to avoid idle connections; use a small positive value to reduce latency for the first requests after idle.
+
+**Default:** `0`
+
+---
+
+### `DATABASE_MAX_CONN_LIFETIME_SECONDS`
+
+Maximum lifetime of a connection in seconds before it is closed and replaced. Helps avoid long-lived connections that may be closed by the server or network.
+
+**Default:** `3600` (1 hour)
+
+---
+
 ## Server Configuration
 
 ### `PORT`
