@@ -59,6 +59,16 @@ type Config struct {
 	WebhookEnqueueInitialBackoff time.Duration // First backoff; default 100ms.
 	WebhookEnqueueMaxBackoff     time.Duration // Max backoff; default 2s.
 
+	// Max request body size in bytes (global limit); default 10MiB. Prevents OOM and DoS from large bodies.
+	MaxRequestBodyBytes int64
+
+	// Database connection pool: max connections; default 25.
+	DatabaseMaxConns int
+	// Database connection pool: min connections to keep open; default 0.
+	DatabaseMinConns int
+	// Database connection pool: max lifetime of a connection before it is closed and replaced; default 1h.
+	DatabaseMaxConnLifetime time.Duration
+
 	// OpenTelemetry: set to "otlp" to enable metrics (OTLP push); empty = metrics disabled
 	OtelMetricsExporter string
 	// OpenTelemetry: traces exporter (e.g. "otlp", "stdout"); empty = tracing disabled.
@@ -90,6 +100,21 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return value
 }
 
+// getEnvAsInt64 retrieves an environment variable as int64 or returns a default value.
+func getEnvAsInt64(key string, defaultValue int64) int64 {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+
+	value, err := strconv.ParseInt(valueStr, 10, 64)
+	if err != nil {
+		return defaultValue
+	}
+
+	return value
+}
+
 // Load reads configuration from environment variables and returns a Config struct.
 // It automatically loads .env file if it exists.
 // Returns default values for any missing environment variables.
@@ -112,6 +137,10 @@ func Load() (*Config, error) {
 		defaultWebhookEnqueueMaxRetries        = 3
 		defaultWebhookEnqueueInitialMs         = 500 // ~3.5s total wait before fail (500ms + 1s + 2s)
 		defaultWebhookEnqueueMaxBackoffMs      = 5000
+		defaultMaxRequestBodyBytes             = 10 * 1024 * 1024 // 10 MiB
+		defaultDatabaseMaxConns                = 25
+		defaultDatabaseMinConns                = 0
+		defaultDatabaseMaxConnLifetimeSeconds  = 3600 // 1 hour
 	)
 
 	apiKey := os.Getenv("API_KEY")
@@ -179,6 +208,28 @@ func Load() (*Config, error) {
 		webhookEnqueueInitialBackoff,
 	)
 
+	maxRequestBodyBytes := getEnvAsInt64("MAX_REQUEST_BODY_BYTES", defaultMaxRequestBodyBytes)
+	if maxRequestBodyBytes <= 0 {
+		maxRequestBodyBytes = defaultMaxRequestBodyBytes
+	}
+
+	databaseMaxConns := getEnvAsInt("DATABASE_MAX_CONNS", defaultDatabaseMaxConns)
+	if databaseMaxConns <= 0 {
+		databaseMaxConns = defaultDatabaseMaxConns
+	}
+
+	databaseMinConns := getEnvAsInt("DATABASE_MIN_CONNS", defaultDatabaseMinConns)
+	if databaseMinConns < 0 {
+		databaseMinConns = defaultDatabaseMinConns
+	}
+
+	databaseMaxConnLifetimeSecs := getEnvAsInt("DATABASE_MAX_CONN_LIFETIME_SECONDS", defaultDatabaseMaxConnLifetimeSeconds)
+	if databaseMaxConnLifetimeSecs <= 0 {
+		databaseMaxConnLifetimeSecs = defaultDatabaseMaxConnLifetimeSeconds
+	}
+
+	databaseMaxConnLifetime := time.Duration(databaseMaxConnLifetimeSecs) * time.Second
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
@@ -196,6 +247,10 @@ func Load() (*Config, error) {
 		WebhookEnqueueMaxRetries:        webhookEnqueueMaxRetries,
 		WebhookEnqueueInitialBackoff:    webhookEnqueueInitialBackoff,
 		WebhookEnqueueMaxBackoff:        webhookEnqueueMaxBackoff,
+		MaxRequestBodyBytes:             maxRequestBodyBytes,
+		DatabaseMaxConns:                databaseMaxConns,
+		DatabaseMinConns:                databaseMinConns,
+		DatabaseMaxConnLifetime:         databaseMaxConnLifetime,
 
 		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
 		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),

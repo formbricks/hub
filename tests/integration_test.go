@@ -51,7 +51,10 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	require.NoError(t, err, "Failed to load configuration")
 
 	// Initialize database connection
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL, &database.PoolConfig{
+		MaxConns: cfg.DatabaseMaxConns, MinConns: cfg.DatabaseMinConns,
+		MaxConnLifetime: cfg.DatabaseMaxConnLifetime,
+	})
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize message publisher manager for tests (no providers required)
@@ -750,7 +753,10 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL, &database.PoolConfig{
+		MaxConns: cfg.DatabaseMaxConns, MinConns: cfg.DatabaseMinConns,
+		MaxConnLifetime: cfg.DatabaseMaxConnLifetime,
+	})
 	require.NoError(t, err)
 
 	defer db.Close()
@@ -837,13 +843,15 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, getResp.StatusCode)
 
-	var got models.Webhook
+	var got map[string]any
 
 	err = decodeData(getResp, &got)
 	require.NoError(t, err)
 	require.NoError(t, getResp.Body.Close())
-	assert.Equal(t, created.ID, got.ID)
-	assert.Equal(t, created.URL, got.URL)
+	assert.Equal(t, created.ID.String(), got["id"])
+	assert.Equal(t, created.URL, got["url"])
+	_, hasSigningKey := got["signing_key"]
+	assert.False(t, hasSigningKey)
 
 	// List webhooks
 	listReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/webhooks", http.NoBody)
@@ -853,13 +861,25 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, listResp.StatusCode)
 
-	var listResult models.ListWebhooksResponse
+	var listResult map[string]any
 
 	err = decodeData(listResp, &listResult)
 	require.NoError(t, err)
 	require.NoError(t, listResp.Body.Close())
-	assert.GreaterOrEqual(t, listResult.Total, int64(1))
-	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	total, hasTotal := listResult["total"].(float64)
+	require.True(t, hasTotal)
+	assert.GreaterOrEqual(t, int64(total), int64(1))
+
+	dataRaw, hasData := listResult["data"].([]any)
+	require.True(t, hasData)
+	assert.GreaterOrEqual(t, len(dataRaw), 1)
+
+	firstWebhook, hasFirstWebhook := dataRaw[0].(map[string]any)
+	require.True(t, hasFirstWebhook)
+
+	_, hasListSigningKey := firstWebhook["signing_key"]
+	assert.False(t, hasListSigningKey)
 
 	// Update webhook (including tenant_id)
 	updateBody := map[string]any{

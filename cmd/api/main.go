@@ -35,7 +35,11 @@ func run() int {
 
 	ctx := context.Background()
 
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL, &database.PoolConfig{
+		MaxConns:        cfg.DatabaseMaxConns,
+		MinConns:        cfg.DatabaseMinConns,
+		MaxConnLifetime: cfg.DatabaseMaxConnLifetime,
+	})
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 

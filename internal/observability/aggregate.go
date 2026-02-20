@@ -7,12 +7,13 @@ import (
 )
 
 // Metrics holds all hub metric collectors. When metrics are disabled, all fields are nil.
-// Components that accept an interface (EventMetrics, WebhookMetrics, CacheMetrics) can
+// Components that accept an interface (EventMetrics, WebhookMetrics, CacheMetrics, APIMetrics) can
 // receive the corresponding field; they already handle nil.
 type Metrics struct {
 	Events   EventMetrics
 	Webhooks WebhookMetrics
 	Cache    CacheMetrics
+	API      APIMetrics
 }
 
 // NewMetrics creates EventMetrics, WebhookMetrics, and CacheMetrics from the given meter.
@@ -38,9 +39,15 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("cache metrics: %w", err)
 	}
 
+	api, err := NewAPIMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("api metrics: %w", err)
+	}
+
 	return &Metrics{
 		Events:   events,
 		Webhooks: webhooks,
 		Cache:    cache,
+		API:      api,
 	}, nil
 }
