@@ -24,7 +24,7 @@ func (c *countingWebhooksRepo) Create(_ context.Context, _ *models.CreateWebhook
 	return nil, errors.New("not implemented")
 }
 
-func (c *countingWebhooksRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+func (c *countingWebhooksRepo) GetByIDInternal(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
 	c.getByIDCalls++
 	if c.getByIDErr != nil {
 		return nil, c.getByIDErr
@@ -33,7 +33,15 @@ func (c *countingWebhooksRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.
 	return c.getByIDResult, nil
 }
 
-func (c *countingWebhooksRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
+func (c *countingWebhooksRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.WebhookResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c *countingWebhooksRepo) ListInternal(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c *countingWebhooksRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.WebhookResponse, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -101,8 +109,8 @@ func TestCachingWebhooksRepository_GetByID_cached(t *testing.T) {
 	repo := NewCachingWebhooksRepository(inner, listCache, getByIDCache, nil)
 	ctx := context.Background()
 
-	_, _ = repo.GetByID(ctx, id)
-	_, _ = repo.GetByID(ctx, id)
+	_, _ = repo.GetByIDInternal(ctx, id)
+	_, _ = repo.GetByIDInternal(ctx, id)
 
 	if inner.getByIDCalls != 1 {
 		t.Errorf("GetByID calls = %d, want 1 (second call cached)", inner.getByIDCalls)

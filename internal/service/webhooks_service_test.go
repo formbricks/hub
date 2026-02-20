@@ -22,11 +22,19 @@ func (m *mockWebhooksRepo) Create(_ context.Context, _ *models.CreateWebhookRequ
 	return m.createResult, nil
 }
 
-func (m *mockWebhooksRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+func (m *mockWebhooksRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.WebhookResponse, error) {
 	return nil, nil
 }
 
-func (m *mockWebhooksRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
+func (m *mockWebhooksRepo) GetByIDInternal(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+	return nil, nil
+}
+
+func (m *mockWebhooksRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.WebhookResponse, error) {
+	return nil, nil
+}
+
+func (m *mockWebhooksRepo) ListInternal(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
 	return nil, nil
 }
 
