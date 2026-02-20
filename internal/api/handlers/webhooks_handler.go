@@ -75,7 +75,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusCreated, webhook)
+	response.RespondJSON(w, http.StatusCreated, models.ToWebhookResponse(webhook))
 }
 
 // Get handles GET /v1/webhooks/{id}.
@@ -186,7 +186,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, webhook)
+	response.RespondJSON(w, http.StatusOK, models.ToWebhookResponse(webhook))
 }
 
 // Delete handles DELETE /v1/webhooks/{id}.

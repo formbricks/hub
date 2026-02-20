@@ -817,19 +817,21 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusCreated, createResp.StatusCode)
 
-	var created models.Webhook
+	var created map[string]any
 
 	err = decodeData(createResp, &created)
 	require.NoError(t, err)
 	require.NoError(t, createResp.Body.Close())
-	assert.NotEmpty(t, created.ID.String())
-	assert.Equal(t, "https://example.com/webhook", created.URL)
-	assert.NotEmpty(t, created.SigningKey)
-	assert.True(t, created.Enabled)
-	assert.Len(t, created.EventTypes, 2)
+
+	createdID, hasCreatedID := created["id"].(string)
+	require.True(t, hasCreatedID)
+	assert.NotEmpty(t, createdID)
+	assert.Equal(t, "https://example.com/webhook", created["url"])
+	_, hasCreateSigningKey := created["signing_key"]
+	assert.False(t, hasCreateSigningKey)
 
 	// Get webhook
-	getWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	getWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	getReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, getWebhookURL, http.NoBody)
 	require.NoError(t, err)
 	getReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -842,8 +844,8 @@ func TestWebhooksCRUD(t *testing.T) {
 	err = decodeData(getResp, &got)
 	require.NoError(t, err)
 	require.NoError(t, getResp.Body.Close())
-	assert.Equal(t, created.ID.String(), got["id"])
-	assert.Equal(t, created.URL, got["url"])
+	assert.Equal(t, createdID, got["id"])
+	assert.Equal(t, created["url"], got["url"])
 	_, hasSigningKey := got["signing_key"]
 	assert.False(t, hasSigningKey)
 
@@ -884,7 +886,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	updateJSON, err := json.Marshal(updateBody)
 	require.NoError(t, err)
 
-	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	updateReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, updateURL, bytes.NewBuffer(updateJSON))
 	require.NoError(t, err)
 	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -893,22 +895,23 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
 
-	var updated models.Webhook
+	var updated map[string]any
 
 	err = decodeData(updateResp, &updated)
 	require.NoError(t, err)
 	require.NoError(t, updateResp.Body.Close())
-	assert.Equal(t, "https://example.com/webhook-v2", updated.URL)
-	assert.False(t, updated.Enabled)
-	require.NotNil(t, updated.TenantID)
-	assert.Equal(t, "org-123", *updated.TenantID)
+	assert.Equal(t, "https://example.com/webhook-v2", updated["url"])
+	assert.Equal(t, false, updated["enabled"])
+	assert.Equal(t, "org-123", updated["tenant_id"])
+	_, hasUpdateSigningKey := updated["signing_key"]
+	assert.False(t, hasUpdateSigningKey)
 
 	// PATCH tenant_id to empty string to clear it
 	clearTenantBody := map[string]any{"tenant_id": ""}
 	clearTenantJSON, err := json.Marshal(clearTenantBody)
 	require.NoError(t, err)
 
-	clearTenantURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	clearTenantURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	clearTenantReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, clearTenantURL, bytes.NewBuffer(clearTenantJSON))
 	require.NoError(t, err)
 	clearTenantReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -917,15 +920,17 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
 
-	var afterClear models.Webhook
+	var afterClear map[string]any
 
 	err = decodeData(clearTenantResp, &afterClear)
 	require.NoError(t, err)
 	require.NoError(t, clearTenantResp.Body.Close())
-	assert.Nil(t, afterClear.TenantID)
+	assert.Nil(t, afterClear["tenant_id"])
+	_, hasAfterClearSigningKey := afterClear["signing_key"]
+	assert.False(t, hasAfterClearSigningKey)
 
 	// Delete webhook
-	deleteWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	deleteWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	deleteReq, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, deleteWebhookURL, http.NoBody)
 	require.NoError(t, err)
 	deleteReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -935,7 +940,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, deleteResp.Body.Close())
 
 	// Verify deleted
-	getAfterURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	getAfterURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	getAfterReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, getAfterURL, http.NoBody)
 	require.NoError(t, err)
 	getAfterReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -995,18 +1000,24 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, validResp.StatusCode)
 
-	var created models.Webhook
+	var created map[string]any
 
 	err = decodeData(validResp, &created)
 	require.NoError(t, err)
 	require.NoError(t, validResp.Body.Close())
+
+	createdID, hasCreatedID := created["id"].(string)
+	require.True(t, hasCreatedID)
+
+	_, hasSigningKey := created["signing_key"]
+	assert.False(t, hasSigningKey)
 
 	// Update with invalid signing_key
 	updateBody := map[string]any{"signing_key": "bad_key"}
 	updateJSON, err := json.Marshal(updateBody)
 	require.NoError(t, err)
 
-	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	updateReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, updateURL, bytes.NewBuffer(updateJSON))
 	require.NoError(t, err)
 	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)

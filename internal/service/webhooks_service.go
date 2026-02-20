@@ -72,7 +72,7 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 		return nil, fmt.Errorf("create webhook: %w", err)
 	}
 
-	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, *webhook)
+	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, models.ToWebhookResponse(webhook))
 
 	return webhook, nil
 }
@@ -151,7 +151,7 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 		return nil, fmt.Errorf("update webhook: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, req.ChangedFields())
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, models.ToWebhookResponse(webhook), req.ChangedFields())
 
 	return webhook, nil
 }
