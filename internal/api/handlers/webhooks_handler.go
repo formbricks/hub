@@ -108,7 +108,7 @@ func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, webhook)
+	response.RespondJSON(w, http.StatusOK, models.ToWebhookResponse(webhook))
 }
 
 // List handles GET /v1/webhooks.
@@ -129,7 +129,7 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, result)
+	response.RespondJSON(w, http.StatusOK, models.ToListWebhooksPublicResponse(result))
 }
 
 // Update handles PATCH /v1/webhooks/{id}.
