@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// WebhookMetrics records webhook pipeline metrics (provider, worker, sender).
+// WebhookMetrics records webhook pipeline metrics (provider, worker, sender, enqueue retries).
 // Methods accept ctx for future exemplar support (linking metric samples to trace IDs).
 type WebhookMetrics interface {
 	RecordJobsEnqueued(ctx context.Context, eventType string, count int64)
@@ -18,6 +18,7 @@ type WebhookMetrics interface {
 	RecordWebhookDisabled(ctx context.Context, reason string)
 	RecordDispatchError(ctx context.Context, reason string)
 	RecordWebhookDeliveryDuration(ctx context.Context, duration time.Duration, eventType, status string)
+	RecordEnqueueRetry(ctx context.Context)
 }
 
 // webhookMetrics implements WebhookMetrics.
@@ -28,6 +29,7 @@ type webhookMetrics struct {
 	disabled         metric.Int64Counter
 	dispatchErrors   metric.Int64Counter
 	deliveryDuration metric.Float64Histogram
+	enqueueRetries   metric.Int64Counter
 }
 
 // NewWebhookMetrics creates WebhookMetrics. Returns (nil, nil) when meter is nil (metrics disabled).
@@ -86,6 +88,15 @@ func NewWebhookMetrics(meter metric.Meter) (WebhookMetrics, error) {
 		return nil, fmt.Errorf("create webhook delivery duration histogram: %w", err)
 	}
 
+	enqueueRetries, err := meter.Int64Counter(
+		MetricNameWebhookEnqueueRetries,
+		metric.WithDescription("Total enqueue retry attempts (InsertMany failed, sleeping then retrying)."),
+		metric.WithUnit("1"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create webhook enqueue retries counter: %w", err)
+	}
+
 	return &webhookMetrics{
 		jobsEnqueued:     jobsEnqueued,
 		providerErrors:   providerErrors,
@@ -93,7 +104,12 @@ func NewWebhookMetrics(meter metric.Meter) (WebhookMetrics, error) {
 		disabled:         disabled,
 		dispatchErrors:   dispatchErrors,
 		deliveryDuration: deliveryDuration,
+		enqueueRetries:   enqueueRetries,
 	}, nil
+}
+
+func (wm *webhookMetrics) RecordEnqueueRetry(ctx context.Context) {
+	wm.enqueueRetries.Add(ctx, 1)
 }
 
 func (wm *webhookMetrics) RecordJobsEnqueued(ctx context.Context, eventType string, count int64) {

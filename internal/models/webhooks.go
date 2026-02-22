@@ -24,6 +24,60 @@ type Webhook struct {
 	DisabledAt     *time.Time            `json:"disabled_at,omitempty"`
 }
 
+// WebhookResponse is the public read model for webhook GET/LIST endpoints.
+// It intentionally omits SigningKey to avoid exposing secrets in read responses.
+type WebhookResponse struct {
+	ID             uuid.UUID             `json:"id"`
+	URL            string                `json:"url"`
+	Enabled        bool                  `json:"enabled"`
+	TenantID       *string               `json:"tenant_id,omitempty"`
+	EventTypes     []datatypes.EventType `json:"event_types,omitempty"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+	DisabledReason *string               `json:"disabled_reason,omitempty"`
+	DisabledAt     *time.Time            `json:"disabled_at,omitempty"`
+}
+
+// ToWebhookResponse converts an internal webhook model to the public response model.
+func ToWebhookResponse(w *Webhook) *WebhookResponse {
+	if w == nil {
+		return nil
+	}
+
+	return &WebhookResponse{
+		ID:             w.ID,
+		URL:            w.URL,
+		Enabled:        w.Enabled,
+		TenantID:       w.TenantID,
+		EventTypes:     w.EventTypes,
+		CreatedAt:      w.CreatedAt,
+		UpdatedAt:      w.UpdatedAt,
+		DisabledReason: w.DisabledReason,
+		DisabledAt:     w.DisabledAt,
+	}
+}
+
+// MarshalJSON converts []datatypes.EventType to JSON string array.
+func (w *WebhookResponse) MarshalJSON() ([]byte, error) {
+	type Alias WebhookResponse
+
+	aux := &struct {
+		*Alias
+
+		EventTypes []string `json:"event_types,omitempty"`
+	}{
+		Alias: (*Alias)(w),
+	}
+	aux.EventTypes = datatypes.EventTypeStrings(w.EventTypes)
+
+	data, err := json.Marshal(aux)
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook response: %w", err)
+	}
+
+	return data, nil
+}
+
 // MarshalJSON converts []datatypes.EventType to JSON string array.
 func (w *Webhook) MarshalJSON() ([]byte, error) {
 	type Alias Webhook
@@ -207,4 +261,31 @@ type ListWebhooksResponse struct {
 	Total  int64     `json:"total"`
 	Limit  int       `json:"limit"`
 	Offset int       `json:"offset"`
+}
+
+// ListWebhooksPublicResponse is the public list response that omits webhook secrets.
+type ListWebhooksPublicResponse struct {
+	Data   []WebhookResponse `json:"data"`
+	Total  int64             `json:"total"`
+	Limit  int               `json:"limit"`
+	Offset int               `json:"offset"`
+}
+
+// ToListWebhooksPublicResponse converts the internal list model to the public response model.
+func ToListWebhooksPublicResponse(r *ListWebhooksResponse) *ListWebhooksPublicResponse {
+	if r == nil {
+		return nil
+	}
+
+	data := make([]WebhookResponse, 0, len(r.Data))
+	for _, webhook := range r.Data {
+		data = append(data, *ToWebhookResponse(&webhook))
+	}
+
+	return &ListWebhooksPublicResponse{
+		Data:   data,
+		Total:  r.Total,
+		Limit:  r.Limit,
+		Offset: r.Offset,
+	}
 }

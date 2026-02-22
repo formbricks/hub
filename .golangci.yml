@@ -54,7 +54,7 @@ linters:
           form: snake
           validate: snake
           river: snake
-    # Ignore common Go idioms (handlers w/r, id, db, test tt, etc.)
+    # Ignore common Go idioms (handlers w/r, id, db, test tt, cache c, etc.)
     varnamelen:
       ignore-names:
         - id
@@ -70,6 +70,9 @@ linters:
         - i
         - ss
         - p
+        - c
+        - v
+        - wg
     # Optional: enable once long functions are refactored (excluded in tests via exclude-rules)
     # funlen: { lines: 80, statements: 50, ignore-comments: true }
     # Nesting: flag only very deep nesting (8); allows inline shutdown-and-log pattern in app.go
@@ -195,6 +198,10 @@ issues:
         - exhaustive    # test switch on types often intentionally partial
         - lll           # test URLs and mock signatures are often long
         - err113        # mocks and test helpers use dynamic errors
+        - wsl_v5        # test setup often uses tight statement grouping
+        - nlreturn      # test assertions don't need newline before return
+        - varnamelen    # c, v, wg are idiomatic in short test functions
+        - revive        # unused params and short names ok in test mocks
     # Integration tests (long URLs, request setup)
     - path: tests/
       linters:

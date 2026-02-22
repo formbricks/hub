@@ -17,6 +17,9 @@ const (
 	MetricNameWebhookDisabled         = "hub_webhook_disabled_total"
 	MetricNameWebhookDispatchErrors   = "hub_webhook_dispatch_errors_total"
 	MetricNameWebhookDeliveryDuration = "hub_webhook_delivery_duration_seconds"
+	MetricNameWebhookEnqueueRetries   = "hub_webhook_enqueue_retries_total"
+	MetricNameCacheHits               = "hub_cache_hits_total"
+	MetricNameCacheMisses             = "hub_cache_misses_total"
 )
 
 // Attribute keys.
@@ -55,6 +58,12 @@ var allowedDispatchReasons = map[string]bool{
 	"get_webhook_failed": true,
 }
 
+// allowedCacheNames for hub_cache_hits_total / hub_cache_misses_total (bounded cardinality).
+var allowedCacheNames = map[string]bool{
+	"webhook_list":      true,
+	"webhook_get_by_id": true,
+}
+
 // AllowedProviderReason returns true if reason is an allowed provider error reason.
 func AllowedProviderReason(reason string) bool { return allowedProviderReasons[reason] }
 
@@ -66,6 +75,18 @@ func AllowedDisabledReason(reason string) bool { return allowedDisabledReasons[r
 
 // AllowedDispatchReason returns true if reason is an allowed dispatch error reason.
 func AllowedDispatchReason(reason string) bool { return allowedDispatchReasons[reason] }
+
+// AllowedCacheName returns true if name is an allowed cache name for metrics.
+func AllowedCacheName(name string) bool { return allowedCacheNames[name] }
+
+// NormalizeCacheName returns name if allowed, otherwise "other".
+func NormalizeCacheName(name string) string {
+	if AllowedCacheName(name) {
+		return name
+	}
+
+	return "other"
+}
 
 // NormalizeEventType returns eventType if allowed, otherwise "unknown".
 func NormalizeEventType(eventType string) string {

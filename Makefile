@@ -27,10 +27,11 @@ help:
 	@echo "  make clean            - Clean build artifacts"
 	@echo "  make schemathesis     - Run Schemathesis API tests (requires API server running)"
 
-# Run all tests (integration tests in tests/ directory)
+# Run all tests (integration tests in tests/ directory).
+# Loads .env if present so DATABASE_URL matches local Postgres (e.g. port 5433).
 tests:
 	@echo "Running integration tests..."
-	go test ./tests/... -v
+	@if [ -f .env ]; then export $$(grep -v '^#' .env | xargs); fi && go test ./tests/... -v
 
 # Run unit tests (fast, no database required)
 test-unit:

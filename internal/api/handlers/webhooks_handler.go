@@ -18,8 +18,10 @@ import (
 // WebhooksService defines the interface for webhooks business logic.
 type WebhooksService interface {
 	CreateWebhook(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error)
-	GetWebhook(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
-	ListWebhooks(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksResponse, error)
+	GetWebhook(ctx context.Context, id uuid.UUID) (*models.WebhookResponse, error)
+	ListWebhooks(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksPublicResponse, error)
+	GetWebhookInternal(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
+	ListWebhooksInternal(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksResponse, error)
 	UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
 	DeleteWebhook(ctx context.Context, id uuid.UUID) error
 }
@@ -63,7 +65,8 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, huberrors.ErrLimitExceeded) {
-			response.RespondError(w, http.StatusForbidden, "Forbidden", err.Error())
+			slog.Info("Webhook limit exceeded", "method", r.Method, "path", r.URL.Path, "error", err)
+			response.RespondError(w, http.StatusForbidden, "Forbidden", "Maximum number of webhooks reached")
 
 			return
 		}
@@ -74,7 +77,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusCreated, webhook)
+	response.RespondJSON(w, http.StatusCreated, models.ToWebhookResponse(webhook))
 }
 
 // Get handles GET /v1/webhooks/{id}.
@@ -185,7 +188,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, webhook)
+	response.RespondJSON(w, http.StatusOK, models.ToWebhookResponse(webhook))
 }
 
 // Delete handles DELETE /v1/webhooks/{id}.

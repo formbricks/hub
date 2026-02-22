@@ -3,6 +3,7 @@
 ## Project Structure & Module Organization
 - `cmd/api/` holds the API server (package `main`: `main.go`, `app.go`). Build/run the package, e.g. `go run ./cmd/api` or `make run`.
 - `internal/` contains core application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, and `config`.
+- **Repository pattern**: Data-access interfaces (e.g. `WebhooksRepository`) are defined in `service` (consumer). The DB implementation lives in `repository` (e.g. `DBWebhooksRepository`). Optional decorators (e.g. caching) live in `service` and wrap the interface; wiring is done in `cmd/api/app.go`. This keeps dependencies inward (service → interface) and makes “one DB implementation, optional cache wrapper” explicit.
 - `pkg/` provides shared utilities (currently `pkg/database`).
 - `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.
 - `tests/` contains integration tests.

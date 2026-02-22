@@ -28,11 +28,19 @@ func (m *mockSenderRepo) Create(_ context.Context, _ *models.CreateWebhookReques
 	return nil, nil
 }
 
-func (m *mockSenderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+func (m *mockSenderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.WebhookResponse, error) {
 	return nil, nil
 }
 
-func (m *mockSenderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
+func (m *mockSenderRepo) GetByIDInternal(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+	return nil, nil
+}
+
+func (m *mockSenderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.WebhookResponse, error) {
+	return nil, nil
+}
+
+func (m *mockSenderRepo) ListInternal(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
 	return nil, nil
 }
 

@@ -39,7 +39,7 @@ type Config struct {
 	// Webhook max fan-out per event (max jobs enqueued per event); default 500
 	WebhookMaxFanOutPerEvent int
 
-	// Message publisher: event channel buffer size; default 1024
+	// Message publisher: event channel buffer size; default 16384
 	MessagePublisherBufferSize int
 
 	// Message publisher: per-event timeout (max time to process one event across all providers); default 10s
@@ -50,6 +50,14 @@ type Config struct {
 
 	// Max total webhooks allowed (creation rejected when count >= this); default 500
 	WebhookMaxCount int
+
+	// Webhook cache max entries (shared by list-by-event-type and GetByID caches); default 4096
+	WebhookCacheSize int
+
+	// Webhook enqueue: retries when InsertMany fails (transient River/DB errors).
+	WebhookEnqueueMaxRetries     int           // Number of retries after first attempt; default 3.
+	WebhookEnqueueInitialBackoff time.Duration // First backoff; default 100ms.
+	WebhookEnqueueMaxBackoff     time.Duration // Max backoff; default 2s.
 
 	// OpenTelemetry: set to "otlp" to enable metrics (OTLP push); empty = metrics disabled
 	OtelMetricsExporter string
@@ -100,6 +108,10 @@ func Load() (*Config, error) {
 		defaultMessagePublisherPerEventTimeout = 10
 		defaultShutdownTimeoutSeconds          = 30
 		defaultWebhookMaxCount                 = 500
+		defaultWebhookCacheSize                = 4096
+		defaultWebhookEnqueueMaxRetries        = 3
+		defaultWebhookEnqueueInitialMs         = 500 // ~3.5s total wait before fail (500ms + 1s + 2s)
+		defaultWebhookEnqueueMaxBackoffMs      = 5000
 	)
 
 	apiKey := os.Getenv("API_KEY")
@@ -142,6 +154,31 @@ func Load() (*Config, error) {
 		return nil, ErrWebhookMaxCount
 	}
 
+	webhookCacheSize := getEnvAsInt("WEBHOOK_CACHE_SIZE", defaultWebhookCacheSize)
+	if webhookCacheSize <= 0 {
+		webhookCacheSize = defaultWebhookCacheSize
+	}
+
+	webhookEnqueueMaxRetries := getEnvAsInt("WEBHOOK_ENQUEUE_MAX_RETRIES", defaultWebhookEnqueueMaxRetries)
+	if webhookEnqueueMaxRetries < 0 {
+		webhookEnqueueMaxRetries = defaultWebhookEnqueueMaxRetries
+	}
+
+	webhookEnqueueInitialBackoff := time.Duration(
+		getEnvAsInt("WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS", defaultWebhookEnqueueInitialMs),
+	) * time.Millisecond
+	if webhookEnqueueInitialBackoff <= 0 {
+		webhookEnqueueInitialBackoff = defaultWebhookEnqueueInitialMs * time.Millisecond
+	}
+
+	webhookEnqueueMaxBackoffMs := getEnvAsInt(
+		"WEBHOOK_ENQUEUE_MAX_BACKOFF_MS", defaultWebhookEnqueueMaxBackoffMs,
+	)
+	webhookEnqueueMaxBackoff := max(
+		time.Duration(webhookEnqueueMaxBackoffMs)*time.Millisecond,
+		webhookEnqueueInitialBackoff,
+	)
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
@@ -155,6 +192,10 @@ func Load() (*Config, error) {
 		MessagePublisherPerEventTimeout: time.Duration(perEventTimeoutSecs) * time.Second,
 		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
 		WebhookMaxCount:                 webhookMaxCount,
+		WebhookCacheSize:                webhookCacheSize,
+		WebhookEnqueueMaxRetries:        webhookEnqueueMaxRetries,
+		WebhookEnqueueInitialBackoff:    webhookEnqueueInitialBackoff,
+		WebhookEnqueueMaxBackoff:        webhookEnqueueMaxBackoff,
 
 		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
 		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),

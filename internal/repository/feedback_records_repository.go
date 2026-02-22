@@ -16,18 +16,19 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
-// FeedbackRecordsRepository handles data access for feedback records.
-type FeedbackRecordsRepository struct {
+// DBFeedbackRecordsRepository is the database implementation of feedback-records data access.
+// It satisfies service.FeedbackRecordsRepository.
+type DBFeedbackRecordsRepository struct {
 	db *pgxpool.Pool
 }
 
-// NewFeedbackRecordsRepository creates a new feedback records repository.
-func NewFeedbackRecordsRepository(db *pgxpool.Pool) *FeedbackRecordsRepository {
-	return &FeedbackRecordsRepository{db: db}
+// NewDBFeedbackRecordsRepository creates a new feedback records repository that reads and writes to the DB.
+func NewDBFeedbackRecordsRepository(db *pgxpool.Pool) *DBFeedbackRecordsRepository {
+	return &DBFeedbackRecordsRepository{db: db}
 }
 
 // Create inserts a new feedback record.
-func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+func (r *DBFeedbackRecordsRepository) Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
 	collectedAt := time.Now()
 	if req.CollectedAt != nil {
 		collectedAt = *req.CollectedAt
@@ -70,7 +71,7 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 }
 
 // GetByID retrieves a single feedback record by ID.
-func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
+func (r *DBFeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
@@ -169,7 +170,9 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 }
 
 // List retrieves feedback records with optional filters.
-func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
+func (r *DBFeedbackRecordsRepository) List(
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
+) ([]models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
@@ -231,7 +234,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 }
 
 // Count returns the total count of feedback records matching the filters.
-func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error) {
+func (r *DBFeedbackRecordsRepository) Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error) {
 	query := `SELECT COUNT(*) FROM feedback_records`
 
 	whereClause, args := buildFilterConditions(filters)
@@ -324,7 +327,7 @@ func buildUpdateQuery(
 
 // Update updates an existing feedback record
 // Only value fields, metadata, language, and user_identifier can be updated.
-func (r *FeedbackRecordsRepository) Update(
+func (r *DBFeedbackRecordsRepository) Update(
 	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, error) {
 	query, args, hasUpdates := buildUpdateQuery(req, id, time.Now())
@@ -353,7 +356,7 @@ func (r *FeedbackRecordsRepository) Update(
 }
 
 // Delete removes a feedback record.
-func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *DBFeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM feedback_records WHERE id = $1`
 
 	result, err := r.db.Exec(ctx, query, id)
@@ -370,7 +373,7 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 
 // BulkDelete deletes all feedback records matching user_identifier and optional tenant_id.
 // It returns the deleted IDs (via RETURNING id) so callers can e.g. publish events.
-func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error) {
+func (r *DBFeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error) {
 	query := `
 		DELETE FROM feedback_records
 		WHERE user_identifier = $1`

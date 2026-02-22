@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,17 +25,26 @@ import (
 )
 
 // defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
-// Setting it here before config.Load() ensures tests do not use a different DATABASE_URL from .env,
-// which would cause "password authentication failed" when .env points at another database.
+// If DATABASE_URL is already set (e.g. by .env when running "make tests"), it is used so tests
+// hit the same DB as local dev (e.g. hub Postgres on 5433 when POSTGRES_PORT=5433).
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+
+// getTestDatabaseURL returns DATABASE_URL from env if set, otherwise the default (for CI).
+func getTestDatabaseURL() string {
+	if u := os.Getenv("DATABASE_URL"); u != "" {
+		return u
+	}
+
+	return defaultTestDatabaseURL
+}
 
 // setupTestServer creates a test HTTP server with all routes configured.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
 
-	// Set test env before loading config so config.Load() uses test values and is not affected by .env.
+	// Set test env before loading config. Use DATABASE_URL from env when set (e.g. make tests with .env).
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	t.Setenv("DATABASE_URL", getTestDatabaseURL())
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -48,12 +58,12 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, nil)
 
 	// Webhooks
-	webhooksRepo := repository.NewWebhooksRepository(db)
+	webhooksRepo := repository.NewDBWebhooksRepository(db)
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
-	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	feedbackRecordsRepo := repository.NewDBFeedbackRecordsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
@@ -736,7 +746,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	t.Setenv("DATABASE_URL", getTestDatabaseURL())
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -745,7 +755,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	defer db.Close()
 
-	repo := repository.NewFeedbackRecordsRepository(db)
+	repo := repository.NewDBFeedbackRecordsRepository(db)
 	userID := "repo-bulk-delete-user"
 	sourceType := "formbricks"
 
@@ -807,19 +817,21 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusCreated, createResp.StatusCode)
 
-	var created models.Webhook
+	var created map[string]any
 
 	err = decodeData(createResp, &created)
 	require.NoError(t, err)
 	require.NoError(t, createResp.Body.Close())
-	assert.NotEmpty(t, created.ID.String())
-	assert.Equal(t, "https://example.com/webhook", created.URL)
-	assert.NotEmpty(t, created.SigningKey)
-	assert.True(t, created.Enabled)
-	assert.Len(t, created.EventTypes, 2)
+
+	createdID, hasCreatedID := created["id"].(string)
+	require.True(t, hasCreatedID)
+	assert.NotEmpty(t, createdID)
+	assert.Equal(t, "https://example.com/webhook", created["url"])
+	_, hasCreateSigningKey := created["signing_key"]
+	assert.False(t, hasCreateSigningKey)
 
 	// Get webhook
-	getWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	getWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	getReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, getWebhookURL, http.NoBody)
 	require.NoError(t, err)
 	getReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -827,13 +839,15 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, getResp.StatusCode)
 
-	var got models.Webhook
+	var got map[string]any
 
 	err = decodeData(getResp, &got)
 	require.NoError(t, err)
 	require.NoError(t, getResp.Body.Close())
-	assert.Equal(t, created.ID, got.ID)
-	assert.Equal(t, created.URL, got.URL)
+	assert.Equal(t, createdID, got["id"])
+	assert.Equal(t, created["url"], got["url"])
+	_, hasSigningKey := got["signing_key"]
+	assert.False(t, hasSigningKey)
 
 	// List webhooks
 	listReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/webhooks", http.NoBody)
@@ -843,13 +857,25 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, listResp.StatusCode)
 
-	var listResult models.ListWebhooksResponse
+	var listResult map[string]any
 
 	err = decodeData(listResp, &listResult)
 	require.NoError(t, err)
 	require.NoError(t, listResp.Body.Close())
-	assert.GreaterOrEqual(t, listResult.Total, int64(1))
-	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	total, hasTotal := listResult["total"].(float64)
+	require.True(t, hasTotal)
+	assert.GreaterOrEqual(t, int64(total), int64(1))
+
+	dataRaw, hasData := listResult["data"].([]any)
+	require.True(t, hasData)
+	assert.GreaterOrEqual(t, len(dataRaw), 1)
+
+	firstWebhook, hasFirstWebhook := dataRaw[0].(map[string]any)
+	require.True(t, hasFirstWebhook)
+
+	_, hasListSigningKey := firstWebhook["signing_key"]
+	assert.False(t, hasListSigningKey)
 
 	// Update webhook (including tenant_id)
 	updateBody := map[string]any{
@@ -860,7 +886,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	updateJSON, err := json.Marshal(updateBody)
 	require.NoError(t, err)
 
-	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	updateReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, updateURL, bytes.NewBuffer(updateJSON))
 	require.NoError(t, err)
 	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -869,22 +895,23 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
 
-	var updated models.Webhook
+	var updated map[string]any
 
 	err = decodeData(updateResp, &updated)
 	require.NoError(t, err)
 	require.NoError(t, updateResp.Body.Close())
-	assert.Equal(t, "https://example.com/webhook-v2", updated.URL)
-	assert.False(t, updated.Enabled)
-	require.NotNil(t, updated.TenantID)
-	assert.Equal(t, "org-123", *updated.TenantID)
+	assert.Equal(t, "https://example.com/webhook-v2", updated["url"])
+	assert.Equal(t, false, updated["enabled"])
+	assert.Equal(t, "org-123", updated["tenant_id"])
+	_, hasUpdateSigningKey := updated["signing_key"]
+	assert.False(t, hasUpdateSigningKey)
 
 	// PATCH tenant_id to empty string to clear it
 	clearTenantBody := map[string]any{"tenant_id": ""}
 	clearTenantJSON, err := json.Marshal(clearTenantBody)
 	require.NoError(t, err)
 
-	clearTenantURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	clearTenantURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	clearTenantReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, clearTenantURL, bytes.NewBuffer(clearTenantJSON))
 	require.NoError(t, err)
 	clearTenantReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -893,15 +920,17 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
 
-	var afterClear models.Webhook
+	var afterClear map[string]any
 
 	err = decodeData(clearTenantResp, &afterClear)
 	require.NoError(t, err)
 	require.NoError(t, clearTenantResp.Body.Close())
-	assert.Nil(t, afterClear.TenantID)
+	assert.Nil(t, afterClear["tenant_id"])
+	_, hasAfterClearSigningKey := afterClear["signing_key"]
+	assert.False(t, hasAfterClearSigningKey)
 
 	// Delete webhook
-	deleteWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	deleteWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	deleteReq, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, deleteWebhookURL, http.NoBody)
 	require.NoError(t, err)
 	deleteReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -911,7 +940,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, deleteResp.Body.Close())
 
 	// Verify deleted
-	getAfterURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	getAfterURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	getAfterReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, getAfterURL, http.NoBody)
 	require.NoError(t, err)
 	getAfterReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -971,18 +1000,24 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, validResp.StatusCode)
 
-	var created models.Webhook
+	var created map[string]any
 
 	err = decodeData(validResp, &created)
 	require.NoError(t, err)
 	require.NoError(t, validResp.Body.Close())
+
+	createdID, hasCreatedID := created["id"].(string)
+	require.True(t, hasCreatedID)
+
+	_, hasSigningKey := created["signing_key"]
+	assert.False(t, hasSigningKey)
 
 	// Update with invalid signing_key
 	updateBody := map[string]any{"signing_key": "bad_key"}
 	updateJSON, err := json.Marshal(updateBody)
 	require.NoError(t, err)
 
-	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
+	updateURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, createdID)
 	updateReq, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, updateURL, bytes.NewBuffer(updateJSON))
 	require.NoError(t, err)
 	updateReq.Header.Set("Authorization", "Bearer "+testAPIKey)

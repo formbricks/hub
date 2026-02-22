@@ -56,11 +56,19 @@ func (m *mockProviderRepo) Create(_ context.Context, _ *models.CreateWebhookRequ
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+func (m *mockProviderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.WebhookResponse, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
+func (m *mockProviderRepo) GetByIDInternal(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockProviderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.WebhookResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockProviderRepo) ListInternal(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
 	return nil, errors.New("not implemented")
 }
 

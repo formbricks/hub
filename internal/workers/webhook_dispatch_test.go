@@ -20,7 +20,7 @@ type mockDispatchRepo struct {
 	update  *models.UpdateWebhookRequest
 }
 
-func (m *mockDispatchRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+func (m *mockDispatchRepo) GetByIDInternal(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
 	return m.webhook, m.err
 }
 

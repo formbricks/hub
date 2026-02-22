@@ -15,7 +15,8 @@ import (
 // ErrUserIdentifierRequired is returned when bulk delete is called without user_identifier (err113).
 var ErrUserIdentifierRequired = errors.New("user_identifier is required")
 
-// FeedbackRecordsRepository defines the interface for feedback records data access.
+// FeedbackRecordsRepository is the port for feedback records data access.
+// Implementation: repository.DBFeedbackRecordsRepository.
 type FeedbackRecordsRepository interface {
 	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)

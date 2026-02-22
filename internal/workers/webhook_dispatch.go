@@ -26,7 +26,7 @@ type WebhookDispatchWorker struct {
 
 // webhookDispatchRepo is the minimal repo interface needed by the worker.
 type webhookDispatchRepo interface {
-	GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
+	GetByIDInternal(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
 }
 
@@ -51,7 +51,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	args := job.Args
 	start := time.Now()
 
-	webhook, err := w.repo.GetByID(ctx, args.WebhookID)
+	webhook, err := w.repo.GetByIDInternal(ctx, args.WebhookID)
 	if err != nil {
 		if w.metrics != nil {
 			w.metrics.RecordDispatchError(ctx, "get_webhook_failed")
