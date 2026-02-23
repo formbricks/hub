@@ -52,9 +52,9 @@ func (r *cachingWebhooksRepo) Create(ctx context.Context, req *models.CreateWebh
 	return w, nil
 }
 
-func (r *cachingWebhooksRepo) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
+func (r *cachingWebhooksRepo) GetByIDInternal(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
 	if r.metrics != nil {
-		w, hit, err := r.getByIDCache.GetWithStats(ctx, id, r.inner.GetByID)
+		w, hit, err := r.getByIDCache.GetWithStats(ctx, id, r.inner.GetByIDInternal)
 		if err != nil {
 			return nil, fmt.Errorf("get webhook by id: %w", err)
 		}
@@ -68,7 +68,7 @@ func (r *cachingWebhooksRepo) GetByID(ctx context.Context, id uuid.UUID) (*model
 		return w, nil
 	}
 
-	w, err := r.getByIDCache.Get(ctx, id, r.inner.GetByID)
+	w, err := r.getByIDCache.Get(ctx, id, r.inner.GetByIDInternal)
 	if err != nil {
 		return nil, fmt.Errorf("get webhook by id: %w", err)
 	}
@@ -76,10 +76,30 @@ func (r *cachingWebhooksRepo) GetByID(ctx context.Context, id uuid.UUID) (*model
 	return w, nil
 }
 
-func (r *cachingWebhooksRepo) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
-	webhooks, err := r.inner.List(ctx, filters)
+func (r *cachingWebhooksRepo) GetByID(ctx context.Context, id uuid.UUID) (*models.WebhookResponse, error) {
+	webhook, err := r.inner.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get public webhook by id: %w", err)
+	}
+
+	return webhook, nil
+}
+
+func (r *cachingWebhooksRepo) ListInternal(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
+	webhooks, err := r.inner.ListInternal(ctx, filters)
 	if err != nil {
 		return nil, fmt.Errorf("list webhooks: %w", err)
+	}
+
+	return webhooks, nil
+}
+
+func (r *cachingWebhooksRepo) List(
+	ctx context.Context, filters *models.ListWebhooksFilters,
+) ([]models.WebhookResponse, error) {
+	webhooks, err := r.inner.List(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("list public webhooks: %w", err)
 	}
 
 	return webhooks, nil

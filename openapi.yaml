@@ -1049,7 +1049,8 @@ components:
                     example: "https://example.com/hub-events"
                 signing_key:
                     type: string
-                    description: Optional. If omitted, a key is auto-generated (whsec_...). Used to sign payloads (Standard Webhooks). When provided, max 255 characters; NULL bytes not allowed.
+                    description: Optional. If omitted, a key is auto-generated (whsec_...). Used to sign payloads (Standard Webhooks). This field is write-only and never returned in API responses. When provided, max 255 characters; NULL bytes not allowed.
+                    writeOnly: true
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                 enabled:
@@ -1108,7 +1109,8 @@ components:
                     pattern: '^[^\x00]*$'
                 signing_key:
                     type: string
-                    description: New signing key. NULL bytes not allowed.
+                    description: New signing key. This field is write-only and never returned in API responses. NULL bytes not allowed.
+                    writeOnly: true
                     minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
@@ -1137,9 +1139,6 @@ components:
                 url:
                     type: string
                     description: URL that receives webhook POSTs
-                signing_key:
-                    type: string
-                    description: Key used to sign payloads (Standard Webhooks)
                 enabled:
                     type: boolean
                     description: Whether the webhook is active
@@ -1171,7 +1170,6 @@ components:
             required:
                 - id
                 - url
-                - signing_key
                 - enabled
                 - created_at
                 - updated_at

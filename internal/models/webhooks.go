@@ -58,6 +58,27 @@ func ToWebhookResponse(w *Webhook) *WebhookResponse {
 }
 
 // MarshalJSON converts []datatypes.EventType to JSON string array.
+func (w *WebhookResponse) MarshalJSON() ([]byte, error) {
+	type Alias WebhookResponse
+
+	aux := &struct {
+		*Alias
+
+		EventTypes []string `json:"event_types,omitempty"`
+	}{
+		Alias: (*Alias)(w),
+	}
+	aux.EventTypes = datatypes.EventTypeStrings(w.EventTypes)
+
+	data, err := json.Marshal(aux)
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook response: %w", err)
+	}
+
+	return data, nil
+}
+
+// MarshalJSON converts []datatypes.EventType to JSON string array.
 func (w *Webhook) MarshalJSON() ([]byte, error) {
 	type Alias Webhook
 

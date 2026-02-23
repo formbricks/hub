@@ -18,8 +18,10 @@ import (
 // - repository.DBWebhooksRepository (DB); in production wrapped by NewCachingWebhooksRepository for cache.
 type WebhooksRepository interface {
 	Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error)
-	GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
-	List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*models.WebhookResponse, error)
+	GetByIDInternal(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
+	List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.WebhookResponse, error)
+	ListInternal(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error)
 	Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -72,7 +74,7 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 		return nil, fmt.Errorf("create webhook: %w", err)
 	}
 
-	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, *webhook)
+	s.publisher.PublishEvent(ctx, datatypes.WebhookCreated, models.ToWebhookResponse(webhook))
 
 	return webhook, nil
 }
@@ -104,9 +106,9 @@ func generateSigningKey() (string, error) {
 	return "whsec_" + base64.StdEncoding.EncodeToString(key), nil
 }
 
-// GetWebhook retrieves a single webhook by ID.
-func (s *WebhooksService) GetWebhook(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
-	webhook, err := s.repo.GetByID(ctx, id)
+// GetWebhookInternal retrieves a single webhook by ID including internal fields.
+func (s *WebhooksService) GetWebhookInternal(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
+	webhook, err := s.repo.GetByIDInternal(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get webhook: %w", err)
 	}
@@ -114,13 +116,25 @@ func (s *WebhooksService) GetWebhook(ctx context.Context, id uuid.UUID) (*models
 	return webhook, nil
 }
 
-// ListWebhooks retrieves a list of webhooks with optional filters.
-func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksResponse, error) {
+// GetWebhook retrieves a single webhook by ID for public API responses.
+func (s *WebhooksService) GetWebhook(ctx context.Context, id uuid.UUID) (*models.WebhookResponse, error) {
+	webhook, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get webhook public: %w", err)
+	}
+
+	return webhook, nil
+}
+
+// ListWebhooksInternal retrieves a list of webhooks with optional filters including internal fields.
+func (s *WebhooksService) ListWebhooksInternal(
+	ctx context.Context, filters *models.ListWebhooksFilters,
+) (*models.ListWebhooksResponse, error) {
 	if filters.Limit <= 0 {
 		filters.Limit = 100
 	}
 
-	webhooks, err := s.repo.List(ctx, filters)
+	webhooks, err := s.repo.ListInternal(ctx, filters)
 	if err != nil {
 		return nil, fmt.Errorf("list webhooks: %w", err)
 	}
@@ -131,6 +145,32 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 	}
 
 	return &models.ListWebhooksResponse{
+		Data:   webhooks,
+		Total:  total,
+		Limit:  filters.Limit,
+		Offset: filters.Offset,
+	}, nil
+}
+
+// ListWebhooks retrieves webhooks for public API responses (without secrets).
+func (s *WebhooksService) ListWebhooks(
+	ctx context.Context, filters *models.ListWebhooksFilters,
+) (*models.ListWebhooksPublicResponse, error) {
+	if filters.Limit <= 0 {
+		filters.Limit = 100
+	}
+
+	webhooks, err := s.repo.List(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("list webhooks public: %w", err)
+	}
+
+	total, err := s.repo.Count(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("count webhooks: %w", err)
+	}
+
+	return &models.ListWebhooksPublicResponse{
 		Data:   webhooks,
 		Total:  total,
 		Limit:  filters.Limit,
@@ -151,7 +191,7 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 		return nil, fmt.Errorf("update webhook: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, req.ChangedFields())
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, models.ToWebhookResponse(webhook), req.ChangedFields())
 
 	return webhook, nil
 }

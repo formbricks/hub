@@ -18,8 +18,10 @@ import (
 // WebhooksService defines the interface for webhooks business logic.
 type WebhooksService interface {
 	CreateWebhook(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error)
-	GetWebhook(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
-	ListWebhooks(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksResponse, error)
+	GetWebhook(ctx context.Context, id uuid.UUID) (*models.WebhookResponse, error)
+	ListWebhooks(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksPublicResponse, error)
+	GetWebhookInternal(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
+	ListWebhooksInternal(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksResponse, error)
 	UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
 	DeleteWebhook(ctx context.Context, id uuid.UUID) error
 }
@@ -75,7 +77,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusCreated, webhook)
+	response.RespondJSON(w, http.StatusCreated, models.ToWebhookResponse(webhook))
 }
 
 // Get handles GET /v1/webhooks/{id}.
@@ -108,7 +110,7 @@ func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, models.ToWebhookResponse(webhook))
+	response.RespondJSON(w, http.StatusOK, webhook)
 }
 
 // List handles GET /v1/webhooks.
@@ -129,7 +131,7 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, models.ToListWebhooksPublicResponse(result))
+	response.RespondJSON(w, http.StatusOK, result)
 }
 
 // Update handles PATCH /v1/webhooks/{id}.
@@ -186,7 +188,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, webhook)
+	response.RespondJSON(w, http.StatusOK, models.ToWebhookResponse(webhook))
 }
 
 // Delete handles DELETE /v1/webhooks/{id}.
