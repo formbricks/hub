@@ -354,6 +354,118 @@ func TestListFeedbackRecords(t *testing.T) {
 	})
 }
 
+func TestFeedbackRecordsSubmissionID(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+	subID := "550e8400-e29b-41d4-a716-446655440000"
+	tenantID := "tenant-submission-test"
+
+	// Create two records with same submission_id (multi-field submission)
+	createPayload := func(fieldID string, value any) map[string]any {
+		p := map[string]any{
+			"source_type":   "formbricks",
+			"submission_id": subID,
+			"tenant_id":     tenantID,
+			"field_id":      fieldID,
+			"field_type":    "text",
+		}
+		if v, ok := value.(string); ok {
+			p["value_text"] = v
+		}
+
+		return p
+	}
+
+	for _, item := range []struct {
+		fieldID string
+		value   string
+	}{
+		{"reason", "cancelled"},
+		{"comment", "Too expensive"},
+	} {
+		body, err := json.Marshal(createPayload(item.fieldID, item.value))
+		require.NoError(t, err)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	// List by submission_id
+	t.Run("List by submission_id", func(t *testing.T) {
+		listURL := server.URL + "/v1/feedback-records?submission_id=" + subID + "&tenant_id=" + tenantID
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, listURL, http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var result models.ListFeedbackRecordsResponse
+
+		err = decodeData(resp, &result)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		assert.GreaterOrEqual(t, len(result.Data), 2)
+
+		for _, rec := range result.Data {
+			require.NotNil(t, rec.SubmissionID)
+			assert.Equal(t, subID, *rec.SubmissionID)
+			require.NotNil(t, rec.TenantID)
+			assert.Equal(t, tenantID, *rec.TenantID)
+		}
+	})
+}
+
+func TestFeedbackRecordsSubmissionIDUniqueConstraint(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+	subID := "unique-constraint-sub-id"
+	tenantID := "tenant-unique"
+	fieldID := "reason"
+
+	reqBody := map[string]any{
+		"source_type":   "formbricks",
+		"submission_id": subID,
+		"tenant_id":     tenantID,
+		"field_id":      fieldID,
+		"field_type":    "text",
+		"value_text":    "first",
+	}
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	// Duplicate (same tenant_id, submission_id, field_id) must return 409
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := client.Do(req2)
+	require.NoError(t, err)
+
+	defer func() { _ = resp2.Body.Close() }()
+
+	assert.Equal(t, http.StatusConflict, resp2.StatusCode)
+}
+
 func TestGetFeedbackRecord(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()

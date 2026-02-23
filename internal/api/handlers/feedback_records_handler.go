@@ -64,6 +64,12 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
+		if errors.Is(err, huberrors.ErrConflict) {
+			response.RespondConflict(w, err.Error())
+
+			return
+		}
+
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return
