@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 
+	pgxvec "github.com/pgvector/pgvector-go/pgx"
+
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/pkg/database"
 )
@@ -35,7 +37,7 @@ func run() int {
 
 	ctx := context.Background()
 
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL, database.WithAfterConnect(pgxvec.RegisterTypes))
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 

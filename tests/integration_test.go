@@ -54,7 +54,13 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
+	feedbackRecordsService := service.NewFeedbackRecordsService(
+		feedbackRecordsRepo,
+		messageManager,
+		nil,
+		"",
+		0,
+	)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 

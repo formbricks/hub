@@ -1001,6 +1001,12 @@ components:
                     type: string
                     description: Text response. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                embedding:
+                    type: array
+                    description: Embedding vector (when embeddings are enabled). Omitted when null.
+                    items:
+                        type: number
+                        format: float
             required:
                 - id
                 - collected_at

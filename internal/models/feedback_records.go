@@ -102,6 +102,7 @@ type FeedbackRecord struct {
 	Language        *string         `json:"language,omitempty"`
 	UserIdentifier  *string         `json:"user_identifier,omitempty"`
 	TenantID        *string         `json:"tenant_id,omitempty"`
+	Embedding       []float32       `json:"embedding,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.

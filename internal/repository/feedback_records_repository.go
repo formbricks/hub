@@ -10,7 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgvector/pgvector-go"
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
@@ -76,12 +78,14 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id
+			metadata, language, user_identifier, tenant_id, embedding
 		FROM feedback_records
 		WHERE id = $1
 	`
 
 	var record models.FeedbackRecord
+
+	var emb pgvector.Vector
 
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
@@ -89,6 +93,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
+		&emb,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -96,6 +101,10 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		}
 
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
+	}
+
+	if s := emb.Slice(); len(s) > 0 {
+		record.Embedding = s
 	}
 
 	return &record, nil
@@ -175,7 +184,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id
+			metadata, language, user_identifier, tenant_id, embedding
 		FROM feedback_records
 	`
 
@@ -209,15 +218,22 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	for rows.Next() {
 		var record models.FeedbackRecord
 
+		var emb pgvector.Vector
+
 		err := rows.Scan(
 			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 			&record.SourceType, &record.SourceID, &record.SourceName,
 			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
+			&emb,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
+		}
+
+		if s := emb.Slice(); len(s) > 0 {
+			record.Embedding = s
 		}
 
 		records = append(records, record)
@@ -316,7 +332,7 @@ func buildUpdateQuery(
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id
+			metadata, language, user_identifier, tenant_id, embedding
 	`, strings.Join(updates, ", "), argCount)
 
 	return query, args, true
@@ -334,12 +350,15 @@ func (r *FeedbackRecordsRepository) Update(
 
 	var record models.FeedbackRecord
 
+	var emb pgvector.Vector
+
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
+		&emb,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -349,7 +368,75 @@ func (r *FeedbackRecordsRepository) Update(
 		return nil, fmt.Errorf("failed to update feedback record: %w", err)
 	}
 
+	if s := emb.Slice(); len(s) > 0 {
+		record.Embedding = s
+	}
+
 	return &record, nil
+}
+
+// UpdateEmbedding sets the embedding vector for a feedback record. Pass nil to clear the embedding (set to NULL).
+func (r *FeedbackRecordsRepository) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
+	var result pgconn.CommandTag
+
+	var err error
+
+	if embedding == nil {
+		result, err = r.db.Exec(ctx,
+			`UPDATE feedback_records SET embedding = NULL, updated_at = $1 WHERE id = $2`,
+			time.Now(), id,
+		)
+	} else {
+		vec := pgvector.NewVector(embedding)
+
+		result, err = r.db.Exec(ctx,
+			`UPDATE feedback_records SET embedding = $1, updated_at = $2 WHERE id = $3`,
+			vec, time.Now(), id,
+		)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to update feedback record embedding: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+	}
+
+	return nil
+}
+
+// ListIDsForEmbeddingBackfill returns IDs of feedback records that have non-empty value_text and null embedding.
+func (r *FeedbackRecordsRepository) ListIDsForEmbeddingBackfill(ctx context.Context) ([]uuid.UUID, error) {
+	query := `
+		SELECT id FROM feedback_records
+		WHERE embedding IS NULL
+		  AND value_text IS NOT NULL
+		  AND trim(value_text) != ''
+	`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list ids for embedding backfill: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan feedback record id: %w", err)
+		}
+
+		ids = append(ids, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating embedding backfill ids: %w", err)
+	}
+
+	return ids, nil
 }
 
 // Delete removes a feedback record.

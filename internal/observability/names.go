@@ -17,6 +17,13 @@ const (
 	MetricNameWebhookDisabled         = "hub_webhook_disabled_total"
 	MetricNameWebhookDispatchErrors   = "hub_webhook_dispatch_errors_total"
 	MetricNameWebhookDeliveryDuration = "hub_webhook_delivery_duration_seconds"
+
+	// MetricNameEmbeddingJobsEnqueued and related embedding pipeline metrics.
+	MetricNameEmbeddingJobsEnqueued   = "hub_embedding_jobs_enqueued_total"
+	MetricNameEmbeddingProviderErrors = "hub_embedding_provider_errors_total"
+	MetricNameEmbeddingOutcomes       = "hub_embedding_outcomes_total"
+	MetricNameEmbeddingWorkerErrors   = "hub_embedding_worker_errors_total"
+	MetricNameEmbeddingDuration       = "hub_embedding_duration_seconds"
 )
 
 // Attribute keys.
@@ -54,6 +61,40 @@ var allowedDisabledReasons = map[string]bool{
 var allowedDispatchReasons = map[string]bool{
 	"get_webhook_failed": true,
 }
+
+// allowedEmbeddingProviderReasons for hub_embedding_provider_errors_total.
+var allowedEmbeddingProviderReasons = map[string]bool{
+	"enqueue_failed": true,
+	"invalid_data":   true,
+}
+
+// allowedEmbeddingOutcomeStatuses for hub_embedding_outcomes_total and hub_embedding_duration_seconds.
+var allowedEmbeddingOutcomeStatuses = map[string]bool{
+	"success":      true,
+	"retry":        true,
+	"failed_final": true,
+	"skipped":      true,
+}
+
+// allowedEmbeddingWorkerReasons for hub_embedding_worker_errors_total.
+var allowedEmbeddingWorkerReasons = map[string]bool{
+	"get_record_failed": true,
+	"openai_failed":     true,
+	"update_failed":     true,
+}
+
+// AllowedEmbeddingProviderReason returns true if reason is allowed for embedding provider errors.
+func AllowedEmbeddingProviderReason(reason string) bool {
+	return allowedEmbeddingProviderReasons[reason]
+}
+
+// AllowedEmbeddingOutcomeStatus returns true if status is allowed for embedding outcomes.
+func AllowedEmbeddingOutcomeStatus(status string) bool {
+	return allowedEmbeddingOutcomeStatuses[status]
+}
+
+// AllowedEmbeddingWorkerReason returns true if reason is allowed for embedding worker errors.
+func AllowedEmbeddingWorkerReason(reason string) bool { return allowedEmbeddingWorkerReasons[reason] }
 
 // AllowedProviderReason returns true if reason is an allowed provider error reason.
 func AllowedProviderReason(reason string) bool { return allowedProviderReasons[reason] }
