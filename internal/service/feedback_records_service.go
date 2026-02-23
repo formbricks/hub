@@ -71,7 +71,7 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(
 		return nil, fmt.Errorf("create feedback record: %w", err)
 	}
 
-	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, *record)
+	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, record)
 
 	return record, nil
 }
@@ -122,7 +122,7 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, *record, req.ChangedFields())
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, req.ChangedFields())
 
 	return record, nil
 }

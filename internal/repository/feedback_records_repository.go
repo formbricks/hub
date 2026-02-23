@@ -18,6 +18,41 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+// errEmbeddingScanInvalidType is returned when Scan receives a type other than []byte.
+var errEmbeddingScanInvalidType = errors.New("embedding: expected []byte")
+
+// nullableEmbedding scans a vector column that may be NULL without panicking (pgvector.Vector.Scan panics on empty/NULL).
+type nullableEmbedding []float32
+
+func (n *nullableEmbedding) Scan(src any) error {
+	if src == nil {
+		*n = nil
+
+		return nil
+	}
+
+	buf, ok := src.([]byte)
+	if !ok {
+		return fmt.Errorf("%w: got %T", errEmbeddingScanInvalidType, src)
+	}
+
+	if len(buf) == 0 {
+		*n = nil
+
+		return nil
+	}
+
+	var vec pgvector.Vector
+
+	if err := vec.DecodeBinary(buf); err != nil {
+		return fmt.Errorf("embedding decode: %w", err)
+	}
+
+	*n = vec.Slice()
+
+	return nil
+}
+
 // FeedbackRecordsRepository handles data access for feedback records.
 type FeedbackRecordsRepository struct {
 	db *pgxpool.Pool
@@ -85,7 +120,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 
 	var record models.FeedbackRecord
 
-	var emb pgvector.Vector
+	var emb nullableEmbedding
 
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
@@ -103,9 +138,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
 	}
 
-	if s := emb.Slice(); len(s) > 0 {
-		record.Embedding = s
-	}
+	record.Embedding = emb
 
 	return &record, nil
 }
@@ -218,7 +251,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	for rows.Next() {
 		var record models.FeedbackRecord
 
-		var emb pgvector.Vector
+		var emb nullableEmbedding
 
 		err := rows.Scan(
 			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
@@ -232,9 +265,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
 		}
 
-		if s := emb.Slice(); len(s) > 0 {
-			record.Embedding = s
-		}
+		record.Embedding = emb
 
 		records = append(records, record)
 	}
@@ -350,7 +381,7 @@ func (r *FeedbackRecordsRepository) Update(
 
 	var record models.FeedbackRecord
 
-	var emb pgvector.Vector
+	var emb nullableEmbedding
 
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
@@ -368,9 +399,7 @@ func (r *FeedbackRecordsRepository) Update(
 		return nil, fmt.Errorf("failed to update feedback record: %w", err)
 	}
 
-	if s := emb.Slice(); len(s) > 0 {
-		record.Embedding = s
-	}
+	record.Embedding = emb
 
 	return &record, nil
 }

@@ -53,7 +53,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	if event.Type == datatypes.FeedbackRecordUpdated {
 		if !contains(event.ChangedFields, "value_text") {
-			slog.Debug("embedding provider: skipping updated event, value_text not in changed fields",
+			slog.Debug("embedding: skip, value_text not in changed fields",
 				"event_id", event.ID,
 				"feedback_record_id", recordIDFromEventData(event.Data),
 			)
@@ -66,7 +66,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	record, ok := event.Data.(*models.FeedbackRecord)
 	if !ok {
-		slog.Debug("embedding provider: event data is not *FeedbackRecord", "event_id", event.ID)
+		slog.Debug("embedding: skip, event data is not *FeedbackRecord", "event_id", event.ID)
 
 		return
 	}
@@ -74,7 +74,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	// On create, only enqueue when there is embeddable text. On update we enqueue regardless so the worker can clear.
 	if event.Type == datatypes.FeedbackRecordCreated &&
 		(record.ValueText == nil || strings.TrimSpace(*record.ValueText) == "") {
-		slog.Debug("embedding provider: no embeddable value_text on create", "feedback_record_id", record.ID)
+		slog.Debug("embedding: skip, no value_text on create", "feedback_record_id", record.ID)
 
 		return
 	}
@@ -91,7 +91,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 			p.metrics.RecordProviderError(ctx, "enqueue_failed")
 		}
 
-		slog.Error("embedding provider: failed to enqueue job",
+		slog.Error("embedding: enqueue failed",
 			"event_id", event.ID,
 			"feedback_record_id", record.ID,
 			"error", err,
@@ -99,6 +99,11 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 		return
 	}
+
+	slog.Info("embedding: job enqueued",
+		"event_id", event.ID,
+		"feedback_record_id", record.ID,
+	)
 
 	if p.metrics != nil {
 		p.metrics.RecordJobsEnqueued(ctx, 1)

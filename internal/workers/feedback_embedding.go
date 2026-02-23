@@ -66,7 +66,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
 		}
 
-		slog.Error("feedback embedding: get record failed",
+		slog.Error("embedding: get record failed",
 			"feedback_record_id", args.FeedbackRecordID,
 			"error", err,
 		)
@@ -100,7 +100,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 		}
 
 		if isLastAttempt {
-			slog.Error("feedback embedding: openai failed (final attempt)",
+			slog.Error("embedding: openai failed (final attempt)",
 				"feedback_record_id", args.FeedbackRecordID,
 				"error", err,
 			)
@@ -119,13 +119,17 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
 		}
 
-		slog.Error("feedback embedding: set embedding failed",
+		slog.Error("embedding: set embedding failed",
 			"feedback_record_id", args.FeedbackRecordID,
 			"error", err,
 		)
 
 		return fmt.Errorf("set feedback record embedding: %w", err)
 	}
+
+	slog.Info("embedding: stored",
+		"feedback_record_id", args.FeedbackRecordID,
+	)
 
 	if w.metrics != nil {
 		w.metrics.RecordEmbeddingOutcome(ctx, "success")
@@ -151,7 +155,7 @@ func (w *FeedbackEmbeddingWorker) handleEmptyText(
 				w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
 			}
 
-			slog.Error("feedback embedding: clear embedding failed",
+			slog.Error("embedding: clear failed",
 				"feedback_record_id", feedbackRecordID,
 				"error", err,
 			)
@@ -164,7 +168,9 @@ func (w *FeedbackEmbeddingWorker) handleEmptyText(
 			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "success")
 		}
 
-		slog.Debug("feedback embedding: cleared embedding for empty value_text", "feedback_record_id", feedbackRecordID)
+		slog.Info("embedding: cleared (empty value_text)",
+			"feedback_record_id", feedbackRecordID,
+		)
 
 		return nil
 	}
@@ -174,7 +180,9 @@ func (w *FeedbackEmbeddingWorker) handleEmptyText(
 		w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "skipped")
 	}
 
-	slog.Debug("feedback embedding: no value_text, skipping", "feedback_record_id", feedbackRecordID)
+	slog.Info("embedding: skipped (no value_text)",
+		"feedback_record_id", feedbackRecordID,
+	)
 
 	return nil
 }
