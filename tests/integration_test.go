@@ -23,18 +23,13 @@ import (
 	"github.com/formbricks/hub/pkg/database"
 )
 
-// defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
-// Setting it here before config.Load() ensures tests do not use a different DATABASE_URL from .env,
-// which would cause "password authentication failed" when .env points at another database.
-const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
-
 // setupTestServer creates a test HTTP server with all routes configured.
+// Database URL comes from .env (DATABASE_URL) when set; otherwise config.Load() uses its default.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
 
-	// Set test env before loading config so config.Load() uses test values and is not affected by .env.
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	// DATABASE_URL: use value from .env if set (config.Load() loads .env); otherwise config default is used.
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -745,7 +740,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	// DATABASE_URL from .env or config default
 
 	cfg, err := config.Load()
 	require.NoError(t, err)

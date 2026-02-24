@@ -31,7 +31,7 @@ help:
 # Run all tests (integration tests in tests/ directory)
 tests:
 	@echo "Running integration tests..."
-	go test ./tests/... -v
+	@if [ -f .env ]; then export $$(grep -v '^#' .env | xargs) && go test ./tests/... -v; else go test ./tests/... -v; fi
 
 # Run unit tests (fast, no database required)
 test-unit:
