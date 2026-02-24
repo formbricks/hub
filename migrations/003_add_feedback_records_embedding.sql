@@ -12,5 +12,15 @@ CREATE TABLE embeddings (
   UNIQUE (feedback_record_id, model)
 );
 
+-- HNSW index for cosine similarity search (OpenAI text-embedding-3-small).
+CREATE INDEX idx_embeddings_openai ON embeddings USING hnsw (embedding vector_cosine_ops)
+WHERE model = 'text-embedding-3-small';
+
+-- HNSW index for cosine similarity search (Google gemini-embedding-001).
+CREATE INDEX idx_embeddings_google ON embeddings USING hnsw (embedding vector_cosine_ops)
+WHERE model = 'gemini-embedding-001';
+
 -- +goose Down
+DROP INDEX IF EXISTS idx_embeddings_google;
+DROP INDEX IF EXISTS idx_embeddings_openai;
 DROP TABLE IF EXISTS embeddings;
