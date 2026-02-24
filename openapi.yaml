@@ -1002,7 +1002,7 @@ components:
                     description: Type of feedback source
                 submission_id:
                     type: string
-                    description: Identifier for the logical submission this record belongs to (optional for legacy records).
+                    description: Identifier for the logical submission this record belongs to (required).
                     pattern: '^[^\x00]*$'
                 tenant_id:
                     type: string
