@@ -102,8 +102,6 @@ type FeedbackRecord struct {
 	Language        *string         `json:"language,omitempty"`
 	UserIdentifier  *string         `json:"user_identifier,omitempty"`
 	TenantID        *string         `json:"tenant_id,omitempty"`
-	// Embedding is internal (worker/store); not loaded in API reads and not exposed in responses (json:"-").
-	Embedding []float32 `json:"-"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.

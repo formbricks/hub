@@ -1,9 +1,16 @@
 -- +goose Up
--- Add embedding column for OpenAI text-embedding-3-small (1536 dimensions).
+-- Embeddings table: one row per feedback_record per model (e.g. openai text-embedding-3-small).
 -- Requires vector extension from 001_initial_schema.sql.
-ALTER TABLE feedback_records
-  ADD COLUMN embedding vector(1536);
+-- ON DELETE CASCADE: embeddings are deleted when the referenced feedback record is deleted.
+CREATE TABLE embeddings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  feedback_record_id UUID NOT NULL REFERENCES feedback_records(id) ON DELETE CASCADE,
+  embedding vector(1536) NOT NULL,
+  model TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (feedback_record_id, model)
+);
 
 -- +goose Down
-ALTER TABLE feedback_records
-  DROP COLUMN IF EXISTS embedding;
+DROP TABLE IF EXISTS embeddings;

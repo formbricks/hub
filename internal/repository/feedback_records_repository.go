@@ -10,9 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgvector/pgvector-go"
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
@@ -352,70 +350,6 @@ func (r *FeedbackRecordsRepository) Update(
 	}
 
 	return &record, nil
-}
-
-// UpdateEmbedding sets the embedding vector for a feedback record. Pass nil to clear the embedding (set to NULL).
-func (r *FeedbackRecordsRepository) UpdateEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error {
-	var result pgconn.CommandTag
-
-	var err error
-
-	if embedding == nil {
-		result, err = r.db.Exec(ctx,
-			`UPDATE feedback_records SET embedding = NULL, updated_at = $1 WHERE id = $2`,
-			time.Now(), id,
-		)
-	} else {
-		vec := pgvector.NewVector(embedding)
-
-		result, err = r.db.Exec(ctx,
-			`UPDATE feedback_records SET embedding = $1, updated_at = $2 WHERE id = $3`,
-			vec, time.Now(), id,
-		)
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to update feedback record embedding: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return huberrors.NewNotFoundError("feedback record", "feedback record not found")
-	}
-
-	return nil
-}
-
-// ListIDsForEmbeddingBackfill returns IDs of feedback records that have non-empty value_text and null embedding.
-func (r *FeedbackRecordsRepository) ListIDsForEmbeddingBackfill(ctx context.Context) ([]uuid.UUID, error) {
-	query := `
-		SELECT id FROM feedback_records
-		WHERE embedding IS NULL
-		  AND value_text IS NOT NULL
-		  AND trim(value_text) != ''
-	`
-
-	rows, err := r.db.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list ids for embedding backfill: %w", err)
-	}
-	defer rows.Close()
-
-	var ids []uuid.UUID
-
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan feedback record id: %w", err)
-		}
-
-		ids = append(ids, id)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating embedding backfill ids: %w", err)
-	}
-
-	return ids, nil
 }
 
 // Delete removes a feedback record.

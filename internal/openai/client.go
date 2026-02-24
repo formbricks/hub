@@ -23,12 +23,16 @@ var (
 	ErrDimensionMismatch = errors.New("openai: embedding dimension mismatch")
 )
 
-const defaultDimension = 1536
+const (
+	defaultDimension = 1536
+	defaultModel     = "text-embedding-3-small"
+)
 
 // Client calls the OpenAI embeddings API via the official SDK.
 type Client struct {
 	sdk        openaisdk.Client
 	dimensions int
+	model      string
 }
 
 // ClientOption configures the Client.
@@ -41,11 +45,19 @@ func WithDimensions(dim int) ClientOption {
 	}
 }
 
+// WithModel sets the embedding model name (e.g. text-embedding-3-small). Empty uses default.
+func WithModel(model string) ClientOption {
+	return func(c *Client) {
+		c.model = model
+	}
+}
+
 // NewClient creates an OpenAI embeddings client using the official SDK.
 func NewClient(apiKey string, opts ...ClientOption) *Client {
 	client := &Client{
 		sdk:        openaisdk.NewClient(option.WithAPIKey(apiKey)),
 		dimensions: defaultDimension,
+		model:      defaultModel,
 	}
 
 	for _, opt := range opts {
@@ -55,7 +67,7 @@ func NewClient(apiKey string, opts ...ClientOption) *Client {
 	return client
 }
 
-// CreateEmbedding returns the embedding vector for the given text using text-embedding-3-small.
+// CreateEmbedding returns the embedding vector for the given text using the configured model.
 // The returned slice length equals the configured dimensions.
 func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {
 	input = strings.TrimSpace(input)
@@ -67,11 +79,16 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		return nil, ErrInvalidDims
 	}
 
+	model := c.model
+	if model == "" {
+		model = defaultModel
+	}
+
 	resp, err := c.sdk.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
 		Input: openaisdk.EmbeddingNewParamsInputUnion{
 			OfString: param.NewOpt(input),
 		},
-		Model:      openaisdk.EmbeddingModelTextEmbedding3Small,
+		Model:      model,
 		Dimensions: param.NewOpt(int64(c.dimensions)),
 	})
 	if err != nil {

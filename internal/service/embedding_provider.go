@@ -22,16 +22,19 @@ import (
 type EmbeddingProvider struct {
 	inserter    FeedbackEmbeddingInserter
 	apiKey      string
+	model       string
 	queueName   string
 	maxAttempts int
 	metrics     observability.EmbeddingMetrics
 }
 
 // NewEmbeddingProvider creates a provider that enqueues feedback_embedding jobs.
+// model is the embedding model name (e.g. text-embedding-3-small) from EMBEDDING_MODEL.
 // metrics may be nil when metrics are disabled.
 func NewEmbeddingProvider(
 	inserter FeedbackEmbeddingInserter,
 	apiKey string,
+	model string,
 	queueName string,
 	maxAttempts int,
 	metrics observability.EmbeddingMetrics,
@@ -39,6 +42,7 @@ func NewEmbeddingProvider(
 	return &EmbeddingProvider{
 		inserter:    inserter,
 		apiKey:      apiKey,
+		model:       model,
 		queueName:   queueName,
 		maxAttempts: maxAttempts,
 		metrics:     metrics,
@@ -48,11 +52,8 @@ func NewEmbeddingProvider(
 // PublishEvent enqueues a feedback_embedding job when the event is FeedbackRecordCreated (with non-empty value_text)
 // or FeedbackRecordUpdated (with value_text in ChangedFields). On update, the job is enqueued even when value_text
 // is now empty so the worker can clear the embedding for text fields.
+// API key may be empty; some providers (e.g. local AI) work without a key.
 func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
-	if p.apiKey == "" {
-		return
-	}
-
 	if event.Type == datatypes.FeedbackRecordUpdated {
 		if !contains(event.ChangedFields, "value_text") {
 			slog.Debug("embedding: skip, value_text not in changed fields",
@@ -91,6 +92,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	_, err := p.inserter.Insert(ctx, FeedbackEmbeddingArgs{
 		FeedbackRecordID: record.ID,
+		Model:            p.model,
 		ValueTextHash:    valueTextHash,
 	}, opts)
 	if err != nil {

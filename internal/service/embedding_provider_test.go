@@ -51,7 +51,7 @@ func ptrString(s string) *string {
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "sk-test", "text-embedding-3-small", "embeddings", 3, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	valueText := "Some feedback text"
@@ -70,6 +70,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
+	assert.Equal(t, "text-embedding-3-small", inserter.insertCalls[0].args.Model)
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash, "dedupe key should include input hash")
 	assert.NotNil(t, inserter.insertCalls[0].opts)
 	assert.Equal(t, "embeddings", inserter.insertCalls[0].opts.Queue)
@@ -78,7 +79,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPointer_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "sk-test", "text-embedding-3-small", "embeddings", 3, nil)
 
 	// Pass value type (as was happening before the service fix) — provider should skip and not enqueue.
 	event := Event{
@@ -99,7 +100,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPoin
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "sk-test", "text-embedding-3-small", "embeddings", 3, nil)
 
 	event := Event{
 		ID:        uuid.Must(uuid.NewV7()),
@@ -119,7 +120,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_ski
 
 func TestEmbeddingProvider_PublishEvent_noAPIKey_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "", "text-embedding-3-small", "embeddings", 3, nil)
 
 	event := Event{
 		ID:        uuid.Must(uuid.NewV7()),
@@ -139,7 +140,7 @@ func TestEmbeddingProvider_PublishEvent_noAPIKey_skips(t *testing.T) {
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "sk-test", "text-embedding-3-small", "embeddings", 3, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -158,5 +159,6 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChanged
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
+	assert.Equal(t, "text-embedding-3-small", inserter.insertCalls[0].args.Model)
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash)
 }

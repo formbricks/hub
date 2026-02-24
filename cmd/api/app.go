@@ -21,6 +21,7 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/googleai"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
@@ -40,7 +41,32 @@ type App struct {
 	metrics        *observability.Metrics
 }
 
+var errUnsupportedEmbeddingProvider = errors.New("unsupported embedding provider")
+
+const (
+	embeddingProviderOpenAI = "openai"
+	embeddingProviderGoogle = "google"
+)
+
+var supportedEmbeddingProviders = map[string]struct{}{
+	embeddingProviderOpenAI: {},
+	embeddingProviderGoogle: {},
+}
+
 const riverQueueDepthInterval = 15 * time.Second
+
+// embeddingProviderAndModel returns (provider, model) from config. If provider is not supported,
+// logs and returns ("", cfg.EmbeddingModel) so provider and worker are not registered.
+func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
+	if _, ok := supportedEmbeddingProviders[cfg.EmbeddingProvider]; ok {
+		return cfg.EmbeddingProvider, cfg.EmbeddingModel
+	}
+
+	slog.Info("embedding model has no supported provider, embedding provider and worker not registered",
+		"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
+
+	return "", cfg.EmbeddingModel
+}
 
 // setupMetrics creates meter provider and hub metrics when metrics are enabled.
 // When NewMeterProvider returns nil (unsupported or disabled exporter), returns (nil, nil, nil) (metrics disabled).
@@ -139,17 +165,42 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
+		embeddingsRepo,
+		embeddingModel,
 		messageManager,
 		nil, // riverClient set below after creation
 		service.EmbeddingsQueueName,
 		cfg.EmbeddingMaxAttempts,
 	)
 
-	if cfg.OpenAIAPIKey != "" {
-		openaiClient := openai.NewClient(cfg.OpenAIAPIKey, openai.WithDimensions(cfg.EmbeddingDimensions))
-		embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, openaiClient, embeddingMetrics)
+	if embeddingProviderName != "" {
+		var embeddingClient service.EmbeddingClient
+
+		switch embeddingProviderName {
+		case embeddingProviderOpenAI:
+			embeddingClient = openai.NewClient(cfg.EmbeddingProviderAPIKey,
+				openai.WithDimensions(cfg.EmbeddingDimensions),
+				openai.WithModel(embeddingModel),
+			)
+		case embeddingProviderGoogle:
+			googleClient, err := googleai.NewClient(context.Background(), cfg.EmbeddingProviderAPIKey,
+				googleai.WithDimensions(cfg.EmbeddingDimensions),
+				googleai.WithModel(embeddingModel),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("create google embedding client: %w", err)
+			}
+
+			embeddingClient = googleClient
+		default:
+			return nil, fmt.Errorf("%w: %s", errUnsupportedEmbeddingProvider, embeddingProviderName)
+		}
+
+		embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, embeddingMetrics)
 		river.AddWorker(riverWorkers, embeddingWorker)
 	}
 
@@ -179,6 +230,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	// without changing the type, so we pass riverClient at construction. Recreate with client.
 	feedbackRecordsService = service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
+		embeddingsRepo,
+		embeddingModel,
 		messageManager,
 		riverClient,
 		service.EmbeddingsQueueName,
@@ -192,15 +245,16 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	)
 	messageManager.RegisterProvider(webhookProvider)
 
-	if cfg.OpenAIAPIKey != "" {
-		embeddingProvider := service.NewEmbeddingProvider(
+	if embeddingProviderName != "" {
+		embeddingProv := service.NewEmbeddingProvider(
 			riverClient,
-			cfg.OpenAIAPIKey,
+			cfg.EmbeddingProviderAPIKey,
+			embeddingModel,
 			service.EmbeddingsQueueName,
 			cfg.EmbeddingMaxAttempts,
 			embeddingMetrics,
 		)
-		messageManager.RegisterProvider(embeddingProvider)
+		messageManager.RegisterProvider(embeddingProv)
 	}
 
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)

@@ -51,9 +51,13 @@ type Config struct {
 	// Max total webhooks allowed (creation rejected when count >= this); default 500
 	WebhookMaxCount int
 
-	// Embeddings: optional OpenAI API key; when set, embedding provider and worker are enabled
-	OpenAIAPIKey string
-	// Embeddings: dimension for OpenAI embeddings and DB column; default 1536
+	// Embeddings: optional API key for the embedding provider (e.g. OpenAI); when set, embedding provider and worker are enabled
+	EmbeddingProviderAPIKey string
+	// Embeddings: provider name (e.g. openai); env EMBEDDING_PROVIDER
+	EmbeddingProvider string
+	// Embeddings: model name (e.g. text-embedding-3-small); env EMBEDDING_MODEL
+	EmbeddingModel string
+	// Embeddings: dimension for embeddings and DB column; default 1536
 	EmbeddingDimensions int
 	// Embeddings: max concurrent workers for the embeddings River queue; default 5
 	EmbeddingMaxConcurrent int
@@ -183,10 +187,12 @@ func Load() (*Config, error) {
 		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
 		WebhookMaxCount:                 webhookMaxCount,
 
-		OpenAIAPIKey:           getEnv("OPENAI_API_KEY", ""),
-		EmbeddingDimensions:    embeddingDimensions,
-		EmbeddingMaxConcurrent: embeddingMaxConcurrent,
-		EmbeddingMaxAttempts:   embeddingMaxAttempts,
+		EmbeddingProviderAPIKey: getEnv("EMBEDDING_PROVIDER_API_KEY", ""),
+		EmbeddingProvider:       getEnv("EMBEDDING_PROVIDER", "openai"),
+		EmbeddingModel:          getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
+		EmbeddingDimensions:     embeddingDimensions,
+		EmbeddingMaxConcurrent:  embeddingMaxConcurrent,
+		EmbeddingMaxAttempts:    embeddingMaxAttempts,
 
 		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
 		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),

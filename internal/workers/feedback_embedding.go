@@ -15,7 +15,6 @@ import (
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
-	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/service"
 )
 
@@ -24,26 +23,26 @@ type FeedbackEmbeddingWorker struct {
 	river.WorkerDefaults[service.FeedbackEmbeddingArgs]
 
 	embeddingService feedbackEmbeddingService
-	openaiClient     *openai.Client
+	embeddingClient  service.EmbeddingClient
 	metrics          observability.EmbeddingMetrics
 }
 
 // feedbackEmbeddingService is the minimal interface needed by the worker.
 type feedbackEmbeddingService interface {
 	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
-	SetFeedbackRecordEmbedding(ctx context.Context, id uuid.UUID, embedding []float32) error
+	SetEmbedding(ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32) error
 }
 
-// NewFeedbackEmbeddingWorker creates a worker that fetches the record, calls OpenAI, and updates the embedding.
+// NewFeedbackEmbeddingWorker creates a worker that fetches the record, calls the embedding client, and stores the result.
 // metrics may be nil when metrics are disabled.
 func NewFeedbackEmbeddingWorker(
 	embeddingService feedbackEmbeddingService,
-	openaiClient *openai.Client,
+	embeddingClient service.EmbeddingClient,
 	metrics observability.EmbeddingMetrics,
 ) *FeedbackEmbeddingWorker {
 	return &FeedbackEmbeddingWorker{
 		embeddingService: embeddingService,
-		openaiClient:     openaiClient,
+		embeddingClient:  embeddingClient,
 		metrics:          metrics,
 	}
 }
@@ -87,15 +86,15 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 	}
 
 	if text == "" {
-		return w.handleEmptyText(ctx, args.FeedbackRecordID, record, start)
+		return w.handleEmptyText(ctx, args.FeedbackRecordID, args.Model, record, start)
 	}
 
-	embedding, err := w.openaiClient.CreateEmbedding(ctx, text)
+	embedding, err := w.embeddingClient.CreateEmbedding(ctx, text)
 	if err != nil {
 		isLastAttempt := job.Attempt >= job.MaxAttempts
 
 		if w.metrics != nil {
-			w.metrics.RecordWorkerError(ctx, "openai_failed")
+			w.metrics.RecordWorkerError(ctx, "embedding_api_failed")
 
 			if isLastAttempt {
 				w.metrics.RecordEmbeddingOutcome(ctx, "failed_final")
@@ -107,7 +106,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 		}
 
 		if isLastAttempt {
-			slog.Error("embedding: openai failed (final attempt)",
+			slog.Error("embedding: API failed (final attempt)",
 				"feedback_record_id", args.FeedbackRecordID,
 				"error", err,
 			)
@@ -115,10 +114,10 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 			return nil
 		}
 
-		return fmt.Errorf("openai embedding: %w", err)
+		return fmt.Errorf("embedding API: %w", err)
 	}
 
-	err = w.embeddingService.SetFeedbackRecordEmbedding(ctx, args.FeedbackRecordID, embedding)
+	err = w.embeddingService.SetEmbedding(ctx, args.FeedbackRecordID, args.Model, embedding)
 	if err != nil {
 		if w.metrics != nil {
 			w.metrics.RecordWorkerError(ctx, "update_failed")
@@ -150,11 +149,12 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 func (w *FeedbackEmbeddingWorker) handleEmptyText(
 	ctx context.Context,
 	feedbackRecordID uuid.UUID,
+	model string,
 	record *models.FeedbackRecord,
 	start time.Time,
 ) error {
 	if record.FieldType == models.FieldTypeText {
-		err := w.embeddingService.SetFeedbackRecordEmbedding(ctx, feedbackRecordID, nil)
+		err := w.embeddingService.SetEmbedding(ctx, feedbackRecordID, model, nil)
 		if err != nil {
 			if w.metrics != nil {
 				w.metrics.RecordWorkerError(ctx, "update_failed")

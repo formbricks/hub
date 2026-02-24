@@ -54,8 +54,11 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
+		embeddingsRepo,
+		"text-embedding-3-small",
 		messageManager,
 		nil,
 		"",

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,6 +18,11 @@ import (
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/pkg/database"
+)
+
+var (
+	errEmbeddingProviderRequired = errors.New("EMBEDDING_PROVIDER is required")
+	errEmbeddingModelRequired    = errors.New("EMBEDDING_MODEL is required")
 )
 
 const (
@@ -64,16 +70,27 @@ func run() int {
 		return exitFailure
 	}
 
+	embeddingProvider, embeddingModel, err := getEmbeddingProviderAndModel()
+	if err != nil {
+		slog.Error(err.Error())
+
+		return exitFailure
+	}
+
+	_ = embeddingProvider // reserved for future use (e.g. provider-specific backfill)
 	repo := repository.NewFeedbackRecordsRepository(db)
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		repo,
+		embeddingsRepo,
+		embeddingModel,
 		nil,
 		riverClient,
 		service.EmbeddingsQueueName,
 		maxAttempts,
 	)
 
-	enqueued, err := feedbackRecordsService.BackfillEmbeddings(ctx)
+	enqueued, err := feedbackRecordsService.BackfillEmbeddings(ctx, embeddingModel)
 	if err != nil {
 		slog.Error("Backfill failed", "error", err)
 
@@ -99,4 +116,18 @@ func getEnvAsInt(key string, defaultValue int) int {
 	}
 
 	return n
+}
+
+func getEmbeddingProviderAndModel() (provider, model string, err error) {
+	provider = os.Getenv("EMBEDDING_PROVIDER")
+	if provider == "" {
+		return "", "", errEmbeddingProviderRequired
+	}
+
+	model = os.Getenv("EMBEDDING_MODEL")
+	if model == "" {
+		return "", "", errEmbeddingModelRequired
+	}
+
+	return provider, model, nil
 }
