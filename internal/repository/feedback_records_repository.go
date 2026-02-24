@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/formbricks/hub/internal/huberrors"
@@ -38,14 +39,14 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 			collected_at, source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id
+			metadata, language, user_identifier, tenant_id, submission_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id
+			metadata, language, user_identifier, tenant_id, submission_id
 	`
 
 	var record models.FeedbackRecord
@@ -54,15 +55,20 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
 		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
-		req.Metadata, req.Language, req.UserIdentifier, req.TenantID,
+		req.Metadata, req.Language, req.UserIdentifier, req.TenantID, req.SubmissionID,
 	).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
+		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
+		}
+
 		return nil, fmt.Errorf("failed to create feedback record: %w", err)
 	}
 
@@ -76,7 +82,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id
+			metadata, language, user_identifier, tenant_id, submission_id
 		FROM feedback_records
 		WHERE id = $1
 	`
@@ -88,7 +94,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
+		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -111,6 +117,12 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 	if filters.TenantID != nil {
 		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", argCount))
 		args = append(args, *filters.TenantID)
+		argCount++
+	}
+
+	if filters.SubmissionID != nil {
+		conditions = append(conditions, fmt.Sprintf("submission_id = $%d", argCount))
+		args = append(args, *filters.SubmissionID)
 		argCount++
 	}
 
@@ -175,7 +187,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id
+			metadata, language, user_identifier, tenant_id, submission_id
 		FROM feedback_records
 	`
 
@@ -214,7 +226,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			&record.SourceType, &record.SourceID, &record.SourceName,
 			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
+			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
@@ -316,7 +328,7 @@ func buildUpdateQuery(
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id
+			metadata, language, user_identifier, tenant_id, submission_id
 	`, strings.Join(updates, ", "), argCount)
 
 	return query, args, true
@@ -339,7 +351,7 @@ func (r *FeedbackRecordsRepository) Update(
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
+		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

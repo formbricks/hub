@@ -8,8 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,13 +26,29 @@ import (
 	"github.com/formbricks/hub/pkg/database"
 )
 
+// defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
+// Used when DATABASE_URL is not set (e.g. CI uses job env; local can rely on .env).
+const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+
 // setupTestServer creates a test HTTP server with all routes configured.
 // Database URL comes from .env (DATABASE_URL) when set; otherwise config.Load() uses its default.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
 
+	// Load .env so DATABASE_URL (e.g. port 5433) is used when set; otherwise use default (5432).
+	// Try current dir and parent (e.g. when test cwd is tests/).
+	_ = godotenv.Load()
+	if os.Getenv("DATABASE_URL") == "" {
+		_ = godotenv.Load("../.env")
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = defaultTestDatabaseURL
+	}
+
 	t.Setenv("API_KEY", testAPIKey)
-	// DATABASE_URL: use value from .env if set (config.Load() loads .env); otherwise config default is used.
+	t.Setenv("DATABASE_URL", databaseURL)
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -138,10 +157,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test without authentication
 	t.Run("Unauthorized without API key", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -158,10 +178,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -181,10 +202,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test with empty API key in header
 	t.Run("Unauthorized with empty API key", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -204,10 +226,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test with malformed Authorization header
 	t.Run("Unauthorized with malformed Authorization header", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -224,13 +247,14 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Test with valid authentication
+	// Test with valid authentication (use unique submission_id to avoid 409 from leftover data)
 	t.Run("Success with valid API key", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": uuid.New().String(),
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -298,12 +322,13 @@ func TestListFeedbackRecords(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Create a test feedback record first
+	// Create a test feedback record first (unique submission_id per run)
 	reqBody := map[string]any{
-		"source_type":  "formbricks",
-		"field_id":     "nps_score",
-		"field_type":   "number",
-		"value_number": 9,
+		"source_type":   "formbricks",
+		"submission_id": uuid.New().String(),
+		"field_id":      "nps_score",
+		"field_type":    "number",
+		"value_number":  9,
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -358,6 +383,118 @@ func TestListFeedbackRecords(t *testing.T) {
 	})
 }
 
+func TestFeedbackRecordsSubmissionID(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+	subID := uuid.New().String() // unique per run to avoid 409 from leftover data
+	tenantID := "tenant-submission-test"
+
+	// Create two records with same submission_id (multi-field submission)
+	createPayload := func(fieldID string, value any) map[string]any {
+		p := map[string]any{
+			"source_type":   "formbricks",
+			"submission_id": subID,
+			"tenant_id":     tenantID,
+			"field_id":      fieldID,
+			"field_type":    "text",
+		}
+		if v, ok := value.(string); ok {
+			p["value_text"] = v
+		}
+
+		return p
+	}
+
+	for _, item := range []struct {
+		fieldID string
+		value   string
+	}{
+		{"reason", "cancelled"},
+		{"comment", "Too expensive"},
+	} {
+		body, err := json.Marshal(createPayload(item.fieldID, item.value))
+		require.NoError(t, err)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	// List by submission_id
+	t.Run("List by submission_id", func(t *testing.T) {
+		listURL := server.URL + "/v1/feedback-records?submission_id=" + subID + "&tenant_id=" + tenantID
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, listURL, http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var result models.ListFeedbackRecordsResponse
+
+		err = decodeData(resp, &result)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		assert.GreaterOrEqual(t, len(result.Data), 2)
+
+		for _, rec := range result.Data {
+			require.NotNil(t, rec.SubmissionID)
+			assert.Equal(t, subID, *rec.SubmissionID)
+			require.NotNil(t, rec.TenantID)
+			assert.Equal(t, tenantID, *rec.TenantID)
+		}
+	})
+}
+
+func TestFeedbackRecordsSubmissionIDUniqueConstraint(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+	subID := uuid.New().String() // unique per run so first create succeeds
+	tenantID := "tenant-unique"
+	fieldID := "reason"
+
+	reqBody := map[string]any{
+		"source_type":   "formbricks",
+		"submission_id": subID,
+		"tenant_id":     tenantID,
+		"field_id":      fieldID,
+		"field_type":    "text",
+		"value_text":    "first",
+	}
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	// Duplicate (same tenant_id, submission_id, field_id) must return 409
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := client.Do(req2)
+	require.NoError(t, err)
+
+	defer func() { _ = resp2.Body.Close() }()
+
+	assert.Equal(t, http.StatusConflict, resp2.StatusCode)
+}
+
 func TestGetFeedbackRecord(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
@@ -377,12 +514,13 @@ func TestGetFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Create a test feedback record
+	// Create a test feedback record (unique submission_id per run)
 	reqBody := map[string]any{
-		"source_type":  "formbricks",
-		"field_id":     "rating",
-		"field_type":   "number",
-		"value_number": 5,
+		"source_type":   "formbricks",
+		"submission_id": uuid.New().String(),
+		"field_id":      "rating",
+		"field_type":    "number",
+		"value_number":  5,
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -460,12 +598,13 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Create a test feedback record
+	// Create a test feedback record (unique submission_id per run)
 	reqBody := map[string]any{
-		"source_type": "formbricks",
-		"field_id":    "comment",
-		"field_type":  "text",
-		"value_text":  "Initial comment",
+		"source_type":   "formbricks",
+		"submission_id": uuid.New().String(),
+		"field_id":      "comment",
+		"field_type":    "text",
+		"value_text":    "Initial comment",
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -532,12 +671,13 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Create a test feedback record
+	// Create a test feedback record (unique submission_id per run)
 	reqBody := map[string]any{
-		"source_type": "formbricks",
-		"field_id":    "temp",
-		"field_type":  "text",
-		"value_text":  "To be deleted",
+		"source_type":   "formbricks",
+		"submission_id": uuid.New().String(),
+		"field_id":      "temp",
+		"field_type":    "text",
+		"value_text":    "To be deleted",
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -588,11 +728,13 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 
 	client := &http.Client{}
 	userID := "bulk-delete-test-user-123"
+	subID := uuid.New().String() // unique per run to avoid 409 from leftover data
 
 	// Create several feedback records with the same user_identifier
 	createPayload := func(fieldID string, valueNum float64) map[string]any {
 		return map[string]any{
 			"source_type":     "formbricks",
+			"submission_id":   subID,
 			"user_identifier": userID,
 			"field_id":        fieldID,
 			"field_type":      "number",
@@ -687,6 +829,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		} {
 			body, err := json.Marshal(map[string]any{
 				"source_type":     "formbricks",
+				"submission_id":   userIDTenant + "-" + item.fieldID,
 				"user_identifier": userIDTenant,
 				"tenant_id":       item.tenantID,
 				"field_id":        item.fieldID,
@@ -739,8 +882,15 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	ctx := context.Background()
 
+	_ = godotenv.Load()
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = defaultTestDatabaseURL
+	}
+
 	t.Setenv("API_KEY", testAPIKey)
-	// DATABASE_URL from .env or config default
+	t.Setenv("DATABASE_URL", databaseURL)
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -756,6 +906,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	// Create two records with same user_identifier
 	req1 := &models.CreateFeedbackRecordRequest{
 		SourceType:     sourceType,
+		SubmissionID:   userID,
 		FieldID:        "f1",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    ptrFloat64(1),
@@ -767,6 +918,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	req2 := &models.CreateFeedbackRecordRequest{
 		SourceType:     sourceType,
+		SubmissionID:   userID,
 		FieldID:        "f2",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    ptrFloat64(2),

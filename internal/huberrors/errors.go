@@ -106,3 +106,32 @@ func (e *LimitExceededError) Is(target error) bool {
 
 	return ok
 }
+
+// ErrConflict is the sentinel for conflict errors (e.g. duplicate tenant_id + submission_id + field_id).
+var ErrConflict = &ConflictError{}
+
+// ConflictError is a sentinel error for resource conflicts.
+type ConflictError struct {
+	Message string
+}
+
+// NewConflictError creates a ConflictError with a custom message.
+func NewConflictError(message string) *ConflictError {
+	return &ConflictError{Message: message}
+}
+
+// Error implements the error interface.
+func (e *ConflictError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+
+	return "conflict"
+}
+
+// Is implements the error interface for error comparison.
+func (e *ConflictError) Is(target error) bool {
+	_, ok := target.(*ConflictError)
+
+	return ok
+}

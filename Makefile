@@ -28,10 +28,11 @@ help:
 	@echo "  make clean            - Clean build artifacts"
 	@echo "  make schemathesis     - Run Schemathesis API tests (requires API server running)"
 
-# Run all tests (integration tests in tests/ directory)
+# Run all tests (integration tests in tests/ directory).
+# Loads .env if present so DATABASE_URL (e.g. port 5433) is used when Postgres runs on a non-default port.
 tests:
 	@echo "Running integration tests..."
-	@if [ -f .env ]; then export $$(grep -v '^#' .env | xargs) && go test ./tests/... -v; else go test ./tests/... -v; fi
+	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./tests/... -v)
 
 # Run unit tests (fast, no database required)
 test-unit:
