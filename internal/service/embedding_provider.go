@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"slices"
 	"strings"
@@ -79,13 +81,18 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
+	valueTextHash := embeddingValueTextHash(record.ValueText)
+
 	opts := &river.InsertOpts{
 		Queue:       p.queueName,
 		MaxAttempts: p.maxAttempts,
 		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: uniqueByPeriodEmbedding},
 	}
 
-	_, err := p.inserter.Insert(ctx, FeedbackEmbeddingArgs{FeedbackRecordID: record.ID}, opts)
+	_, err := p.inserter.Insert(ctx, FeedbackEmbeddingArgs{
+		FeedbackRecordID: record.ID,
+		ValueTextHash:    valueTextHash,
+	}, opts)
 	if err != nil {
 		if p.metrics != nil {
 			p.metrics.RecordProviderError(ctx, "enqueue_failed")
@@ -120,4 +127,21 @@ func recordIDFromEventData(data any) uuid.UUID {
 	}
 
 	return uuid.Nil
+}
+
+// embeddingValueTextHash returns a hash of the input for dedupe (same content => same job within window).
+// Empty or nil value_text returns "empty".
+func embeddingValueTextHash(valueText *string) string {
+	if valueText == nil {
+		return "empty"
+	}
+
+	trimmed := strings.TrimSpace(*valueText)
+	if trimmed == "" {
+		return "empty"
+	}
+
+	sum := sha256.Sum256([]byte(trimmed))
+
+	return hex.EncodeToString(sum[:])
 }

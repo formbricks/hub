@@ -189,7 +189,10 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context) (int, e
 	enqueued := 0
 
 	for _, id := range ids {
-		_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{FeedbackRecordID: id}, opts)
+		_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
+			FeedbackRecordID: id,
+			ValueTextHash:    "backfill",
+		}, opts)
 		if err != nil {
 			return enqueued, fmt.Errorf("enqueue embedding job for %s: %w", id, err)
 		}

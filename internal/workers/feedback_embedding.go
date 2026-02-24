@@ -3,6 +3,7 @@ package workers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/openai"
@@ -71,7 +73,12 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 			"error", err,
 		)
 
-		return nil // no retry when record not found
+		// Only suppress retries for not-found; transient DB/network errors should retry.
+		if errors.Is(err, huberrors.ErrNotFound) {
+			return nil
+		}
+
+		return fmt.Errorf("get feedback record: %w", err)
 	}
 
 	text := ""

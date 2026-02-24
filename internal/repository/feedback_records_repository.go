@@ -18,41 +18,6 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
-// errEmbeddingScanInvalidType is returned when Scan receives a type other than []byte.
-var errEmbeddingScanInvalidType = errors.New("embedding: expected []byte")
-
-// nullableEmbedding scans a vector column that may be NULL without panicking (pgvector.Vector.Scan panics on empty/NULL).
-type nullableEmbedding []float32
-
-func (n *nullableEmbedding) Scan(src any) error {
-	if src == nil {
-		*n = nil
-
-		return nil
-	}
-
-	buf, ok := src.([]byte)
-	if !ok {
-		return fmt.Errorf("%w: got %T", errEmbeddingScanInvalidType, src)
-	}
-
-	if len(buf) == 0 {
-		*n = nil
-
-		return nil
-	}
-
-	var vec pgvector.Vector
-
-	if err := vec.DecodeBinary(buf); err != nil {
-		return fmt.Errorf("embedding decode: %w", err)
-	}
-
-	*n = vec.Slice()
-
-	return nil
-}
-
 // FeedbackRecordsRepository handles data access for feedback records.
 type FeedbackRecordsRepository struct {
 	db *pgxpool.Pool
@@ -106,21 +71,19 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 	return &record, nil
 }
 
-// GetByID retrieves a single feedback record by ID.
+// GetByID retrieves a single feedback record by ID. Embedding is not selected (API/worker reads stay lean).
 func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, embedding
+			metadata, language, user_identifier, tenant_id
 		FROM feedback_records
 		WHERE id = $1
 	`
 
 	var record models.FeedbackRecord
-
-	var emb nullableEmbedding
 
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
@@ -128,7 +91,6 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
-		&emb,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -137,8 +99,6 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
 	}
-
-	record.Embedding = emb
 
 	return &record, nil
 }
@@ -210,14 +170,14 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 	return whereClause, args
 }
 
-// List retrieves feedback records with optional filters.
+// List retrieves feedback records with optional filters. Embedding is not selected (API reads stay lean).
 func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, embedding
+			metadata, language, user_identifier, tenant_id
 		FROM feedback_records
 	`
 
@@ -251,21 +211,16 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	for rows.Next() {
 		var record models.FeedbackRecord
 
-		var emb nullableEmbedding
-
 		err := rows.Scan(
 			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 			&record.SourceType, &record.SourceID, &record.SourceName,
 			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
-			&emb,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
 		}
-
-		record.Embedding = emb
 
 		records = append(records, record)
 	}
@@ -363,7 +318,7 @@ func buildUpdateQuery(
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, embedding
+			metadata, language, user_identifier, tenant_id
 	`, strings.Join(updates, ", "), argCount)
 
 	return query, args, true
@@ -381,15 +336,12 @@ func (r *FeedbackRecordsRepository) Update(
 
 	var record models.FeedbackRecord
 
-	var emb nullableEmbedding
-
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID,
-		&emb,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -398,8 +350,6 @@ func (r *FeedbackRecordsRepository) Update(
 
 		return nil, fmt.Errorf("failed to update feedback record: %w", err)
 	}
-
-	record.Embedding = emb
 
 	return &record, nil
 }

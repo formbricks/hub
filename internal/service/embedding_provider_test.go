@@ -70,6 +70,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
+	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash, "dedupe key should include input hash")
 	assert.NotNil(t, inserter.insertCalls[0].opts)
 	assert.Equal(t, "embeddings", inserter.insertCalls[0].opts.Queue)
 	assert.Equal(t, 3, inserter.insertCalls[0].opts.MaxAttempts)
@@ -157,4 +158,5 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChanged
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
+	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash)
 }
