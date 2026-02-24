@@ -8,8 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -24,17 +27,27 @@ import (
 )
 
 // defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
-// Setting it here before config.Load() ensures tests do not use a different DATABASE_URL from .env,
-// which would cause "password authentication failed" when .env points at another database.
+// Used when DATABASE_URL is not set (e.g. CI uses job env; local can rely on .env).
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
 
 // setupTestServer creates a test HTTP server with all routes configured.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
 
-	// Set test env before loading config so config.Load() uses test values and is not affected by .env.
+	// Load .env so DATABASE_URL (e.g. port 5433) is used when set; otherwise use default (5432).
+	// Try current dir and parent (e.g. when test cwd is tests/).
+	_ = godotenv.Load()
+	if os.Getenv("DATABASE_URL") == "" {
+		_ = godotenv.Load("../.env")
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = defaultTestDatabaseURL
+	}
+
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	t.Setenv("DATABASE_URL", databaseURL)
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -224,11 +237,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Test with valid authentication
+	// Test with valid authentication (use unique submission_id to avoid 409 from leftover data)
 	t.Run("Success with valid API key", func(t *testing.T) {
 		reqBody := map[string]any{
 			"source_type":   "formbricks",
-			"submission_id": "feedback",
+			"submission_id": uuid.New().String(),
 			"field_id":      "feedback",
 			"field_type":    "text",
 			"value_text":    "Great product!",
@@ -299,10 +312,10 @@ func TestListFeedbackRecords(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Create a test feedback record first
+	// Create a test feedback record first (unique submission_id per run)
 	reqBody := map[string]any{
 		"source_type":   "formbricks",
-		"submission_id": "nps_score",
+		"submission_id": uuid.New().String(),
 		"field_id":      "nps_score",
 		"field_type":    "number",
 		"value_number":  9,
@@ -365,7 +378,7 @@ func TestFeedbackRecordsSubmissionID(t *testing.T) {
 	defer cleanup()
 
 	client := &http.Client{}
-	subID := "550e8400-e29b-41d4-a716-446655440000"
+	subID := uuid.New().String() // unique per run to avoid 409 from leftover data
 	tenantID := "tenant-submission-test"
 
 	// Create two records with same submission_id (multi-field submission)
@@ -436,7 +449,7 @@ func TestFeedbackRecordsSubmissionIDUniqueConstraint(t *testing.T) {
 	defer cleanup()
 
 	client := &http.Client{}
-	subID := "unique-constraint-sub-id"
+	subID := uuid.New().String() // unique per run so first create succeeds
 	tenantID := "tenant-unique"
 	fieldID := "reason"
 
@@ -491,10 +504,10 @@ func TestGetFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Create a test feedback record
+	// Create a test feedback record (unique submission_id per run)
 	reqBody := map[string]any{
 		"source_type":   "formbricks",
-		"submission_id": "rating",
+		"submission_id": uuid.New().String(),
 		"field_id":      "rating",
 		"field_type":    "number",
 		"value_number":  5,
@@ -575,10 +588,10 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Create a test feedback record
+	// Create a test feedback record (unique submission_id per run)
 	reqBody := map[string]any{
 		"source_type":   "formbricks",
-		"submission_id": "comment",
+		"submission_id": uuid.New().String(),
 		"field_id":      "comment",
 		"field_type":    "text",
 		"value_text":    "Initial comment",
@@ -648,10 +661,10 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	})
 
-	// Create a test feedback record
+	// Create a test feedback record (unique submission_id per run)
 	reqBody := map[string]any{
 		"source_type":   "formbricks",
-		"submission_id": "temp",
+		"submission_id": uuid.New().String(),
 		"field_id":      "temp",
 		"field_type":    "text",
 		"value_text":    "To be deleted",
@@ -705,12 +718,13 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 
 	client := &http.Client{}
 	userID := "bulk-delete-test-user-123"
+	subID := uuid.New().String() // unique per run to avoid 409 from leftover data
 
 	// Create several feedback records with the same user_identifier
 	createPayload := func(fieldID string, valueNum float64) map[string]any {
 		return map[string]any{
 			"source_type":     "formbricks",
-			"submission_id":   userID,
+			"submission_id":   subID,
 			"user_identifier": userID,
 			"field_id":        fieldID,
 			"field_type":      "number",
@@ -805,6 +819,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		} {
 			body, err := json.Marshal(map[string]any{
 				"source_type":     "formbricks",
+				"submission_id":   userIDTenant + "-" + item.fieldID,
 				"user_identifier": userIDTenant,
 				"tenant_id":       item.tenantID,
 				"field_id":        item.fieldID,
@@ -857,8 +872,15 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	ctx := context.Background()
 
+	_ = godotenv.Load()
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = defaultTestDatabaseURL
+	}
+
 	t.Setenv("API_KEY", testAPIKey)
-	t.Setenv("DATABASE_URL", defaultTestDatabaseURL)
+	t.Setenv("DATABASE_URL", databaseURL)
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
