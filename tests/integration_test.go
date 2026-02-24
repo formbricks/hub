@@ -134,10 +134,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test without authentication
 	t.Run("Unauthorized without API key", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -154,10 +155,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -177,10 +179,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test with empty API key in header
 	t.Run("Unauthorized with empty API key", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -200,10 +203,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test with malformed Authorization header
 	t.Run("Unauthorized with malformed Authorization header", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -223,10 +227,11 @@ func TestCreateFeedbackRecord(t *testing.T) {
 	// Test with valid authentication
 	t.Run("Success with valid API key", func(t *testing.T) {
 		reqBody := map[string]any{
-			"source_type": "formbricks",
-			"field_id":    "feedback",
-			"field_type":  "text",
-			"value_text":  "Great product!",
+			"source_type":   "formbricks",
+			"submission_id": "feedback",
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "Great product!",
 		}
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
@@ -296,10 +301,11 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	// Create a test feedback record first
 	reqBody := map[string]any{
-		"source_type":  "formbricks",
-		"field_id":     "nps_score",
-		"field_type":   "number",
-		"value_number": 9,
+		"source_type":   "formbricks",
+		"submission_id": "nps_score",
+		"field_id":      "nps_score",
+		"field_type":    "number",
+		"value_number":  9,
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -487,10 +493,11 @@ func TestGetFeedbackRecord(t *testing.T) {
 
 	// Create a test feedback record
 	reqBody := map[string]any{
-		"source_type":  "formbricks",
-		"field_id":     "rating",
-		"field_type":   "number",
-		"value_number": 5,
+		"source_type":   "formbricks",
+		"submission_id": "rating",
+		"field_id":      "rating",
+		"field_type":    "number",
+		"value_number":  5,
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -570,10 +577,11 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 	// Create a test feedback record
 	reqBody := map[string]any{
-		"source_type": "formbricks",
-		"field_id":    "comment",
-		"field_type":  "text",
-		"value_text":  "Initial comment",
+		"source_type":   "formbricks",
+		"submission_id": "comment",
+		"field_id":      "comment",
+		"field_type":    "text",
+		"value_text":    "Initial comment",
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -642,10 +650,11 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 
 	// Create a test feedback record
 	reqBody := map[string]any{
-		"source_type": "formbricks",
-		"field_id":    "temp",
-		"field_type":  "text",
-		"value_text":  "To be deleted",
+		"source_type":   "formbricks",
+		"submission_id": "temp",
+		"field_id":      "temp",
+		"field_type":    "text",
+		"value_text":    "To be deleted",
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -701,6 +710,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	createPayload := func(fieldID string, valueNum float64) map[string]any {
 		return map[string]any{
 			"source_type":     "formbricks",
+			"submission_id":   userID,
 			"user_identifier": userID,
 			"field_id":        fieldID,
 			"field_type":      "number",
@@ -864,6 +874,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	// Create two records with same user_identifier
 	req1 := &models.CreateFeedbackRecordRequest{
 		SourceType:     sourceType,
+		SubmissionID:   userID,
 		FieldID:        "f1",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    ptrFloat64(1),
@@ -875,6 +886,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	req2 := &models.CreateFeedbackRecordRequest{
 		SourceType:     sourceType,
+		SubmissionID:   userID,
 		FieldID:        "f2",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    ptrFloat64(2),

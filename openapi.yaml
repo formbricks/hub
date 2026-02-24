@@ -844,9 +844,9 @@ components:
                 submission_id:
                     type: string
                     description: |
-                        Identifier for the logical submission this record belongs to (tenant-scoped).
+                        Identifier for the logical submission this record belongs to (tenant-scoped). Required.
                         Enables grouping multi-field submissions and idempotent ingestion.
-                        Unique per (tenant_id, submission_id, field_id).
+                        Unique per (tenant_id, submission_id, field_id). If a record has no logical submission, use e.g. field_id.
                     examples:
                         - "550e8400-e29b-41d4-a716-446655440000"
                     minLength: 1
@@ -891,6 +891,7 @@ components:
                 - source_type
                 - field_id
                 - field_type
+                - submission_id
         ErrorDetail:
             type: object
             additionalProperties: false
@@ -1037,6 +1038,7 @@ components:
                 - source_type
                 - field_id
                 - field_type
+                - submission_id
         ListFeedbackRecordsOutputBody:
             type: object
             additionalProperties: false
