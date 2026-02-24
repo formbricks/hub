@@ -11,8 +11,9 @@ CREATE INDEX idx_feedback_records_tenant_submission_id ON feedback_records(tenan
 
 -- One value per field_id per submission per tenant (supports idempotent webhook retries).
 -- Partial index: only enforce uniqueness when submission_id is set (backward compatible for NULL).
+-- NULLS NOT DISTINCT (PG 15+): treat NULL tenant_id as equal so duplicate (NULL, submission_id, field_id) conflicts.
 CREATE UNIQUE INDEX idx_feedback_records_tenant_submission_field
-  ON feedback_records(tenant_id, submission_id, field_id)
+  ON feedback_records(tenant_id, submission_id, field_id) NULLS NOT DISTINCT
   WHERE submission_id IS NOT NULL;
 
 -- +goose down
