@@ -13,11 +13,13 @@ CREATE TABLE embeddings (
 );
 
 -- HNSW index for cosine similarity search (OpenAI text-embedding-3-small).
-CREATE INDEX idx_embeddings_openai ON embeddings USING hnsw (embedding vector_cosine_ops)
+-- NOTICE the double parentheses and the explicit ::vector(1536) cast
+CREATE INDEX idx_embeddings_openai ON embeddings USING hnsw ((embedding::vector(1536)) vector_cosine_ops)
 WHERE model = 'text-embedding-3-small';
 
 -- HNSW index for cosine similarity search (Google gemini-embedding-001).
-CREATE INDEX idx_embeddings_google ON embeddings USING hnsw (embedding vector_cosine_ops)
+-- Google's gemini-embedding-001 model outputs 768 dimensions.
+CREATE INDEX idx_embeddings_google ON embeddings USING hnsw ((embedding::vector(768)) vector_cosine_ops)
 WHERE model = 'gemini-embedding-001';
 
 -- +goose Down
