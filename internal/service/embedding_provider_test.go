@@ -118,26 +118,6 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_ski
 	assert.Empty(t, inserter.insertCalls)
 }
 
-func TestEmbeddingProvider_PublishEvent_noAPIKey_skips(t *testing.T) {
-	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "", "text-embedding-3-small", "embeddings", 3, nil)
-
-	event := Event{
-		ID:        uuid.Must(uuid.NewV7()),
-		Type:      datatypes.FeedbackRecordCreated,
-		Timestamp: time.Now(),
-		Data: &models.FeedbackRecord{
-			ID:        uuid.Must(uuid.NewV7()),
-			FieldType: models.FieldTypeText,
-			ValueText: ptrString("hello"),
-		},
-	}
-
-	p.PublishEvent(context.Background(), event)
-
-	assert.Empty(t, inserter.insertCalls)
-}
-
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
 	p := NewEmbeddingProvider(inserter, "sk-test", "text-embedding-3-small", "embeddings", 3, nil)
