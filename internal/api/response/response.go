@@ -56,6 +56,11 @@ func RespondNotFound(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusNotFound, "Not Found", detail)
 }
 
+// RespondConflict writes a 409 Conflict error response.
+func RespondConflict(w http.ResponseWriter, detail string) {
+	RespondError(w, http.StatusConflict, "Conflict", detail)
+}
+
 // RespondInternalServerError writes a 500 Internal Server Error response.
 func RespondInternalServerError(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusInternalServerError, "Internal Server Error", detail)

@@ -52,6 +52,13 @@ paths:
                     type: string
                     description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                - name: submission_id
+                  in: query
+                  description: Filter by submission ID to group records belonging to one logical submission. NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by submission ID (e.g. UUID from webhook idempotency). NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
                 - name: source_type
                   in: query
                   description: Filter by source type. NULL bytes not allowed.
@@ -323,6 +330,12 @@ paths:
                             parameters:
                                 id: '$response.body#/id'
                             description: Delete the created feedback record by ID
+                "409":
+                    description: Conflict – a feedback record with the same tenant_id, submission_id, and field_id already exists (idempotent create).
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -828,6 +841,17 @@ components:
                     minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
+                submission_id:
+                    type: string
+                    description: |
+                        Identifier for the logical submission this record belongs to (tenant-scoped). Required.
+                        Enables grouping multi-field submissions and idempotent ingestion.
+                        Unique per (tenant_id, submission_id, field_id). If a record has no logical submission, use e.g. field_id.
+                    examples:
+                        - "550e8400-e29b-41d4-a716-446655440000"
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
                 tenant_id:
                     type: string
                     description: Tenant/organization identifier for multi-tenancy. NULL bytes not allowed.
@@ -867,6 +891,7 @@ components:
                 - source_type
                 - field_id
                 - field_type
+                - submission_id
         ErrorDetail:
             type: object
             additionalProperties: false
@@ -975,6 +1000,10 @@ components:
                 source_type:
                     type: string
                     description: Type of feedback source
+                submission_id:
+                    type: string
+                    description: Identifier for the logical submission this record belongs to (required).
+                    pattern: '^[^\x00]*$'
                 tenant_id:
                     type: string
                     description: Tenant/organization identifier. NULL bytes not allowed.
@@ -1009,6 +1038,7 @@ components:
                 - source_type
                 - field_id
                 - field_type
+                - submission_id
         ListFeedbackRecordsOutputBody:
             type: object
             additionalProperties: false
