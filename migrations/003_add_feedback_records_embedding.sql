@@ -5,7 +5,7 @@
 CREATE TABLE embeddings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   feedback_record_id UUID NOT NULL REFERENCES feedback_records(id) ON DELETE CASCADE,
-  embedding vector(1536) NOT NULL,
+  embedding vector NOT NULL,
   model TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
