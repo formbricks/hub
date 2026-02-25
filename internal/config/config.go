@@ -158,7 +158,7 @@ func Load() (*Config, error) {
 		return nil, ErrWebhookMaxCount
 	}
 
-	embeddingDimensions := getEnvAsInt("OPENAI_EMBEDDING_DIMENSIONS", defaultEmbeddingDimensions)
+	embeddingDimensions := getEnvAsInt("EMBEDDING_DIMENSIONS", defaultEmbeddingDimensions)
 	if embeddingDimensions <= 0 {
 		embeddingDimensions = defaultEmbeddingDimensions
 	}

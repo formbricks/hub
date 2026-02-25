@@ -226,17 +226,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		return nil, fmt.Errorf("create River client: %w", err)
 	}
 
-	// FeedbackRecordsService needs the river client for backfill; we cannot set it after construction
-	// without changing the type, so we pass riverClient at construction. Recreate with client.
-	feedbackRecordsService = service.NewFeedbackRecordsService(
-		feedbackRecordsRepo,
-		embeddingsRepo,
-		embeddingModel,
-		messageManager,
-		riverClient,
-		service.EmbeddingsQueueName,
-		cfg.EmbeddingMaxAttempts,
-	)
+	// Enable backfill on the same service instance the embedding worker uses (avoids nil inserter if worker ever calls BackfillEmbeddings).
+	feedbackRecordsService.SetEmbeddingInserter(riverClient)
 
 	webhookProvider := service.NewWebhookProvider(
 		riverClient, webhooksRepo,

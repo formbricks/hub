@@ -21,10 +21,11 @@ func NewEmbeddingsRepository(db *pgxpool.Pool) *EmbeddingsRepository {
 }
 
 // Upsert inserts or updates the embedding for (feedback_record_id, model). On conflict updates embedding and updated_at.
+// Uses halfvec storage (2 bytes per dimension); pgvector-go converts float32 to float16 when encoding.
 func (r *EmbeddingsRepository) Upsert(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
 ) error {
-	vec := pgvector.NewVector(embedding)
+	vec := pgvector.NewHalfVector(embedding)
 	now := time.Now()
 
 	_, err := r.db.Exec(ctx, `

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/joho/godotenv"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -36,6 +37,11 @@ func main() {
 }
 
 func run() int {
+	// Load .env for consistency with the main API server (godotenv.Load() there).
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("failed to load .env file", "error", err)
+	}
+
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		slog.Error("DATABASE_URL is required")

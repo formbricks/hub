@@ -53,6 +53,7 @@ type FeedbackRecordsService struct {
 
 // NewFeedbackRecordsService creates a new feedback records service.
 // embeddingInserter and embeddingQueueName are optional (for backfill); when nil/empty, BackfillEmbeddings returns an error.
+// Call SetEmbeddingInserter after the River client is created to enable backfill without building the service twice.
 // embeddingsRepo and embeddingModel are required for SetEmbedding and BackfillEmbeddings (from EMBEDDING_PROVIDER and EMBEDDING_MODEL).
 func NewFeedbackRecordsService(
 	repo FeedbackRecordsRepository,
@@ -72,6 +73,12 @@ func NewFeedbackRecordsService(
 		embeddingQueueName:   embeddingQueueName,
 		embeddingMaxAttempts: embeddingMaxAttempts,
 	}
+}
+
+// SetEmbeddingInserter sets the River inserter for embedding jobs (e.g. after River client is created).
+// This allows a single service instance to be used by both handlers and the embedding worker.
+func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter FeedbackEmbeddingInserter) {
+	s.embeddingInserter = inserter
 }
 
 // CreateFeedbackRecord creates a new feedback record.

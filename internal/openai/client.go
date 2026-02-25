@@ -104,6 +104,9 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		return nil, fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(emb), c.dimensions)
 	}
 
+	// SDK returns float64; convert to float32 so we match EmbeddingClient and the Google SDK (which already returns
+	// float32). Precision loss (64→32, and later 32→16 in the DB driver for halfvec) is acceptable for embeddings;
+	// similarity results are unchanged in practice.
 	out := make([]float32, len(emb))
 	for i := range emb {
 		out[i] = float32(emb[i])

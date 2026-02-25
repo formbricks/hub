@@ -110,8 +110,8 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 				"feedback_record_id", args.FeedbackRecordID,
 				"error", err,
 			)
-
-			return nil
+			// Return error so River marks the job as failed; otherwise these records never get embeddings and don't show as failed in River UI.
+			return fmt.Errorf("embedding API (final attempt): %w", err)
 		}
 
 		return fmt.Errorf("embedding API: %w", err)
