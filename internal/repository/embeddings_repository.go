@@ -2,12 +2,16 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
+
+	"github.com/formbricks/hub/internal/models"
 )
 
 // EmbeddingsRepository handles data access for the embeddings table.
@@ -89,4 +93,93 @@ func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfill(ctx context.Cont
 	}
 
 	return ids, nil
+}
+
+// ErrEmbeddingNotFound is returned when no embedding row exists for the given feedback record and model.
+var ErrEmbeddingNotFound = errors.New("embedding not found for feedback record and model")
+
+// GetEmbeddingByFeedbackRecordAndModel returns the stored embedding for the given feedback record and model.
+// Returns ErrEmbeddingNotFound when no row exists (record not embedded yet).
+func (r *EmbeddingsRepository) GetEmbeddingByFeedbackRecordAndModel(
+	ctx context.Context, feedbackRecordID uuid.UUID, model string,
+) ([]float32, error) {
+	var vec pgvector.HalfVector
+
+	err := r.db.QueryRow(ctx,
+		`SELECT embedding FROM embeddings WHERE feedback_record_id = $1 AND model = $2`,
+		feedbackRecordID, model,
+	).Scan(&vec)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrEmbeddingNotFound
+		}
+
+		return nil, fmt.Errorf("get embedding: %w", err)
+	}
+
+	return vec.Slice(), nil
+}
+
+// NearestFeedbackRecordsByEmbedding returns feedback record IDs and similarity scores (0..1) for the
+// nearest neighbors to queryEmbedding, filtered by model and tenant. Only rows with score >= minScore
+// are returned. Uses cosine distance (<=>); score = 1 - distance. excludeID optionally excludes one
+// feedback record (e.g. for "similar" endpoint).
+func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
+	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
+) ([]models.FeedbackRecordWithScore, error) {
+	queryVec := pgvector.NewHalfVector(queryEmbedding)
+
+	var (
+		rows pgx.Rows
+		err  error
+	)
+
+	if excludeID == nil {
+		rows, err = r.db.Query(ctx, `
+			SELECT e.feedback_record_id, (1 - (e.embedding <=> $1)) AS score, fr.value_text
+			FROM embeddings e
+			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
+			WHERE e.model = $2 AND fr.tenant_id = $3 AND (1 - (e.embedding <=> $1)) >= $4
+			ORDER BY e.embedding <=> $1
+			LIMIT $5`, queryVec, model, tenantID, minScore, limit)
+	} else {
+		rows, err = r.db.Query(ctx, `
+			SELECT e.feedback_record_id, (1 - (e.embedding <=> $1)) AS score, fr.value_text
+			FROM embeddings e
+			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
+			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4 AND (1 - (e.embedding <=> $1)) >= $5
+			ORDER BY e.embedding <=> $1
+			LIMIT $6`, queryVec, model, tenantID, *excludeID, minScore, limit)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("nearest feedback records: %w", err)
+	}
+
+	defer rows.Close()
+
+	var results []models.FeedbackRecordWithScore
+
+	for rows.Next() {
+		var (
+			row       models.FeedbackRecordWithScore
+			valueText *string
+		)
+
+		if err := rows.Scan(&row.FeedbackRecordID, &row.Score, &valueText); err != nil {
+			return nil, fmt.Errorf("scan feedback record with score: %w", err)
+		}
+
+		if valueText != nil {
+			row.ValueText = *valueText
+		}
+
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating nearest: %w", err)
+	}
+
+	return results, nil
 }

@@ -544,6 +544,96 @@ paths:
                                             - location: "body.value_text"
                                               message: "Text value cannot be empty"
                                               value: ""
+    /v1/feedback-records/search/semantic:
+        post:
+            tags:
+                - Feedback Records
+            summary: Semantic search over feedback records
+            description: |
+                Embeds the search query and returns feedback record IDs with similarity scores (cosine, 0..1).
+                Requires embedding to be configured (EMBEDDING_PROVIDER, EMBEDDING_MODEL).
+            operationId: semantic-search-feedback-records
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/SemanticSearchInputBody'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SemanticSearchResponse'
+                "400":
+                    description: Bad Request (e.g. missing tenantId or empty query)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/feedback-records/{id}/similar:
+        get:
+            tags:
+                - Feedback Records
+            summary: Get similar feedback records
+            description: |
+                Returns feedback record IDs and similarity scores for records similar to the given one (by embedding).
+                Requires embedding to be configured.
+            operationId: similar-feedback-records
+            parameters:
+                - name: id
+                  in: path
+                  description: Feedback record ID (UUID)
+                  required: true
+                  schema:
+                    type: string
+                    format: uuid
+                - name: tenantId
+                  in: query
+                  description: Tenant ID (required for isolation; must match feedback record tenant_id)
+                  required: true
+                  schema:
+                    type: string
+                - name: topK
+                  in: query
+                  description: Maximum number of similar records to return (default 10, max 100)
+                  schema:
+                    type: integer
+                    default: 10
+                    minimum: 1
+                    maximum: 100
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SemanticSearchResponse'
+                "400":
+                    description: Bad Request (e.g. missing tenantId)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found (feedback record has no embedding for the current model)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
     /v1/webhooks:
         get:
             tags:
@@ -762,6 +852,55 @@ components:
             required:
                 - deleted_count
                 - message
+        SemanticSearchInputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                query:
+                    type: string
+                    description: Search query text (embedded and compared via cosine similarity)
+                topK:
+                    type: integer
+                    description: Maximum number of results (default 10, max 100)
+                    default: 10
+                    minimum: 1
+                    maximum: 100
+                tenantId:
+                    type: string
+                    description: Tenant ID (required for isolation; must match feedback record tenant_id)
+            required:
+                - query
+                - tenantId
+        SemanticSearchResponse:
+            type: object
+            additionalProperties: false
+            properties:
+                results:
+                    type: array
+                    description: List of feedback record IDs with similarity scores (0 = unrelated, 1 = identical)
+                    items:
+                        $ref: '#/components/schemas/SemanticSearchResultItem'
+            required:
+                - results
+        SemanticSearchResultItem:
+            type: object
+            additionalProperties: false
+            properties:
+                feedbackRecordId:
+                    type: string
+                    format: uuid
+                    description: Feedback record UUID
+                score:
+                    type: number
+                    format: double
+                    description: Similarity score (0..1)
+                value:
+                    type: string
+                    description: value_text of the feedback record (the text that was embedded); omitted if null
+                    nullable: true
+            required:
+                - feedbackRecordId
+                - score
         CreateFeedbackRecordInputBody:
             type: object
             additionalProperties: false

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -177,6 +178,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.EmbeddingMaxAttempts,
 	)
 
+	var searchHandler *handlers.SearchHandler
+
 	if embeddingProviderName != "" {
 		var embeddingClient service.EmbeddingClient
 
@@ -202,6 +205,29 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 		embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, embeddingMetrics)
 		river.AddWorker(riverWorkers, embeddingWorker)
+
+		const searchQueryCacheSize = 1000
+
+		queryCache, err := lru.New[string, []float32](searchQueryCacheSize)
+		if err != nil {
+			return nil, fmt.Errorf("create search query cache: %w", err)
+		}
+
+		var cacheMetrics observability.CacheMetrics
+		if metrics != nil {
+			cacheMetrics = metrics.Cache
+		}
+
+		searchService := service.NewSearchService(service.SearchServiceParams{
+			EmbeddingClient: embeddingClient,
+			EmbeddingsRepo:  embeddingsRepo,
+			Model:           embeddingModel,
+			MinScore:        cfg.SearchScoreThreshold,
+			QueryCache:      queryCache,
+			CacheMetrics:    cacheMetrics,
+			Logger:          slog.Default(),
+		})
+		searchHandler = handlers.NewSearchHandler(searchService)
 	}
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
@@ -255,7 +281,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	healthHandler := handlers.NewHealthHandler()
 
 	server := newHTTPServer(
-		cfg, healthHandler, feedbackRecordsHandler, webhooksHandler,
+		cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, searchHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -278,6 +304,7 @@ func newHTTPServer(
 	health *handlers.HealthHandler,
 	feedback *handlers.FeedbackRecordsHandler,
 	webhooks *handlers.WebhooksHandler,
+	search *handlers.SearchHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
 ) *http.Server {
@@ -297,6 +324,13 @@ func newHTTPServer(
 	protected.HandleFunc("GET /v1/webhooks/{id}", webhooks.Get)
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
+
+	// Search is nil when no embeddings API is configured (e.g. EMBEDDING_PROVIDER unset);
+	// semantic search and similar-feedback are not registered then.
+	if search != nil {
+		protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
+		protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
+	}
 
 	protectedWithAuth := middleware.Auth(cfg.APIKey)(protected)
 	mux := http.NewServeMux()
