@@ -55,17 +55,19 @@ var supportedEmbeddingProviders = map[string]struct{}{
 
 const riverQueueDepthInterval = 15 * time.Second
 
-// embeddingProviderAndModel returns (provider, model) from config. If provider is not supported,
-// logs and returns ("", cfg.EmbeddingModel) so provider and worker are not registered.
+// embeddingProviderAndModel returns (provider, model) when embeddings are enabled: EMBEDDING_PROVIDER
+// is set and supported. Model and API key are optional (e.g. local provider may not need them).
+// Otherwise returns ("", "") so no embedding provider or jobs run. Embeddings are optional; no defaults.
 func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
-	if _, ok := supportedEmbeddingProviders[cfg.EmbeddingProvider]; ok {
-		return cfg.EmbeddingProvider, cfg.EmbeddingModel
+	if cfg.EmbeddingProvider == "" {
+		return "", ""
 	}
-
-	slog.Info("embedding model has no supported provider, embedding provider and worker not registered",
-		"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
-
-	return "", cfg.EmbeddingModel
+	if _, ok := supportedEmbeddingProviders[cfg.EmbeddingProvider]; !ok {
+		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
+			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
+		return "", ""
+	}
+	return cfg.EmbeddingProvider, cfg.EmbeddingModel
 }
 
 // setupMetrics creates meter provider and hub metrics when metrics are enabled.
@@ -167,15 +169,26 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
+	// Model for DB/jobs: required for embeddings.model column; use "default" when provider has no model name (e.g. local).
+	embeddingModelForDB := embeddingModel
+	if embeddingModelForDB == "" {
+		embeddingModelForDB = "default"
+	}
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
 		embeddingsRepo,
-		embeddingModel,
+		embeddingModelForDB,
 		messageManager,
 		nil, // riverClient set below after creation
 		service.EmbeddingsQueueName,
 		cfg.EmbeddingMaxAttempts,
 	)
+
+	// Dimensions fallback for client and index when unset (e.g. local provider).
+	embeddingDimensions := cfg.EmbeddingDimensions
+	if embeddingDimensions <= 0 {
+		embeddingDimensions = 1536
+	}
 
 	if embeddingProviderName != "" {
 		var embeddingClient service.EmbeddingClient
@@ -183,12 +196,12 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		switch embeddingProviderName {
 		case embeddingProviderOpenAI:
 			embeddingClient = openai.NewClient(cfg.EmbeddingProviderAPIKey,
-				openai.WithDimensions(cfg.EmbeddingDimensions),
+				openai.WithDimensions(embeddingDimensions),
 				openai.WithModel(embeddingModel),
 			)
 		case embeddingProviderGoogle:
 			googleClient, err := googleai.NewClient(context.Background(), cfg.EmbeddingProviderAPIKey,
-				googleai.WithDimensions(cfg.EmbeddingDimensions),
+				googleai.WithDimensions(embeddingDimensions),
 				googleai.WithModel(embeddingModel),
 			)
 			if err != nil {
@@ -240,7 +253,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		embeddingProv := service.NewEmbeddingProvider(
 			riverClient,
 			cfg.EmbeddingProviderAPIKey,
-			embeddingModel,
+			embeddingModelForDB,
 			service.EmbeddingsQueueName,
 			cfg.EmbeddingMaxAttempts,
 			embeddingMetrics,

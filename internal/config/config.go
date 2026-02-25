@@ -51,13 +51,13 @@ type Config struct {
 	// Max total webhooks allowed (creation rejected when count >= this); default 500
 	WebhookMaxCount int
 
-	// Embeddings: optional API key for the embedding provider (e.g. OpenAI); when set, embedding provider and worker are enabled
+	// Embeddings: optional. No default for provider; if EMBEDDING_PROVIDER is not set, embeddings are disabled and no embedding jobs run.
 	EmbeddingProviderAPIKey string
-	// Embeddings: provider name (e.g. openai); env EMBEDDING_PROVIDER
+	// Embeddings: provider name (e.g. openai); env EMBEDDING_PROVIDER. Empty = embeddings disabled.
 	EmbeddingProvider string
-	// Embeddings: model name (e.g. text-embedding-3-small); env EMBEDDING_MODEL
+	// Embeddings: model name; env EMBEDDING_MODEL. Optional (e.g. local provider may not use it).
 	EmbeddingModel string
-	// Embeddings: dimension for embeddings and DB column; default 1536
+	// Embeddings: dimension for embeddings and DB; env EMBEDDING_DIMENSIONS. Optional; fallback used at runtime when unset.
 	EmbeddingDimensions int
 	// Embeddings: max concurrent workers for the embeddings River queue; default 5
 	EmbeddingMaxConcurrent int
@@ -113,9 +113,8 @@ func Load() (*Config, error) {
 		defaultMessagePublisherPerEventTimeout = 10
 		defaultShutdownTimeoutSeconds          = 30
 		defaultWebhookMaxCount                 = 500
-		defaultEmbeddingDimensions             = 1536
-		defaultEmbeddingMaxConcurrent          = 5
-		defaultEmbeddingMaxAttempts            = 3
+		defaultEmbeddingMaxConcurrent = 5
+		defaultEmbeddingMaxAttempts   = 3
 	)
 
 	apiKey := os.Getenv("API_KEY")
@@ -158,10 +157,8 @@ func Load() (*Config, error) {
 		return nil, ErrWebhookMaxCount
 	}
 
-	embeddingDimensions := getEnvAsInt("EMBEDDING_DIMENSIONS", defaultEmbeddingDimensions)
-	if embeddingDimensions <= 0 {
-		embeddingDimensions = defaultEmbeddingDimensions
-	}
+	// No default: embeddings are off until user sets EMBEDDING_PROVIDER, EMBEDDING_MODEL, EMBEDDING_PROVIDER_API_KEY, EMBEDDING_DIMENSIONS.
+	embeddingDimensions := getEnvAsInt("EMBEDDING_DIMENSIONS", 0)
 
 	embeddingMaxConcurrent := getEnvAsInt("EMBEDDING_MAX_CONCURRENT", defaultEmbeddingMaxConcurrent)
 	if embeddingMaxConcurrent <= 0 {
@@ -188,8 +185,8 @@ func Load() (*Config, error) {
 		WebhookMaxCount:                 webhookMaxCount,
 
 		EmbeddingProviderAPIKey: getEnv("EMBEDDING_PROVIDER_API_KEY", ""),
-		EmbeddingProvider:       getEnv("EMBEDDING_PROVIDER", "openai"),
-		EmbeddingModel:          getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
+		EmbeddingProvider:       getEnv("EMBEDDING_PROVIDER", ""),
+		EmbeddingModel:          getEnv("EMBEDDING_MODEL", ""),
 		EmbeddingDimensions:     embeddingDimensions,
 		EmbeddingMaxConcurrent:  embeddingMaxConcurrent,
 		EmbeddingMaxAttempts:    embeddingMaxAttempts,
