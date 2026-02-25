@@ -22,6 +22,7 @@ When a user completes a survey with an NPS score and a comment, Hub creates two 
 ```json
 // Record 1: NPS score
 {
+  "submission_id": "subm_01jq6k3x8m9n2p4r7t5v",
   "source_id": "nps-2024",
   "field_id": "nps_score",
   "field_type": "nps",
@@ -30,6 +31,7 @@ When a user completes a survey with an NPS score and a comment, Hub creates two 
 
 // Record 2: Comment
 {
+  "submission_id": "subm_01jq6k3x8m9n2p4r7t5v",
   "source_id": "nps-2024",
   "field_id": "feedback_comment",
   "field_type": "text",
@@ -50,6 +52,7 @@ The `FeedbackRecord` entity stores individual feedback data points.
 | Field              | Type      | Required | Description                                                  |
 | ------------------ | --------- | -------- | ------------------------------------------------------------ |
 | **`id`**           | UUIDv7    | Auto     | Time-ordered primary key for efficient indexing              |
+| **`submission_id`** | String    | Yes      | Identifier shared by all rows from the same submission      |
 | **`collected_at`** | Timestamp | Yes      | When the feedback was originally collected (defaults to now) |
 | **`created_at`**   | Timestamp | Auto     | When the record was created in the Hub                       |
 | **`updated_at`**   | Timestamp | Auto     | When the record was last updated                             |
@@ -161,6 +164,7 @@ The `source_type` field identifies where the feedback data originated:
 
 ```json
 {
+  "submission_id": "subm_01jq6k3x8m9n2p4r7t5v",
   "source_type": "survey",
   "source_id": "q1-2025-nps",
   "source_name": "Q1 2025 Customer NPS",
@@ -182,6 +186,7 @@ The `source_type` field identifies where the feedback data originated:
 
 ```json
 {
+  "submission_id": "subm_01jq6k9f2a7b4c6d8e1",
   "source_type": "survey",
   "source_id": "onboarding-survey-v2",
   "field_id": "q3_improvements",
@@ -205,6 +210,7 @@ A ranking question where users order features by importance creates multiple row
 ```json
 // Row 1: First ranked item
 {
+  "submission_id": "subm_01jq6m0r4s8t1u3v5w7",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
   "field_id": "feature_priority__reports",
@@ -220,6 +226,7 @@ A ranking question where users order features by importance creates multiple row
 
 // Row 2: Second ranked item
 {
+  "submission_id": "subm_01jq6m0r4s8t1u3v5w7",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
   "field_id": "feature_priority__dashboards",
@@ -235,6 +242,7 @@ A ranking question where users order features by importance creates multiple row
 
 // Row 3: Third ranked item
 {
+  "submission_id": "subm_01jq6m0r4s8t1u3v5w7",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
   "field_id": "feature_priority__alerts",
@@ -276,6 +284,7 @@ A matrix question with multiple row items creates rows with shared `field_group_
 ```json
 // Row 1: First matrix item
 {
+  "submission_id": "subm_01jq6m4x9y2z5a7b1c3",
   "source_type": "survey",
   "source_id": "satisfaction-survey",
   "field_id": "feature_satisfaction__ease_of_use",
@@ -291,6 +300,7 @@ A matrix question with multiple row items creates rows with shared `field_group_
 
 // Row 2: Second matrix item
 {
+  "submission_id": "subm_01jq6m4x9y2z5a7b1c3",
   "source_type": "survey",
   "source_id": "satisfaction-survey",
   "field_id": "feature_satisfaction__performance",
@@ -314,6 +324,7 @@ When a user selects multiple options, each choice becomes a separate row:
 
 // Row 1
 {
+  "submission_id": "subm_01jq6m8d3e5f7g9h1j2",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
   "field_id": "features_used",
@@ -326,6 +337,7 @@ When a user selects multiple options, each choice becomes a separate row:
 
 // Row 2
 {
+  "submission_id": "subm_01jq6m8d3e5f7g9h1j2",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
   "field_id": "features_used",
@@ -338,6 +350,7 @@ When a user selects multiple options, each choice becomes a separate row:
 
 // Row 3
 {
+  "submission_id": "subm_01jq6m8d3e5f7g9h1j2",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
   "field_id": "features_used",
@@ -588,10 +601,10 @@ For questions where users can select multiple options, create one row per select
 
 ```json
 // Question: "Which features do you use?" (user selected 3 options)
-// Create 3 rows with the same source_id, field_id, but different value_text
-{"field_type": "categorical", "value_text": "Dashboards"},
-{"field_type": "categorical", "value_text": "Reports"},
-{"field_type": "categorical", "value_text": "Alerts"}
+// Create 3 rows with the same submission_id, source_id, and field_id, but different value_text
+{"submission_id": "subm_01jq6m8d3e5f7g9h1j2", "field_type": "categorical", "value_text": "Dashboards"},
+{"submission_id": "subm_01jq6m8d3e5f7g9h1j2", "field_type": "categorical", "value_text": "Reports"},
+{"submission_id": "subm_01jq6m8d3e5f7g9h1j2", "field_type": "categorical", "value_text": "Alerts"}
 ```
 
 ### 6. Anonymous User Identifiers
