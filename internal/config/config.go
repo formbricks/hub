@@ -113,8 +113,8 @@ func Load() (*Config, error) {
 		defaultMessagePublisherPerEventTimeout = 10
 		defaultShutdownTimeoutSeconds          = 30
 		defaultWebhookMaxCount                 = 500
-		defaultEmbeddingMaxConcurrent = 5
-		defaultEmbeddingMaxAttempts   = 3
+		defaultEmbeddingMaxConcurrent          = 5
+		defaultEmbeddingMaxAttempts            = 3
 	)
 
 	apiKey := os.Getenv("API_KEY")

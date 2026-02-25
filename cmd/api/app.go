@@ -62,11 +62,14 @@ func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 	if cfg.EmbeddingProvider == "" {
 		return "", ""
 	}
+
 	if _, ok := supportedEmbeddingProviders[cfg.EmbeddingProvider]; !ok {
 		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
 			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
+
 		return "", ""
 	}
+
 	return cfg.EmbeddingProvider, cfg.EmbeddingModel
 }
 
@@ -174,6 +177,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	if embeddingModelForDB == "" {
 		embeddingModelForDB = "default"
 	}
+
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
 		embeddingsRepo,
