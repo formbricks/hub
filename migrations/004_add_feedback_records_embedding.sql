@@ -13,7 +13,7 @@ CREATE TABLE embeddings (
   UNIQUE (feedback_record_id, model)
 );
 
-CREATE INDEX idx_embeddings ON embeddings USING hnsw ((embedding halfvec_cosine_ops));
+CREATE INDEX idx_embeddings ON embeddings USING hnsw (embedding halfvec_cosine_ops);
 
 -- +goose Down
 DROP INDEX IF EXISTS idx_embeddings;
