@@ -14,6 +14,9 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+// ErrEmbeddingDimensionMismatch is returned when an embedding slice length does not match EmbeddingVectorDimensions.
+var ErrEmbeddingDimensionMismatch = errors.New("embedding dimension mismatch")
+
 // EmbeddingsRepository handles data access for the embeddings table.
 type EmbeddingsRepository struct {
 	db *pgxpool.Pool
@@ -26,9 +29,14 @@ func NewEmbeddingsRepository(db *pgxpool.Pool) *EmbeddingsRepository {
 
 // Upsert inserts or updates the embedding for (feedback_record_id, model). On conflict updates embedding and updated_at.
 // Uses halfvec storage (2 bytes per dimension); pgvector-go converts float32 to float16 when encoding.
+// embedding must have length models.EmbeddingVectorDimensions (fixed 768).
 func (r *EmbeddingsRepository) Upsert(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
 ) error {
+	if len(embedding) != models.EmbeddingVectorDimensions {
+		return fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(embedding), models.EmbeddingVectorDimensions)
+	}
+
 	vec := pgvector.NewHalfVector(embedding)
 	now := time.Now()
 
@@ -124,9 +132,14 @@ func (r *EmbeddingsRepository) GetEmbeddingByFeedbackRecordAndModel(
 // nearest neighbors to queryEmbedding, filtered by model and tenant. Only rows with score >= minScore
 // are returned. Uses cosine distance (<=>); score = 1 - distance. excludeID optionally excludes one
 // feedback record (e.g. for "similar" endpoint).
+// queryEmbedding must have length models.EmbeddingVectorDimensions (fixed 768). Uses idx_embeddings HNSW index.
 func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
 ) ([]models.FeedbackRecordWithScore, error) {
+	if len(queryEmbedding) != models.EmbeddingVectorDimensions {
+		return nil, fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(queryEmbedding), models.EmbeddingVectorDimensions)
+	}
+
 	queryVec := pgvector.NewHalfVector(queryEmbedding)
 
 	var (
