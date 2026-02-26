@@ -57,8 +57,6 @@ type Config struct {
 	EmbeddingProvider string
 	// Embeddings: model name; env EMBEDDING_MODEL. Optional (e.g. local provider may not use it).
 	EmbeddingModel string
-	// Embeddings: dimension for embeddings and DB; env EMBEDDING_DIMENSIONS. Optional; fallback used at runtime when unset.
-	EmbeddingDimensions int
 	// Embeddings: max concurrent workers for the embeddings River queue; default 5
 	EmbeddingMaxConcurrent int
 	// Embeddings: max attempts per embedding job (River retries); default 3
@@ -157,9 +155,6 @@ func Load() (*Config, error) {
 		return nil, ErrWebhookMaxCount
 	}
 
-	// No default: embeddings are off until user sets EMBEDDING_PROVIDER, EMBEDDING_MODEL, EMBEDDING_PROVIDER_API_KEY, EMBEDDING_DIMENSIONS.
-	embeddingDimensions := getEnvAsInt("EMBEDDING_DIMENSIONS", 0)
-
 	embeddingMaxConcurrent := getEnvAsInt("EMBEDDING_MAX_CONCURRENT", defaultEmbeddingMaxConcurrent)
 	if embeddingMaxConcurrent <= 0 {
 		embeddingMaxConcurrent = defaultEmbeddingMaxConcurrent
@@ -187,7 +182,6 @@ func Load() (*Config, error) {
 		EmbeddingProviderAPIKey: getEnv("EMBEDDING_PROVIDER_API_KEY", ""),
 		EmbeddingProvider:       getEnv("EMBEDDING_PROVIDER", ""),
 		EmbeddingModel:          getEnv("EMBEDDING_MODEL", ""),
-		EmbeddingDimensions:     embeddingDimensions,
 		EmbeddingMaxConcurrent:  embeddingMaxConcurrent,
 		EmbeddingMaxAttempts:    embeddingMaxAttempts,
 

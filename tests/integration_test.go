@@ -72,7 +72,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
 		embeddingsRepo,
-		"text-embedding-3-small",
+		"model-name",
 		messageManager,
 		nil,
 		"",

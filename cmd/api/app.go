@@ -188,24 +188,16 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.EmbeddingMaxAttempts,
 	)
 
-	// Dimensions fallback for client and index when unset (e.g. local provider).
-	embeddingDimensions := cfg.EmbeddingDimensions
-	if embeddingDimensions <= 0 {
-		embeddingDimensions = 1536
-	}
-
 	if embeddingProviderName != "" {
 		var embeddingClient service.EmbeddingClient
 
 		switch embeddingProviderName {
 		case embeddingProviderOpenAI:
 			embeddingClient = openai.NewClient(cfg.EmbeddingProviderAPIKey,
-				openai.WithDimensions(embeddingDimensions),
 				openai.WithModel(embeddingModel),
 			)
 		case embeddingProviderGoogle:
 			googleClient, err := googleai.NewClient(context.Background(), cfg.EmbeddingProviderAPIKey,
-				googleai.WithDimensions(embeddingDimensions),
 				googleai.WithModel(embeddingModel),
 			)
 			if err != nil {
