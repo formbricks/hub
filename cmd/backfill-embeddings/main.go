@@ -105,7 +105,7 @@ func run() int {
 
 	slog.Info("Backfill complete", "enqueued", enqueued)
 
-	_, _ = fmt.Fprintf(os.Stdout, "Enqueued %d embedding job(s).\n", enqueued)
+	fmt.Printf("Enqueued %d embedding job(s).\n", enqueued)
 
 	return exitSuccess
 }

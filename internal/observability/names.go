@@ -24,6 +24,9 @@ const (
 	MetricNameEmbeddingOutcomes       = "hub_embedding_outcomes_total"
 	MetricNameEmbeddingWorkerErrors   = "hub_embedding_worker_errors_total"
 	MetricNameEmbeddingDuration       = "hub_embedding_duration_seconds"
+
+	MetricNameCacheHits   = "hub_cache_hits_total"
+	MetricNameCacheMisses = "hub_cache_misses_total"
 )
 
 // Attribute keys.
@@ -65,7 +68,6 @@ var allowedDispatchReasons = map[string]bool{
 // allowedEmbeddingProviderReasons for hub_embedding_provider_errors_total.
 var allowedEmbeddingProviderReasons = map[string]bool{
 	"enqueue_failed": true,
-	"invalid_data":   true,
 }
 
 // allowedEmbeddingOutcomeStatuses for hub_embedding_outcomes_total and hub_embedding_duration_seconds.
@@ -78,9 +80,9 @@ var allowedEmbeddingOutcomeStatuses = map[string]bool{
 
 // allowedEmbeddingWorkerReasons for hub_embedding_worker_errors_total.
 var allowedEmbeddingWorkerReasons = map[string]bool{
-	"get_record_failed": true,
-	"openai_failed":     true,
-	"update_failed":     true,
+	"embedding_api_failed": true,
+	"get_record_failed":    true,
+	"update_failed":        true,
 }
 
 // AllowedEmbeddingProviderReason returns true if reason is allowed for embedding provider errors.
@@ -107,6 +109,23 @@ func AllowedDisabledReason(reason string) bool { return allowedDisabledReasons[r
 
 // AllowedDispatchReason returns true if reason is an allowed dispatch error reason.
 func AllowedDispatchReason(reason string) bool { return allowedDispatchReasons[reason] }
+
+// allowedCacheNames for hub_cache_hits_total / hub_cache_misses_total (bounded cardinality).
+var allowedCacheNames = map[string]bool{
+	"search_query_embedding": true,
+}
+
+// AllowedCacheName returns true if name is an allowed cache name for metrics.
+func AllowedCacheName(name string) bool { return allowedCacheNames[name] }
+
+// NormalizeCacheName returns name if allowed, otherwise "other".
+func NormalizeCacheName(name string) string {
+	if AllowedCacheName(name) {
+		return name
+	}
+
+	return "other"
+}
 
 // NormalizeEventType returns eventType if allowed, otherwise "unknown".
 func NormalizeEventType(eventType string) string {
