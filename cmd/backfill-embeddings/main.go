@@ -76,16 +76,16 @@ func run() int {
 		return exitFailure
 	}
 
-	embeddingProvider, embeddingModel, err := getEmbeddingProviderAndModel()
+	_, embeddingModel, err := getEmbeddingProviderAndModel()
 	if err != nil {
 		slog.Error(err.Error())
 
 		return exitFailure
 	}
 
-	_ = embeddingProvider // reserved for future use (e.g. provider-specific backfill)
 	repo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		repo,
 		embeddingsRepo,

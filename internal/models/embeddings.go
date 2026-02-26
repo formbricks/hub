@@ -6,6 +6,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// EmbeddingVectorDimensions is the fixed size for all embedding vectors (DB column, index, and provider APIs).
+const EmbeddingVectorDimensions = 768
+
 // Embedding represents one embedding row: one vector per feedback record per model.
 type Embedding struct {
 	ID               uuid.UUID `json:"id"`

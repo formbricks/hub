@@ -10,6 +10,8 @@ import (
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
+
+	"github.com/formbricks/hub/internal/models"
 )
 
 var (
@@ -21,11 +23,6 @@ var (
 	ErrNoEmbeddingInResponse = errors.New("openai: no embedding in response")
 	// ErrDimensionMismatch is returned when the response embedding length does not match configured dimensions.
 	ErrDimensionMismatch = errors.New("openai: embedding dimension mismatch")
-)
-
-const (
-	defaultDimension = 1536
-	defaultModel     = "text-embedding-3-small"
 )
 
 // Client calls the OpenAI embeddings API via the official SDK.
@@ -45,7 +42,7 @@ func WithDimensions(dim int) ClientOption {
 	}
 }
 
-// WithModel sets the embedding model name (e.g. text-embedding-3-small). Empty uses default.
+// WithModel sets the embedding model name. Empty uses default.
 func WithModel(model string) ClientOption {
 	return func(c *Client) {
 		c.model = model
@@ -53,11 +50,11 @@ func WithModel(model string) ClientOption {
 }
 
 // NewClient creates an OpenAI embeddings client using the official SDK.
+// Embedding dimension is fixed (models.EmbeddingVectorDimensions); WithDimensions is optional for overrides.
 func NewClient(apiKey string, opts ...ClientOption) *Client {
 	client := &Client{
 		sdk:        openaisdk.NewClient(option.WithAPIKey(apiKey)),
-		dimensions: defaultDimension,
-		model:      defaultModel,
+		dimensions: models.EmbeddingVectorDimensions,
 	}
 
 	for _, opt := range opts {
@@ -80,9 +77,6 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 	}
 
 	model := c.model
-	if model == "" {
-		model = defaultModel
-	}
 
 	resp, err := c.sdk.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
 		Input: openaisdk.EmbeddingNewParamsInputUnion{

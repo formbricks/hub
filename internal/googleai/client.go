@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"google.golang.org/genai"
+
+	"github.com/formbricks/hub/internal/models"
 )
 
 var (
@@ -20,11 +22,6 @@ var (
 	ErrNoEmbeddingInResponse = errors.New("googleai: no embedding in response")
 	// ErrDimensionMismatch is returned when the response embedding length does not match configured dimensions.
 	ErrDimensionMismatch = errors.New("googleai: embedding dimension mismatch")
-)
-
-const (
-	defaultDimension = 1536
-	defaultModel     = "gemini-embedding-001"
 )
 
 // Client calls the Gemini embeddings API via the Google Gen AI SDK.
@@ -44,7 +41,7 @@ func WithDimensions(dim int) ClientOption {
 	}
 }
 
-// WithModel sets the embedding model name (e.g. gemini-embedding-001). Empty uses default.
+// WithModel sets the embedding model name. Empty uses default.
 func WithModel(model string) ClientOption {
 	return func(c *Client) {
 		c.model = model
@@ -63,8 +60,7 @@ func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Clien
 
 	client := &Client{
 		client:     genaiClient,
-		model:      defaultModel,
-		dimensions: defaultDimension,
+		dimensions: models.EmbeddingVectorDimensions,
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -86,12 +82,9 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 	}
 
 	model := c.model
-	if model == "" {
-		model = defaultModel
-	}
 
 	contents := []*genai.Content{genai.NewContentFromText(input, genai.RoleUser)}
-	//nolint:gosec // G115: c.dimensions is bounded above by math.MaxInt32
+
 	dimInt32 := int32(c.dimensions)
 
 	resp, err := c.client.Models.EmbedContent(ctx, model, contents, &genai.EmbedContentConfig{
