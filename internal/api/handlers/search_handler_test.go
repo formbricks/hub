@@ -17,28 +17,30 @@ import (
 )
 
 type mockSearchService struct {
-	semanticFunc func(ctx context.Context, query, tenantID string, topK int) ([]models.FeedbackRecordWithScore, error)
-	similarFunc  func(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int) ([]models.FeedbackRecordWithScore, error)
+	semanticFunc func(ctx context.Context, query, tenantID string, topK, offset int, minScore float64,
+		cursor string) (service.SearchResult, error)
+	similarFunc func(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit, offset int,
+		minScore float64, cursor string) (service.SearchResult, error)
 }
 
 func (m *mockSearchService) SemanticSearch(
-	ctx context.Context, query, tenantID string, topK int,
-) ([]models.FeedbackRecordWithScore, error) {
+	ctx context.Context, query, tenantID string, topK, offset int, minScore float64, cursor string,
+) (service.SearchResult, error) {
 	if m.semanticFunc != nil {
-		return m.semanticFunc(ctx, query, tenantID, topK)
+		return m.semanticFunc(ctx, query, tenantID, topK, offset, minScore, cursor)
 	}
 
-	return nil, nil
+	return service.SearchResult{}, nil
 }
 
 func (m *mockSearchService) SimilarFeedback(
-	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int,
-) ([]models.FeedbackRecordWithScore, error) {
+	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit, offset int, minScore float64, cursor string,
+) (service.SearchResult, error) {
 	if m.similarFunc != nil {
-		return m.similarFunc(ctx, feedbackRecordID, tenantID, limit)
+		return m.similarFunc(ctx, feedbackRecordID, tenantID, limit, offset, minScore, cursor)
 	}
 
-	return nil, nil
+	return service.SearchResult{}, nil
 }
 
 func TestSearchHandler_SemanticSearch(t *testing.T) {
@@ -58,10 +60,10 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 	t.Run("empty query returns 400", func(t *testing.T) {
 		called := false
 		mock := &mockSearchService{
-			semanticFunc: func(_ context.Context, _, _ string, _ int) ([]models.FeedbackRecordWithScore, error) {
+			semanticFunc: func(_ context.Context, _, _ string, _, _ int, _ float64, _ string) (service.SearchResult, error) {
 				called = true
 
-				return nil, service.ErrEmptyQuery
+				return service.SearchResult{}, service.ErrEmptyQuery
 			},
 		}
 		handler := NewSearchHandler(mock)
@@ -83,14 +85,21 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 		val1 := "Login is very slow."
 		val2 := "Dashboard loads fast."
 		mock := &mockSearchService{
-			semanticFunc: func(_ context.Context, query, tenantID string, topK int) ([]models.FeedbackRecordWithScore, error) {
+			semanticFunc: func(_ context.Context, query, tenantID string, topK, offset int, minScore float64,
+				cursor string,
+			) (service.SearchResult, error) {
 				assert.Equal(t, "login is slow", query)
 				assert.Equal(t, "env-1", tenantID)
 				assert.Equal(t, 10, topK)
+				assert.Equal(t, 0, offset)
+				assert.InDelta(t, 0.0, minScore, 1e-9)
+				assert.Empty(t, cursor)
 
-				return []models.FeedbackRecordWithScore{
-					{FeedbackRecordID: id1, Score: 0.91, ValueText: val1},
-					{FeedbackRecordID: id2, Score: 0.85, ValueText: val2},
+				return service.SearchResult{
+					Results: []models.FeedbackRecordWithScore{
+						{FeedbackRecordID: id1, Score: 0.91, ValueText: val1},
+						{FeedbackRecordID: id2, Score: 0.85, ValueText: val2},
+					},
 				}, nil
 			},
 		}
@@ -117,6 +126,29 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 		assert.InDelta(t, 0.85, resp.Results[1].Score, 1e-9)
 		assert.Equal(t, val2, resp.Results[1].Value)
 	})
+
+	t.Run("invalid cursor returns 400", func(t *testing.T) {
+		mock := &mockSearchService{
+			semanticFunc: func(_ context.Context, _, _ string, _, _ int, _ float64, cursor string) (service.SearchResult, error) {
+				if cursor != "" {
+					return service.SearchResult{}, service.ErrInvalidCursor
+				}
+
+				return service.SearchResult{}, nil
+			},
+		}
+		handler := NewSearchHandler(mock)
+		body := []byte(`{"query":"login is slow","topK":10,"tenantId":"env-1"}`)
+		req := httptest.NewRequest(http.MethodPost,
+			"http://test/v1/feedback-records/search/semantic?cursor=not-valid-base64", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		rec := httptest.NewRecorder()
+
+		handler.SemanticSearch(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
 }
 
 const similarURL = "http://test/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc/similar"
@@ -136,8 +168,8 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 
 	t.Run("embedding not found returns 404", func(t *testing.T) {
 		mock := &mockSearchService{
-			similarFunc: func(_ context.Context, _ uuid.UUID, _ string, _ int) ([]models.FeedbackRecordWithScore, error) {
-				return nil, service.ErrEmbeddingNotFound
+			similarFunc: func(_ context.Context, _ uuid.UUID, _ string, _, _ int, _ float64, _ string) (service.SearchResult, error) {
+				return service.SearchResult{}, service.ErrEmbeddingNotFound
 			},
 		}
 		handler := NewSearchHandler(mock)
@@ -156,13 +188,20 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 		similarID := uuid.MustParse("018e1234-5678-9abc-def0-aaaaaaaaaaaa")
 		similarVal := "Similar feedback text."
 		mock := &mockSearchService{
-			similarFunc: func(_ context.Context, fid uuid.UUID, tenantID string, limit int) ([]models.FeedbackRecordWithScore, error) {
+			similarFunc: func(_ context.Context, fid uuid.UUID, tenantID string, limit, offset int, minScore float64,
+				cursor string,
+			) (service.SearchResult, error) {
 				assert.Equal(t, id, fid)
 				assert.Equal(t, "env-1", tenantID)
 				assert.Equal(t, 10, limit)
+				assert.Equal(t, 0, offset)
+				assert.InDelta(t, 0.0, minScore, 1e-9)
+				assert.Empty(t, cursor)
 
-				return []models.FeedbackRecordWithScore{
-					{FeedbackRecordID: similarID, Score: 0.88, ValueText: similarVal},
+				return service.SearchResult{
+					Results: []models.FeedbackRecordWithScore{
+						{FeedbackRecordID: similarID, Score: 0.88, ValueText: similarVal},
+					},
 				}, nil
 			},
 		}

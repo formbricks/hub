@@ -29,7 +29,11 @@ type mockEmbeddingsRepoForSearch struct {
 	getEmbeddingFunc func(ctx context.Context, feedbackRecordID uuid.UUID, model string) ([]float32, error)
 	nearestFunc      func(
 		ctx context.Context, model string, queryEmbedding []float32,
-		tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
+		tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
+	) ([]models.FeedbackRecordWithScore, error)
+	nearestAfterFunc func(
+		ctx context.Context, model string, queryEmbedding []float32,
+		tenantID string, limit int, lastDistance float64, lastID uuid.UUID, excludeID *uuid.UUID, minScore float64,
 	) ([]models.FeedbackRecordWithScore, error)
 }
 
@@ -44,10 +48,21 @@ func (m *mockEmbeddingsRepoForSearch) GetEmbeddingByFeedbackRecordAndModel(
 }
 
 func (m *mockEmbeddingsRepoForSearch) NearestFeedbackRecordsByEmbedding(
-	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
+	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
 ) ([]models.FeedbackRecordWithScore, error) {
 	if m.nearestFunc != nil {
-		return m.nearestFunc(ctx, model, queryEmbedding, tenantID, limit, excludeID, minScore)
+		return m.nearestFunc(ctx, model, queryEmbedding, tenantID, limit, offset, excludeID, minScore)
+	}
+
+	return nil, nil
+}
+
+func (m *mockEmbeddingsRepoForSearch) NearestFeedbackRecordsByEmbeddingAfterCursor(
+	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int,
+	lastDistance float64, lastFeedbackRecordID uuid.UUID, excludeID *uuid.UUID, minScore float64,
+) ([]models.FeedbackRecordWithScore, error) {
+	if m.nearestAfterFunc != nil {
+		return m.nearestAfterFunc(ctx, model, queryEmbedding, tenantID, limit, lastDistance, lastFeedbackRecordID, excludeID, minScore)
 	}
 
 	return nil, nil
@@ -59,10 +74,9 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 			EmbeddingClient: &mockEmbeddingClient{},
 			EmbeddingsRepo:  &mockEmbeddingsRepoForSearch{},
 			Model:           "test-model",
-			MinScore:        0.5,
 		})
-		results, err := svc.SemanticSearch(context.Background(), "query", "", 10)
-		assert.Nil(t, results)
+		res, err := svc.SemanticSearch(context.Background(), "query", "", 10, 0, 0, "")
+		assert.Empty(t, res.Results)
 		assert.ErrorIs(t, err, ErrMissingTenantID)
 	})
 
@@ -71,10 +85,9 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 			EmbeddingClient: &mockEmbeddingClient{},
 			EmbeddingsRepo:  &mockEmbeddingsRepoForSearch{},
 			Model:           "test-model",
-			MinScore:        0.5,
 		})
-		results, err := svc.SemanticSearch(context.Background(), "  ", "tenant-1", 10)
-		assert.Nil(t, results)
+		res, err := svc.SemanticSearch(context.Background(), "  ", "tenant-1", 10, 0, 0, "")
+		assert.Empty(t, res.Results)
 		assert.ErrorIs(t, err, ErrEmptyQuery)
 	})
 
@@ -95,7 +108,7 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 			EmbeddingsRepo: &mockEmbeddingsRepoForSearch{
 				nearestFunc: func(
 					_ context.Context, model string, queryEmbedding []float32,
-					tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
+					tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
 				) ([]models.FeedbackRecordWithScore, error) {
 					nearestCalled = true
 
@@ -103,6 +116,7 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 					assert.Equal(t, []float32{0.1, 0.2}, queryEmbedding)
 					assert.Equal(t, "env-1", tenantID)
 					assert.Equal(t, 10, limit)
+					assert.Equal(t, 2, offset)
 					assert.Nil(t, excludeID)
 					assert.InDelta(t, 0.5, minScore, 1e-9)
 
@@ -111,16 +125,15 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 					}, nil
 				},
 			},
-			Model:    "test-model",
-			MinScore: 0.5,
+			Model: "test-model",
 		})
-		results, err := svc.SemanticSearch(context.Background(), "login slow", "env-1", 10)
+		res, err := svc.SemanticSearch(context.Background(), "login slow", "env-1", 10, 2, 0.5, "")
 		require.NoError(t, err)
 		require.True(t, clientCalled)
 		require.True(t, nearestCalled)
-		require.Len(t, results, 1)
-		assert.Equal(t, id, results[0].FeedbackRecordID)
-		assert.InDelta(t, 0.91, results[0].Score, 1e-9)
+		require.Len(t, res.Results, 1)
+		assert.Equal(t, id, res.Results[0].FeedbackRecordID)
+		assert.InDelta(t, 0.91, res.Results[0].Score, 1e-9)
 	})
 }
 
@@ -130,10 +143,9 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 			EmbeddingClient: &mockEmbeddingClient{},
 			EmbeddingsRepo:  &mockEmbeddingsRepoForSearch{},
 			Model:           "test-model",
-			MinScore:        0.5,
 		})
-		results, err := svc.SimilarFeedback(context.Background(), uuid.MustParse("018e1234-5678-9abc-def0-123456789abc"), "", 10)
-		assert.Nil(t, results)
+		res, err := svc.SimilarFeedback(context.Background(), uuid.MustParse("018e1234-5678-9abc-def0-123456789abc"), "", 10, 0, 0, "")
+		assert.Empty(t, res.Results)
 		assert.ErrorIs(t, err, ErrMissingTenantID)
 	})
 
@@ -148,11 +160,10 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 					return nil, repository.ErrEmbeddingNotFound
 				},
 			},
-			Model:    "test-model",
-			MinScore: 0.5,
+			Model: "test-model",
 		})
-		results, err := svc.SimilarFeedback(context.Background(), rid, "env-1", 10)
-		assert.Nil(t, results)
+		res, err := svc.SimilarFeedback(context.Background(), rid, "env-1", 10, 0, 0, "")
+		assert.Empty(t, res.Results)
 		assert.ErrorIs(t, err, repository.ErrEmbeddingNotFound)
 	})
 
@@ -170,11 +181,12 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 				},
 				nearestFunc: func(
 					_ context.Context, model string, _ []float32,
-					tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
+					tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
 				) ([]models.FeedbackRecordWithScore, error) {
 					assert.Equal(t, "test-model", model)
 					assert.Equal(t, "env-1", tenantID)
 					assert.Equal(t, 10, limit)
+					assert.Equal(t, 0, offset)
 					require.NotNil(t, excludeID)
 					assert.Equal(t, sourceID, *excludeID)
 					assert.InDelta(t, 0.5, minScore, 1e-9)
@@ -184,14 +196,13 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 					}, nil
 				},
 			},
-			Model:    "test-model",
-			MinScore: 0.5,
+			Model: "test-model",
 		})
-		results, err := svc.SimilarFeedback(context.Background(), sourceID, "env-1", 10)
+		res, err := svc.SimilarFeedback(context.Background(), sourceID, "env-1", 10, 0, 0.5, "")
 		require.NoError(t, err)
-		require.Len(t, results, 1)
-		assert.Equal(t, similarID, results[0].FeedbackRecordID)
-		assert.InDelta(t, 0.88, results[0].Score, 1e-9)
+		require.Len(t, res.Results, 1)
+		assert.Equal(t, similarID, res.Results[0].FeedbackRecordID)
+		assert.InDelta(t, 0.88, res.Results[0].Score, 1e-9)
 	})
 }
 
@@ -205,9 +216,8 @@ func TestSearchService_SemanticSearch_EmbeddingError(t *testing.T) {
 		},
 		EmbeddingsRepo: &mockEmbeddingsRepoForSearch{},
 		Model:          "test-model",
-		MinScore:       0.5,
 	})
-	results, err := svc.SemanticSearch(context.Background(), "query", "env-1", 10)
-	assert.Nil(t, results)
+	res, err := svc.SemanticSearch(context.Background(), "query", "env-1", 10, 0, 0, "")
+	assert.Empty(t, res.Results)
 	assert.ErrorIs(t, err, embeddingErr)
 }

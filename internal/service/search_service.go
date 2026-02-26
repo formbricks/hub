@@ -31,7 +31,11 @@ type EmbeddingsRepositoryForSearch interface {
 		ctx context.Context, feedbackRecordID uuid.UUID, model string,
 	) ([]float32, error)
 	NearestFeedbackRecordsByEmbedding(
-		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
+		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
+	) ([]models.FeedbackRecordWithScore, error)
+	NearestFeedbackRecordsByEmbeddingAfterCursor(
+		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int,
+		lastDistance float64, lastFeedbackRecordID uuid.UUID, excludeID *uuid.UUID, minScore float64,
 	) ([]models.FeedbackRecordWithScore, error)
 }
 
@@ -40,7 +44,6 @@ type SearchService struct {
 	embeddingClient EmbeddingClient
 	embeddingsRepo  EmbeddingsRepositoryForSearch
 	model           string
-	minScore        float64
 	queryCache      *lru.Cache[string, []float32]
 	queryLoadGroup  singleflight.Group
 	cacheMetrics    observability.CacheMetrics
@@ -52,7 +55,6 @@ type SearchServiceParams struct {
 	EmbeddingClient EmbeddingClient
 	EmbeddingsRepo  EmbeddingsRepositoryForSearch
 	Model           string
-	MinScore        float64 // Only results with score >= MinScore are returned (0..1).
 	QueryCache      *lru.Cache[string, []float32]
 	CacheMetrics    observability.CacheMetrics
 	Logger          *slog.Logger
@@ -69,7 +71,6 @@ func NewSearchService(p SearchServiceParams) *SearchService {
 		embeddingClient: p.EmbeddingClient,
 		embeddingsRepo:  p.EmbeddingsRepo,
 		model:           p.Model,
-		minScore:        p.MinScore,
 		queryCache:      p.QueryCache,
 		cacheMetrics:    p.CacheMetrics,
 		logger:          logger,
@@ -77,17 +78,20 @@ func NewSearchService(p SearchServiceParams) *SearchService {
 }
 
 // SemanticSearch returns feedback record IDs and similarity scores for the given query, scoped to tenantID.
-// Requires non-empty tenantID and non-empty (after trim) query.
+// Requires non-empty tenantID and non-empty (after trim) query. If cursor is non-empty it is used for
+// keyset paging (offset is ignored); otherwise offset is used. minScore is the minimum similarity score (0..1).
+// NextCursor is set when there may be a next page (full page returned).
 func (s *SearchService) SemanticSearch(
-	ctx context.Context, query, tenantID string, topK int,
-) ([]models.FeedbackRecordWithScore, error) {
+	ctx context.Context, query, tenantID string, topK, offset int, minScore float64, cursor string,
+) (SearchResult, error) {
+	out := SearchResult{}
 	if tenantID == "" {
-		return nil, ErrMissingTenantID
+		return out, ErrMissingTenantID
 	}
 
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return nil, ErrEmptyQuery
+		return out, ErrEmptyQuery
 	}
 
 	var (
@@ -104,26 +108,47 @@ func (s *SearchService) SemanticSearch(
 	if err != nil {
 		s.logger.Error("semantic search: create embedding failed", "error", err, "model", s.model, "topK", topK)
 
-		return nil, fmt.Errorf("create embedding: %w", err)
+		return out, fmt.Errorf("create embedding: %w", err)
 	}
 
-	results, err := s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(ctx, s.model, embedding, tenantID, topK, nil, s.minScore)
+	var results []models.FeedbackRecordWithScore
+
+	if cursor != "" {
+		lastDistance, lastID, decErr := DecodeSearchCursor(cursor)
+		if decErr != nil {
+			return out, ErrInvalidCursor
+		}
+
+		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbeddingAfterCursor(
+			ctx, s.model, embedding, tenantID, topK, lastDistance, lastID, nil, minScore)
+	} else {
+		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(ctx, s.model, embedding, tenantID, topK, offset, nil, minScore)
+	}
+
 	if err != nil {
 		s.logger.Error("semantic search: nearest failed", "error", err, "model", s.model)
 
-		return nil, fmt.Errorf("nearest feedback records: %w", err)
+		return out, fmt.Errorf("nearest feedback records: %w", err)
 	}
 
-	return results, nil
+	out.Results = results
+	if len(results) == topK {
+		last := results[len(results)-1]
+		out.NextCursor = EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
+	}
+
+	return out, nil
 }
 
 // SimilarFeedback returns feedback record IDs and similarity scores for records similar to the given one, scoped to tenantID.
 // Requires non-empty tenantID. Returns ErrEmbeddingNotFound when the record has no embedding for the current model.
+// If cursor is non-empty it is used for keyset paging (offset is ignored); otherwise offset is used.
 func (s *SearchService) SimilarFeedback(
-	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int,
-) ([]models.FeedbackRecordWithScore, error) {
+	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit, offset int, minScore float64, cursor string,
+) (SearchResult, error) {
+	out := SearchResult{}
 	if tenantID == "" {
-		return nil, ErrMissingTenantID
+		return out, ErrMissingTenantID
 	}
 
 	embedding, err := s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, feedbackRecordID, s.model)
@@ -131,22 +156,42 @@ func (s *SearchService) SimilarFeedback(
 		if errors.Is(err, repository.ErrEmbeddingNotFound) {
 			s.logger.Debug("similar feedback: no embedding for record", "feedbackRecordId", feedbackRecordID.String(), "model", s.model)
 			//nolint:wrapcheck // return as-is so handler can map to 404
-			return nil, err
+			return out, err
 		}
 
 		s.logger.Error("similar feedback: get embedding failed", "error", err, "feedbackRecordId", feedbackRecordID.String())
 
-		return nil, fmt.Errorf("get embedding: %w", err)
+		return out, fmt.Errorf("get embedding: %w", err)
 	}
 
-	results, err := s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(ctx, s.model, embedding, tenantID, limit, &feedbackRecordID, s.minScore)
+	var results []models.FeedbackRecordWithScore
+
+	if cursor != "" {
+		lastDistance, lastID, decErr := DecodeSearchCursor(cursor)
+		if decErr != nil {
+			return out, ErrInvalidCursor
+		}
+
+		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbeddingAfterCursor(
+			ctx, s.model, embedding, tenantID, limit, lastDistance, lastID, &feedbackRecordID, minScore)
+	} else {
+		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(
+			ctx, s.model, embedding, tenantID, limit, offset, &feedbackRecordID, minScore)
+	}
+
 	if err != nil {
 		s.logger.Error("similar feedback: nearest failed", "error", err, "feedbackRecordId", feedbackRecordID.String())
 
-		return nil, fmt.Errorf("nearest feedback records: %w", err)
+		return out, fmt.Errorf("nearest feedback records: %w", err)
 	}
 
-	return results, nil
+	out.Results = results
+	if len(results) == limit {
+		last := results[len(results)-1]
+		out.NextCursor = EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
+	}
+
+	return out, nil
 }
 
 func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query string) ([]float32, error) {

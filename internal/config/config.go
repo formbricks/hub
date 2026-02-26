@@ -67,9 +67,6 @@ type Config struct {
 	// OpenTelemetry: traces exporter (e.g. "otlp", "stdout"); empty = tracing disabled.
 	// OTLP endpoint from OTEL_EXPORTER_OTLP_ENDPOINT (SDK reads env).
 	OtelTracesExporter string
-
-	// Search score threshold: only results with similarity score >= this value (0..1) are returned. Default: 0.5.
-	SearchScoreThreshold float64
 }
 
 // getEnv retrieves an environment variable or returns a default value.
@@ -91,30 +88,6 @@ func getEnvAsInt(key string, defaultValue int) int {
 	value, err := strconv.Atoi(valueStr)
 	if err != nil {
 		return defaultValue
-	}
-
-	return value
-}
-
-// getEnvAsFloat64 retrieves an environment variable as a float64 or returns a default value.
-// Values outside [0, 1] are clamped to that range.
-func getEnvAsFloat64(key string, defaultValue float64) float64 {
-	valueStr := os.Getenv(key)
-	if valueStr == "" {
-		return defaultValue
-	}
-
-	value, err := strconv.ParseFloat(valueStr, 64)
-	if err != nil {
-		return defaultValue
-	}
-
-	if value < 0 {
-		return 0
-	}
-
-	if value > 1 {
-		return 1
 	}
 
 	return value
@@ -192,10 +165,6 @@ func Load() (*Config, error) {
 		embeddingMaxAttempts = defaultEmbeddingMaxAttempts
 	}
 
-	const (
-		defaultSearchScoreThreshold = 0.5
-	)
-
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
@@ -218,8 +187,6 @@ func Load() (*Config, error) {
 
 		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
 		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),
-
-		SearchScoreThreshold: getEnvAsFloat64("SEARCH_SCORE_THRESHOLD", defaultSearchScoreThreshold),
 	}
 
 	return cfg, nil

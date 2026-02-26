@@ -231,7 +231,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			EmbeddingClient: embeddingClient,
 			EmbeddingsRepo:  embeddingsRepo,
 			Model:           embeddingModel,
-			MinScore:        cfg.SearchScoreThreshold,
 			QueryCache:      queryCache,
 			CacheMetrics:    cacheMetrics,
 			Logger:          slog.Default(),

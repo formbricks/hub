@@ -553,6 +553,28 @@ paths:
                 Embeds the search query and returns feedback record IDs with similarity scores (cosine, 0..1).
                 Requires embedding to be configured (EMBEDDING_PROVIDER, EMBEDDING_MODEL).
             operationId: semantic-search-feedback-records
+            parameters:
+                - name: offset
+                  in: query
+                  description: Number of results to skip (OFFSET-based paging). Ignored if cursor is set. Capped at 1000 for performance.
+                  schema:
+                    type: integer
+                    minimum: 0
+                    default: 0
+                - name: cursor
+                  in: query
+                  description: Opaque cursor from previous response nextCursor for keyset paging. When set, offset is ignored and the next page after the cursor is returned (better performance for deep paging).
+                  schema:
+                    type: string
+                - name: minScore
+                  in: query
+                  description: Minimum similarity score (0..1); only results with score >= minScore are returned. Default 0.
+                  schema:
+                    type: number
+                    format: float
+                    minimum: 0
+                    maximum: 1
+                    default: 0
             requestBody:
                 content:
                     application/json:
@@ -567,7 +589,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/SemanticSearchResponse'
                 "400":
-                    description: Bad Request (e.g. missing tenantId or empty query)
+                    description: Bad Request (e.g. missing tenantId, empty query, or invalid cursor)
                     content:
                         application/problem+json:
                             schema:
@@ -609,6 +631,27 @@ paths:
                     default: 10
                     minimum: 1
                     maximum: 100
+                - name: offset
+                  in: query
+                  description: Number of results to skip (OFFSET-based paging). Ignored if cursor is set. Capped at 1000 for performance.
+                  schema:
+                    type: integer
+                    minimum: 0
+                    default: 0
+                - name: cursor
+                  in: query
+                  description: Opaque cursor from previous response nextCursor for keyset paging. When set, offset is ignored (better performance for deep paging).
+                  schema:
+                    type: string
+                - name: minScore
+                  in: query
+                  description: Minimum similarity score (0..1); only results with score >= minScore are returned. Default 0.
+                  schema:
+                    type: number
+                    format: float
+                    minimum: 0
+                    maximum: 1
+                    default: 0
             responses:
                 "200":
                     description: OK
@@ -617,7 +660,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/SemanticSearchResponse'
                 "400":
-                    description: Bad Request (e.g. missing tenantId)
+                    description: Bad Request (e.g. missing tenantId or invalid cursor)
                     content:
                         application/problem+json:
                             schema:
@@ -880,6 +923,9 @@ components:
                     description: List of feedback record IDs with similarity scores (0 = unrelated, 1 = identical)
                     items:
                         $ref: '#/components/schemas/SemanticSearchResultItem'
+                nextCursor:
+                    type: string
+                    description: Opaque cursor for the next page (keyset paging). Present only when there may be more results (full page returned). Omit when no next page.
             required:
                 - results
         SemanticSearchResultItem:
