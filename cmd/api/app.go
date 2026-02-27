@@ -198,10 +198,12 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		case embeddingProviderOpenAI:
 			embeddingClient = openai.NewClient(cfg.EmbeddingProviderAPIKey,
 				openai.WithModel(embeddingModel),
+				openai.WithNormalize(cfg.EmbeddingNormalize),
 			)
 		case embeddingProviderGoogle:
 			googleClient, err := googleai.NewClient(context.Background(), cfg.EmbeddingProviderAPIKey,
 				googleai.WithModel(embeddingModel),
+				googleai.WithNormalize(cfg.EmbeddingNormalize),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("create google embedding client: %w", err)

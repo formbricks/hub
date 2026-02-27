@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -61,6 +62,8 @@ type Config struct {
 	EmbeddingMaxConcurrent int
 	// Embeddings: max attempts per embedding job (River retries); default 3
 	EmbeddingMaxAttempts int
+	// Embeddings: if true, L2-normalize vectors before storing or caching (env EMBEDDING_NORMALIZE); default false
+	EmbeddingNormalize bool
 
 	// OpenTelemetry: set to "otlp" to enable metrics (OTLP push); empty = metrics disabled
 	OtelMetricsExporter string
@@ -91,6 +94,24 @@ func getEnvAsInt(key string, defaultValue int) int {
 	}
 
 	return value
+}
+
+// GetEnvAsBool retrieves an environment variable as a boolean. "true", "1", "yes" (case-insensitive) => true; else false.
+// Exported so other cmd packages (e.g. backfill-embeddings) can reuse it without duplicating logic.
+func GetEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+
+	switch strings.ToLower(strings.TrimSpace(valueStr)) {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return defaultValue
+	}
 }
 
 // Load reads configuration from environment variables and returns a Config struct.
@@ -184,6 +205,7 @@ func Load() (*Config, error) {
 		EmbeddingModel:          getEnv("EMBEDDING_MODEL", ""),
 		EmbeddingMaxConcurrent:  embeddingMaxConcurrent,
 		EmbeddingMaxAttempts:    embeddingMaxAttempts,
+		EmbeddingNormalize:      GetEnvAsBool("EMBEDDING_NORMALIZE", false),
 
 		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
 		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),

@@ -1,4 +1,4 @@
-.PHONY: help tests tests-coverage build build-backfill-embeddings run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: help tests tests-coverage build build-backfill-embeddings run run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Default target - show help
 help:
@@ -8,6 +8,7 @@ help:
 	@echo "  make build                    - Build the API server"
 	@echo "  make build-backfill-embeddings - Build the backfill-embeddings command"
 	@echo "  make run              - Run the API server"
+	@echo "  make run-backfill-embeddings - Run the backfill-embeddings command (enqueues embedding jobs; loads .env)"
 	@echo "  make test-unit        - Run unit tests (fast, no database)"
 	@echo "  make tests            - Run integration tests"
 	@echo "  make test-all         - Run all tests (unit + integration)"
@@ -61,6 +62,10 @@ build-backfill-embeddings:
 	@echo "Building backfill-embeddings..."
 	go build -o bin/backfill-embeddings ./cmd/backfill-embeddings
 	@echo "Binary created: bin/backfill-embeddings"
+
+# Run the backfill-embeddings command (loads .env for DATABASE_URL etc.)
+run-backfill-embeddings:
+	@(set -a && [ -f .env ] && . ./.env && set +a; go run ./cmd/backfill-embeddings)
 
 # Run the API server
 run:

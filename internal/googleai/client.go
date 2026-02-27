@@ -11,6 +11,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/embeddings"
 )
 
 var (
@@ -29,6 +30,7 @@ type Client struct {
 	client     *genai.Client
 	model      string
 	dimensions int
+	normalize  bool
 }
 
 // ClientOption configures the Client.
@@ -45,6 +47,13 @@ func WithDimensions(dim int) ClientOption {
 func WithModel(model string) ClientOption {
 	return func(c *Client) {
 		c.model = model
+	}
+}
+
+// WithNormalize enables L2 normalization of the embedding vector before returning (e.g. before storing or caching).
+func WithNormalize(normalize bool) ClientOption {
+	return func(c *Client) {
+		c.normalize = normalize
 	}
 }
 
@@ -105,6 +114,10 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 
 	out := make([]float32, len(emb))
 	copy(out, emb)
+
+	if c.normalize {
+		embeddings.NormalizeL2(out)
+	}
 
 	return out, nil
 }
