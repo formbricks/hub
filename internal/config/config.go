@@ -51,6 +51,17 @@ type Config struct {
 	// Max total webhooks allowed (creation rejected when count >= this); default 500
 	WebhookMaxCount int
 
+	// Embeddings: optional. No default for provider; if EMBEDDING_PROVIDER is not set, embeddings are disabled and no embedding jobs run.
+	EmbeddingProviderAPIKey string
+	// Embeddings: provider name (e.g. openai); env EMBEDDING_PROVIDER. Empty = embeddings disabled.
+	EmbeddingProvider string
+	// Embeddings: model name; env EMBEDDING_MODEL. Optional (e.g. local provider may not use it).
+	EmbeddingModel string
+	// Embeddings: max concurrent workers for the embeddings River queue; default 5
+	EmbeddingMaxConcurrent int
+	// Embeddings: max attempts per embedding job (River retries); default 3
+	EmbeddingMaxAttempts int
+
 	// OpenTelemetry: set to "otlp" to enable metrics (OTLP push); empty = metrics disabled
 	OtelMetricsExporter string
 	// OpenTelemetry: traces exporter (e.g. "otlp", "stdout"); empty = tracing disabled.
@@ -100,6 +111,8 @@ func Load() (*Config, error) {
 		defaultMessagePublisherPerEventTimeout = 10
 		defaultShutdownTimeoutSeconds          = 30
 		defaultWebhookMaxCount                 = 500
+		defaultEmbeddingMaxConcurrent          = 5
+		defaultEmbeddingMaxAttempts            = 3
 	)
 
 	apiKey := os.Getenv("API_KEY")
@@ -142,6 +155,16 @@ func Load() (*Config, error) {
 		return nil, ErrWebhookMaxCount
 	}
 
+	embeddingMaxConcurrent := getEnvAsInt("EMBEDDING_MAX_CONCURRENT", defaultEmbeddingMaxConcurrent)
+	if embeddingMaxConcurrent <= 0 {
+		embeddingMaxConcurrent = defaultEmbeddingMaxConcurrent
+	}
+
+	embeddingMaxAttempts := getEnvAsInt("EMBEDDING_MAX_ATTEMPTS", defaultEmbeddingMaxAttempts)
+	if embeddingMaxAttempts <= 0 {
+		embeddingMaxAttempts = defaultEmbeddingMaxAttempts
+	}
+
 	cfg := &Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
 		Port:        getEnv("PORT", "8080"),
@@ -155,6 +178,12 @@ func Load() (*Config, error) {
 		MessagePublisherPerEventTimeout: time.Duration(perEventTimeoutSecs) * time.Second,
 		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
 		WebhookMaxCount:                 webhookMaxCount,
+
+		EmbeddingProviderAPIKey: getEnv("EMBEDDING_PROVIDER_API_KEY", ""),
+		EmbeddingProvider:       getEnv("EMBEDDING_PROVIDER", ""),
+		EmbeddingModel:          getEnv("EMBEDDING_MODEL", ""),
+		EmbeddingMaxConcurrent:  embeddingMaxConcurrent,
+		EmbeddingMaxAttempts:    embeddingMaxAttempts,
 
 		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
 		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),

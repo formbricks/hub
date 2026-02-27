@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
@@ -14,6 +16,11 @@ import (
 
 // ErrUserIdentifierRequired is returned when bulk delete is called without user_identifier (err113).
 var ErrUserIdentifierRequired = errors.New("user_identifier is required")
+
+// ErrEmbeddingBackfillNotConfigured is returned when BackfillEmbeddings is called without embedding inserter/queue.
+var ErrEmbeddingBackfillNotConfigured = errors.New("embedding backfill not configured")
+
+const uniqueByPeriodEmbedding = 24 * time.Hour
 
 // FeedbackRecordsRepository defines the interface for feedback records data access.
 type FeedbackRecordsRepository interface {
@@ -26,18 +33,52 @@ type FeedbackRecordsRepository interface {
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error)
 }
 
+// EmbeddingsRepository defines the interface for embeddings table access.
+type EmbeddingsRepository interface {
+	Upsert(ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32) error
+	DeleteByFeedbackRecordAndModel(ctx context.Context, feedbackRecordID uuid.UUID, model string) error
+	ListFeedbackRecordIDsForBackfill(ctx context.Context, model string) ([]uuid.UUID, error)
+}
+
 // FeedbackRecordsService handles business logic for feedback records.
 type FeedbackRecordsService struct {
-	repo      FeedbackRecordsRepository
-	publisher MessagePublisher
+	repo                 FeedbackRecordsRepository
+	embeddingsRepo       EmbeddingsRepository
+	embeddingModel       string
+	publisher            MessagePublisher
+	embeddingInserter    FeedbackEmbeddingInserter
+	embeddingQueueName   string
+	embeddingMaxAttempts int
 }
 
 // NewFeedbackRecordsService creates a new feedback records service.
-func NewFeedbackRecordsService(repo FeedbackRecordsRepository, publisher MessagePublisher) *FeedbackRecordsService {
+// embeddingInserter and embeddingQueueName are optional (for backfill); when nil/empty, BackfillEmbeddings returns an error.
+// Call SetEmbeddingInserter after the River client is created to enable backfill without building the service twice.
+// embeddingsRepo and embeddingModel are required for SetEmbedding and BackfillEmbeddings (from EMBEDDING_PROVIDER and EMBEDDING_MODEL).
+func NewFeedbackRecordsService(
+	repo FeedbackRecordsRepository,
+	embeddingsRepo EmbeddingsRepository,
+	embeddingModel string,
+	publisher MessagePublisher,
+	embeddingInserter FeedbackEmbeddingInserter,
+	embeddingQueueName string,
+	embeddingMaxAttempts int,
+) *FeedbackRecordsService {
 	return &FeedbackRecordsService{
-		repo:      repo,
-		publisher: publisher,
+		repo:                 repo,
+		embeddingsRepo:       embeddingsRepo,
+		embeddingModel:       embeddingModel,
+		publisher:            publisher,
+		embeddingInserter:    embeddingInserter,
+		embeddingQueueName:   embeddingQueueName,
+		embeddingMaxAttempts: embeddingMaxAttempts,
 	}
+}
+
+// SetEmbeddingInserter sets the River inserter for embedding jobs (e.g. after River client is created).
+// This allows a single service instance to be used by both handlers and the embedding worker.
+func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter FeedbackEmbeddingInserter) {
+	s.embeddingInserter = inserter
 }
 
 // CreateFeedbackRecord creates a new feedback record.
@@ -49,7 +90,7 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(
 		return nil, fmt.Errorf("create feedback record: %w", err)
 	}
 
-	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, *record)
+	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, record)
 
 	return record, nil
 }
@@ -100,7 +141,7 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, *record, req.ChangedFields())
+	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, req.ChangedFields())
 
 	return record, nil
 }
@@ -134,4 +175,62 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 	}
 
 	return len(ids), nil
+}
+
+// SetEmbedding sets or clears the embedding for a feedback record and model (internal use by embeddings worker).
+// If embedding is nil, the row for (feedbackRecordID, model) is deleted; otherwise upserted.
+// It does not publish an event.
+func (s *FeedbackRecordsService) SetEmbedding(
+	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
+) error {
+	if embedding == nil {
+		if err := s.embeddingsRepo.DeleteByFeedbackRecordAndModel(ctx, feedbackRecordID, model); err != nil {
+			return fmt.Errorf("delete embedding: %w", err)
+		}
+
+		return nil
+	}
+
+	if err := s.embeddingsRepo.Upsert(ctx, feedbackRecordID, model, embedding); err != nil {
+		return fmt.Errorf("upsert embedding: %w", err)
+	}
+
+	return nil
+}
+
+// BackfillEmbeddings enqueues embedding jobs for the given model for all feedback records that have
+// non-empty value_text and no embedding row for that model (existing rows are replaced by upsert when the job runs).
+// Returns the number of jobs enqueued. Requires embeddingInserter and embeddingQueueName to be set.
+func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model string) (int, error) {
+	if s.embeddingInserter == nil || s.embeddingQueueName == "" {
+		return 0, ErrEmbeddingBackfillNotConfigured
+	}
+
+	ids, err := s.embeddingsRepo.ListFeedbackRecordIDsForBackfill(ctx, model)
+	if err != nil {
+		return 0, fmt.Errorf("list ids for embedding backfill: %w", err)
+	}
+
+	opts := &river.InsertOpts{
+		Queue:       s.embeddingQueueName,
+		MaxAttempts: s.embeddingMaxAttempts,
+		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: uniqueByPeriodEmbedding},
+	}
+
+	enqueued := 0
+
+	for _, id := range ids {
+		_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
+			FeedbackRecordID: id,
+			Model:            model,
+			ValueTextHash:    "backfill",
+		}, opts)
+		if err != nil {
+			return enqueued, fmt.Errorf("enqueue embedding job for %s: %w", id, err)
+		}
+
+		enqueued++
+	}
+
+	return enqueued, nil
 }

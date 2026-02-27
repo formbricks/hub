@@ -1,11 +1,12 @@
-.PHONY: help tests tests-coverage build run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: help tests tests-coverage build build-backfill-embeddings run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Default target - show help
 help:
 	@echo "Available targets:"
 	@echo "  make help             - Show this help message"
 	@echo "  make dev-setup        - Set up development environment (docker, deps, tools, schema, hooks)"
-	@echo "  make build            - Build the API server"
+	@echo "  make build                    - Build the API server"
+	@echo "  make build-backfill-embeddings - Build the backfill-embeddings command"
 	@echo "  make run              - Run the API server"
 	@echo "  make test-unit        - Run unit tests (fast, no database)"
 	@echo "  make tests            - Run integration tests"
@@ -54,6 +55,12 @@ build:
 	@echo "Building API server..."
 	go build -o bin/api ./cmd/api
 	@echo "Binary created: bin/api"
+
+# Build the backfill-embeddings command (enqueues embedding jobs; requires DATABASE_URL)
+build-backfill-embeddings:
+	@echo "Building backfill-embeddings..."
+	go build -o bin/backfill-embeddings ./cmd/backfill-embeddings
+	@echo "Binary created: bin/backfill-embeddings"
 
 # Run the API server
 run:

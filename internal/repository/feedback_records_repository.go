@@ -75,7 +75,7 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 	return &record, nil
 }
 
-// GetByID retrieves a single feedback record by ID.
+// GetByID retrieves a single feedback record by ID. Embedding is not selected (API/worker reads stay lean).
 func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,
@@ -180,7 +180,7 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 	return whereClause, args
 }
 
-// List retrieves feedback records with optional filters.
+// List retrieves feedback records with optional filters. Embedding is not selected (API reads stay lean).
 func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
 	query := `
 		SELECT id, collected_at, created_at, updated_at,

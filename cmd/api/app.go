@@ -21,7 +21,9 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/googleai"
 	"github.com/formbricks/hub/internal/observability"
+	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
@@ -36,67 +38,93 @@ type App struct {
 	message        *service.MessagePublisherManager
 	meterProvider  *sdkmetric.MeterProvider
 	tracerProvider *sdktrace.TracerProvider
-	eventMetrics   observability.EventMetrics
+	metrics        *observability.Metrics
+}
+
+var errUnsupportedEmbeddingProvider = errors.New("unsupported embedding provider")
+
+const (
+	embeddingProviderOpenAI = "openai"
+	embeddingProviderGoogle = "google"
+)
+
+var supportedEmbeddingProviders = map[string]struct{}{
+	embeddingProviderOpenAI: {},
+	embeddingProviderGoogle: {},
 }
 
 const riverQueueDepthInterval = 15 * time.Second
 
-// setupMetrics creates meter provider, event metrics, and webhook metrics when metrics are enabled.
-// When NewMeterProvider returns nil (unsupported or disabled exporter), returns all nils (metrics disabled).
-func setupMetrics(cfg *config.Config) (
-	*sdkmetric.MeterProvider, observability.EventMetrics, observability.WebhookMetrics, error,
-) {
+// embeddingProviderAndModel returns (provider, model) when embeddings are enabled: EMBEDDING_PROVIDER
+// is set and supported. Model and API key are optional (e.g. local provider may not need them).
+// Otherwise returns ("", "") so no embedding provider or jobs run. Embeddings are optional; no defaults.
+func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
+	if cfg.EmbeddingProvider == "" {
+		return "", ""
+	}
+
+	if _, ok := supportedEmbeddingProviders[cfg.EmbeddingProvider]; !ok {
+		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
+			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
+
+		return "", ""
+	}
+
+	return cfg.EmbeddingProvider, cfg.EmbeddingModel
+}
+
+// setupMetrics creates meter provider and hub metrics when metrics are enabled.
+// When NewMeterProvider returns nil (unsupported or disabled exporter), returns (nil, nil, nil) (metrics disabled).
+func setupMetrics(cfg *config.Config) (*sdkmetric.MeterProvider, *observability.Metrics, error) {
 	mp, err := observability.NewMeterProvider(cfg)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create meter provider: %w", err)
+		return nil, nil, fmt.Errorf("create meter provider: %w", err)
 	}
 
 	if mp == nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil
 	}
 
-	meter := mp.Meter("hub")
-
-	eventMetrics, err := observability.NewEventMetrics(meter)
+	metrics, err := observability.NewMetrics(mp.Meter("hub"))
 	if err != nil {
 		err2 := observability.ShutdownMeterProvider(context.Background(), mp)
 		if err2 != nil {
-			slog.Error("shutdown meter provider after event metrics error", "error", err2)
+			slog.Error("shutdown meter provider after metrics error", "error", err2)
 		}
 
-		return nil, nil, nil, fmt.Errorf("create event metrics: %w", err)
+		return nil, nil, fmt.Errorf("create metrics: %w", err)
 	}
 
-	webhookMetrics, err := observability.NewWebhookMetrics(meter)
-	if err != nil {
-		err2 := observability.ShutdownMeterProvider(context.Background(), mp)
-		if err2 != nil {
-			slog.Error("shutdown meter provider after webhook metrics error", "error", err2)
-		}
-
-		return nil, nil, nil, fmt.Errorf("create webhook metrics: %w", err)
-	}
-
-	return mp, eventMetrics, webhookMetrics, nil
+	return mp, metrics, nil
 }
 
 // NewApp builds and wires all components. It does not start the HTTP server or River;
 // call Run to start and block until shutdown or failure.
 func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	var (
-		err            error
-		meterProvider  *sdkmetric.MeterProvider
-		eventMetrics   observability.EventMetrics
-		webhookMetrics observability.WebhookMetrics
+		err           error
+		meterProvider *sdkmetric.MeterProvider
+		metrics       *observability.Metrics
 	)
 
 	if cfg.OtelMetricsExporter == "" {
 		slog.Warn("metrics not enabled (OTEL_METRICS_EXPORTER empty or unset)")
 	} else {
-		meterProvider, eventMetrics, webhookMetrics, err = setupMetrics(cfg)
+		meterProvider, metrics, err = setupMetrics(cfg)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	var (
+		eventMetrics     observability.EventMetrics
+		webhookMetrics   observability.WebhookMetrics
+		embeddingMetrics observability.EmbeddingMetrics
+	)
+	if metrics != nil {
+		eventMetrics = metrics.Events
+		webhookMetrics = metrics.Webhooks
+		embeddingMetrics = metrics.Embeddings
 	}
 
 	var tracerProvider *sdktrace.TracerProvider
@@ -136,10 +164,57 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, webhookWorker)
 
+	queues := map[string]river.QueueConfig{
+		river.QueueDefault:          {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
+		service.EmbeddingsQueueName: {MaxWorkers: cfg.EmbeddingMaxConcurrent},
+	}
+
+	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
+	// Model for DB/jobs: required for embeddings.model column; use "default" when provider has no model name (e.g. local).
+	embeddingModelForDB := embeddingModel
+	if embeddingModelForDB == "" {
+		embeddingModelForDB = "default"
+	}
+
+	feedbackRecordsService := service.NewFeedbackRecordsService(
+		feedbackRecordsRepo,
+		embeddingsRepo,
+		embeddingModelForDB,
+		messageManager,
+		nil, // riverClient set below after creation
+		service.EmbeddingsQueueName,
+		cfg.EmbeddingMaxAttempts,
+	)
+
+	if embeddingProviderName != "" {
+		var embeddingClient service.EmbeddingClient
+
+		switch embeddingProviderName {
+		case embeddingProviderOpenAI:
+			embeddingClient = openai.NewClient(cfg.EmbeddingProviderAPIKey,
+				openai.WithModel(embeddingModel),
+			)
+		case embeddingProviderGoogle:
+			googleClient, err := googleai.NewClient(context.Background(), cfg.EmbeddingProviderAPIKey,
+				googleai.WithModel(embeddingModel),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("create google embedding client: %w", err)
+			}
+
+			embeddingClient = googleClient
+		default:
+			return nil, fmt.Errorf("%w: %s", errUnsupportedEmbeddingProvider, embeddingProviderName)
+		}
+
+		embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, embeddingMetrics)
+		river.AddWorker(riverWorkers, embeddingWorker)
+	}
+
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
-		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
-		},
+		Queues:  queues,
 		Workers: riverWorkers,
 	})
 	if err != nil {
@@ -160,6 +235,9 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		return nil, fmt.Errorf("create River client: %w", err)
 	}
 
+	// Enable backfill on the same service instance the embedding worker uses (avoids nil inserter if worker ever calls BackfillEmbeddings).
+	feedbackRecordsService.SetEmbeddingInserter(riverClient)
+
 	webhookProvider := service.NewWebhookProvider(
 		riverClient, webhooksRepo,
 		cfg.WebhookDeliveryMaxAttempts, cfg.WebhookMaxFanOutPerEvent,
@@ -167,15 +245,28 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	)
 	messageManager.RegisterProvider(webhookProvider)
 
+	if embeddingProviderName != "" {
+		embeddingProv := service.NewEmbeddingProvider(
+			riverClient,
+			cfg.EmbeddingProviderAPIKey,
+			embeddingModelForDB,
+			service.EmbeddingsQueueName,
+			cfg.EmbeddingMaxAttempts,
+			embeddingMetrics,
+		)
+		messageManager.RegisterProvider(embeddingProv)
+	}
+
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
-	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(feedbackRecordsRepo, messageManager)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
-	server := newHTTPServer(cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, meterProvider, tracerProvider)
+	server := newHTTPServer(
+		cfg, healthHandler, feedbackRecordsHandler, webhooksHandler,
+		meterProvider, tracerProvider,
+	)
 
 	return &App{
 		cfg:            cfg,
@@ -185,7 +276,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		message:        messageManager,
 		meterProvider:  meterProvider,
 		tracerProvider: tracerProvider,
-		eventMetrics:   eventMetrics,
+		metrics:        metrics,
 	}, nil
 }
 
@@ -209,6 +300,7 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/feedback-records/{id}", feedback.Update)
 	protected.HandleFunc("DELETE /v1/feedback-records/{id}", feedback.Delete)
 	protected.HandleFunc("DELETE /v1/feedback-records", feedback.BulkDelete)
+
 	protected.HandleFunc("POST /v1/webhooks", webhooks.Create)
 	protected.HandleFunc("GET /v1/webhooks", webhooks.List)
 	protected.HandleFunc("GET /v1/webhooks/{id}", webhooks.Get)
@@ -263,8 +355,8 @@ func (a *App) Run(ctx context.Context) error {
 	riverCtx, cancelRiver := context.WithCancel(ctx)
 	defer cancelRiver()
 
-	if a.eventMetrics != nil {
-		go runRiverQueueDepthPoller(riverCtx, a.db, a.eventMetrics)
+	if a.metrics != nil && a.metrics.Events != nil {
+		go runRiverQueueDepthPoller(riverCtx, a.db, a.metrics.Events)
 	}
 
 	go func() {
@@ -371,7 +463,9 @@ func (a *App) Shutdown(ctx context.Context) (err error) {
 	}()
 
 	if err = a.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		_ = a.river.Stop(ctx)
+		if stopErr := a.river.Stop(ctx); stopErr != nil {
+			slog.Error("river stop during server shutdown", "error", stopErr)
+		}
 
 		return fmt.Errorf("server shutdown: %w", err)
 	}

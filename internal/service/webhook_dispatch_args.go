@@ -25,6 +25,4 @@ type WebhookDispatchArgs struct {
 // Kind returns the River job kind.
 func (WebhookDispatchArgs) Kind() string { return webhookDispatchKind }
 
-func init() {
-	var _ river.JobArgs = WebhookDispatchArgs{}
-}
+var _ river.JobArgs = WebhookDispatchArgs{}
