@@ -233,6 +233,7 @@ dev-setup: docker-up deps install-tools init-db install-hooks
 # This runs more thorough tests than CI to find edge-case bugs.
 # Requires: API server running (make run in another terminal)
 # Requires: uvx (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)
+# Uses PORT from .env if set, otherwise 8080.
 schemathesis:
 	@echo "Running Schemathesis API tests (all phases)..."
 	@echo "This is deeper testing than CI - may find edge-case bugs."
@@ -243,7 +244,7 @@ schemathesis:
 			echo "Warning: API_KEY not found in .env file, tests may fail authentication"; \
 		fi && \
 		uvx schemathesis run ./openapi.yaml \
-			--url http://localhost:8080 \
+			--url "http://localhost:$${PORT:-8080}" \
 			--header "Authorization: Bearer $${API_KEY:-test-api-key-12345}" \
 			--checks all \
 			--phases examples,coverage,stateful,fuzzing \
@@ -255,7 +256,7 @@ schemathesis:
 			exit 1; \
 		fi && \
 		uvx schemathesis run ./openapi.yaml \
-			--url http://localhost:8080 \
+			--url "http://localhost:$${PORT:-8080}" \
 			--header "Authorization: Bearer $$API_KEY" \
 			--checks all \
 			--phases examples,coverage,stateful,fuzzing \
