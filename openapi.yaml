@@ -215,6 +215,7 @@ paths:
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
                                     tenant_id: "org-123"
+                                    submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     language: "en"
                             text:
                                 summary: Text feedback
@@ -228,6 +229,7 @@ paths:
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
                                     tenant_id: "org-123"
+                                    submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     language: "en"
                             nps:
                                 summary: NPS score
@@ -241,6 +243,7 @@ paths:
                                     source_name: "NPS Survey"
                                     user_identifier: "user-abc-123"
                                     tenant_id: "org-123"
+                                    submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     language: "en"
                             boolean:
                                 summary: Boolean feedback
@@ -254,6 +257,7 @@ paths:
                                     source_name: "Q1 NPS Survey"
                                     user_identifier: "user-abc-123"
                                     tenant_id: "org-123"
+                                    submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     language: "en"
                             ranking:
                                 summary: Ranking question item
@@ -269,6 +273,7 @@ paths:
                                     source_name: "Feature Priority Survey"
                                     user_identifier: "user-abc-123"
                                     tenant_id: "org-123"
+                                    submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     metadata:
                                         question_type: "ranking"
                                         total_items: 3
@@ -286,6 +291,7 @@ paths:
                                     source_name: "Feature Satisfaction Survey"
                                     user_identifier: "user-abc-123"
                                     tenant_id: "org-123"
+                                    submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     metadata:
                                         question_type: "matrix"
                 required: true
@@ -553,7 +559,7 @@ paths:
                 Embeds the search query and returns feedback record IDs with similarity scores (cosine, 0..1).
                 **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
                 When embeddings are disabled, this endpoint returns 503 Service Unavailable.
-                Request body must include query and tenantId (required for tenant isolation).
+                Request body must include query and tenant_id (required for tenant isolation).
             operationId: semantic-search-feedback-records
             parameters:
                 - name: offset
@@ -565,18 +571,18 @@ paths:
                     default: 0
                 - name: cursor
                   in: query
-                  description: Opaque cursor from previous response nextCursor for keyset paging. When set, offset is ignored and the next page after the cursor is returned (better performance for deep paging).
+                  description: Opaque cursor from previous response next_cursor for keyset paging. When set, offset is ignored and the next page after the cursor is returned (better performance for deep paging).
                   schema:
                     type: string
-                - name: minScore
+                - name: min_score
                   in: query
-                  description: Minimum similarity score (0..1); only results with score >= minScore are returned. Default 0.
+                  description: Minimum similarity score (0..1); only results with score >= min_score are returned. Default 0.7 to reduce noise.
                   schema:
                     type: number
                     format: float
                     minimum: 0
                     maximum: 1
-                    default: 0
+                    default: 0.7
             requestBody:
                 content:
                     application/json:
@@ -591,7 +597,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/SemanticSearchResponse'
                 "400":
-                    description: Bad Request (e.g. missing tenantId, empty query, or invalid cursor)
+                    description: Bad Request (e.g. missing tenant_id, empty query, or invalid cursor)
                     content:
                         application/problem+json:
                             schema:
@@ -617,7 +623,7 @@ paths:
                 Returns feedback record IDs and similarity scores for records similar to the given one (by embedding).
                 **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
                 When embeddings are disabled, this endpoint returns 503 Service Unavailable.
-                The source feedback record must belong to the given tenantId (tenant_id is enforced).
+                The source feedback record must belong to the given tenant_id (enforced).
             operationId: similar-feedback-records
             parameters:
                 - name: id
@@ -627,13 +633,13 @@ paths:
                   schema:
                     type: string
                     format: uuid
-                - name: tenantId
+                - name: tenant_id
                   in: query
                   description: Tenant ID (required for isolation; must match feedback record tenant_id)
                   required: true
                   schema:
                     type: string
-                - name: topK
+                - name: top_k
                   in: query
                   description: Maximum number of similar records to return (default 10, max 100)
                   schema:
@@ -650,18 +656,18 @@ paths:
                     default: 0
                 - name: cursor
                   in: query
-                  description: Opaque cursor from previous response nextCursor for keyset paging. When set, offset is ignored (better performance for deep paging).
+                  description: Opaque cursor from previous response next_cursor for keyset paging. When set, offset is ignored (better performance for deep paging).
                   schema:
                     type: string
-                - name: minScore
+                - name: min_score
                   in: query
-                  description: Minimum similarity score (0..1); only results with score >= minScore are returned. Default 0.
+                  description: Minimum similarity score (0..1); only results with score >= min_score are returned. Default 0.7 to reduce noise.
                   schema:
                     type: number
                     format: float
                     minimum: 0
                     maximum: 1
-                    default: 0
+                    default: 0.7
             responses:
                 "200":
                     description: OK
@@ -670,7 +676,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/SemanticSearchResponse'
                 "400":
-                    description: Bad Request (e.g. missing tenantId or invalid cursor)
+                    description: Bad Request (e.g. missing tenant_id or invalid cursor)
                     content:
                         application/problem+json:
                             schema:
@@ -918,18 +924,19 @@ components:
                 query:
                     type: string
                     description: Search query text (embedded and compared via cosine similarity)
-                topK:
+                top_k:
                     type: integer
                     description: Maximum number of results (default 10, max 100)
                     default: 10
                     minimum: 1
                     maximum: 100
-                tenantId:
+                tenant_id:
                     type: string
                     description: Tenant ID (required for isolation; must match feedback record tenant_id)
+                    default: "org-123"
             required:
                 - query
-                - tenantId
+                - tenant_id
         SemanticSearchResponse:
             type: object
             additionalProperties: false
@@ -940,7 +947,7 @@ components:
                     description: List of feedback record IDs with similarity scores (0 = unrelated, 1 = identical)
                     items:
                         $ref: '#/components/schemas/SemanticSearchResultItem'
-                nextCursor:
+                next_cursor:
                     type: string
                     description: Opaque cursor for the next page (keyset paging). Present only when there may be more results (full page returned). Omit when no next page.
             required:
@@ -949,7 +956,7 @@ components:
             type: object
             additionalProperties: false
             properties:
-                feedbackRecordId:
+                feedback_record_id:
                     type: string
                     format: uuid
                     description: Feedback record UUID
@@ -957,15 +964,15 @@ components:
                     type: number
                     format: double
                     description: Similarity score (0..1)
-                fieldLabel:
+                field_label:
                     type: string
                     description: Label of the feedback field (included in embedding for context)
-                value:
+                value_text:
                     type: string
                     description: value_text of the feedback record (the text that was embedded); omitted if null
                     nullable: true
             required:
-                - feedbackRecordId
+                - feedback_record_id
                 - score
         CreateFeedbackRecordInputBody:
             type: object

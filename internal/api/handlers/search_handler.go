@@ -34,26 +34,25 @@ func NewSearchHandler(service SearchService) *SearchHandler {
 	return &SearchHandler{service: service}
 }
 
-// SemanticSearchRequest is the body for POST /v1/feedback-records/search/semantic.
-// API contract uses camelCase (topK, tenantId).
+// SemanticSearchRequest is the body for POST /v1/feedback-records/search/semantic (snake_case for consistency with data model).
 type SemanticSearchRequest struct {
 	Query    string `json:"query"`
-	TopK     int    `json:"topK"`     //nolint:tagliatelle // API contract
-	TenantID string `json:"tenantId"` //nolint:tagliatelle // API contract
+	TopK     int    `json:"top_k"`
+	TenantID string `json:"tenant_id"`
 }
 
 // SemanticSearchResponse is the response for semantic search and similar feedback.
 type SemanticSearchResponse struct {
 	Results    []SemanticSearchResultItem `json:"results"`
-	NextCursor string                     `json:"nextCursor,omitempty"` //nolint:tagliatelle // API contract camelCase
+	NextCursor string                     `json:"next_cursor,omitempty"`
 }
 
-// SemanticSearchResultItem is one result with feedbackRecordId, score, field label, and the record's value_text as value.
+// SemanticSearchResultItem is one result: feedback_record_id, score, field_label, value_text (snake_case).
 type SemanticSearchResultItem struct {
-	FeedbackRecordID uuid.UUID `json:"feedbackRecordId"` //nolint:tagliatelle // API contract
+	FeedbackRecordID uuid.UUID `json:"feedback_record_id"`
 	Score            float64   `json:"score"`
-	FieldLabel       string    `json:"fieldLabel"` //nolint:tagliatelle // API contract; label of the field (included in embedding)
-	Value            string    `json:"value"`      // value_text of the feedback record (the text that was embedded)
+	FieldLabel       string    `json:"field_label"`
+	ValueText        string    `json:"value_text"` // value_text of the feedback record (the text that was embedded)
 }
 
 // maxSearchOffset caps how far paging can go. With OFFSET-based paging the database
@@ -90,7 +89,7 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.TenantID == "" {
-		response.RespondBadRequest(w, "tenantId is required")
+		response.RespondBadRequest(w, "tenant_id is required")
 
 		return
 	}
@@ -112,12 +111,12 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 		offset = min(parseOffset(r.URL.Query().Get("offset")), maxSearchOffset)
 	}
 
-	minScore := parseMinScore(r.URL.Query().Get("minScore"))
+	minScore := parseMinScore(r.URL.Query().Get("min_score"))
 
 	res, err := h.service.SemanticSearch(r.Context(), req.Query, req.TenantID, topK, offset, minScore, cursor)
 	if err != nil {
 		if errors.Is(err, service.ErrMissingTenantID) {
-			response.RespondBadRequest(w, "tenantId is required")
+			response.RespondBadRequest(w, "tenant_id is required")
 
 			return
 		}
@@ -173,14 +172,14 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenantId")
+	tenantID := r.URL.Query().Get("tenant_id")
 	if tenantID == "" {
-		response.RespondBadRequest(w, "tenantId query parameter is required")
+		response.RespondBadRequest(w, "tenant_id query parameter is required")
 
 		return
 	}
 
-	topKStr := r.URL.Query().Get("topK")
+	topKStr := r.URL.Query().Get("top_k")
 	limit := 10
 
 	const maxSimilarLimit = 100
@@ -198,7 +197,7 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 		offset = min(parseOffset(r.URL.Query().Get("offset")), maxSearchOffset)
 	}
 
-	minScore := parseMinScore(r.URL.Query().Get("minScore"))
+	minScore := parseMinScore(r.URL.Query().Get("min_score"))
 
 	res, err := h.service.SimilarFeedback(r.Context(), id, tenantID, limit, offset, minScore, cursor)
 	if err != nil {
@@ -209,7 +208,7 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if errors.Is(err, service.ErrMissingTenantID) {
-			response.RespondBadRequest(w, "tenantId is required")
+			response.RespondBadRequest(w, "tenant_id is required")
 
 			return
 		}
@@ -245,10 +244,13 @@ func parseOffset(s string) int {
 	return n
 }
 
-// parseMinScore returns the query param "minScore" as a float in [0,1]; default 0.
+// defaultMinScore is the default minimum similarity score when the query param is omitted (reduces noise).
+const defaultMinScore = 0.7
+
+// parseMinScore returns the query param "min_score" as a float in [0,1]; default defaultMinScore.
 func parseMinScore(s string) float64 {
 	if s == "" {
-		return 0
+		return defaultMinScore
 	}
 
 	val, err := strconv.ParseFloat(s, 64)
@@ -270,7 +272,7 @@ func toResultItems(results []models.FeedbackRecordWithScore) []SemanticSearchRes
 			FeedbackRecordID: results[i].FeedbackRecordID,
 			Score:            results[i].Score,
 			FieldLabel:       results[i].FieldLabel,
-			Value:            results[i].ValueText, // always set: we only have embeddings of text
+			ValueText:        results[i].ValueText,
 		}
 	}
 

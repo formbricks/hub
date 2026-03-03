@@ -254,6 +254,9 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 		return nil, fmt.Errorf("iterating nearest: %w", err)
 	}
 
+	// Close rows before Commit so the connection is not busy (avoids "conn busy" when breaking early from the loop).
+	rows.Close()
+
 	if err := dbTx.Commit(ctx); err != nil {
 		slog.Error("nearest feedback records: commit failed", "error", err)
 
@@ -347,6 +350,9 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating nearest after cursor: %w", err)
 	}
+
+	// Close rows before Commit so the connection is not busy.
+	rows.Close()
 
 	if err := dbTx.Commit(ctx); err != nil {
 		slog.Error("nearest feedback records after cursor: commit failed", "error", err)

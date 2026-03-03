@@ -44,9 +44,9 @@ func (m *mockSearchService) SimilarFeedback(
 }
 
 func TestSearchHandler_SemanticSearch(t *testing.T) {
-	t.Run("missing tenantId returns 400", func(t *testing.T) {
+	t.Run("missing tenant_id returns 400", func(t *testing.T) {
 		handler := NewSearchHandler(&mockSearchService{})
-		body := []byte(`{"query":"login is slow","topK":10}`)
+		body := []byte(`{"query":"login is slow","top_k":10}`)
 		req := httptest.NewRequest(http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
@@ -67,7 +67,7 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 			},
 		}
 		handler := NewSearchHandler(mock)
-		body := []byte(`{"query":"  ","topK":10,"tenantId":"env-1"}`)
+		body := []byte(`{"query":"  ","top_k":10,"tenant_id":"env-1"}`)
 		req := httptest.NewRequest(http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
@@ -92,7 +92,7 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 				assert.Equal(t, "env-1", tenantID)
 				assert.Equal(t, 10, topK)
 				assert.Equal(t, 0, offset)
-				assert.InDelta(t, 0.0, minScore, 1e-9)
+				assert.InDelta(t, 0.7, minScore, 1e-9)
 				assert.Empty(t, cursor)
 
 				return service.SearchResult{
@@ -104,7 +104,7 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 			},
 		}
 		handler := NewSearchHandler(mock)
-		body := []byte(`{"query":"login is slow","topK":10,"tenantId":"env-1"}`)
+		body := []byte(`{"query":"login is slow","top_k":10,"tenant_id":"env-1"}`)
 		req := httptest.NewRequest(http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
@@ -122,11 +122,11 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 		assert.Equal(t, id1, resp.Results[0].FeedbackRecordID)
 		assert.InDelta(t, 0.91, resp.Results[0].Score, 1e-9)
 		assert.Equal(t, "Label1", resp.Results[0].FieldLabel)
-		assert.Equal(t, val1, resp.Results[0].Value)
+		assert.Equal(t, val1, resp.Results[0].ValueText)
 		assert.Equal(t, id2, resp.Results[1].FeedbackRecordID)
 		assert.InDelta(t, 0.85, resp.Results[1].Score, 1e-9)
 		assert.Equal(t, "Label2", resp.Results[1].FieldLabel)
-		assert.Equal(t, val2, resp.Results[1].Value)
+		assert.Equal(t, val2, resp.Results[1].ValueText)
 	})
 
 	t.Run("invalid cursor returns 400", func(t *testing.T) {
@@ -140,7 +140,7 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 			},
 		}
 		handler := NewSearchHandler(mock)
-		body := []byte(`{"query":"login is slow","topK":10,"tenantId":"env-1"}`)
+		body := []byte(`{"query":"login is slow","top_k":10,"tenant_id":"env-1"}`)
 		req := httptest.NewRequest(http.MethodPost,
 			"http://test/v1/feedback-records/search/semantic?cursor=not-valid-base64", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -156,7 +156,7 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 const similarURL = "http://test/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc/similar"
 
 func TestSearchHandler_SimilarFeedback(t *testing.T) {
-	t.Run("missing tenantId returns 400", func(t *testing.T) {
+	t.Run("missing tenant_id returns 400", func(t *testing.T) {
 		handler := NewSearchHandler(&mockSearchService{})
 		req := httptest.NewRequest(http.MethodGet, similarURL, nil)
 		rec := httptest.NewRecorder()
@@ -175,7 +175,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 			},
 		}
 		handler := NewSearchHandler(mock)
-		req := httptest.NewRequest(http.MethodGet, similarURL+"?tenantId=env-1", nil)
+		req := httptest.NewRequest(http.MethodGet, similarURL+"?tenant_id=env-1", nil)
 		req.SetPathValue("id", "018e1234-5678-9abc-def0-123456789abc")
 
 		rec := httptest.NewRecorder()
@@ -197,7 +197,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 				assert.Equal(t, "env-1", tenantID)
 				assert.Equal(t, 10, limit)
 				assert.Equal(t, 0, offset)
-				assert.InDelta(t, 0.0, minScore, 1e-9)
+				assert.InDelta(t, 0.7, minScore, 1e-9)
 				assert.Empty(t, cursor)
 
 				return service.SearchResult{
@@ -208,7 +208,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 			},
 		}
 		handler := NewSearchHandler(mock)
-		req := httptest.NewRequest(http.MethodGet, similarURL+"?tenantId=env-1&topK=10", nil)
+		req := httptest.NewRequest(http.MethodGet, similarURL+"?tenant_id=env-1&top_k=10", nil)
 		req.SetPathValue("id", id.String())
 
 		rec := httptest.NewRecorder()
@@ -225,6 +225,6 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 		assert.Equal(t, similarID, resp.Results[0].FeedbackRecordID)
 		assert.InDelta(t, 0.88, resp.Results[0].Score, 1e-9)
 		assert.Equal(t, "Similar field", resp.Results[0].FieldLabel)
-		assert.Equal(t, similarVal, resp.Results[0].Value)
+		assert.Equal(t, similarVal, resp.Results[0].ValueText)
 	})
 }
