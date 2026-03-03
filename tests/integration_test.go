@@ -448,8 +448,7 @@ func TestFeedbackRecordsSubmissionID(t *testing.T) {
 		assert.GreaterOrEqual(t, len(result.Data), 2)
 
 		for _, rec := range result.Data {
-			require.NotNil(t, rec.SubmissionID)
-			assert.Equal(t, subID, *rec.SubmissionID)
+			assert.Equal(t, subID, rec.SubmissionID)
 			assert.Equal(t, tenantID, rec.TenantID)
 		}
 	})

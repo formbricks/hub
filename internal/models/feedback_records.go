@@ -102,7 +102,7 @@ type FeedbackRecord struct {
 	Language        *string         `json:"language,omitempty"`
 	UserIdentifier  *string         `json:"user_identifier,omitempty"`
 	TenantID        string          `json:"tenant_id"`
-	SubmissionID    *string         `json:"submission_id,omitempty"`
+	SubmissionID    string          `json:"submission_id"` // mandatory; never null (DB NULL is exposed as "")
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.

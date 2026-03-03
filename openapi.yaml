@@ -319,6 +319,7 @@ paths:
                                         source_name: "Q1 NPS Survey"
                                         user_identifier: "user-abc-123"
                                         tenant_id: "org-123"
+                                        submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                         language: "en"
                     links:
                         GetCreatedRecord:
@@ -646,6 +647,7 @@ paths:
                   required: true
                   schema:
                     type: string
+                    minLength: 1
                 - name: top_k
                   in: query
                   description: Maximum number of similar records to return (default 10, max 100)
@@ -686,7 +688,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/SemanticSearchResponse'
                 "400":
-                    description: Bad Request (e.g. missing tenant_id or invalid cursor)
+                    description: Bad Request (e.g. missing or empty tenant_id, invalid cursor)
                     content:
                         application/problem+json:
                             schema:
@@ -933,6 +935,7 @@ components:
             properties:
                 query:
                     type: string
+                    minLength: 1
                     description: Search query text (embedded and compared via cosine similarity)
                 top_k:
                     type: integer
@@ -942,6 +945,7 @@ components:
                     maximum: 100
                 tenant_id:
                     type: string
+                    minLength: 1
                     description: Tenant ID (required for isolation; must match feedback record tenant_id)
                     default: "org-123"
                     example: "org-123"
@@ -1108,7 +1112,8 @@ components:
                         - 9
                 value_text:
                     type: string
-                    description: For open-ended text responses. NULL bytes not allowed.
+                    nullable: true
+                    description: For open-ended text responses. Omit or null if not applicable. NULL bytes not allowed when present.
                     examples:
                         - Great service!
                     pattern: '^[^\x00]*$'
