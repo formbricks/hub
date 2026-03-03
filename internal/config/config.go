@@ -52,11 +52,11 @@ type Config struct {
 	// Max total webhooks allowed (creation rejected when count >= this); default 500
 	WebhookMaxCount int
 
-	// Embeddings: optional. No default for provider; if EMBEDDING_PROVIDER is not set, embeddings are disabled and no embedding jobs run.
+	// Embeddings: optional. Enabled only when both EMBEDDING_PROVIDER and EMBEDDING_MODEL are set and provider is supported.
 	EmbeddingProviderAPIKey string
-	// Embeddings: provider name (e.g. openai); env EMBEDDING_PROVIDER. Empty = embeddings disabled.
+	// Embeddings: provider name (e.g. openai, google); env EMBEDDING_PROVIDER. Required (with EmbeddingModel) to enable embeddings.
 	EmbeddingProvider string
-	// Embeddings: model name; env EMBEDDING_MODEL. Optional (e.g. local provider may not use it).
+	// Embeddings: model name; env EMBEDDING_MODEL. Required (with EmbeddingProvider) to enable embeddings; no default.
 	EmbeddingModel string
 	// Embeddings: max concurrent workers for the embeddings River queue; default 5
 	EmbeddingMaxConcurrent int

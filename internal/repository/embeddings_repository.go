@@ -192,7 +192,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	}
 
 	defer func() {
-		if err := dbTx.Rollback(ctx); err != nil {
+		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 			slog.Error("nearest feedback records: rollback failed", "error", err)
 		}
 	}()
@@ -284,7 +284,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	}
 
 	defer func() {
-		if err := dbTx.Rollback(ctx); err != nil {
+		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 			slog.Error("nearest feedback records after cursor: rollback failed", "error", err)
 		}
 	}()

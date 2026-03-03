@@ -43,7 +43,10 @@ type App struct {
 	metrics        *observability.Metrics
 }
 
-var errUnsupportedEmbeddingProvider = errors.New("unsupported embedding provider")
+var (
+	errUnsupportedEmbeddingProvider    = errors.New("unsupported embedding provider")
+	errEmbeddingProviderAPIKeyRequired = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
+)
 
 const (
 	embeddingProviderOpenAI = "openai"
@@ -198,6 +201,12 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	var searchHandler *handlers.SearchHandler
 
 	if embeddingProviderName != "" {
+		// Fail fast when a provider that requires an API key is configured without one (consistent with backfill-embeddings).
+		if (embeddingProviderName == embeddingProviderOpenAI || embeddingProviderName == embeddingProviderGoogle) &&
+			cfg.EmbeddingProviderAPIKey == "" {
+			return nil, fmt.Errorf("%w: %s", errEmbeddingProviderAPIKeyRequired, embeddingProviderName)
+		}
+
 		var embeddingClient service.EmbeddingClient
 
 		switch embeddingProviderName {
