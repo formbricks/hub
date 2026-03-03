@@ -52,6 +52,7 @@ type FeedbackRecordsService struct {
 }
 
 // NewFeedbackRecordsService creates a new feedback records service.
+// publisher may be nil when the service is used only for backfill (BackfillEmbeddings does not use the publisher).
 // embeddingInserter and embeddingQueueName are optional (for backfill); when nil/empty, BackfillEmbeddings returns an error.
 // Call SetEmbeddingInserter after the River client is created to enable backfill without building the service twice.
 // embeddingsRepo and embeddingModel are required for SetEmbedding and BackfillEmbeddings (from EMBEDDING_PROVIDER and EMBEDDING_MODEL).

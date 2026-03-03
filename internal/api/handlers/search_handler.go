@@ -48,11 +48,12 @@ type SemanticSearchResponse struct {
 	NextCursor string                     `json:"nextCursor,omitempty"` //nolint:tagliatelle // API contract camelCase
 }
 
-// SemanticSearchResultItem is one result with feedbackRecordId, score, and the record's value_text as value.
+// SemanticSearchResultItem is one result with feedbackRecordId, score, field label, and the record's value_text as value.
 type SemanticSearchResultItem struct {
 	FeedbackRecordID uuid.UUID `json:"feedbackRecordId"` //nolint:tagliatelle // API contract
 	Score            float64   `json:"score"`
-	Value            string    `json:"value"` // value_text of the feedback record (the text that was embedded)
+	FieldLabel       string    `json:"fieldLabel"` //nolint:tagliatelle // API contract; label of the field (included in embedding)
+	Value            string    `json:"value"`      // value_text of the feedback record (the text that was embedded)
 }
 
 // maxSearchOffset caps how far paging can go. With OFFSET-based paging the database
@@ -256,6 +257,7 @@ func toResultItems(results []models.FeedbackRecordWithScore) []SemanticSearchRes
 		items[i] = SemanticSearchResultItem{
 			FeedbackRecordID: results[i].FeedbackRecordID,
 			Score:            results[i].Score,
+			FieldLabel:       results[i].FieldLabel,
 			Value:            results[i].ValueText, // always set: we only have embeddings of text
 		}
 	}

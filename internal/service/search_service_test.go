@@ -25,9 +25,13 @@ func (m *mockEmbeddingClient) CreateEmbedding(ctx context.Context, input string)
 	return []float32{0.1}, nil
 }
 
+func (m *mockEmbeddingClient) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
+	return m.CreateEmbedding(ctx, input)
+}
+
 type mockEmbeddingsRepoForSearch struct {
-	getEmbeddingFunc func(ctx context.Context, feedbackRecordID uuid.UUID, model string) ([]float32, error)
-	nearestFunc      func(
+	getEmbeddingByTenantFunc func(ctx context.Context, feedbackRecordID uuid.UUID, model, tenantID string) ([]float32, error)
+	nearestFunc              func(
 		ctx context.Context, model string, queryEmbedding []float32,
 		tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
 	) ([]models.FeedbackRecordWithScore, error)
@@ -37,14 +41,14 @@ type mockEmbeddingsRepoForSearch struct {
 	) ([]models.FeedbackRecordWithScore, error)
 }
 
-func (m *mockEmbeddingsRepoForSearch) GetEmbeddingByFeedbackRecordAndModel(
-	ctx context.Context, feedbackRecordID uuid.UUID, model string,
+func (m *mockEmbeddingsRepoForSearch) GetEmbeddingByFeedbackRecordAndModelAndTenant(
+	ctx context.Context, feedbackRecordID uuid.UUID, model, tenantID string,
 ) ([]float32, error) {
-	if m.getEmbeddingFunc != nil {
-		return m.getEmbeddingFunc(ctx, feedbackRecordID, model)
+	if m.getEmbeddingByTenantFunc != nil {
+		return m.getEmbeddingByTenantFunc(ctx, feedbackRecordID, model, tenantID)
 	}
 
-	return nil, nil
+	return nil, repository.ErrEmbeddingNotFound
 }
 
 func (m *mockEmbeddingsRepoForSearch) NearestFeedbackRecordsByEmbedding(
@@ -121,7 +125,7 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 					assert.InDelta(t, 0.5, minScore, 1e-9)
 
 					return []models.FeedbackRecordWithScore{
-						{FeedbackRecordID: id, Score: 0.91},
+						{FeedbackRecordID: id, Score: 0.91, FieldLabel: "", ValueText: ""},
 					}, nil
 				},
 			},
@@ -154,8 +158,9 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 		svc := NewSearchService(SearchServiceParams{
 			EmbeddingClient: &mockEmbeddingClient{},
 			EmbeddingsRepo: &mockEmbeddingsRepoForSearch{
-				getEmbeddingFunc: func(_ context.Context, id uuid.UUID, _ string) ([]float32, error) {
+				getEmbeddingByTenantFunc: func(_ context.Context, id uuid.UUID, _, tenantID string) ([]float32, error) {
 					assert.Equal(t, rid, id)
+					assert.Equal(t, "env-1", tenantID)
 
 					return nil, repository.ErrEmbeddingNotFound
 				},
@@ -173,9 +178,10 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 		svc := NewSearchService(SearchServiceParams{
 			EmbeddingClient: &mockEmbeddingClient{},
 			EmbeddingsRepo: &mockEmbeddingsRepoForSearch{
-				getEmbeddingFunc: func(_ context.Context, id uuid.UUID, model string) ([]float32, error) {
+				getEmbeddingByTenantFunc: func(_ context.Context, id uuid.UUID, model, tenantID string) ([]float32, error) {
 					assert.Equal(t, sourceID, id)
 					assert.Equal(t, "test-model", model)
+					assert.Equal(t, "env-1", tenantID)
 
 					return []float32{0.1, 0.2}, nil
 				},
@@ -192,7 +198,7 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 					assert.InDelta(t, 0.5, minScore, 1e-9)
 
 					return []models.FeedbackRecordWithScore{
-						{FeedbackRecordID: similarID, Score: 0.88},
+						{FeedbackRecordID: similarID, Score: 0.88, FieldLabel: "", ValueText: ""},
 					}, nil
 				},
 			},

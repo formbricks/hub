@@ -101,7 +101,7 @@ type FeedbackRecord struct {
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 	Language        *string         `json:"language,omitempty"`
 	UserIdentifier  *string         `json:"user_identifier,omitempty"`
-	TenantID        *string         `json:"tenant_id,omitempty"`
+	TenantID        string          `json:"tenant_id"`
 	SubmissionID    *string         `json:"submission_id,omitempty"`
 }
 
@@ -123,7 +123,7 @@ type CreateFeedbackRecordRequest struct {
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 	Language        *string         `json:"language,omitempty"          validate:"omitempty,no_null_bytes,max=10"`
 	UserIdentifier  *string         `json:"user_identifier,omitempty"`
-	TenantID        *string         `json:"tenant_id,omitempty"         validate:"omitempty,no_null_bytes,max=255"`
+	TenantID        string          `json:"tenant_id"                   validate:"required,no_null_bytes,max=255"`
 	SubmissionID    string          `json:"submission_id"               validate:"required,no_null_bytes,min=1,max=255"`
 }
 

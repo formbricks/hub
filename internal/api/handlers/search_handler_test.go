@@ -97,8 +97,8 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 
 				return service.SearchResult{
 					Results: []models.FeedbackRecordWithScore{
-						{FeedbackRecordID: id1, Score: 0.91, ValueText: val1},
-						{FeedbackRecordID: id2, Score: 0.85, ValueText: val2},
+						{FeedbackRecordID: id1, Score: 0.91, FieldLabel: "Label1", ValueText: val1},
+						{FeedbackRecordID: id2, Score: 0.85, FieldLabel: "Label2", ValueText: val2},
 					},
 				}, nil
 			},
@@ -121,9 +121,11 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 		require.Len(t, resp.Results, 2)
 		assert.Equal(t, id1, resp.Results[0].FeedbackRecordID)
 		assert.InDelta(t, 0.91, resp.Results[0].Score, 1e-9)
+		assert.Equal(t, "Label1", resp.Results[0].FieldLabel)
 		assert.Equal(t, val1, resp.Results[0].Value)
 		assert.Equal(t, id2, resp.Results[1].FeedbackRecordID)
 		assert.InDelta(t, 0.85, resp.Results[1].Score, 1e-9)
+		assert.Equal(t, "Label2", resp.Results[1].FieldLabel)
 		assert.Equal(t, val2, resp.Results[1].Value)
 	})
 
@@ -200,7 +202,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 
 				return service.SearchResult{
 					Results: []models.FeedbackRecordWithScore{
-						{FeedbackRecordID: similarID, Score: 0.88, ValueText: similarVal},
+						{FeedbackRecordID: similarID, Score: 0.88, FieldLabel: "Similar field", ValueText: similarVal},
 					},
 				}, nil
 			},
@@ -222,6 +224,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 		require.Len(t, resp.Results, 1)
 		assert.Equal(t, similarID, resp.Results[0].FeedbackRecordID)
 		assert.InDelta(t, 0.88, resp.Results[0].Score, 1e-9)
+		assert.Equal(t, "Similar field", resp.Results[0].FieldLabel)
 		assert.Equal(t, similarVal, resp.Results[0].Value)
 	})
 }

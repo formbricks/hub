@@ -19,10 +19,11 @@ type Embedding struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-// FeedbackRecordWithScore is a feedback record ID, similarity score, and the record's value_text for display.
+// FeedbackRecordWithScore is a feedback record ID, similarity score, and the record's field_label and value_text for display.
 // Embeddings exist only for text, so ValueText is always set for any search result.
 type FeedbackRecordWithScore struct {
 	FeedbackRecordID uuid.UUID `json:"feedback_record_id"`
 	Score            float64   `json:"score"`
-	ValueText        string    `json:"value_text"` // text that was embedded
+	FieldLabel       string    `json:"field_label"` // label of the field (included in embedding for context)
+	ValueText        string    `json:"value_text"`  // text that was embedded (with field_label)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -56,22 +57,25 @@ var supportedEmbeddingProviders = map[string]struct{}{
 
 const riverQueueDepthInterval = 15 * time.Second
 
-// embeddingProviderAndModel returns (provider, model) when embeddings are enabled: EMBEDDING_PROVIDER
-// is set and supported. Model and API key are optional (e.g. local provider may not need them).
-// Otherwise returns ("", "") so no embedding provider or jobs run. Embeddings are optional; no defaults.
+// embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
+// and EMBEDDING_MODEL must be set and the provider must be supported. Otherwise returns ("", "") so no
+// embedding provider or jobs run. No default for model; embeddings are disabled if either is unset.
+// Provider name is normalized to lowercase so that "OpenAI", "openai", and "OPENAI" behave the same
+// (consistent with backfill-embeddings and EmbeddingPrefixForProvider).
 func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
-	if cfg.EmbeddingProvider == "" {
+	if cfg.EmbeddingProvider == "" || cfg.EmbeddingModel == "" {
 		return "", ""
 	}
 
-	if _, ok := supportedEmbeddingProviders[cfg.EmbeddingProvider]; !ok {
+	providerCanonical := strings.ToLower(strings.TrimSpace(cfg.EmbeddingProvider))
+	if _, ok := supportedEmbeddingProviders[providerCanonical]; !ok {
 		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
 			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
 
 		return "", ""
 	}
 
-	return cfg.EmbeddingProvider, cfg.EmbeddingModel
+	return providerCanonical, cfg.EmbeddingModel
 }
 
 // setupMetrics creates meter provider and hub metrics when metrics are enabled.
@@ -166,17 +170,19 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	river.AddWorker(riverWorkers, webhookWorker)
 
 	queues := map[string]river.QueueConfig{
-		river.QueueDefault:          {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
-		service.EmbeddingsQueueName: {MaxWorkers: cfg.EmbeddingMaxConcurrent},
+		river.QueueDefault: {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
 	}
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
-	// Model for DB/jobs: required for embeddings.model column; use "default" when provider has no model name (e.g. local).
+	// Model for DB/jobs: required for embeddings.model column; only set when embeddings are enabled (both provider and model set).
 	embeddingModelForDB := embeddingModel
-	if embeddingModelForDB == "" {
-		embeddingModelForDB = "default"
+
+	var embeddingDocPrefix string
+	if embeddingProviderName != "" {
+		embeddingDocPrefix = service.EmbeddingPrefixForProvider(embeddingProviderName)
+		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: cfg.EmbeddingMaxConcurrent}
 	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
@@ -214,7 +220,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			return nil, fmt.Errorf("%w: %s", errUnsupportedEmbeddingProvider, embeddingProviderName)
 		}
 
-		embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, embeddingMetrics)
+		embeddingWorker := workers.NewFeedbackEmbeddingWorker(
+			feedbackRecordsService, embeddingClient, embeddingDocPrefix, embeddingMetrics)
 		river.AddWorker(riverWorkers, embeddingWorker)
 
 		const searchQueryCacheSize = 1000
@@ -279,6 +286,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			embeddingModelForDB,
 			service.EmbeddingsQueueName,
 			cfg.EmbeddingMaxAttempts,
+			embeddingDocPrefix,
 			embeddingMetrics,
 		)
 		messageManager.RegisterProvider(embeddingProv)

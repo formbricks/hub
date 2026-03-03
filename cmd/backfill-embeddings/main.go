@@ -29,7 +29,6 @@ import (
 const (
 	embeddingProviderOpenAI = "openai"
 	embeddingProviderGoogle = "google"
-	defaultEmbeddingModelDB = "default"
 )
 
 var (
@@ -84,16 +83,13 @@ func run() int {
 	}
 
 	apiKey := os.Getenv("EMBEDDING_PROVIDER_API_KEY")
-	if apiKey == "" {
-		slog.Error("EMBEDDING_PROVIDER_API_KEY is required for backfill")
+	if providerRequiresAPIKey(provider) && apiKey == "" {
+		slog.Error("EMBEDDING_PROVIDER_API_KEY is required for this provider", "provider", provider)
 
 		return exitFailure
 	}
 
 	embeddingModelForDB := embeddingModel
-	if embeddingModelForDB == "" {
-		embeddingModelForDB = defaultEmbeddingModelDB
-	}
 
 	repo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
@@ -117,7 +113,8 @@ func run() int {
 		return exitFailure
 	}
 
-	embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, nil)
+	docPrefix := service.EmbeddingPrefixForProvider(provider)
+	embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, docPrefix, nil)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, embeddingWorker)
 
@@ -193,4 +190,15 @@ func getEmbeddingProviderAndModel() (provider, model string, err error) {
 	}
 
 	return provider, model, nil
+}
+
+// providerRequiresAPIKey returns true for providers that need EMBEDDING_PROVIDER_API_KEY (e.g. openai, google).
+// Providers that do not require an API key (e.g. local) return false.
+func providerRequiresAPIKey(provider string) bool {
+	switch strings.ToLower(provider) {
+	case embeddingProviderOpenAI, embeddingProviderGoogle:
+		return true
+	default:
+		return false
+	}
 }

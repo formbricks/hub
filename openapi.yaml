@@ -551,7 +551,9 @@ paths:
             summary: Semantic search over feedback records
             description: |
                 Embeds the search query and returns feedback record IDs with similarity scores (cosine, 0..1).
-                Requires embedding to be configured (EMBEDDING_PROVIDER, EMBEDDING_MODEL).
+                **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
+                When embeddings are disabled, this endpoint returns 404.
+                Request body must include query and tenantId (required for tenant isolation).
             operationId: semantic-search-feedback-records
             parameters:
                 - name: offset
@@ -607,7 +609,9 @@ paths:
             summary: Get similar feedback records
             description: |
                 Returns feedback record IDs and similarity scores for records similar to the given one (by embedding).
-                Requires embedding to be configured.
+                **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
+                When embeddings are disabled, this endpoint returns 404.
+                The source feedback record must belong to the given tenantId (tenant_id is enforced).
             operationId: similar-feedback-records
             parameters:
                 - name: id
@@ -940,6 +944,9 @@ components:
                     type: number
                     format: double
                     description: Similarity score (0..1)
+                fieldLabel:
+                    type: string
+                    description: Label of the feedback field (included in embedding for context)
                 value:
                     type: string
                     description: value_text of the feedback record (the text that was embedded); omitted if null
@@ -1039,9 +1046,10 @@ components:
                     pattern: '^[^\x00]*$'
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier for multi-tenancy. NULL bytes not allowed.
+                    description: Tenant/organization identifier for multi-tenancy. Required.
                     examples:
                         - org-123
+                    minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                 user_identifier:
@@ -1077,6 +1085,7 @@ components:
                 - field_id
                 - field_type
                 - submission_id
+                - tenant_id
         ErrorDetail:
             type: object
             additionalProperties: false
@@ -1224,6 +1233,7 @@ components:
                 - field_id
                 - field_type
                 - submission_id
+                - tenant_id
         ListFeedbackRecordsOutputBody:
             type: object
             additionalProperties: false

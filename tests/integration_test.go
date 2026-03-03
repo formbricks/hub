@@ -448,8 +448,7 @@ func TestFeedbackRecordsSubmissionID(t *testing.T) {
 		for _, rec := range result.Data {
 			require.NotNil(t, rec.SubmissionID)
 			assert.Equal(t, subID, *rec.SubmissionID)
-			require.NotNil(t, rec.TenantID)
-			assert.Equal(t, tenantID, *rec.TenantID)
+			assert.Equal(t, tenantID, rec.TenantID)
 		}
 	})
 }
@@ -904,9 +903,12 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	sourceType := "formbricks"
 
 	// Create two records with same user_identifier
+	const bulkDeleteTenant = "bulk-delete-tenant"
+
 	req1 := &models.CreateFeedbackRecordRequest{
 		SourceType:     sourceType,
 		SubmissionID:   userID,
+		TenantID:       bulkDeleteTenant,
 		FieldID:        "f1",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    ptrFloat64(1),
@@ -919,6 +921,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	req2 := &models.CreateFeedbackRecordRequest{
 		SourceType:     sourceType,
 		SubmissionID:   userID,
+		TenantID:       bulkDeleteTenant,
 		FieldID:        "f2",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    ptrFloat64(2),

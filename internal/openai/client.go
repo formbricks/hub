@@ -121,3 +121,9 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 
 	return out, nil
 }
+
+// CreateEmbeddingForQuery returns an embedding for the given search query. OpenAI's API does not distinguish
+// task type; this delegates to CreateEmbedding for compatibility with EmbeddingClient.
+func (c *Client) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
+	return c.CreateEmbedding(ctx, input)
+}

@@ -10,7 +10,7 @@ import (
 func NormalizeL2(vector []float32) {
 	var sumSquares float64
 
-	// 1. Calculate the sum of the squared values
+	// 1. Calculate the sum of the squared values (in float64 to avoid float32 overflow).
 	for _, v := range vector {
 		sumSquares += float64(v) * float64(v)
 	}

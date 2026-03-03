@@ -27,8 +27,8 @@ var (
 
 // EmbeddingsRepositoryForSearch provides the embedding read operations needed for semantic search.
 type EmbeddingsRepositoryForSearch interface {
-	GetEmbeddingByFeedbackRecordAndModel(
-		ctx context.Context, feedbackRecordID uuid.UUID, model string,
+	GetEmbeddingByFeedbackRecordAndModelAndTenant(
+		ctx context.Context, feedbackRecordID uuid.UUID, model, tenantID string,
 	) ([]float32, error)
 	NearestFeedbackRecordsByEmbedding(
 		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
@@ -102,7 +102,7 @@ func (s *SearchService) SemanticSearch(
 	if s.queryCache != nil {
 		embedding, err = s.getQueryEmbeddingCached(ctx, query)
 	} else {
-		embedding, err = s.embeddingClient.CreateEmbedding(ctx, query)
+		embedding, err = s.embeddingClient.CreateEmbeddingForQuery(ctx, query)
 	}
 
 	if err != nil {
@@ -151,10 +151,12 @@ func (s *SearchService) SimilarFeedback(
 		return out, ErrMissingTenantID
 	}
 
-	embedding, err := s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, feedbackRecordID, s.model)
+	// Load source embedding only if the record belongs to this tenant (tenant isolation).
+	embedding, err := s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(ctx, feedbackRecordID, s.model, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrEmbeddingNotFound) {
-			s.logger.Debug("similar feedback: no embedding for record", "feedbackRecordId", feedbackRecordID.String(), "model", s.model)
+			s.logger.Debug("similar feedback: no embedding or tenant mismatch",
+				"feedbackRecordId", feedbackRecordID.String(), "model", s.model)
 			//nolint:wrapcheck // return as-is so handler can map to 404
 			return out, err
 		}
@@ -203,8 +205,8 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 		return vec, nil
 	}
 
-	val, err, _ := s.queryLoadGroup.Do(query, func() (any, error) {
-		vec, loadErr := s.embeddingClient.CreateEmbedding(ctx, query)
+	val, err, shared := s.queryLoadGroup.Do(query, func() (any, error) {
+		vec, loadErr := s.embeddingClient.CreateEmbeddingForQuery(ctx, query)
 		if loadErr != nil {
 			return nil, fmt.Errorf("create embedding: %w", loadErr)
 		}
@@ -218,7 +220,13 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 	}
 
 	if s.cacheMetrics != nil {
-		s.cacheMetrics.RecordMiss(ctx, searchQueryEmbeddingCacheName)
+		// shared == true: we waited on another caller and got their result (deduplicated = effective cache hit).
+		// shared == false: we ran the load ourselves (cache miss).
+		if shared {
+			s.cacheMetrics.RecordHit(ctx, searchQueryEmbeddingCacheName)
+		} else {
+			s.cacheMetrics.RecordMiss(ctx, searchQueryEmbeddingCacheName)
+		}
 	}
 
 	return val.([]float32), nil

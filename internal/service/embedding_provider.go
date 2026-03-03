@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
@@ -25,11 +26,13 @@ type EmbeddingProvider struct {
 	model       string
 	queueName   string
 	maxAttempts int
+	docPrefix   string // model-specific prefix for document embedding (e.g. "search_document: " for Nomic)
 	metrics     observability.EmbeddingMetrics
 }
 
 // NewEmbeddingProvider creates a provider that enqueues feedback_embedding jobs.
 // model is the embedding model name (e.g. text-embedding-3-small) from EMBEDDING_MODEL.
+// docPrefix is the prefix for document text (from EmbeddingPrefixForProvider); use "" for OpenAI/Google.
 // metrics may be nil when metrics are disabled.
 func NewEmbeddingProvider(
 	inserter FeedbackEmbeddingInserter,
@@ -37,6 +40,7 @@ func NewEmbeddingProvider(
 	model string,
 	queueName string,
 	maxAttempts int,
+	docPrefix string,
 	metrics observability.EmbeddingMetrics,
 ) *EmbeddingProvider {
 	return &EmbeddingProvider{
@@ -45,6 +49,7 @@ func NewEmbeddingProvider(
 		model:       model,
 		queueName:   queueName,
 		maxAttempts: maxAttempts,
+		docPrefix:   docPrefix,
 		metrics:     metrics,
 	}
 }
@@ -55,8 +60,8 @@ func NewEmbeddingProvider(
 // API key may be empty; some providers (e.g. local AI) work without a key.
 func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	if event.Type == datatypes.FeedbackRecordUpdated {
-		if !contains(event.ChangedFields, "value_text") {
-			slog.Debug("embedding: skip, value_text not in changed fields",
+		if !contains(event.ChangedFields, "value_text") && !contains(event.ChangedFields, "field_label") {
+			slog.Debug("embedding: skip, value_text/field_label not in changed fields",
 				"event_id", event.ID,
 				"feedback_record_id", recordIDFromEventData(event.Data),
 			)
@@ -76,13 +81,13 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	// On create, only enqueue when there is embeddable text. On update we enqueue regardless so the worker can clear.
 	if event.Type == datatypes.FeedbackRecordCreated &&
-		(record.ValueText == nil || strings.TrimSpace(*record.ValueText) == "") {
+		BuildEmbeddingInput(record.FieldLabel, record.ValueText, p.docPrefix) == "" {
 		slog.Debug("embedding: skip, no value_text on create", "feedback_record_id", record.ID)
 
 		return
 	}
 
-	valueTextHash := embeddingValueTextHash(record.ValueText)
+	valueTextHash := embeddingValueTextHash(record.FieldLabel, record.ValueText, p.docPrefix)
 
 	opts := &river.InsertOpts{
 		Queue:       p.queueName,
@@ -131,19 +136,88 @@ func recordIDFromEventData(data any) uuid.UUID {
 	return uuid.Nil
 }
 
-// embeddingValueTextHash returns a hash of the input for dedupe (same content => same job within window).
-// Empty or nil value_text returns "empty".
-func embeddingValueTextHash(valueText *string) string {
+const (
+	questionPrefix = "Question: "
+	answerPrefix   = "\nAnswer: "
+)
+
+// BuildEmbeddingInput prepares text for vector embedding.
+// Uses a pre-allocated strings.Builder to reduce allocations on this hot path.
+//
+// We feed the model raw, natural text: only TrimSpace and Unicode NFC normalization are applied.
+// Case, diacritics, and punctuation are preserved so the model retains semantic clues (e.g. "US" vs "us", "résumé" vs "resume").
+//
+// Arguments:
+//   - fieldLabel: The "question" or metadata key (e.g. "What is your reasoning?").
+//   - valueText:  The "answer" or main content (e.g. "I chose option B because...").
+//   - prefix:     Model-specific task instruction (e.g. "search_document: " for Nomic, "" for OpenAI).
+//
+// Returns formatted string: "[prefix]Question: [label]\nAnswer: [value]" (or "[prefix][value]" when label is empty).
+func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 	if valueText == nil {
+		return ""
+	}
+
+	trimmedValue := strings.TrimSpace(*valueText)
+	if trimmedValue == "" {
+		return ""
+	}
+
+	// Unicode NFC normalization: consistent byte representation without changing meaning (e.g. ñ as single codepoint).
+	val := norm.NFC.String(trimmedValue)
+
+	label := ""
+	if fieldLabel != nil {
+		label = norm.NFC.String(strings.TrimSpace(*fieldLabel))
+	}
+
+	// Pre-allocate to avoid builder growth and reduce GC pressure.
+	bufCap := len(prefix) + len(val)
+	if label != "" {
+		bufCap += len(questionPrefix) + len(label) + len(answerPrefix)
+	}
+
+	var builder strings.Builder
+	builder.Grow(bufCap)
+
+	builder.WriteString(prefix)
+
+	if label != "" {
+		builder.WriteString(questionPrefix)
+		builder.WriteString(label)
+		builder.WriteString(answerPrefix)
+	}
+
+	builder.WriteString(val)
+
+	return builder.String()
+}
+
+// EmbeddingPrefixForProvider returns the document prefix for the given embedding provider.
+// Some open-source models (e.g. Nomic, E5, Mistral) require a prefix to indicate the text is a stored document;
+// OpenAI and Google use no prefix. Provider name is case-insensitive.
+func EmbeddingPrefixForProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "nomic":
+		return "search_document: "
+	case "e5", "intfloat/multilingual-e5-large", "intfloat/e5-large":
+		return "passage: "
+	case "mistral":
+		return "search_document: "
+	default:
+		return ""
+	}
+}
+
+// embeddingValueTextHash returns a hash of the embedding input for dedupe (same content => same job within window).
+// Uses BuildEmbeddingInput; empty content returns "empty".
+func embeddingValueTextHash(fieldLabel, valueText *string, prefix string) string {
+	content := BuildEmbeddingInput(fieldLabel, valueText, prefix)
+	if content == "" {
 		return "empty"
 	}
 
-	trimmed := strings.TrimSpace(*valueText)
-	if trimmed == "" {
-		return "empty"
-	}
-
-	sum := sha256.Sum256([]byte(trimmed))
+	sum := sha256.Sum256([]byte(content))
 
 	return hex.EncodeToString(sum[:])
 }
