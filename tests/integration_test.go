@@ -252,6 +252,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		reqBody := map[string]any{
 			"source_type":   "formbricks",
 			"submission_id": uuid.New().String(),
+			"tenant_id":     "test-tenant",
 			"field_id":      "feedback",
 			"field_type":    "text",
 			"value_text":    "Great product!",
@@ -326,6 +327,7 @@ func TestListFeedbackRecords(t *testing.T) {
 	reqBody := map[string]any{
 		"source_type":   "formbricks",
 		"submission_id": uuid.New().String(),
+		"tenant_id":     "test-tenant",
 		"field_id":      "nps_score",
 		"field_type":    "number",
 		"value_number":  9,
@@ -517,6 +519,7 @@ func TestGetFeedbackRecord(t *testing.T) {
 	reqBody := map[string]any{
 		"source_type":   "formbricks",
 		"submission_id": uuid.New().String(),
+		"tenant_id":     "test-tenant",
 		"field_id":      "rating",
 		"field_type":    "number",
 		"value_number":  5,
@@ -601,6 +604,7 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 	reqBody := map[string]any{
 		"source_type":   "formbricks",
 		"submission_id": uuid.New().String(),
+		"tenant_id":     "test-tenant",
 		"field_id":      "comment",
 		"field_type":    "text",
 		"value_text":    "Initial comment",
@@ -674,6 +678,7 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 	reqBody := map[string]any{
 		"source_type":   "formbricks",
 		"submission_id": uuid.New().String(),
+		"tenant_id":     "test-tenant",
 		"field_id":      "temp",
 		"field_type":    "text",
 		"value_text":    "To be deleted",
@@ -730,10 +735,12 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	subID := uuid.New().String() // unique per run to avoid 409 from leftover data
 
 	// Create several feedback records with the same user_identifier
+	tenantID := "test-tenant"
 	createPayload := func(fieldID string, valueNum float64) map[string]any {
 		return map[string]any{
 			"source_type":     "formbricks",
 			"submission_id":   subID,
+			"tenant_id":       tenantID,
 			"user_identifier": userID,
 			"field_id":        fieldID,
 			"field_type":      "number",
