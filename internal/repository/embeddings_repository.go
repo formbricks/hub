@@ -197,7 +197,8 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 		}
 	}()
 
-	if _, err := dbTx.Exec(ctx, "SET LOCAL hnsw.ef_search = $1", hnswEfSearch); err != nil {
+	// SET LOCAL does not support bound parameters; value is a package constant.
+	if _, err := dbTx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", hnswEfSearch)); err != nil {
 		return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
 	}
 
@@ -288,7 +289,8 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 		}
 	}()
 
-	if _, err := dbTx.Exec(ctx, "SET LOCAL hnsw.ef_search = $1", hnswEfSearch); err != nil {
+	// SET LOCAL does not support bound parameters; value is a package constant.
+	if _, err := dbTx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", hnswEfSearch)); err != nil {
 		return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
 	}
 

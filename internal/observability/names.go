@@ -68,6 +68,7 @@ var allowedDispatchReasons = map[string]bool{
 // allowedEmbeddingProviderReasons for hub_embedding_provider_errors_total.
 var allowedEmbeddingProviderReasons = map[string]bool{
 	"enqueue_failed": true,
+	"invalid_data":   true,
 }
 
 // allowedEmbeddingOutcomeStatuses for hub_embedding_outcomes_total and hub_embedding_duration_seconds.
