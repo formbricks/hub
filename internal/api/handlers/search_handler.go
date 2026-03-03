@@ -128,7 +128,7 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, service.ErrInvalidCursor) {
-			response.RespondBadRequest(w, "Invalid cursor")
+			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
 
 			return
 		}
@@ -214,7 +214,7 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if errors.Is(err, service.ErrInvalidCursor) {
-			response.RespondBadRequest(w, "Invalid cursor")
+			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
 
 			return
 		}
