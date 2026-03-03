@@ -119,9 +119,13 @@ jobs:
           checks: not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance
           # Only run examples phase for fast, deterministic CI testing.
           # For deeper testing (stateful, fuzzing), run locally: make schemathesis
+          # Exclude search endpoints: CI does not configure embeddings, so they return 503 (treated as failure by not_a_server_error).
+          # Run locally with embeddings enabled to test these operations.
           args: >-
             --phases examples
             -H "Authorization: Bearer test-api-key-for-ci"
+            --exclude-operation-id semantic-search-feedback-records
+            --exclude-operation-id similar-feedback-records
 
       - name: Stop API server
         if: always()
