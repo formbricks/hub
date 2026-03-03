@@ -596,6 +596,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "503":
+                    description: Service Unavailable (embeddings are not configured)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -671,6 +677,12 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                 "404":
                     description: Not Found (feedback record has no embedding for the current model)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "503":
+                    description: Service Unavailable (embeddings are not configured)
                     content:
                         application/problem+json:
                             schema:
