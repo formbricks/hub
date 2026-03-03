@@ -936,6 +936,7 @@ components:
             properties:
                 results:
                     type: array
+                    maxItems: 100
                     description: List of feedback record IDs with similarity scores (0 = unrelated, 1 = identical)
                     items:
                         $ref: '#/components/schemas/SemanticSearchResultItem'

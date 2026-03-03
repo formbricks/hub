@@ -14,7 +14,8 @@ import (
 )
 
 type mockEmbeddingClient struct {
-	createFunc func(ctx context.Context, input string) ([]float32, error)
+	createFunc      func(ctx context.Context, input string) ([]float32, error)
+	createQueryFunc func(ctx context.Context, input string) ([]float32, error)
 }
 
 func (m *mockEmbeddingClient) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {
@@ -26,6 +27,10 @@ func (m *mockEmbeddingClient) CreateEmbedding(ctx context.Context, input string)
 }
 
 func (m *mockEmbeddingClient) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
+	if m.createQueryFunc != nil {
+		return m.createQueryFunc(ctx, input)
+	}
+
 	return m.CreateEmbedding(ctx, input)
 }
 
@@ -97,12 +102,17 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 
 	t.Run("success returns results from repo", func(t *testing.T) {
 		id := uuid.MustParse("018e1234-5678-9abc-def0-111111111111")
-		clientCalled := false
+		queryClientCalled := false
 		nearestCalled := false
 		svc := NewSearchService(SearchServiceParams{
 			EmbeddingClient: &mockEmbeddingClient{
-				createFunc: func(_ context.Context, input string) ([]float32, error) {
-					clientCalled = true
+				createFunc: func(_ context.Context, _ string) ([]float32, error) {
+					t.Fatal("semantic search must use CreateEmbeddingForQuery, not CreateEmbedding")
+
+					return nil, nil
+				},
+				createQueryFunc: func(_ context.Context, input string) ([]float32, error) {
+					queryClientCalled = true
 
 					assert.Equal(t, "login slow", input)
 
@@ -133,7 +143,7 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 		})
 		res, err := svc.SemanticSearch(context.Background(), "login slow", "env-1", 10, 2, 0.5, "")
 		require.NoError(t, err)
-		require.True(t, clientCalled)
+		require.True(t, queryClientCalled)
 		require.True(t, nearestCalled)
 		require.Len(t, res.Results, 1)
 		assert.Equal(t, id, res.Results[0].FeedbackRecordID)
@@ -217,6 +227,11 @@ func TestSearchService_SemanticSearch_EmbeddingError(t *testing.T) {
 	svc := NewSearchService(SearchServiceParams{
 		EmbeddingClient: &mockEmbeddingClient{
 			createFunc: func(_ context.Context, _ string) ([]float32, error) {
+				t.Fatal("semantic search must use CreateEmbeddingForQuery, not CreateEmbedding")
+
+				return nil, nil
+			},
+			createQueryFunc: func(_ context.Context, _ string) ([]float32, error) {
 				return nil, embeddingErr
 			},
 		},

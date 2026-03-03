@@ -134,7 +134,13 @@ func (s *SearchService) SemanticSearch(
 	out.Results = results
 	if len(results) == topK {
 		last := results[len(results)-1]
-		out.NextCursor = EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
+
+		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
+		if err != nil {
+			return out, fmt.Errorf("encode next cursor: %w", err)
+		}
+
+		out.NextCursor = nextCursor
 	}
 
 	return out, nil
@@ -190,7 +196,13 @@ func (s *SearchService) SimilarFeedback(
 	out.Results = results
 	if len(results) == limit {
 		last := results[len(results)-1]
-		out.NextCursor = EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
+
+		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
+		if err != nil {
+			return out, fmt.Errorf("encode next cursor: %w", err)
+		}
+
+		out.NextCursor = nextCursor
 	}
 
 	return out, nil

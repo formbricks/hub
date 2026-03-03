@@ -91,7 +91,9 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(
 		return nil, fmt.Errorf("create feedback record: %w", err)
 	}
 
-	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, record)
+	if s.publisher != nil {
+		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, record)
+	}
 
 	return record, nil
 }
@@ -142,7 +144,9 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, req.ChangedFields())
+	if s.publisher != nil {
+		s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, req.ChangedFields())
+	}
 
 	return record, nil
 }
@@ -154,7 +158,9 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 		return fmt.Errorf("delete feedback record: %w", err)
 	}
 
-	s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, []uuid.UUID{id})
+	if s.publisher != nil {
+		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, []uuid.UUID{id})
+	}
 
 	return nil
 }
@@ -171,7 +177,7 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 		return 0, fmt.Errorf("bulk delete feedback records: %w", err)
 	}
 
-	if len(ids) > 0 {
+	if len(ids) > 0 && s.publisher != nil {
 		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, ids)
 	}
 

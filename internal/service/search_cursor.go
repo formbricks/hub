@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 
@@ -20,13 +21,13 @@ type cursorPayload struct {
 
 // EncodeSearchCursor returns an opaque cursor for the next page. distance is the cosine distance
 // (e.embedding <=> query) of the last result row; id is that row's feedback_record_id.
-func EncodeSearchCursor(distance float64, id uuid.UUID) string {
+func EncodeSearchCursor(distance float64, id uuid.UUID) (string, error) {
 	b, err := json.Marshal(cursorPayload{D: distance, I: id.String()})
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("encode search cursor: %w", err)
 	}
 
-	return base64.URLEncoding.EncodeToString(b)
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
 // DecodeSearchCursor parses an opaque cursor and returns (distance, feedbackRecordID).
