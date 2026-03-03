@@ -245,6 +245,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			Logger:          slog.Default(),
 		})
 		searchHandler = handlers.NewSearchHandler(searchService)
+	} else {
+		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
@@ -343,12 +345,9 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
 
-	// Search is nil when no embeddings API is configured (e.g. EMBEDDING_PROVIDER unset);
-	// semantic search and similar-feedback are not registered then.
-	if search != nil {
-		protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
-		protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
-	}
+	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
+	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
+	protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
 
 	protectedWithAuth := middleware.Auth(cfg.APIKey)(protected)
 	mux := http.NewServeMux()

@@ -72,6 +72,12 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.service == nil {
+		response.RespondServiceUnavailable(w, "Semantic search is not available: embeddings are not configured.")
+
+		return
+	}
+
 	var req SemanticSearchRequest
 
 	decoder := json.NewDecoder(r.Body)
@@ -143,6 +149,12 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.RespondError(w, http.StatusMethodNotAllowed, "Method Not Allowed", "GET required")
+
+		return
+	}
+
+	if h.service == nil {
+		response.RespondServiceUnavailable(w, "Similar feedback is not available: embeddings are not configured.")
 
 		return
 	}

@@ -66,6 +66,11 @@ func RespondInternalServerError(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusInternalServerError, "Internal Server Error", detail)
 }
 
+// RespondServiceUnavailable writes a 503 Service Unavailable error response.
+func RespondServiceUnavailable(w http.ResponseWriter, detail string) {
+	RespondError(w, http.StatusServiceUnavailable, "Service Unavailable", detail)
+}
+
 // RespondJSON writes a JSON response directly without wrapping.
 func RespondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
