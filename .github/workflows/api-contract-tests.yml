@@ -127,6 +127,20 @@ jobs:
             --exclude-operation-id semantic-search-feedback-records
             --exclude-operation-id similar-feedback-records
 
+      - name: Run API contract tests (search endpoints)
+        uses: schemathesis/action@1f15936316e0742005bf69657b5909ac68f04cb3
+        with:
+          schema: ./openapi.yaml
+          base-url: http://localhost:8080
+          version: "4.4.4"
+          # Omit not_a_server_error: search endpoints return 503 when embeddings are disabled (documented behavior).
+          checks: status_code_conformance,content_type_conformance,response_schema_conformance
+          args: >-
+            --phases examples
+            -H "Authorization: Bearer test-api-key-for-ci"
+            --operation-id semantic-search-feedback-records
+            --operation-id similar-feedback-records
+
       - name: Stop API server
         if: always()
         run: |
