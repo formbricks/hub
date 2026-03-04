@@ -196,16 +196,5 @@ func TestBuildEmbeddingInput(t *testing.T) {
 func TestEmbeddingPrefixForProvider(t *testing.T) {
 	t.Run("openai returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("openai")) })
 	t.Run("google returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("google")) })
-	t.Run("nomic returns search_document prefix", func(t *testing.T) {
-		assert.Equal(t, "search_document: ", EmbeddingPrefixForProvider("nomic"))
-	})
-	t.Run("e5 returns passage prefix", func(t *testing.T) {
-		assert.Equal(t, "passage: ", EmbeddingPrefixForProvider("e5"))
-	})
-	t.Run("unknown returns empty", func(t *testing.T) {
-		assert.Empty(t, EmbeddingPrefixForProvider("unknown"))
-	})
-	t.Run("case insensitive", func(t *testing.T) {
-		assert.Equal(t, "search_document: ", EmbeddingPrefixForProvider("NOMIC"))
-	})
+	t.Run("unknown returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("unknown")) })
 }

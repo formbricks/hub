@@ -26,7 +26,7 @@ type EmbeddingProvider struct {
 	model       string
 	queueName   string
 	maxAttempts int
-	docPrefix   string // model-specific prefix for document embedding (e.g. "search_document: " for Nomic)
+	docPrefix   string // model-specific prefix for document embedding; OpenAI and Google use ""
 	metrics     observability.EmbeddingMetrics
 }
 
@@ -57,7 +57,7 @@ func NewEmbeddingProvider(
 // PublishEvent enqueues a feedback_embedding job when the event is FeedbackRecordCreated (with non-empty value_text)
 // or FeedbackRecordUpdated (with value_text in ChangedFields). On update, the job is enqueued even when value_text
 // is now empty so the worker can clear the embedding for text fields.
-// API key may be empty; some providers (e.g. local AI) work without a key.
+// API key is required for openai and google (validated at startup).
 func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	if event.Type == datatypes.FeedbackRecordUpdated {
 		if !contains(event.ChangedFields, "value_text") && !contains(event.ChangedFields, "field_label") {
@@ -150,7 +150,7 @@ const (
 // Arguments:
 //   - fieldLabel: The "question" or metadata key (e.g. "What is your reasoning?").
 //   - valueText:  The "answer" or main content (e.g. "I chose option B because...").
-//   - prefix:     Model-specific task instruction (e.g. "search_document: " for Nomic, "" for OpenAI).
+//   - prefix:     Model-specific task instruction; OpenAI and Google use "".
 //
 // Returns formatted string: "[prefix]Question: [label]\nAnswer: [value]" (or "[prefix][value]" when label is empty).
 func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
@@ -194,22 +194,9 @@ func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 }
 
 // EmbeddingPrefixForProvider returns the document prefix for the given embedding provider.
-// Some open-source models require a prefix to indicate the text is a stored document:
-// - Nomic: "search_document: "
-// - E5 variants (e5, intfloat/multilingual-e5-large, intfloat/e5-large): "passage: "
-// Mistral uses the API parameter input_type to distinguish query vs document; no prefix.
-// OpenAI and Google use no prefix. Provider name is case-insensitive.
-func EmbeddingPrefixForProvider(provider string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "nomic":
-		return "search_document: "
-	case "e5", "intfloat/multilingual-e5-large", "intfloat/e5-large":
-		return "passage: "
-	case "mistral":
-		return ""
-	default:
-		return ""
-	}
+// OpenAI and Google use no prefix. Returns "" for all supported providers.
+func EmbeddingPrefixForProvider(_ string) string {
+	return ""
 }
 
 // embeddingValueTextHash returns a hash of the embedding input for dedupe (same content => same job within window).

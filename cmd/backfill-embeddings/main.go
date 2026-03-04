@@ -192,8 +192,7 @@ func getEmbeddingProviderAndModel() (provider, model string, err error) {
 	return provider, model, nil
 }
 
-// providerRequiresAPIKey returns true for providers that need EMBEDDING_PROVIDER_API_KEY (e.g. openai, google).
-// Providers that do not require an API key (e.g. local) return false.
+// providerRequiresAPIKey returns true for providers that require EMBEDDING_PROVIDER_API_KEY (openai, google).
 func providerRequiresAPIKey(provider string) bool {
 	switch strings.ToLower(provider) {
 	case embeddingProviderOpenAI, embeddingProviderGoogle:
