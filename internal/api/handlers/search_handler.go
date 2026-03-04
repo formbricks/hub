@@ -258,7 +258,7 @@ func parseMinScore(s string) float64 {
 
 	val, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0
+		return defaultMinScore
 	}
 
 	if val < 0 {
