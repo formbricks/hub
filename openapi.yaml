@@ -47,10 +47,12 @@ paths:
             parameters:
                 - name: tenant_id
                   in: query
-                  description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
+                  required: true
+                  description: Tenant ID (required for isolation). NULL bytes not allowed.
                   schema:
                     type: string
-                    description: Filter by tenant ID (for multi-tenant deployments). NULL bytes not allowed.
+                    description: Tenant ID (required for isolation). NULL bytes not allowed.
+                    minLength: 1
                     pattern: '^[^\x00]*$'
                 - name: submission_id
                   in: query

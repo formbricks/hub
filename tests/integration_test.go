@@ -313,7 +313,8 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	// Test with invalid API key
 	t.Run("Unauthorized with invalid API key", func(t *testing.T) {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records?tenant_id=test-tenant", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer wrong-key-12345")
 
@@ -343,9 +344,22 @@ func TestListFeedbackRecords(t *testing.T) {
 	// decodeData not needed for this create; we only need a record to list
 	require.NoError(t, createResp.Body.Close())
 
+	// Test missing tenant_id returns 400
+	t.Run("Missing tenant_id returns 400", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	})
+
 	// Test listing feedback records
 	t.Run("List all feedback records", func(t *testing.T) {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records", http.NoBody)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records?tenant_id=test-tenant", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -364,7 +378,7 @@ func TestListFeedbackRecords(t *testing.T) {
 
 	// Test with filters
 	t.Run("List with source_type filter", func(t *testing.T) {
-		listURL := server.URL + "/v1/feedback-records?source_type=formbricks&limit=10"
+		listURL := server.URL + "/v1/feedback-records?tenant_id=test-tenant&source_type=formbricks&limit=10"
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, listURL, http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
