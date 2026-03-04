@@ -107,6 +107,21 @@ func TestRetryingWebhookDispatchInserter_RecordEnqueueRetry(t *testing.T) {
 	assert.Equal(t, 1, retryCount, "RecordEnqueueRetry should be called once (one retry)")
 }
 
+func TestRetryingWebhookDispatchInserter_NilBaseInserter(t *testing.T) {
+	r := NewRetryingWebhookDispatchInserter(RetryingWebhookDispatchInserterConfig{
+		MaxRetries:     1,
+		InitialBackoff: 10 * time.Millisecond,
+		MaxBackoff:     50 * time.Millisecond,
+		BaseInserter:   nil,
+	})
+
+	ctx := context.Background()
+	result, err := r.InsertMany(ctx, nil)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	require.ErrorIs(t, err, errBaseInserterNotConfigured)
+}
+
 // countingInserter wraps an inserter and counts calls.
 type countingInserter struct {
 	base  *mockWebhookInserter

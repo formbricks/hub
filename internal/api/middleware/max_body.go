@@ -3,16 +3,13 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/formbricks/hub/internal/api/response"
 )
-
-// errRequestBodyTooLarge is the message returned by http.MaxBytesReader when limit is exceeded.
-const errRequestBodyTooLarge = "http: request body too large"
 
 // mayHaveBody is true for methods that typically send a request body (we buffer only then to send 413).
 func mayHaveBody(method string) bool {
@@ -51,7 +48,8 @@ func MaxBody(maxBytes int64, recorder RequestBodyTooLargeRecorder) func(http.Han
 			r.Body = &maxBodyReader{
 				ReadCloser: limited,
 				onReadError: func(err error) {
-					if err != nil && strings.Contains(err.Error(), errRequestBodyTooLarge) {
+					var maxBytesErr *http.MaxBytesError
+					if errors.As(err, &maxBytesErr) {
 						limitExceeded = true
 					}
 				},
@@ -96,19 +94,24 @@ func (r *maxBodyReader) Read(p []byte) (n int, err error) {
 		r.onReadError(err)
 	}
 
-	if err != nil {
-		return n, fmt.Errorf("read body: %w", err)
-	}
-
-	return n, nil
+	return n, err //nolint:wrapcheck // must return raw error so io.EOF and *http.MaxBytesError propagate
 }
 
-// responseBuffer captures status and body so we can optionally discard and send 413 instead.
+// responseBuffer captures status, headers, and body so we can optionally discard and send 413 instead.
 type responseBuffer struct {
 	http.ResponseWriter
 
 	status int
+	header http.Header
 	buf    bytes.Buffer
+}
+
+func (b *responseBuffer) Header() http.Header {
+	if b.header == nil {
+		b.header = make(http.Header)
+	}
+
+	return b.header
 }
 
 func (b *responseBuffer) WriteHeader(code int) {
@@ -125,6 +128,12 @@ func (b *responseBuffer) Write(p []byte) (n int, err error) {
 }
 
 func (b *responseBuffer) flush() {
+	for k, v := range b.header {
+		for _, vv := range v {
+			b.ResponseWriter.Header().Add(k, vv)
+		}
+	}
+
 	if b.status != 0 {
 		b.ResponseWriter.WriteHeader(b.status)
 	}

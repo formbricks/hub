@@ -109,6 +109,14 @@ func validateSigningKey(key string) error {
 // SigningKeySize is the number of random bytes for Standard Webhooks signing keys.
 const SigningKeySize = 32
 
+// canonicalizeHost normalizes host for blacklist lookup (trim trailing dots, lowercase).
+func canonicalizeHost(host string) string {
+	h := strings.TrimSpace(strings.ToLower(host))
+	h = strings.TrimSuffix(h, ".")
+
+	return h
+}
+
 // validateWebhookURLHost checks that the URL's host is not in the blacklist (SSRF mitigation).
 func validateWebhookURLHost(urlStr string, blacklist map[string]struct{}) error {
 	if len(blacklist) == 0 {
@@ -120,7 +128,7 @@ func validateWebhookURLHost(urlStr string, blacklist map[string]struct{}) error 
 		return huberrors.NewValidationError("url", "invalid URL: "+err.Error())
 	}
 
-	host := strings.TrimSpace(strings.ToLower(u.Hostname()))
+	host := canonicalizeHost(u.Hostname())
 	if host == "" {
 		return huberrors.NewValidationError("url", "URL host is empty")
 	}

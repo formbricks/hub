@@ -1286,6 +1286,8 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 
 // TestWebhookURLBlacklist asserts that webhook URLs with blacklisted hosts are rejected.
 func TestWebhookURLBlacklist(t *testing.T) {
+	t.Setenv("WEBHOOK_BLACKLIST", "localhost,127.0.0.1,::1")
+
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
@@ -1315,6 +1317,23 @@ func TestWebhookURLBlacklist(t *testing.T) {
 	require.Len(t, problem.Errors, 1)
 	assert.Equal(t, "url", problem.Errors[0].Location)
 	assert.Contains(t, problem.Errors[0].Message, "blacklisted")
+
+	// Trailing-dot FQDN (localhost.) must match blacklist
+	createBodyTrailingDot := map[string]any{
+		"url":         "https://localhost./webhook",
+		"event_types": []string{"feedback_record.created"},
+	}
+	body2, err := json.Marshal(createBodyTrailingDot)
+	require.NoError(t, err)
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(body2))
+	require.NoError(t, err)
+	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req2.Header.Set("Content-Type", "application/json")
+
+	resp2, err := client.Do(req2)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+	require.NoError(t, resp2.Body.Close())
 }
 
 // TestRequestBodyTooLarge asserts that requests with body exceeding MAX_REQUEST_BODY_BYTES return 413.

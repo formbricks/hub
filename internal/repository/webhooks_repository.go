@@ -428,6 +428,7 @@ func (r *DBWebhooksRepository) listEnabledForEventTypeDirect(ctx context.Context
 		FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
+		ORDER BY id
 	`
 
 	rows, err := r.db.Query(ctx, query, eventType)

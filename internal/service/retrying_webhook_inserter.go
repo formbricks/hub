@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/formbricks/hub/internal/observability"
 )
+
+var errBaseInserterNotConfigured = errors.New("webhook inserter: BaseInserter is not configured")
 
 // RetryingWebhookDispatchInserterConfig configures retry behavior for webhook enqueue.
 type RetryingWebhookDispatchInserterConfig struct {
@@ -37,6 +40,9 @@ func (r *RetryingWebhookDispatchInserter) InsertMany(
 	ctx context.Context, params []river.InsertManyParams,
 ) ([]*rivertype.JobInsertResult, error) {
 	base := r.cfg.BaseInserter
+	if base == nil {
+		return nil, errBaseInserterNotConfigured
+	}
 
 	maxRetries := max(r.cfg.MaxRetries, 0)
 
@@ -58,10 +64,6 @@ func (r *RetryingWebhookDispatchInserter) InsertMany(
 	lastErr := err
 
 	for attempt := range maxRetries {
-		if r.cfg.Metrics != nil {
-			r.cfg.Metrics.RecordEnqueueRetry(ctx)
-		}
-
 		backoff := computeBackoff(initialBackoff, maxBackoff, attempt)
 		slog.Warn("webhook enqueue failed, retrying",
 			"attempt", attempt+1,
@@ -78,6 +80,10 @@ func (r *RetryingWebhookDispatchInserter) InsertMany(
 
 			return nil, fmt.Errorf("webhook enqueue retry: %w", err)
 		case <-time.After(backoff):
+			if r.cfg.Metrics != nil {
+				r.cfg.Metrics.RecordEnqueueRetry(ctx)
+			}
+
 			result, err = base.InsertMany(ctx, params)
 			if err == nil {
 				return result, nil

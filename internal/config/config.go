@@ -22,6 +22,7 @@ var (
 	ErrMessagePublisherPerEventTimeout = errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
 	ErrShutdownTimeoutSeconds          = errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
 	ErrWebhookMaxCount                 = errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
+	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
 )
 
 // Config holds all application configuration.
@@ -271,6 +272,10 @@ func Load() (*Config, error) {
 	databaseMinConns := getEnvAsInt("DATABASE_MIN_CONNS", defaultDatabaseMinConns)
 	if databaseMinConns < 0 {
 		databaseMinConns = defaultDatabaseMinConns
+	}
+
+	if databaseMinConns > databaseMaxConns {
+		return nil, ErrDatabaseMinConnsExceedsMax
 	}
 
 	databaseMaxConnLifetimeSecs := getEnvAsInt("DATABASE_MAX_CONN_LIFETIME_SECONDS", defaultDatabaseMaxConnLifetimeSeconds)
