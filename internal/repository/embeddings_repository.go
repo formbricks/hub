@@ -172,9 +172,9 @@ func (r *EmbeddingsRepository) GetEmbeddingByFeedbackRecordAndModelAndTenant(
 // feedback record (e.g. for "similar" endpoint). offset is the number of rows to skip (for paging).
 func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
-) ([]models.FeedbackRecordWithScore, error) {
+) ([]models.FeedbackRecordWithScore, bool, error) {
 	if len(queryEmbedding) != models.EmbeddingVectorDimensions {
-		return nil, fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(queryEmbedding), models.EmbeddingVectorDimensions)
+		return nil, false, fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(queryEmbedding), models.EmbeddingVectorDimensions)
 	}
 
 	if offset < 0 {
@@ -188,7 +188,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 
 	dbTx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
+		return nil, false, fmt.Errorf("begin tx: %w", err)
 	}
 
 	defer func() {
@@ -199,7 +199,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 
 	// SET LOCAL does not support bound parameters; value is a package constant.
 	if _, err := dbTx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", hnswEfSearch)); err != nil {
-		return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
+		return nil, false, fmt.Errorf("set hnsw.ef_search: %w", err)
 	}
 
 	var rows pgx.Rows
@@ -222,20 +222,27 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("nearest feedback records: %w", err)
+		return nil, false, fmt.Errorf("nearest feedback records: %w", err)
 	}
 
 	defer rows.Close()
 
-	var results []models.FeedbackRecordWithScore
+	var (
+		results  []models.FeedbackRecordWithScore
+		rowCount int
+	)
+
+	brokeWithFullPage := false
 
 	for rows.Next() {
+		rowCount++
+
 		var (
 			row       models.FeedbackRecordWithScore
 			valueText *string
 		)
 		if err := rows.Scan(&row.FeedbackRecordID, &row.Score, &row.FieldLabel, &valueText); err != nil {
-			return nil, fmt.Errorf("scan feedback record with score: %w", err)
+			return nil, false, fmt.Errorf("scan feedback record with score: %w", err)
 		}
 
 		if valueText != nil {
@@ -245,13 +252,15 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 		if row.Score >= minScore {
 			results = append(results, row)
 			if len(results) >= limit {
+				brokeWithFullPage = true
+
 				break
 			}
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating nearest: %w", err)
+		return nil, false, fmt.Errorf("iterating nearest: %w", err)
 	}
 
 	// Close rows before Commit so the connection is not busy (avoids "conn busy" when breaking early from the loop).
@@ -260,10 +269,12 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	if err := dbTx.Commit(ctx); err != nil {
 		slog.Error("nearest feedback records: commit failed", "error", err)
 
-		return nil, fmt.Errorf("commit: %w", err)
+		return nil, false, fmt.Errorf("commit: %w", err)
 	}
 
-	return results, nil
+	hasMore := brokeWithFullPage || rowCount >= fetchLimit
+
+	return results, hasMore, nil
 }
 
 // NearestFeedbackRecordsByEmbeddingAfterCursor returns the next page of nearest neighbors after the given
@@ -272,9 +283,9 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int,
 	lastDistance float64, lastFeedbackRecordID uuid.UUID, excludeID *uuid.UUID, minScore float64,
-) ([]models.FeedbackRecordWithScore, error) {
+) ([]models.FeedbackRecordWithScore, bool, error) {
 	if len(queryEmbedding) != models.EmbeddingVectorDimensions {
-		return nil, fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(queryEmbedding), models.EmbeddingVectorDimensions)
+		return nil, false, fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(queryEmbedding), models.EmbeddingVectorDimensions)
 	}
 
 	queryVec := pgvector.NewVector(queryEmbedding)
@@ -283,7 +294,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 
 	dbTx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
+		return nil, false, fmt.Errorf("begin tx: %w", err)
 	}
 
 	defer func() {
@@ -294,7 +305,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 
 	// SET LOCAL does not support bound parameters; value is a package constant.
 	if _, err := dbTx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", hnswEfSearch)); err != nil {
-		return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
+		return nil, false, fmt.Errorf("set hnsw.ef_search: %w", err)
 	}
 
 	var rows pgx.Rows
@@ -319,20 +330,27 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("nearest feedback records after cursor: %w", err)
+		return nil, false, fmt.Errorf("nearest feedback records after cursor: %w", err)
 	}
 
 	defer rows.Close()
 
-	var results []models.FeedbackRecordWithScore
+	var (
+		results  []models.FeedbackRecordWithScore
+		rowCount int
+	)
+
+	brokeWithFullPage := false
 
 	for rows.Next() {
+		rowCount++
+
 		var (
 			row       models.FeedbackRecordWithScore
 			valueText *string
 		)
 		if err := rows.Scan(&row.FeedbackRecordID, &row.Score, &row.FieldLabel, &valueText); err != nil {
-			return nil, fmt.Errorf("scan feedback record with score: %w", err)
+			return nil, false, fmt.Errorf("scan feedback record with score: %w", err)
 		}
 
 		if valueText != nil {
@@ -342,13 +360,15 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 		if row.Score >= minScore {
 			results = append(results, row)
 			if len(results) >= limit {
+				brokeWithFullPage = true
+
 				break
 			}
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating nearest after cursor: %w", err)
+		return nil, false, fmt.Errorf("iterating nearest after cursor: %w", err)
 	}
 
 	// Close rows before Commit so the connection is not busy.
@@ -357,8 +377,10 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	if err := dbTx.Commit(ctx); err != nil {
 		slog.Error("nearest feedback records after cursor: commit failed", "error", err)
 
-		return nil, fmt.Errorf("commit: %w", err)
+		return nil, false, fmt.Errorf("commit: %w", err)
 	}
 
-	return results, nil
+	hasMore := brokeWithFullPage || rowCount >= fetchLimit
+
+	return results, hasMore, nil
 }

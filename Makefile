@@ -67,9 +67,10 @@ build-backfill-embeddings:
 	go build -o bin/backfill-embeddings ./cmd/backfill-embeddings
 	@echo "Binary created: bin/backfill-embeddings"
 
-# Run the backfill-embeddings command (loads .env for DATABASE_URL etc.)
+# Run the backfill-embeddings command (loads .env for DATABASE_URL etc.). Requires .env; fails fast if missing.
 run-backfill-embeddings:
-	@(set -a && [ -f .env ] && . ./.env && set +a; go run ./cmd/backfill-embeddings)
+	@if [ ! -f .env ]; then echo "Error: .env file required. Copy .env.example to .env and configure."; exit 1; fi && \
+	(set -a && . ./.env && set +a && go run ./cmd/backfill-embeddings)
 
 # Run the API server
 run:

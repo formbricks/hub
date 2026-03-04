@@ -39,11 +39,11 @@ type mockEmbeddingsRepoForSearch struct {
 	nearestFunc              func(
 		ctx context.Context, model string, queryEmbedding []float32,
 		tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
-	) ([]models.FeedbackRecordWithScore, error)
+	) ([]models.FeedbackRecordWithScore, bool, error)
 	nearestAfterFunc func(
 		ctx context.Context, model string, queryEmbedding []float32,
 		tenantID string, limit int, lastDistance float64, lastID uuid.UUID, excludeID *uuid.UUID, minScore float64,
-	) ([]models.FeedbackRecordWithScore, error)
+	) ([]models.FeedbackRecordWithScore, bool, error)
 }
 
 func (m *mockEmbeddingsRepoForSearch) GetEmbeddingByFeedbackRecordAndModelAndTenant(
@@ -58,23 +58,23 @@ func (m *mockEmbeddingsRepoForSearch) GetEmbeddingByFeedbackRecordAndModelAndTen
 
 func (m *mockEmbeddingsRepoForSearch) NearestFeedbackRecordsByEmbedding(
 	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
-) ([]models.FeedbackRecordWithScore, error) {
+) ([]models.FeedbackRecordWithScore, bool, error) {
 	if m.nearestFunc != nil {
 		return m.nearestFunc(ctx, model, queryEmbedding, tenantID, limit, offset, excludeID, minScore)
 	}
 
-	return nil, nil
+	return nil, false, nil
 }
 
 func (m *mockEmbeddingsRepoForSearch) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int,
 	lastDistance float64, lastFeedbackRecordID uuid.UUID, excludeID *uuid.UUID, minScore float64,
-) ([]models.FeedbackRecordWithScore, error) {
+) ([]models.FeedbackRecordWithScore, bool, error) {
 	if m.nearestAfterFunc != nil {
 		return m.nearestAfterFunc(ctx, model, queryEmbedding, tenantID, limit, lastDistance, lastFeedbackRecordID, excludeID, minScore)
 	}
 
-	return nil, nil
+	return nil, false, nil
 }
 
 func TestSearchService_SemanticSearch(t *testing.T) {
@@ -123,7 +123,7 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 				nearestFunc: func(
 					_ context.Context, model string, queryEmbedding []float32,
 					tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
-				) ([]models.FeedbackRecordWithScore, error) {
+				) ([]models.FeedbackRecordWithScore, bool, error) {
 					nearestCalled = true
 
 					assert.Equal(t, "test-model", model)
@@ -136,7 +136,7 @@ func TestSearchService_SemanticSearch(t *testing.T) {
 
 					return []models.FeedbackRecordWithScore{
 						{FeedbackRecordID: id, Score: 0.91, FieldLabel: "", ValueText: ""},
-					}, nil
+					}, false, nil
 				},
 			},
 			Model: "test-model",
@@ -198,7 +198,7 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 				nearestFunc: func(
 					_ context.Context, model string, _ []float32,
 					tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
-				) ([]models.FeedbackRecordWithScore, error) {
+				) ([]models.FeedbackRecordWithScore, bool, error) {
 					assert.Equal(t, "test-model", model)
 					assert.Equal(t, "env-1", tenantID)
 					assert.Equal(t, 10, limit)
@@ -209,7 +209,7 @@ func TestSearchService_SimilarFeedback(t *testing.T) {
 
 					return []models.FeedbackRecordWithScore{
 						{FeedbackRecordID: similarID, Score: 0.88, FieldLabel: "", ValueText: ""},
-					}, nil
+					}, false, nil
 				},
 			},
 			Model: "test-model",

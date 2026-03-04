@@ -26,17 +26,18 @@ var (
 )
 
 // EmbeddingsRepositoryForSearch provides the embedding read operations needed for semantic search.
+// HasMore is true when there may be additional results (full page returned or full fetch limit consumed).
 type EmbeddingsRepositoryForSearch interface {
 	GetEmbeddingByFeedbackRecordAndModelAndTenant(
 		ctx context.Context, feedbackRecordID uuid.UUID, model, tenantID string,
 	) ([]float32, error)
 	NearestFeedbackRecordsByEmbedding(
 		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
-	) ([]models.FeedbackRecordWithScore, error)
+	) ([]models.FeedbackRecordWithScore, bool, error)
 	NearestFeedbackRecordsByEmbeddingAfterCursor(
 		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int,
 		lastDistance float64, lastFeedbackRecordID uuid.UUID, excludeID *uuid.UUID, minScore float64,
-	) ([]models.FeedbackRecordWithScore, error)
+	) ([]models.FeedbackRecordWithScore, bool, error)
 }
 
 // SearchService performs semantic search and similar-feedback lookups using embeddings.
@@ -113,16 +114,19 @@ func (s *SearchService) SemanticSearch(
 
 	var results []models.FeedbackRecordWithScore
 
+	var hasMore bool
+
 	if cursor != "" {
 		lastDistance, lastID, decErr := DecodeSearchCursor(cursor)
 		if decErr != nil {
 			return out, ErrInvalidCursor
 		}
 
-		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbeddingAfterCursor(
+		results, hasMore, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbeddingAfterCursor(
 			ctx, s.model, embedding, tenantID, limit, lastDistance, lastID, nil, minScore)
 	} else {
-		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(ctx, s.model, embedding, tenantID, limit, offset, nil, minScore)
+		results, hasMore, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(
+			ctx, s.model, embedding, tenantID, limit, offset, nil, minScore)
 	}
 
 	if err != nil {
@@ -132,7 +136,7 @@ func (s *SearchService) SemanticSearch(
 	}
 
 	out.Results = results
-	if len(results) == limit {
+	if hasMore {
 		last := results[len(results)-1]
 
 		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
@@ -172,7 +176,10 @@ func (s *SearchService) SimilarFeedback(
 		return out, fmt.Errorf("get embedding: %w", err)
 	}
 
-	var results []models.FeedbackRecordWithScore
+	var (
+		results []models.FeedbackRecordWithScore
+		hasMore bool
+	)
 
 	if cursor != "" {
 		lastDistance, lastID, decErr := DecodeSearchCursor(cursor)
@@ -180,10 +187,10 @@ func (s *SearchService) SimilarFeedback(
 			return out, ErrInvalidCursor
 		}
 
-		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbeddingAfterCursor(
+		results, hasMore, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbeddingAfterCursor(
 			ctx, s.model, embedding, tenantID, limit, lastDistance, lastID, &feedbackRecordID, minScore)
 	} else {
-		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(
+		results, hasMore, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(
 			ctx, s.model, embedding, tenantID, limit, offset, &feedbackRecordID, minScore)
 	}
 
@@ -194,7 +201,7 @@ func (s *SearchService) SimilarFeedback(
 	}
 
 	out.Results = results
-	if len(results) == limit {
+	if hasMore {
 		last := results[len(results)-1]
 
 		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
