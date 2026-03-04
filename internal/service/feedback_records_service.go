@@ -28,11 +28,11 @@ const uniqueByPeriodEmbedding = 24 * time.Hour
 type FeedbackRecordsRepository interface {
 	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
-	List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error)
+	List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, bool, error)
 	ListAfterCursor(
 		ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
-	) ([]models.FeedbackRecord, error)
+	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error)
@@ -118,6 +118,10 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 func (s *FeedbackRecordsService) ListFeedbackRecords(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 ) (*models.ListFeedbackRecordsResponse, error) {
+	if filters == nil {
+		filters = &models.ListFeedbackRecordsFilters{}
+	}
+
 	if filters.Limit <= 0 {
 		filters.Limit = 100
 	}
@@ -126,6 +130,7 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 
 	var (
 		records []models.FeedbackRecord
+		hasMore bool
 		err     error
 	)
 
@@ -135,16 +140,16 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 			return nil, fmt.Errorf("decode cursor: %w", decErr)
 		}
 
-		records, err = s.repo.ListAfterCursor(ctx, filters, collectedAt, id)
+		records, hasMore, err = s.repo.ListAfterCursor(ctx, filters, collectedAt, id)
 	} else {
-		records, err = s.repo.List(ctx, filters)
+		records, hasMore, err = s.repo.List(ctx, filters)
 	}
 
 	if err != nil {
 		return nil, fmt.Errorf("list feedback records: %w", err)
 	}
 
-	meta, err := BuildListPaginationMeta(filters.Limit, len(records), func() (string, error) {
+	meta, err := BuildListPaginationMeta(filters.Limit, hasMore, func() (string, error) {
 		last := records[len(records)-1]
 
 		return cursor.Encode(last.CollectedAt, last.ID)

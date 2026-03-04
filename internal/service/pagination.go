@@ -7,13 +7,14 @@ type ListPaginationMeta struct {
 }
 
 // BuildListPaginationMeta builds pagination metadata for cursor-based list responses.
-// encodeLast is called only when there may be more results (recordCount == limit && recordCount > 0).
+// hasMore indicates a sentinel row was fetched (limit+1 returned, trimmed to limit).
+// encodeLast is called only when hasMore is true to produce next_cursor.
 func BuildListPaginationMeta(
-	limit, recordCount int, encodeLast func() (string, error),
+	limit int, hasMore bool, encodeLast func() (string, error),
 ) (ListPaginationMeta, error) {
 	meta := ListPaginationMeta{Limit: limit}
 
-	if recordCount == limit && recordCount > 0 && encodeLast != nil {
+	if hasMore && encodeLast != nil {
 		next, err := encodeLast()
 		if err != nil {
 			return meta, err

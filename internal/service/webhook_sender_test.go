@@ -32,14 +32,14 @@ func (m *mockSenderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhoo
 	return nil, nil
 }
 
-func (m *mockSenderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
-	return nil, nil
+func (m *mockSenderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, bool, error) {
+	return nil, false, nil
 }
 
 func (m *mockSenderRepo) ListAfterCursor(
 	_ context.Context, _ *models.ListWebhooksFilters, _ time.Time, _ uuid.UUID,
-) ([]models.Webhook, error) {
-	return nil, nil
+) ([]models.Webhook, bool, error) {
+	return nil, false, nil
 }
 
 func (m *mockSenderRepo) Count(_ context.Context, _ *models.ListWebhooksFilters) (int64, error) {

@@ -60,14 +60,14 @@ func (m *mockProviderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webh
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockProviderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
-	return nil, errors.New("not implemented")
+func (m *mockProviderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, bool, error) {
+	return nil, false, errors.New("not implemented")
 }
 
 func (m *mockProviderRepo) ListAfterCursor(
 	_ context.Context, _ *models.ListWebhooksFilters, _ time.Time, _ uuid.UUID,
-) ([]models.Webhook, error) {
-	return nil, errors.New("not implemented")
+) ([]models.Webhook, bool, error) {
+	return nil, false, errors.New("not implemented")
 }
 
 func (m *mockProviderRepo) Count(_ context.Context, _ *models.ListWebhooksFilters) (int64, error) {

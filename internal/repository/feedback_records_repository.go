@@ -190,7 +190,10 @@ const feedbackRecordsListSelect = `
 	`
 
 // List retrieves feedback records with optional filters. Embedding is not selected (API reads stay lean).
-func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
+// Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
+func (r *FeedbackRecordsRepository) List(
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
+) ([]models.FeedbackRecord, bool, error) {
 	query := feedbackRecordsListSelect
 
 	whereClause, args := buildFilterConditions(filters)
@@ -199,20 +202,34 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 
 	query += " ORDER BY collected_at DESC, id ASC"
 
-	if filters.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", argCount)
-
-		args = append(args, filters.Limit)
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 100
 	}
 
-	return r.fetchFeedbackRecords(ctx, query, args...)
+	query += fmt.Sprintf(" LIMIT $%d", argCount)
+
+	args = append(args, limit+1)
+
+	records, err := r.fetchFeedbackRecords(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+
+	return records, hasMore, nil
 }
 
 // ListAfterCursor retrieves feedback records after the given keyset cursor (collected_at, id).
 // Order is collected_at DESC, id ASC. The cursor represents the last row of the previous page.
+// Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
 func (r *FeedbackRecordsRepository) ListAfterCursor(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters, cursorCollectedAt time.Time, cursorID uuid.UUID,
-) ([]models.FeedbackRecord, error) {
+) ([]models.FeedbackRecord, bool, error) {
 	query := feedbackRecordsListSelect
 
 	whereClause, args := buildFilterConditions(filters)
@@ -234,13 +251,26 @@ func (r *FeedbackRecordsRepository) ListAfterCursor(
 
 	query += " ORDER BY collected_at DESC, id ASC"
 
-	if filters.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", argCount)
-
-		args = append(args, filters.Limit)
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 100
 	}
 
-	return r.fetchFeedbackRecords(ctx, query, args...)
+	query += fmt.Sprintf(" LIMIT $%d", argCount)
+
+	args = append(args, limit+1)
+
+	records, err := r.fetchFeedbackRecords(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+
+	return records, hasMore, nil
 }
 
 // buildUpdateQuery builds an UPDATE query with SET clause and arguments.
