@@ -102,7 +102,7 @@ type FeedbackRecord struct {
 	Language        *string         `json:"language,omitempty"`
 	UserIdentifier  *string         `json:"user_identifier,omitempty"`
 	TenantID        string          `json:"tenant_id"`
-	SubmissionID    string          `json:"submission_id"` // mandatory; never null (DB NULL is exposed as "")
+	SubmissionID    string          `json:"submission_id"` // mandatory; never null
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.
@@ -175,7 +175,7 @@ func (r *UpdateFeedbackRecordRequest) ChangedFields() []string {
 
 // ListFeedbackRecordsFilters represents filters for listing feedback records.
 type ListFeedbackRecordsFilters struct {
-	TenantID       *string    `form:"tenant_id"       validate:"omitempty,no_null_bytes"`
+	TenantID       *string    `form:"tenant_id"       validate:"required,no_null_bytes,min=1"`
 	SubmissionID   *string    `form:"submission_id"   validate:"omitempty,no_null_bytes"`
 	SourceType     *string    `form:"source_type"     validate:"omitempty,no_null_bytes"`
 	SourceID       *string    `form:"source_id"       validate:"omitempty,no_null_bytes"`
