@@ -20,7 +20,7 @@ const searchQueryEmbeddingCacheName = "search_query_embedding"
 
 // Sentinel errors for search (used by handlers for status mapping).
 var (
-	ErrMissingTenantID   = errors.New("environment_id is required")
+	ErrMissingTenantID   = errors.New("tenant_id is required")
 	ErrEmptyQuery        = errors.New("query is required and must be non-empty")
 	ErrEmbeddingNotFound = repository.ErrEmbeddingNotFound
 )
@@ -136,7 +136,7 @@ func (s *SearchService) SemanticSearch(
 	}
 
 	out.Results = results
-	if hasMore {
+	if hasMore && len(results) > 0 {
 		last := results[len(results)-1]
 
 		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
@@ -201,7 +201,7 @@ func (s *SearchService) SimilarFeedback(
 	}
 
 	out.Results = results
-	if hasMore {
+	if hasMore && len(results) > 0 {
 		last := results[len(results)-1]
 
 		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)

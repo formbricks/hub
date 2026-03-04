@@ -194,7 +194,10 @@ func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 }
 
 // EmbeddingPrefixForProvider returns the document prefix for the given embedding provider.
-// Some open-source models (e.g. Nomic, E5, Mistral) require a prefix to indicate the text is a stored document;
+// Some open-source models require a prefix to indicate the text is a stored document:
+// - Nomic: "search_document: "
+// - E5 variants (e5, intfloat/multilingual-e5-large, intfloat/e5-large): "passage: "
+// Mistral uses the API parameter input_type to distinguish query vs document; no prefix.
 // OpenAI and Google use no prefix. Provider name is case-insensitive.
 func EmbeddingPrefixForProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
@@ -203,7 +206,7 @@ func EmbeddingPrefixForProvider(provider string) string {
 	case "e5", "intfloat/multilingual-e5-large", "intfloat/e5-large":
 		return "passage: "
 	case "mistral":
-		return "search_document: "
+		return ""
 	default:
 		return ""
 	}

@@ -22,9 +22,10 @@ func NormalizeL2(vector []float32) {
 
 	// 2. Find the square root (the magnitude/length of the vector)
 	magnitude := math.Sqrt(sumSquares)
+	invMag := 1.0 / magnitude
 
-	// 3. Divide each dimension by the magnitude
+	// 3. Scale each dimension by the inverse magnitude (multiply instead of divide for performance)
 	for i := range vector {
-		vector[i] = float32(float64(vector[i]) / magnitude)
+		vector[i] = float32(float64(vector[i]) * invMag)
 	}
 }
