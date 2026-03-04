@@ -180,9 +180,7 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 	return whereClause, args
 }
 
-// List retrieves feedback records with optional filters. Embedding is not selected (API reads stay lean).
-func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
-	query := `
+const feedbackRecordsListSelect = `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
@@ -190,6 +188,10 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 			metadata, language, user_identifier, tenant_id, submission_id
 		FROM feedback_records
 	`
+
+// List retrieves feedback records with optional filters. Embedding is not selected (API reads stay lean).
+func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
+	query := feedbackRecordsListSelect
 
 	whereClause, args := buildFilterConditions(filters)
 	query += whereClause
@@ -210,36 +212,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 		args = append(args, filters.Offset)
 	}
 
-	rows, err := r.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list feedback records: %w", err)
-	}
-	defer rows.Close()
-
-	records := []models.FeedbackRecord{} // Initialize as empty slice, not nil
-
-	for rows.Next() {
-		var record models.FeedbackRecord
-
-		err := rows.Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
-		}
-
-		records = append(records, record)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating feedback records: %w", err)
-	}
-
-	return records, nil
+	return r.fetchFeedbackRecords(ctx, query, args...)
 }
 
 // ListAfterCursor retrieves feedback records after the given keyset cursor (collected_at, id).
@@ -247,14 +220,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 func (r *FeedbackRecordsRepository) ListAfterCursor(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters, cursorCollectedAt time.Time, cursorID uuid.UUID,
 ) ([]models.FeedbackRecord, error) {
-	query := `
-		SELECT id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, submission_id
-		FROM feedback_records
-	`
+	query := feedbackRecordsListSelect
 
 	whereClause, args := buildFilterConditions(filters)
 	query += whereClause
@@ -281,36 +247,7 @@ func (r *FeedbackRecordsRepository) ListAfterCursor(
 		args = append(args, filters.Limit)
 	}
 
-	rows, err := r.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list feedback records after cursor: %w", err)
-	}
-	defer rows.Close()
-
-	records := []models.FeedbackRecord{}
-
-	for rows.Next() {
-		var record models.FeedbackRecord
-
-		err := rows.Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
-		}
-
-		records = append(records, record)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating feedback records: %w", err)
-	}
-
-	return records, nil
+	return r.fetchFeedbackRecords(ctx, query, args...)
 }
 
 // Count returns the total count of feedback records matching the filters.
@@ -490,4 +427,41 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	}
 
 	return ids, nil
+}
+
+// fetchFeedbackRecords executes the given query and scans rows into FeedbackRecord slices.
+// Used by List and ListAfterCursor to avoid duplicating SELECT/scan logic.
+func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
+	ctx context.Context, query string, args ...any,
+) ([]models.FeedbackRecord, error) {
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list feedback records: %w", err)
+	}
+	defer rows.Close()
+
+	records := []models.FeedbackRecord{}
+
+	for rows.Next() {
+		var record models.FeedbackRecord
+
+		err := rows.Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
+		}
+
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating feedback records: %w", err)
+	}
+
+	return records, nil
 }

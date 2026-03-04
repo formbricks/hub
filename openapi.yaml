@@ -191,6 +191,12 @@ paths:
                                         total: 1
                                         limit: 100
                                         offset: 0
+                "400":
+                    description: Bad Request (e.g. invalid cursor)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -797,6 +803,12 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/ListWebhooksOutputBody'
+                "400":
+                    description: Bad Request (e.g. invalid cursor)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:

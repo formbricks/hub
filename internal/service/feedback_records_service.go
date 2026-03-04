@@ -137,21 +137,21 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 			return nil, fmt.Errorf("list feedback records after cursor: %w", err)
 		}
 
-		var nextCursor string
-
-		if len(records) == filters.Limit && len(records) > 0 {
+		meta, err := BuildListPaginationMeta(nil, 0, filters.Limit, len(records), func() (string, error) {
 			last := records[len(records)-1]
 
-			nextCursor, err = cursor.Encode(last.CollectedAt, last.ID)
-			if err != nil {
-				return nil, fmt.Errorf("encode next cursor: %w", err)
-			}
+			return cursor.Encode(last.CollectedAt, last.ID)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode next cursor: %w", err)
 		}
 
 		return &models.ListFeedbackRecordsResponse{
 			Data:       records,
-			Limit:      filters.Limit,
-			NextCursor: nextCursor,
+			Total:      meta.Total,
+			Limit:      meta.Limit,
+			Offset:     meta.Offset,
+			NextCursor: meta.NextCursor,
 		}, nil
 	}
 
@@ -165,26 +165,21 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 		return nil, fmt.Errorf("count feedback records: %w", err)
 	}
 
-	totalPtr := total
-	offsetVal := filters.Offset
-
-	var nextCursor string
-
-	if len(records) == filters.Limit && len(records) > 0 {
+	meta, err := BuildListPaginationMeta(&total, filters.Offset, filters.Limit, len(records), func() (string, error) {
 		last := records[len(records)-1]
 
-		nextCursor, err = cursor.Encode(last.CollectedAt, last.ID)
-		if err != nil {
-			return nil, fmt.Errorf("encode next cursor: %w", err)
-		}
+		return cursor.Encode(last.CollectedAt, last.ID)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode next cursor: %w", err)
 	}
 
 	return &models.ListFeedbackRecordsResponse{
 		Data:       records,
-		Total:      &totalPtr,
-		Limit:      filters.Limit,
-		Offset:     &offsetVal,
-		NextCursor: nextCursor,
+		Total:      meta.Total,
+		Limit:      meta.Limit,
+		Offset:     meta.Offset,
+		NextCursor: meta.NextCursor,
 	}, nil
 }
 

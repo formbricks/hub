@@ -140,21 +140,21 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 			return nil, fmt.Errorf("list webhooks after cursor: %w", err)
 		}
 
-		var nextCursor string
-
-		if len(webhooks) == filters.Limit && len(webhooks) > 0 {
+		meta, err := BuildListPaginationMeta(nil, 0, filters.Limit, len(webhooks), func() (string, error) {
 			last := webhooks[len(webhooks)-1]
 
-			nextCursor, err = cursor.Encode(last.CreatedAt, last.ID)
-			if err != nil {
-				return nil, fmt.Errorf("encode next cursor: %w", err)
-			}
+			return cursor.Encode(last.CreatedAt, last.ID)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode next cursor: %w", err)
 		}
 
 		return &models.ListWebhooksResponse{
 			Data:       webhooks,
-			Limit:      filters.Limit,
-			NextCursor: nextCursor,
+			Total:      meta.Total,
+			Limit:      meta.Limit,
+			Offset:     meta.Offset,
+			NextCursor: meta.NextCursor,
 		}, nil
 	}
 
@@ -168,26 +168,21 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 		return nil, fmt.Errorf("count webhooks: %w", err)
 	}
 
-	totalPtr := total
-	offsetVal := filters.Offset
-
-	var nextCursor string
-
-	if len(webhooks) == filters.Limit && len(webhooks) > 0 {
+	meta, err := BuildListPaginationMeta(&total, filters.Offset, filters.Limit, len(webhooks), func() (string, error) {
 		last := webhooks[len(webhooks)-1]
 
-		nextCursor, err = cursor.Encode(last.CreatedAt, last.ID)
-		if err != nil {
-			return nil, fmt.Errorf("encode next cursor: %w", err)
-		}
+		return cursor.Encode(last.CreatedAt, last.ID)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode next cursor: %w", err)
 	}
 
 	return &models.ListWebhooksResponse{
 		Data:       webhooks,
-		Total:      &totalPtr,
-		Limit:      filters.Limit,
-		Offset:     &offsetVal,
-		NextCursor: nextCursor,
+		Total:      meta.Total,
+		Limit:      meta.Limit,
+		Offset:     meta.Offset,
+		NextCursor: meta.NextCursor,
 	}, nil
 }
 
