@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-go/v3/packages/param"
 
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/embeddings"
 )
 
 var (
@@ -30,6 +31,7 @@ type Client struct {
 	sdk        openaisdk.Client
 	dimensions int
 	model      string
+	normalize  bool
 }
 
 // ClientOption configures the Client.
@@ -46,6 +48,13 @@ func WithDimensions(dim int) ClientOption {
 func WithModel(model string) ClientOption {
 	return func(c *Client) {
 		c.model = model
+	}
+}
+
+// WithNormalize enables L2 normalization of the embedding vector before returning (e.g. before storing or caching).
+func WithNormalize(normalize bool) ClientOption {
+	return func(c *Client) {
+		c.normalize = normalize
 	}
 }
 
@@ -106,5 +115,15 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		out[i] = float32(emb[i])
 	}
 
+	if c.normalize {
+		embeddings.NormalizeL2(out)
+	}
+
 	return out, nil
+}
+
+// CreateEmbeddingForQuery returns an embedding for the given search query. OpenAI's API does not distinguish
+// task type; this delegates to CreateEmbedding for compatibility with EmbeddingClient.
+func (c *Client) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
+	return c.CreateEmbedding(ctx, input)
 }

@@ -51,7 +51,7 @@ func ptrString(s string) *string {
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	valueText := "Some feedback text"
@@ -79,7 +79,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPointer_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
 
 	// Pass value type (as was happening before the service fix) — provider should skip and not enqueue.
 	event := Event{
@@ -100,7 +100,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPoin
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
 
 	event := Event{
 		ID:        uuid.Must(uuid.NewV7()),
@@ -120,7 +120,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_ski
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, nil)
+	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -141,4 +141,60 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChanged
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
 	assert.Equal(t, "model-name", inserter.insertCalls[0].args.Model)
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash)
+}
+
+func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_fieldLabelInChangedFields_enqueues(t *testing.T) {
+	inserter := &mockEmbeddingInserter{}
+	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
+
+	recordID := uuid.Must(uuid.NewV7())
+	event := Event{
+		ID:            uuid.Must(uuid.NewV7()),
+		Type:          datatypes.FeedbackRecordUpdated,
+		Timestamp:     time.Now(),
+		ChangedFields: []string{"field_label"},
+		Data: &models.FeedbackRecord{
+			ID:         recordID,
+			FieldType:  models.FieldTypeText,
+			FieldLabel: ptrString("Updated label"),
+			ValueText:  ptrString("same value"),
+		},
+	}
+
+	p.PublishEvent(context.Background(), event)
+
+	require.Len(t, inserter.insertCalls, 1)
+	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
+	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash)
+}
+
+func TestBuildEmbeddingInput(t *testing.T) {
+	t.Run("label and value produces Question/Answer format", func(t *testing.T) {
+		out := BuildEmbeddingInput(
+			ptrString("What features are you missing?"),
+			ptrString("Dashboards, Charts"),
+			"",
+		)
+		assert.Equal(t, "Question: What features are you missing?\nAnswer: Dashboards, Charts", out)
+	})
+	t.Run("empty label returns value only", func(t *testing.T) {
+		out := BuildEmbeddingInput(nil, ptrString("Just the value"), "")
+		assert.Equal(t, "Just the value", out)
+	})
+	t.Run("nil valueText returns empty", func(t *testing.T) {
+		assert.Empty(t, BuildEmbeddingInput(ptrString("Label"), nil, ""))
+	})
+	t.Run("whitespace value returns empty", func(t *testing.T) {
+		assert.Empty(t, BuildEmbeddingInput(nil, ptrString("   "), ""))
+	})
+	t.Run("prefix is prepended", func(t *testing.T) {
+		out := BuildEmbeddingInput(ptrString("Q"), ptrString("A"), "search_document: ")
+		assert.Equal(t, "search_document: Question: Q\nAnswer: A", out)
+	})
+}
+
+func TestEmbeddingPrefixForProvider(t *testing.T) {
+	t.Run("openai returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("openai")) })
+	t.Run("google returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("google")) })
+	t.Run("unknown returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("unknown")) })
 }

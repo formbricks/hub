@@ -11,6 +11,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/embeddings"
 )
 
 var (
@@ -29,6 +30,7 @@ type Client struct {
 	client     *genai.Client
 	model      string
 	dimensions int
+	normalize  bool
 }
 
 // ClientOption configures the Client.
@@ -45,6 +47,13 @@ func WithDimensions(dim int) ClientOption {
 func WithModel(model string) ClientOption {
 	return func(c *Client) {
 		c.model = model
+	}
+}
+
+// WithNormalize enables L2 normalization of the embedding vector before returning (e.g. before storing or caching).
+func WithNormalize(normalize bool) ClientOption {
+	return func(c *Client) {
+		c.normalize = normalize
 	}
 }
 
@@ -69,9 +78,20 @@ func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Clien
 	return client, nil
 }
 
-// CreateEmbedding returns the embedding vector for the given text using the configured model.
-// The returned slice length equals the configured dimensions when OutputDimensionality is supported.
+// CreateEmbedding returns the embedding vector for the given text using RETRIEVAL_DOCUMENT task type
+// (for storing documents/feedback records). The returned slice length equals the configured dimensions.
 func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {
+	return c.embedWithTaskType(ctx, input, "RETRIEVAL_DOCUMENT")
+}
+
+// CreateEmbeddingForQuery returns an embedding for the given search query using RETRIEVAL_QUERY task type,
+// which optimizes the vector for asymmetric retrieval against documents embedded with RETRIEVAL_DOCUMENT.
+func (c *Client) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
+	return c.embedWithTaskType(ctx, input, "RETRIEVAL_QUERY")
+}
+
+// embedWithTaskType calls the Gemini API with the given task type (e.g. RETRIEVAL_DOCUMENT, RETRIEVAL_QUERY).
+func (c *Client) embedWithTaskType(ctx context.Context, input, taskType string) ([]float32, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil, ErrEmptyInput
@@ -81,13 +101,11 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		return nil, ErrInvalidDims
 	}
 
-	model := c.model
-
 	contents := []*genai.Content{genai.NewContentFromText(input, genai.RoleUser)}
-
 	dimInt32 := int32(c.dimensions)
 
-	resp, err := c.client.Models.EmbedContent(ctx, model, contents, &genai.EmbedContentConfig{
+	resp, err := c.client.Models.EmbedContent(ctx, c.model, contents, &genai.EmbedContentConfig{
+		TaskType:             taskType,
 		OutputDimensionality: &dimInt32,
 	})
 	if err != nil {
@@ -105,6 +123,10 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 
 	out := make([]float32, len(emb))
 	copy(out, emb)
+
+	if c.normalize {
+		embeddings.NormalizeL2(out)
+	}
 
 	return out, nil
 }

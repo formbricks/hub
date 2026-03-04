@@ -3,8 +3,13 @@ package response
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
+
+	"github.com/iancoleman/strcase"
 )
 
 // ErrorDetail represents a single error detail in RFC 7807 Problem Details.
@@ -46,6 +51,42 @@ func RespondBadRequest(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusBadRequest, "Bad Request", detail)
 }
 
+// JSONDecodeErrorDetail returns a user-friendly message for json.Decode errors.
+// Use this when decoding request bodies to give clients actionable feedback.
+// Note: Missing fields do not cause Decode to fail; validate required fields after decode.
+func JSONDecodeErrorDetail(err error) string {
+	if err == nil {
+		return "Invalid request body"
+	}
+
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return "Invalid JSON: " + err.Error()
+	}
+
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		field := fieldNameForAPI(typeErr.Field)
+
+		return fmt.Sprintf("field %q must be %s", field, typeErr.Type.String())
+	}
+
+	if strings.Contains(err.Error(), "unknown field") {
+		return err.Error()
+	}
+
+	return "Invalid request body"
+}
+
+// fieldNameForAPI converts a struct field path (e.g. "TenantID" or "X.Y") to API-style snake_case.
+func fieldNameForAPI(fieldPath string) string {
+	if i := strings.LastIndex(fieldPath, "."); i >= 0 && i+1 < len(fieldPath) {
+		fieldPath = fieldPath[i+1:]
+	}
+
+	return strcase.ToSnake(fieldPath)
+}
+
 // RespondUnauthorized writes a 401 Unauthorized error response.
 func RespondUnauthorized(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusUnauthorized, "Unauthorized", detail)
@@ -64,6 +105,11 @@ func RespondConflict(w http.ResponseWriter, detail string) {
 // RespondInternalServerError writes a 500 Internal Server Error response.
 func RespondInternalServerError(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusInternalServerError, "Internal Server Error", detail)
+}
+
+// RespondServiceUnavailable writes a 503 Service Unavailable error response.
+func RespondServiceUnavailable(w http.ResponseWriter, detail string) {
+	RespondError(w, http.StatusServiceUnavailable, "Service Unavailable", detail)
 }
 
 // RespondJSON writes a JSON response directly without wrapping.

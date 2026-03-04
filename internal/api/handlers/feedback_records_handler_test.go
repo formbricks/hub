@@ -53,6 +53,20 @@ func (m *mockFeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Conte
 	return 0, nil
 }
 
+func TestFeedbackRecordsHandler_List(t *testing.T) {
+	t.Run("missing tenant_id returns 400", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		h := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequest(http.MethodGet, "http://test/v1/feedback-records", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		h.List(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
 func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 	t.Run("success returns 200 with deleted_count and message", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{

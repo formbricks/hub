@@ -10,20 +10,31 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
+	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/googleai"
+	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/internal/workers"
 	"github.com/formbricks/hub/pkg/database"
+)
+
+const (
+	embeddingProviderOpenAI = "openai"
+	embeddingProviderGoogle = "google"
 )
 
 var (
 	errEmbeddingProviderRequired = errors.New("EMBEDDING_PROVIDER is required")
 	errEmbeddingModelRequired    = errors.New("EMBEDDING_MODEL is required")
+	errUnsupportedProvider       = errors.New("unsupported embedding provider")
 )
 
 const (
@@ -64,24 +75,21 @@ func run() int {
 	}
 	defer db.Close()
 
-	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
-		Queues: map[string]river.QueueConfig{
-			service.EmbeddingsQueueName: {},
-		},
-		Workers: river.NewWorkers(),
-	})
-	if err != nil {
-		slog.Error("Failed to create River client", "error", err)
-
-		return exitFailure
-	}
-
-	_, embeddingModel, err := getEmbeddingProviderAndModel()
+	provider, embeddingModel, err := getEmbeddingProviderAndModel()
 	if err != nil {
 		slog.Error(err.Error())
 
 		return exitFailure
 	}
+
+	apiKey := os.Getenv("EMBEDDING_PROVIDER_API_KEY")
+	if providerRequiresAPIKey(provider) && apiKey == "" {
+		slog.Error("EMBEDDING_PROVIDER_API_KEY is required for this provider", "provider", provider)
+
+		return exitFailure
+	}
+
+	embeddingModelForDB := embeddingModel
 
 	repo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
@@ -89,14 +97,44 @@ func run() int {
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		repo,
 		embeddingsRepo,
-		embeddingModel,
+		embeddingModelForDB,
 		nil,
-		riverClient,
+		nil, // inserter set below after River client is created
 		service.EmbeddingsQueueName,
 		maxAttempts,
 	)
 
-	enqueued, err := feedbackRecordsService.BackfillEmbeddings(ctx, embeddingModel)
+	normalize := config.GetEnvAsBool("EMBEDDING_NORMALIZE", false)
+
+	embeddingClient, err := newEmbeddingClient(ctx, provider, apiKey, embeddingModel, normalize)
+	if err != nil {
+		slog.Error("Failed to create embedding client", "error", err)
+
+		return exitFailure
+	}
+
+	docPrefix := service.EmbeddingPrefixForProvider(provider)
+	embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, docPrefix, nil)
+	riverWorkers := river.NewWorkers()
+	river.AddWorker(riverWorkers, embeddingWorker)
+
+	// Producer-only: we only enqueue jobs; workers run in the API. River requires the job kind
+	// to be registered (worker added above) and MaxWorkers > 0 when a queue is declared.
+	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
+		Queues: map[string]river.QueueConfig{
+			service.EmbeddingsQueueName: {MaxWorkers: 1},
+		},
+		Workers: riverWorkers,
+	})
+	if err != nil {
+		slog.Error("Failed to create River client", "error", err)
+
+		return exitFailure
+	}
+
+	feedbackRecordsService.SetEmbeddingInserter(riverClient)
+
+	enqueued, err := feedbackRecordsService.BackfillEmbeddings(ctx, embeddingModelForDB)
 	if err != nil {
 		slog.Error("Backfill failed", "error", err)
 
@@ -105,7 +143,7 @@ func run() int {
 
 	slog.Info("Backfill complete", "enqueued", enqueued)
 
-	_, _ = fmt.Fprintf(os.Stdout, "Enqueued %d embedding job(s).\n", enqueued)
+	fmt.Printf("Enqueued %d embedding job(s).\n", enqueued)
 
 	return exitSuccess
 }
@@ -124,6 +162,22 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return n
 }
 
+func newEmbeddingClient(ctx context.Context, provider, apiKey, model string, normalize bool) (service.EmbeddingClient, error) {
+	switch strings.ToLower(provider) {
+	case embeddingProviderOpenAI:
+		return openai.NewClient(apiKey, openai.WithModel(model), openai.WithNormalize(normalize)), nil
+	case embeddingProviderGoogle:
+		client, err := googleai.NewClient(ctx, apiKey, googleai.WithModel(model), googleai.WithNormalize(normalize))
+		if err != nil {
+			return nil, fmt.Errorf("create google embedding client: %w", err)
+		}
+
+		return client, nil
+	default:
+		return nil, fmt.Errorf("%w: %s", errUnsupportedProvider, provider)
+	}
+}
+
 func getEmbeddingProviderAndModel() (provider, model string, err error) {
 	provider = os.Getenv("EMBEDDING_PROVIDER")
 	if provider == "" {
@@ -136,4 +190,14 @@ func getEmbeddingProviderAndModel() (provider, model string, err error) {
 	}
 
 	return provider, model, nil
+}
+
+// providerRequiresAPIKey returns true for providers that require EMBEDDING_PROVIDER_API_KEY (openai, google).
+func providerRequiresAPIKey(provider string) bool {
+	switch strings.ToLower(provider) {
+	case embeddingProviderOpenAI, embeddingProviderGoogle:
+		return true
+	default:
+		return false
+	}
 }

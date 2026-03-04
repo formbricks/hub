@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +23,7 @@ type FeedbackEmbeddingWorker struct {
 
 	embeddingService feedbackEmbeddingService
 	embeddingClient  service.EmbeddingClient
+	docPrefix        string // model-specific prefix for document embedding
 	metrics          observability.EmbeddingMetrics
 }
 
@@ -34,15 +34,18 @@ type feedbackEmbeddingService interface {
 }
 
 // NewFeedbackEmbeddingWorker creates a worker that fetches the record, calls the embedding client, and stores the result.
+// docPrefix is the prefix for document text. Can be empty for some providers.
 // metrics may be nil when metrics are disabled.
 func NewFeedbackEmbeddingWorker(
 	embeddingService feedbackEmbeddingService,
 	embeddingClient service.EmbeddingClient,
+	docPrefix string,
 	metrics observability.EmbeddingMetrics,
 ) *FeedbackEmbeddingWorker {
 	return &FeedbackEmbeddingWorker{
 		embeddingService: embeddingService,
 		embeddingClient:  embeddingClient,
+		docPrefix:        docPrefix,
 		metrics:          metrics,
 	}
 }
@@ -80,10 +83,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 		return fmt.Errorf("get feedback record: %w", err)
 	}
 
-	text := ""
-	if record.ValueText != nil {
-		text = strings.TrimSpace(*record.ValueText)
-	}
+	text := service.BuildEmbeddingInput(record.FieldLabel, record.ValueText, w.docPrefix)
 
 	if text == "" {
 		return w.handleEmptyText(ctx, args.FeedbackRecordID, args.Model, record, start)

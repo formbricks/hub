@@ -1,4 +1,8 @@
-.PHONY: help tests tests-coverage build build-backfill-embeddings run init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: all test help tests tests-coverage build build-backfill-embeddings run run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+
+# Aliases for checkmake/lint expectations
+all: build
+test: test-all
 
 # Default target - show help
 help:
@@ -8,6 +12,7 @@ help:
 	@echo "  make build                    - Build the API server"
 	@echo "  make build-backfill-embeddings - Build the backfill-embeddings command"
 	@echo "  make run              - Run the API server"
+	@echo "  make run-backfill-embeddings - Run the backfill-embeddings command (enqueues embedding jobs; loads .env)"
 	@echo "  make test-unit        - Run unit tests (fast, no database)"
 	@echo "  make tests            - Run integration tests"
 	@echo "  make test-all         - Run all tests (unit + integration)"
@@ -61,6 +66,11 @@ build-backfill-embeddings:
 	@echo "Building backfill-embeddings..."
 	go build -o bin/backfill-embeddings ./cmd/backfill-embeddings
 	@echo "Binary created: bin/backfill-embeddings"
+
+# Run the backfill-embeddings command (loads .env for DATABASE_URL etc.). Requires .env; fails fast if missing.
+run-backfill-embeddings:
+	@if [ ! -f .env ]; then echo "Error: .env file required. Copy .env.example to .env and configure."; exit 1; fi && \
+	(set -a && . ./.env && set +a && go run ./cmd/backfill-embeddings)
 
 # Run the API server
 run:
@@ -228,6 +238,7 @@ dev-setup: docker-up deps install-tools init-db install-hooks
 # This runs more thorough tests than CI to find edge-case bugs.
 # Requires: API server running (make run in another terminal)
 # Requires: uvx (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)
+# Uses PORT from .env if set, otherwise 8080.
 schemathesis:
 	@echo "Running Schemathesis API tests (all phases)..."
 	@echo "This is deeper testing than CI - may find edge-case bugs."
@@ -238,7 +249,7 @@ schemathesis:
 			echo "Warning: API_KEY not found in .env file, tests may fail authentication"; \
 		fi && \
 		uvx schemathesis run ./openapi.yaml \
-			--url http://localhost:8080 \
+			--url "http://localhost:$${PORT:-8080}" \
 			--header "Authorization: Bearer $${API_KEY:-test-api-key-12345}" \
 			--checks all \
 			--phases examples,coverage,stateful,fuzzing \
@@ -250,7 +261,7 @@ schemathesis:
 			exit 1; \
 		fi && \
 		uvx schemathesis run ./openapi.yaml \
-			--url http://localhost:8080 \
+			--url "http://localhost:$${PORT:-8080}" \
 			--header "Authorization: Bearer $$API_KEY" \
 			--checks all \
 			--phases examples,coverage,stateful,fuzzing \

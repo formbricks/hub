@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -51,16 +52,18 @@ type Config struct {
 	// Max total webhooks allowed (creation rejected when count >= this); default 500
 	WebhookMaxCount int
 
-	// Embeddings: optional. No default for provider; if EMBEDDING_PROVIDER is not set, embeddings are disabled and no embedding jobs run.
+	// Embeddings: optional. Enabled only when both EMBEDDING_PROVIDER and EMBEDDING_MODEL are set and provider is supported.
 	EmbeddingProviderAPIKey string
-	// Embeddings: provider name (e.g. openai); env EMBEDDING_PROVIDER. Empty = embeddings disabled.
+	// Embeddings: provider name (e.g. openai, google); env EMBEDDING_PROVIDER. Required (with EmbeddingModel) to enable embeddings.
 	EmbeddingProvider string
-	// Embeddings: model name; env EMBEDDING_MODEL. Optional (e.g. local provider may not use it).
+	// Embeddings: model name; env EMBEDDING_MODEL. Required (with EmbeddingProvider) to enable embeddings; no default.
 	EmbeddingModel string
 	// Embeddings: max concurrent workers for the embeddings River queue; default 5
 	EmbeddingMaxConcurrent int
 	// Embeddings: max attempts per embedding job (River retries); default 3
 	EmbeddingMaxAttempts int
+	// Embeddings: if true, L2-normalize vectors before storing or caching (env EMBEDDING_NORMALIZE); default false
+	EmbeddingNormalize bool
 
 	// OpenTelemetry: set to "otlp" to enable metrics (OTLP push); empty = metrics disabled
 	OtelMetricsExporter string
@@ -91,6 +94,24 @@ func getEnvAsInt(key string, defaultValue int) int {
 	}
 
 	return value
+}
+
+// GetEnvAsBool retrieves an environment variable as a boolean. "true", "1", "yes" (case-insensitive) => true; else false.
+// Exported so other cmd packages (e.g. backfill-embeddings) can reuse it without duplicating logic.
+func GetEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+
+	switch strings.ToLower(strings.TrimSpace(valueStr)) {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return defaultValue
+	}
 }
 
 // Load reads configuration from environment variables and returns a Config struct.
@@ -184,6 +205,7 @@ func Load() (*Config, error) {
 		EmbeddingModel:          getEnv("EMBEDDING_MODEL", ""),
 		EmbeddingMaxConcurrent:  embeddingMaxConcurrent,
 		EmbeddingMaxAttempts:    embeddingMaxAttempts,
+		EmbeddingNormalize:      GetEnvAsBool("EMBEDDING_NORMALIZE", false),
 
 		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
 		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),

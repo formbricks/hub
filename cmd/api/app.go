@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -41,7 +43,10 @@ type App struct {
 	metrics        *observability.Metrics
 }
 
-var errUnsupportedEmbeddingProvider = errors.New("unsupported embedding provider")
+var (
+	errUnsupportedEmbeddingProvider    = errors.New("unsupported embedding provider")
+	errEmbeddingProviderAPIKeyRequired = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
+)
 
 const (
 	embeddingProviderOpenAI = "openai"
@@ -55,22 +60,25 @@ var supportedEmbeddingProviders = map[string]struct{}{
 
 const riverQueueDepthInterval = 15 * time.Second
 
-// embeddingProviderAndModel returns (provider, model) when embeddings are enabled: EMBEDDING_PROVIDER
-// is set and supported. Model and API key are optional (e.g. local provider may not need them).
-// Otherwise returns ("", "") so no embedding provider or jobs run. Embeddings are optional; no defaults.
+// embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
+// and EMBEDDING_MODEL must be set and the provider must be supported. Otherwise returns ("", "") so no
+// embedding provider or jobs run. No default for model; embeddings are disabled if either is unset.
+// Provider name is normalized to lowercase so that "OpenAI", "openai", and "OPENAI" behave the same
+// (consistent with backfill-embeddings and EmbeddingPrefixForProvider).
 func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
-	if cfg.EmbeddingProvider == "" {
+	if cfg.EmbeddingProvider == "" || cfg.EmbeddingModel == "" {
 		return "", ""
 	}
 
-	if _, ok := supportedEmbeddingProviders[cfg.EmbeddingProvider]; !ok {
+	providerCanonical := strings.ToLower(strings.TrimSpace(cfg.EmbeddingProvider))
+	if _, ok := supportedEmbeddingProviders[providerCanonical]; !ok {
 		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
 			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
 
 		return "", ""
 	}
 
-	return cfg.EmbeddingProvider, cfg.EmbeddingModel
+	return providerCanonical, cfg.EmbeddingModel
 }
 
 // setupMetrics creates meter provider and hub metrics when metrics are enabled.
@@ -165,17 +173,19 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	river.AddWorker(riverWorkers, webhookWorker)
 
 	queues := map[string]river.QueueConfig{
-		river.QueueDefault:          {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
-		service.EmbeddingsQueueName: {MaxWorkers: cfg.EmbeddingMaxConcurrent},
+		river.QueueDefault: {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
 	}
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
-	// Model for DB/jobs: required for embeddings.model column; use "default" when provider has no model name (e.g. local).
+	// Model for DB/jobs: required for embeddings.model column; only set when embeddings are enabled (both provider and model set).
 	embeddingModelForDB := embeddingModel
-	if embeddingModelForDB == "" {
-		embeddingModelForDB = "default"
+
+	var embeddingDocPrefix string
+	if embeddingProviderName != "" {
+		embeddingDocPrefix = service.EmbeddingPrefixForProvider(embeddingProviderName)
+		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: cfg.EmbeddingMaxConcurrent}
 	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
@@ -188,17 +198,27 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.EmbeddingMaxAttempts,
 	)
 
+	var searchHandler *handlers.SearchHandler
+
 	if embeddingProviderName != "" {
+		// Fail fast when a provider that requires an API key is configured without one (consistent with backfill-embeddings).
+		if (embeddingProviderName == embeddingProviderOpenAI || embeddingProviderName == embeddingProviderGoogle) &&
+			cfg.EmbeddingProviderAPIKey == "" {
+			return nil, fmt.Errorf("%w: %s", errEmbeddingProviderAPIKeyRequired, embeddingProviderName)
+		}
+
 		var embeddingClient service.EmbeddingClient
 
 		switch embeddingProviderName {
 		case embeddingProviderOpenAI:
 			embeddingClient = openai.NewClient(cfg.EmbeddingProviderAPIKey,
 				openai.WithModel(embeddingModel),
+				openai.WithNormalize(cfg.EmbeddingNormalize),
 			)
 		case embeddingProviderGoogle:
 			googleClient, err := googleai.NewClient(context.Background(), cfg.EmbeddingProviderAPIKey,
 				googleai.WithModel(embeddingModel),
+				googleai.WithNormalize(cfg.EmbeddingNormalize),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("create google embedding client: %w", err)
@@ -209,8 +229,33 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			return nil, fmt.Errorf("%w: %s", errUnsupportedEmbeddingProvider, embeddingProviderName)
 		}
 
-		embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, embeddingMetrics)
+		embeddingWorker := workers.NewFeedbackEmbeddingWorker(
+			feedbackRecordsService, embeddingClient, embeddingDocPrefix, embeddingMetrics)
 		river.AddWorker(riverWorkers, embeddingWorker)
+
+		const searchQueryCacheSize = 1000
+
+		queryCache, err := lru.New[string, []float32](searchQueryCacheSize)
+		if err != nil {
+			return nil, fmt.Errorf("create search query cache: %w", err)
+		}
+
+		var cacheMetrics observability.CacheMetrics
+		if metrics != nil {
+			cacheMetrics = metrics.Cache
+		}
+
+		searchService := service.NewSearchService(service.SearchServiceParams{
+			EmbeddingClient: embeddingClient,
+			EmbeddingsRepo:  embeddingsRepo,
+			Model:           embeddingModel,
+			QueryCache:      queryCache,
+			CacheMetrics:    cacheMetrics,
+			Logger:          slog.Default(),
+		})
+		searchHandler = handlers.NewSearchHandler(searchService)
+	} else {
+		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
@@ -252,6 +297,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			embeddingModelForDB,
 			service.EmbeddingsQueueName,
 			cfg.EmbeddingMaxAttempts,
+			embeddingDocPrefix,
 			embeddingMetrics,
 		)
 		messageManager.RegisterProvider(embeddingProv)
@@ -264,7 +310,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	healthHandler := handlers.NewHealthHandler()
 
 	server := newHTTPServer(
-		cfg, healthHandler, feedbackRecordsHandler, webhooksHandler,
+		cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, searchHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -287,6 +333,7 @@ func newHTTPServer(
 	health *handlers.HealthHandler,
 	feedback *handlers.FeedbackRecordsHandler,
 	webhooks *handlers.WebhooksHandler,
+	search *handlers.SearchHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
 ) *http.Server {
@@ -306,6 +353,10 @@ func newHTTPServer(
 	protected.HandleFunc("GET /v1/webhooks/{id}", webhooks.Get)
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
+
+	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
+	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
+	protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
 
 	protectedWithAuth := middleware.Auth(cfg.APIKey)(protected)
 	mux := http.NewServeMux()
