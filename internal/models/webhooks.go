@@ -199,12 +199,14 @@ type ListWebhooksFilters struct {
 	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes"`
 	Limit    int     `form:"limit"     validate:"omitempty,min=1,max=1000"`
 	Offset   int     `form:"offset"    validate:"omitempty,min=0"`
+	Cursor   string  `form:"cursor"    validate:"omitempty"` // keyset cursor; when set, offset is ignored
 }
 
 // ListWebhooksResponse represents the response for listing webhooks.
 type ListWebhooksResponse struct {
-	Data   []Webhook `json:"data"`
-	Total  int64     `json:"total"`
-	Limit  int       `json:"limit"`
-	Offset int       `json:"offset"`
+	Data       []Webhook `json:"data"`
+	Total      *int64    `json:"total,omitempty"` // set when offset-based; omitted when using cursor (avoids extra COUNT)
+	Limit      int       `json:"limit"`
+	Offset     *int      `json:"offset,omitempty"`      // set when offset-based; omitted when using cursor
+	NextCursor string    `json:"next_cursor,omitempty"` // present when there may be more results
 }

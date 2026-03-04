@@ -64,6 +64,12 @@ func (m *mockProviderRepo) List(_ context.Context, _ *models.ListWebhooksFilters
 	return nil, errors.New("not implemented")
 }
 
+func (m *mockProviderRepo) ListAfterCursor(
+	_ context.Context, _ *models.ListWebhooksFilters, _ time.Time, _ uuid.UUID,
+) ([]models.Webhook, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (m *mockProviderRepo) Count(_ context.Context, _ *models.ListWebhooksFilters) (int64, error) {
 	return 0, errors.New("not implemented")
 }

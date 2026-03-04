@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/cursor"
 )
 
 // ErrUserIdentifierRequired is returned when bulk delete is called without user_identifier (err113).
@@ -27,6 +29,10 @@ type FeedbackRecordsRepository interface {
 	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error)
+	ListAfterCursor(
+		ctx context.Context, filters *models.ListFeedbackRecordsFilters,
+		cursorCollectedAt time.Time, cursorID uuid.UUID,
+	) ([]models.FeedbackRecord, error)
 	Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -109,12 +115,44 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 }
 
 // ListFeedbackRecords retrieves a list of feedback records with optional filters.
+// When filters.Cursor is set, uses keyset pagination (no Count query); otherwise uses offset.
 func (s *FeedbackRecordsService) ListFeedbackRecords(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 ) (*models.ListFeedbackRecordsResponse, error) {
 	// Set default limit if not provided (validation ensures it's within bounds if provided)
 	if filters.Limit <= 0 {
 		filters.Limit = 100 // Default limit
+	}
+
+	cursorStr := strings.TrimSpace(filters.Cursor)
+
+	if cursorStr != "" {
+		collectedAt, id, err := cursor.Decode(cursorStr)
+		if err != nil {
+			return nil, fmt.Errorf("decode cursor: %w", err)
+		}
+
+		records, err := s.repo.ListAfterCursor(ctx, filters, collectedAt, id)
+		if err != nil {
+			return nil, fmt.Errorf("list feedback records after cursor: %w", err)
+		}
+
+		var nextCursor string
+
+		if len(records) == filters.Limit && len(records) > 0 {
+			last := records[len(records)-1]
+
+			nextCursor, err = cursor.Encode(last.CollectedAt, last.ID)
+			if err != nil {
+				return nil, fmt.Errorf("encode next cursor: %w", err)
+			}
+		}
+
+		return &models.ListFeedbackRecordsResponse{
+			Data:       records,
+			Limit:      filters.Limit,
+			NextCursor: nextCursor,
+		}, nil
 	}
 
 	records, err := s.repo.List(ctx, filters)
@@ -127,11 +165,26 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 		return nil, fmt.Errorf("count feedback records: %w", err)
 	}
 
+	totalPtr := total
+	offsetVal := filters.Offset
+
+	var nextCursor string
+
+	if len(records) == filters.Limit && len(records) > 0 {
+		last := records[len(records)-1]
+
+		nextCursor, err = cursor.Encode(last.CollectedAt, last.ID)
+		if err != nil {
+			return nil, fmt.Errorf("encode next cursor: %w", err)
+		}
+	}
+
 	return &models.ListFeedbackRecordsResponse{
-		Data:   records,
-		Total:  total,
-		Limit:  filters.Limit,
-		Offset: filters.Offset,
+		Data:       records,
+		Total:      &totalPtr,
+		Limit:      filters.Limit,
+		Offset:     &offsetVal,
+		NextCursor: nextCursor,
 	}, nil
 }
 

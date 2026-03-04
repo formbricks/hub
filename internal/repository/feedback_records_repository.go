@@ -195,7 +195,7 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	query += whereClause
 	argCount := len(args) + 1
 
-	query += " ORDER BY collected_at DESC"
+	query += " ORDER BY collected_at DESC, id ASC"
 
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argCount)
@@ -217,6 +217,77 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 	defer rows.Close()
 
 	records := []models.FeedbackRecord{} // Initialize as empty slice, not nil
+
+	for rows.Next() {
+		var record models.FeedbackRecord
+
+		err := rows.Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
+		}
+
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating feedback records: %w", err)
+	}
+
+	return records, nil
+}
+
+// ListAfterCursor retrieves feedback records after the given keyset cursor (collected_at, id).
+// Order is collected_at DESC, id ASC. The cursor represents the last row of the previous page.
+func (r *FeedbackRecordsRepository) ListAfterCursor(
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters, cursorCollectedAt time.Time, cursorID uuid.UUID,
+) ([]models.FeedbackRecord, error) {
+	query := `
+		SELECT id, collected_at, created_at, updated_at,
+			source_type, source_id, source_name,
+			field_id, field_label, field_type, field_group_id, field_group_label,
+			value_text, value_number, value_boolean, value_date,
+			metadata, language, user_identifier, tenant_id, submission_id
+		FROM feedback_records
+	`
+
+	whereClause, args := buildFilterConditions(filters)
+	query += whereClause
+
+	// Keyset condition: next page = (collected_at < cursor) OR (collected_at = cursor AND id > cursorID)
+	// For ORDER BY collected_at DESC, id ASC (two cursor params: collected_at, id)
+	argTime := len(args) + 1
+
+	argID := len(args) + 2 //nolint:mnd // second keyset param
+	if whereClause != "" {
+		query += fmt.Sprintf(" AND (collected_at < $%d OR (collected_at = $%d AND id > $%d))", argTime, argTime, argID)
+	} else {
+		query += fmt.Sprintf(" WHERE (collected_at < $%d OR (collected_at = $%d AND id > $%d))", argTime, argTime, argID)
+	}
+
+	args = append(args, cursorCollectedAt, cursorID)
+	argCount := len(args) + 1
+
+	query += " ORDER BY collected_at DESC, id ASC"
+
+	if filters.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argCount)
+
+		args = append(args, filters.Limit)
+	}
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list feedback records after cursor: %w", err)
+	}
+	defer rows.Close()
+
+	records := []models.FeedbackRecord{}
 
 	for rows.Next() {
 		var record models.FeedbackRecord

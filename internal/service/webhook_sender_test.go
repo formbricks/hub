@@ -36,6 +36,12 @@ func (m *mockSenderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) 
 	return nil, nil
 }
 
+func (m *mockSenderRepo) ListAfterCursor(
+	_ context.Context, _ *models.ListWebhooksFilters, _ time.Time, _ uuid.UUID,
+) ([]models.Webhook, error) {
+	return nil, nil
+}
+
 func (m *mockSenderRepo) Count(_ context.Context, _ *models.ListWebhooksFilters) (int64, error) {
 	return 0, nil
 }

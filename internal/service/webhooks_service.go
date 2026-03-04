@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
@@ -12,6 +14,7 @@ import (
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/cursor"
 )
 
 // WebhooksRepository defines the interface for webhooks data access.
@@ -19,6 +22,10 @@ type WebhooksRepository interface {
 	Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error)
 	List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error)
+	ListAfterCursor(
+		ctx context.Context, filters *models.ListWebhooksFilters,
+		cursorCreatedAt time.Time, cursorID uuid.UUID,
+	) ([]models.Webhook, error)
 	Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -114,9 +121,41 @@ func (s *WebhooksService) GetWebhook(ctx context.Context, id uuid.UUID) (*models
 }
 
 // ListWebhooks retrieves a list of webhooks with optional filters.
+// When filters.Cursor is set, uses keyset pagination (no Count query); otherwise uses offset.
 func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.ListWebhooksFilters) (*models.ListWebhooksResponse, error) {
 	if filters.Limit <= 0 {
 		filters.Limit = 100
+	}
+
+	cursorStr := strings.TrimSpace(filters.Cursor)
+
+	if cursorStr != "" {
+		createdAt, id, err := cursor.Decode(cursorStr)
+		if err != nil {
+			return nil, fmt.Errorf("decode cursor: %w", err)
+		}
+
+		webhooks, err := s.repo.ListAfterCursor(ctx, filters, createdAt, id)
+		if err != nil {
+			return nil, fmt.Errorf("list webhooks after cursor: %w", err)
+		}
+
+		var nextCursor string
+
+		if len(webhooks) == filters.Limit && len(webhooks) > 0 {
+			last := webhooks[len(webhooks)-1]
+
+			nextCursor, err = cursor.Encode(last.CreatedAt, last.ID)
+			if err != nil {
+				return nil, fmt.Errorf("encode next cursor: %w", err)
+			}
+		}
+
+		return &models.ListWebhooksResponse{
+			Data:       webhooks,
+			Limit:      filters.Limit,
+			NextCursor: nextCursor,
+		}, nil
 	}
 
 	webhooks, err := s.repo.List(ctx, filters)
@@ -129,11 +168,26 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 		return nil, fmt.Errorf("count webhooks: %w", err)
 	}
 
+	totalPtr := total
+	offsetVal := filters.Offset
+
+	var nextCursor string
+
+	if len(webhooks) == filters.Limit && len(webhooks) > 0 {
+		last := webhooks[len(webhooks)-1]
+
+		nextCursor, err = cursor.Encode(last.CreatedAt, last.ID)
+		if err != nil {
+			return nil, fmt.Errorf("encode next cursor: %w", err)
+		}
+	}
+
 	return &models.ListWebhooksResponse{
-		Data:   webhooks,
-		Total:  total,
-		Limit:  filters.Limit,
-		Offset: filters.Offset,
+		Data:       webhooks,
+		Total:      &totalPtr,
+		Limit:      filters.Limit,
+		Offset:     &offsetVal,
+		NextCursor: nextCursor,
 	}, nil
 }
 

@@ -138,7 +138,7 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 	query += whereClause
 	argCount := len(args) + 1
 
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY created_at DESC, id ASC"
 
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argCount)
@@ -156,6 +156,78 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list webhooks: %w", err)
+	}
+	defer rows.Close()
+
+	webhooks := []models.Webhook{}
+
+	for rows.Next() {
+		var (
+			webhook      models.Webhook
+			dbEventTypes []string
+		)
+
+		err := rows.Scan(
+			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
+			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+			&webhook.DisabledReason, &webhook.DisabledAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan webhook: %w", err)
+		}
+
+		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
+		if err != nil {
+			return nil, err
+		}
+
+		webhooks = append(webhooks, webhook)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating webhooks: %w", err)
+	}
+
+	return webhooks, nil
+}
+
+// ListAfterCursor retrieves webhooks after the given keyset cursor (created_at, id).
+// Order is created_at DESC, id ASC. The cursor represents the last row of the previous page.
+func (r *WebhooksRepository) ListAfterCursor(
+	ctx context.Context, filters *models.ListWebhooksFilters, cursorCreatedAt time.Time, cursorID uuid.UUID,
+) ([]models.Webhook, error) {
+	query := `
+		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
+		FROM webhooks
+	`
+
+	whereClause, args := buildWebhookFilterConditions(filters)
+	query += whereClause
+
+	// Keyset condition: next page = (created_at < cursor) OR (created_at = cursor AND id > cursorID)
+	argTime := len(args) + 1
+
+	argID := len(args) + 2 //nolint:mnd // second keyset param
+	if whereClause != "" {
+		query += fmt.Sprintf(" AND (created_at < $%d OR (created_at = $%d AND id > $%d))", argTime, argTime, argID)
+	} else {
+		query += fmt.Sprintf(" WHERE (created_at < $%d OR (created_at = $%d AND id > $%d))", argTime, argTime, argID)
+	}
+
+	args = append(args, cursorCreatedAt, cursorID)
+	argCount := len(args) + 1
+
+	query += " ORDER BY created_at DESC, id ASC"
+
+	if filters.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argCount)
+
+		args = append(args, filters.Limit)
+	}
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list webhooks after cursor: %w", err)
 	}
 	defer rows.Close()
 

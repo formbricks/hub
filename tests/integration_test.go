@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 
@@ -396,6 +397,78 @@ func TestListFeedbackRecords(t *testing.T) {
 		for _, exp := range result.Data {
 			assert.Equal(t, "formbricks", exp.SourceType)
 		}
+	})
+
+	// Test cursor pagination
+	t.Run("Cursor pagination", func(t *testing.T) {
+		tenantID := "tenant-cursor-test"
+		// Create 3 records for pagination
+		for i := range 3 {
+			body, _ := json.Marshal(map[string]any{
+				"source_type":   "formbricks",
+				"submission_id": uuid.New().String(),
+				"tenant_id":     tenantID,
+				"field_id":      "q1",
+				"field_type":    "text",
+				"value_text":    fmt.Sprintf("record %d", i),
+			})
+			req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+			require.NoError(t, resp.Body.Close())
+		}
+
+		// First page (limit=2)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records?tenant_id="+tenantID+"&limit=2", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var page1 models.ListFeedbackRecordsResponse
+
+		err = decodeData(resp, &page1)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		assert.Len(t, page1.Data, 2)
+		assert.NotEmpty(t, page1.NextCursor)
+
+		// Second page using cursor (URL-encode cursor since it may contain = padding)
+		listURL := fmt.Sprintf("%s/v1/feedback-records?tenant_id=%s&limit=2&cursor=%s",
+			server.URL, url.QueryEscape(tenantID), url.QueryEscape(page1.NextCursor))
+		req2, err := http.NewRequestWithContext(context.Background(), http.MethodGet, listURL, http.NoBody)
+		require.NoError(t, err)
+		req2.Header.Set("Authorization", "Bearer "+testAPIKey)
+		resp2, err := client.Do(req2)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+		var page2 models.ListFeedbackRecordsResponse
+
+		err = decodeData(resp2, &page2)
+		require.NoError(t, err)
+		require.NoError(t, resp2.Body.Close())
+
+		assert.GreaterOrEqual(t, len(page2.Data), 1)
+		// Cursor path omits total and offset
+		assert.Nil(t, page2.Total)
+		assert.Nil(t, page2.Offset)
+
+		// Invalid cursor returns 400
+		req3, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records?tenant_id="+tenantID+"&cursor=invalid", http.NoBody)
+		require.NoError(t, err)
+		req3.Header.Set("Authorization", "Bearer "+testAPIKey)
+		resp3, err := client.Do(req3)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusBadRequest, resp3.StatusCode)
+		require.NoError(t, resp3.Body.Close())
 	})
 }
 
@@ -1027,8 +1100,21 @@ func TestWebhooksCRUD(t *testing.T) {
 	err = decodeData(listResp, &listResult)
 	require.NoError(t, err)
 	require.NoError(t, listResp.Body.Close())
-	assert.GreaterOrEqual(t, listResult.Total, int64(1))
+	require.NotNil(t, listResult.Total)
+	assert.GreaterOrEqual(t, *listResult.Total, int64(1))
 	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	// Test invalid cursor returns 400
+	invalidCursorReq, err := http.NewRequestWithContext(
+		context.Background(), http.MethodGet,
+		server.URL+"/v1/webhooks?cursor=invalid", http.NoBody,
+	)
+	require.NoError(t, err)
+	invalidCursorReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+	invalidCursorResp, err := client.Do(invalidCursorReq)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, invalidCursorResp.StatusCode)
+	require.NoError(t, invalidCursorResp.Body.Close())
 
 	// Update webhook (including tenant_id)
 	updateBody := map[string]any{
