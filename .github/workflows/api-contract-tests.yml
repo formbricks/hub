@@ -138,8 +138,8 @@ jobs:
           args: >-
             --phases examples
             -H "Authorization: Bearer test-api-key-for-ci"
-            --operation-id semantic-search-feedback-records
-            --operation-id similar-feedback-records
+            --include-operation-id semantic-search-feedback-records
+            --include-operation-id similar-feedback-records
 
       - name: Stop API server
         if: always()
