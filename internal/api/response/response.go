@@ -3,8 +3,12 @@ package response
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
+	"unicode"
 )
 
 // ErrorDetail represents a single error detail in RFC 7807 Problem Details.
@@ -44,6 +48,53 @@ func RespondError(w http.ResponseWriter, statusCode int, title, detail string) {
 // RespondBadRequest writes a 400 Bad Request error response.
 func RespondBadRequest(w http.ResponseWriter, detail string) {
 	RespondError(w, http.StatusBadRequest, "Bad Request", detail)
+}
+
+// JSONDecodeErrorDetail returns a user-friendly message for json.Decode errors.
+// Use this when decoding request bodies to give clients actionable feedback.
+// Note: Missing fields do not cause Decode to fail; validate required fields after decode.
+func JSONDecodeErrorDetail(err error) string {
+	if err == nil {
+		return "Invalid request body"
+	}
+
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return "Invalid JSON: " + err.Error()
+	}
+
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		field := fieldNameForAPI(typeErr.Field)
+
+		return fmt.Sprintf("field %q must be %s", field, typeErr.Type.String())
+	}
+
+	if strings.Contains(err.Error(), "unknown field") {
+		return err.Error()
+	}
+
+	return "Invalid request body"
+}
+
+// fieldNameForAPI converts a struct field path (e.g. "TenantID" or "X.Y") to API-style snake_case.
+func fieldNameForAPI(fieldPath string) string {
+	// Take last segment if path (e.g. "SemanticSearchRequest.TenantID" -> "TenantID")
+	if i := strings.LastIndex(fieldPath, "."); i >= 0 && i+1 < len(fieldPath) {
+		fieldPath = fieldPath[i+1:]
+	}
+
+	var buf strings.Builder
+
+	for i, r := range fieldPath {
+		if i > 0 && unicode.IsUpper(r) && (i+1 >= len(fieldPath) || unicode.IsLower(rune(fieldPath[i+1]))) {
+			buf.WriteByte('_')
+		}
+
+		buf.WriteRune(unicode.ToLower(r))
+	}
+
+	return buf.String()
 }
 
 // RespondUnauthorized writes a 401 Unauthorized error response.

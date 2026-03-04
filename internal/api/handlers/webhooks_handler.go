@@ -43,7 +43,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if err := decoder.Decode(&req); err != nil {
 		slog.Warn("Invalid request body", "method", r.Method, "path", r.URL.Path, "error", err)
-		response.RespondBadRequest(w, "Invalid request body")
+		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
 
 		return
 	}
@@ -154,7 +154,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if err := decoder.Decode(&req); err != nil {
 		slog.Warn("Invalid request body for update", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
-		response.RespondBadRequest(w, "Invalid request body")
+		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
 
 		return
 	}
