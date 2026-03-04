@@ -8,7 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"unicode"
+
+	"github.com/iancoleman/strcase"
 )
 
 // ErrorDetail represents a single error detail in RFC 7807 Problem Details.
@@ -79,22 +80,11 @@ func JSONDecodeErrorDetail(err error) string {
 
 // fieldNameForAPI converts a struct field path (e.g. "TenantID" or "X.Y") to API-style snake_case.
 func fieldNameForAPI(fieldPath string) string {
-	// Take last segment if path (e.g. "SemanticSearchRequest.TenantID" -> "TenantID")
 	if i := strings.LastIndex(fieldPath, "."); i >= 0 && i+1 < len(fieldPath) {
 		fieldPath = fieldPath[i+1:]
 	}
 
-	var buf strings.Builder
-
-	for i, r := range fieldPath {
-		if i > 0 && unicode.IsUpper(r) && (i+1 >= len(fieldPath) || unicode.IsLower(rune(fieldPath[i+1]))) {
-			buf.WriteByte('_')
-		}
-
-		buf.WriteRune(unicode.ToLower(r))
-	}
-
-	return buf.String()
+	return strcase.ToSnake(fieldPath)
 }
 
 // RespondUnauthorized writes a 401 Unauthorized error response.
