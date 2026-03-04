@@ -33,7 +33,6 @@ type FeedbackRecordsRepository interface {
 		ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
 	) ([]models.FeedbackRecord, error)
-	Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error)
@@ -115,57 +114,37 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 }
 
 // ListFeedbackRecords retrieves a list of feedback records with optional filters.
-// When filters.Cursor is set, uses keyset pagination (no Count query); otherwise uses offset.
+// Uses cursor-based pagination: omit cursor for first page, use next_cursor for subsequent pages.
 func (s *FeedbackRecordsService) ListFeedbackRecords(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 ) (*models.ListFeedbackRecordsResponse, error) {
-	// Set default limit if not provided (validation ensures it's within bounds if provided)
 	if filters.Limit <= 0 {
-		filters.Limit = 100 // Default limit
+		filters.Limit = 100
 	}
 
 	cursorStr := strings.TrimSpace(filters.Cursor)
 
+	var (
+		records []models.FeedbackRecord
+		err     error
+	)
+
 	if cursorStr != "" {
-		collectedAt, id, err := cursor.Decode(cursorStr)
-		if err != nil {
-			return nil, fmt.Errorf("decode cursor: %w", err)
+		collectedAt, id, decErr := cursor.Decode(cursorStr)
+		if decErr != nil {
+			return nil, fmt.Errorf("decode cursor: %w", decErr)
 		}
 
-		records, err := s.repo.ListAfterCursor(ctx, filters, collectedAt, id)
-		if err != nil {
-			return nil, fmt.Errorf("list feedback records after cursor: %w", err)
-		}
-
-		meta, err := BuildListPaginationMeta(nil, 0, filters.Limit, len(records), func() (string, error) {
-			last := records[len(records)-1]
-
-			return cursor.Encode(last.CollectedAt, last.ID)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("encode next cursor: %w", err)
-		}
-
-		return &models.ListFeedbackRecordsResponse{
-			Data:       records,
-			Total:      meta.Total,
-			Limit:      meta.Limit,
-			Offset:     meta.Offset,
-			NextCursor: meta.NextCursor,
-		}, nil
+		records, err = s.repo.ListAfterCursor(ctx, filters, collectedAt, id)
+	} else {
+		records, err = s.repo.List(ctx, filters)
 	}
 
-	records, err := s.repo.List(ctx, filters)
 	if err != nil {
 		return nil, fmt.Errorf("list feedback records: %w", err)
 	}
 
-	total, err := s.repo.Count(ctx, filters)
-	if err != nil {
-		return nil, fmt.Errorf("count feedback records: %w", err)
-	}
-
-	meta, err := BuildListPaginationMeta(&total, filters.Offset, filters.Limit, len(records), func() (string, error) {
+	meta, err := BuildListPaginationMeta(filters.Limit, len(records), func() (string, error) {
 		last := records[len(records)-1]
 
 		return cursor.Encode(last.CollectedAt, last.ID)
@@ -176,9 +155,7 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 
 	return &models.ListFeedbackRecordsResponse{
 		Data:       records,
-		Total:      meta.Total,
 		Limit:      meta.Limit,
-		Offset:     meta.Offset,
 		NextCursor: meta.NextCursor,
 	}, nil
 }

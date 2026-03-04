@@ -18,9 +18,9 @@ import (
 
 // SearchService defines the interface for semantic search and similar feedback.
 type SearchService interface {
-	SemanticSearch(ctx context.Context, query, tenantID string, limit, offset int, minScore float64, cursor string) (
+	SemanticSearch(ctx context.Context, query, tenantID string, limit int, minScore float64, cursor string) (
 		service.SearchResult, error)
-	SimilarFeedback(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit, offset int,
+	SimilarFeedback(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int,
 		minScore float64, cursor string) (service.SearchResult, error)
 }
 
@@ -55,14 +55,7 @@ type SemanticSearchResultItem struct {
 	ValueText        string    `json:"value_text"` // value_text of the feedback record (the text that was embedded)
 }
 
-// maxSearchOffset caps how far paging can go. With OFFSET-based paging the database
-// still computes and discards all rows before the offset, so large offsets (e.g. 5000)
-// make queries slow. Clamping keeps latency predictable and discourages deep paging.
-// To support deeper paging without this limit, switch to cursor-based (keyset) pagination:
-// return a cursor (e.g. last score + last feedback_record_id), and query WHERE (score, id) after cursor
-// instead of OFFSET.
 const (
-	maxSearchOffset    = 1000
 	defaultSearchLimit = 10
 	maxSearchLimit     = 100
 )
@@ -99,17 +92,10 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit := parseLimit(r.URL.Query().Get("limit"), defaultSearchLimit, maxSearchLimit)
-
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
-
-	offset := 0
-	if cursor == "" {
-		offset = min(parseOffset(r.URL.Query().Get("offset")), maxSearchOffset)
-	}
-
 	minScore := parseMinScore(r.URL.Query().Get("min_score"))
 
-	res, err := h.service.SemanticSearch(r.Context(), req.Query, req.TenantID, limit, offset, minScore, cursor)
+	res, err := h.service.SemanticSearch(r.Context(), req.Query, req.TenantID, limit, minScore, cursor)
 	if err != nil {
 		if errors.Is(err, service.ErrMissingTenantID) {
 			response.RespondBadRequest(w, "tenant_id is required")
@@ -177,17 +163,10 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	limit := parseLimit(r.URL.Query().Get("limit"), defaultSearchLimit, maxSearchLimit)
-
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
-
-	offset := 0
-	if cursor == "" {
-		offset = min(parseOffset(r.URL.Query().Get("offset")), maxSearchOffset)
-	}
-
 	minScore := parseMinScore(r.URL.Query().Get("min_score"))
 
-	res, err := h.service.SimilarFeedback(r.Context(), id, tenantID, limit, offset, minScore, cursor)
+	res, err := h.service.SimilarFeedback(r.Context(), id, tenantID, limit, minScore, cursor)
 	if err != nil {
 		if errors.Is(err, service.ErrEmbeddingNotFound) {
 			response.RespondNotFound(w, "Feedback record has no embedding for the current model")
@@ -231,20 +210,6 @@ func parseLimit(s string, def, upperBound int) int {
 	}
 
 	return min(n, upperBound)
-}
-
-// parseOffset returns the query param "offset" as a non-negative int; default 0.
-func parseOffset(s string) int {
-	if s == "" {
-		return 0
-	}
-
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 {
-		return 0
-	}
-
-	return n
 }
 
 // defaultMinScore is the default minimum similarity score when the query param is omitted (reduces noise).

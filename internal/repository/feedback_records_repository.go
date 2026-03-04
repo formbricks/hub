@@ -203,13 +203,6 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 		query += fmt.Sprintf(" LIMIT $%d", argCount)
 
 		args = append(args, filters.Limit)
-		argCount++
-	}
-
-	if filters.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", argCount)
-
-		args = append(args, filters.Offset)
 	}
 
 	return r.fetchFeedbackRecords(ctx, query, args...)
@@ -248,23 +241,6 @@ func (r *FeedbackRecordsRepository) ListAfterCursor(
 	}
 
 	return r.fetchFeedbackRecords(ctx, query, args...)
-}
-
-// Count returns the total count of feedback records matching the filters.
-func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error) {
-	query := `SELECT COUNT(*) FROM feedback_records`
-
-	whereClause, args := buildFilterConditions(filters)
-	query += whereClause
-
-	var count int64
-
-	err := r.db.QueryRow(ctx, query, args...).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count feedback records: %w", err)
-	}
-
-	return count, nil
 }
 
 // buildUpdateQuery builds an UPDATE query with SET clause and arguments.

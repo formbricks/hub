@@ -144,13 +144,6 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 		query += fmt.Sprintf(" LIMIT $%d", argCount)
 
 		args = append(args, filters.Limit)
-		argCount++
-	}
-
-	if filters.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", argCount)
-
-		args = append(args, filters.Offset)
 	}
 
 	rows, err := r.db.Query(ctx, query, args...)

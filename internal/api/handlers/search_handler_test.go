@@ -17,27 +17,27 @@ import (
 )
 
 type mockSearchService struct {
-	semanticFunc func(ctx context.Context, query, tenantID string, limit, offset int, minScore float64,
+	semanticFunc func(ctx context.Context, query, tenantID string, limit int, minScore float64,
 		cursor string) (service.SearchResult, error)
-	similarFunc func(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit, offset int,
+	similarFunc func(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int,
 		minScore float64, cursor string) (service.SearchResult, error)
 }
 
 func (m *mockSearchService) SemanticSearch(
-	ctx context.Context, query, tenantID string, limit, offset int, minScore float64, cursor string,
+	ctx context.Context, query, tenantID string, limit int, minScore float64, cursor string,
 ) (service.SearchResult, error) {
 	if m.semanticFunc != nil {
-		return m.semanticFunc(ctx, query, tenantID, limit, offset, minScore, cursor)
+		return m.semanticFunc(ctx, query, tenantID, limit, minScore, cursor)
 	}
 
 	return service.SearchResult{}, nil
 }
 
 func (m *mockSearchService) SimilarFeedback(
-	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit, offset int, minScore float64, cursor string,
+	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int, minScore float64, cursor string,
 ) (service.SearchResult, error) {
 	if m.similarFunc != nil {
-		return m.similarFunc(ctx, feedbackRecordID, tenantID, limit, offset, minScore, cursor)
+		return m.similarFunc(ctx, feedbackRecordID, tenantID, limit, minScore, cursor)
 	}
 
 	return service.SearchResult{}, nil
@@ -60,7 +60,7 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 	t.Run("empty query returns 400", func(t *testing.T) {
 		called := false
 		mock := &mockSearchService{
-			semanticFunc: func(_ context.Context, _, _ string, _, _ int, _ float64, _ string) (service.SearchResult, error) {
+			semanticFunc: func(_ context.Context, _, _ string, _ int, _ float64, _ string) (service.SearchResult, error) {
 				called = true
 
 				return service.SearchResult{}, service.ErrEmptyQuery
@@ -85,13 +85,12 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 		val1 := "Login is very slow."
 		val2 := "Dashboard loads fast."
 		mock := &mockSearchService{
-			semanticFunc: func(_ context.Context, query, tenantID string, limit, offset int, minScore float64,
+			semanticFunc: func(_ context.Context, query, tenantID string, limit int, minScore float64,
 				cursor string,
 			) (service.SearchResult, error) {
 				assert.Equal(t, "login is slow", query)
 				assert.Equal(t, "env-1", tenantID)
 				assert.Equal(t, 10, limit)
-				assert.Equal(t, 0, offset)
 				assert.InDelta(t, 0.7, minScore, 1e-9)
 				assert.Empty(t, cursor)
 
@@ -132,7 +131,7 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 
 	t.Run("invalid cursor returns 400", func(t *testing.T) {
 		mock := &mockSearchService{
-			semanticFunc: func(_ context.Context, _, _ string, _, _ int, _ float64, cursor string) (service.SearchResult, error) {
+			semanticFunc: func(_ context.Context, _, _ string, _ int, _ float64, cursor string) (service.SearchResult, error) {
 				if cursor != "" {
 					return service.SearchResult{}, service.ErrInvalidCursor
 				}
@@ -171,7 +170,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 
 	t.Run("embedding not found returns 404", func(t *testing.T) {
 		mock := &mockSearchService{
-			similarFunc: func(_ context.Context, _ uuid.UUID, _ string, _, _ int, _ float64, _ string) (service.SearchResult, error) {
+			similarFunc: func(_ context.Context, _ uuid.UUID, _ string, _ int, _ float64, _ string) (service.SearchResult, error) {
 				return service.SearchResult{}, service.ErrEmbeddingNotFound
 			},
 		}
@@ -191,13 +190,12 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 		similarID := uuid.MustParse("018e1234-5678-9abc-def0-aaaaaaaaaaaa")
 		similarVal := "Similar feedback text."
 		mock := &mockSearchService{
-			similarFunc: func(_ context.Context, fid uuid.UUID, tenantID string, limit, offset int, minScore float64,
+			similarFunc: func(_ context.Context, fid uuid.UUID, tenantID string, limit int, minScore float64,
 				cursor string,
 			) (service.SearchResult, error) {
 				assert.Equal(t, id, fid)
 				assert.Equal(t, "env-1", tenantID)
 				assert.Equal(t, 10, limit)
-				assert.Equal(t, 0, offset)
 				assert.InDelta(t, 0.7, minScore, 1e-9)
 				assert.Empty(t, cursor)
 

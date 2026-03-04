@@ -456,9 +456,6 @@ func TestListFeedbackRecords(t *testing.T) {
 		require.NoError(t, resp2.Body.Close())
 
 		assert.GreaterOrEqual(t, len(page2.Data), 1)
-		// Cursor path omits total and offset
-		assert.Nil(t, page2.Total)
-		assert.Nil(t, page2.Offset)
 
 		// Invalid cursor returns 400
 		req3, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
@@ -1100,8 +1097,6 @@ func TestWebhooksCRUD(t *testing.T) {
 	err = decodeData(listResp, &listResult)
 	require.NoError(t, err)
 	require.NoError(t, listResp.Body.Close())
-	require.NotNil(t, listResult.Total)
-	assert.GreaterOrEqual(t, *listResult.Total, int64(1))
 	assert.GreaterOrEqual(t, len(listResult.Data), 1)
 
 	// Test invalid cursor returns 400

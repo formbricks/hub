@@ -32,7 +32,7 @@ type EmbeddingsRepositoryForSearch interface {
 		ctx context.Context, feedbackRecordID uuid.UUID, model, tenantID string,
 	) ([]float32, error)
 	NearestFeedbackRecordsByEmbedding(
-		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit, offset int, excludeID *uuid.UUID, minScore float64,
+		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
 	) ([]models.FeedbackRecordWithScore, bool, error)
 	NearestFeedbackRecordsByEmbeddingAfterCursor(
 		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int,
@@ -79,11 +79,10 @@ func NewSearchService(p SearchServiceParams) *SearchService {
 }
 
 // SemanticSearch returns feedback record IDs and similarity scores for the given query, scoped to tenantID.
-// Requires non-empty tenantID and non-empty (after trim) query. If cursor is non-empty it is used for
-// keyset paging (offset is ignored); otherwise offset is used. minScore is the minimum similarity score (0..1).
-// NextCursor is set when there may be a next page (full page returned).
+// Requires non-empty tenantID and non-empty (after trim) query. Uses cursor-based pagination.
+// minScore is the minimum similarity score (0..1). NextCursor is set when there may be a next page.
 func (s *SearchService) SemanticSearch(
-	ctx context.Context, query, tenantID string, limit, offset int, minScore float64, cursor string,
+	ctx context.Context, query, tenantID string, limit int, minScore float64, cursor string,
 ) (SearchResult, error) {
 	out := SearchResult{}
 	if tenantID == "" {
@@ -126,7 +125,7 @@ func (s *SearchService) SemanticSearch(
 			ctx, s.model, embedding, tenantID, limit, lastDistance, lastID, nil, minScore)
 	} else {
 		results, hasMore, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(
-			ctx, s.model, embedding, tenantID, limit, offset, nil, minScore)
+			ctx, s.model, embedding, tenantID, limit, nil, minScore)
 	}
 
 	if err != nil {
@@ -152,9 +151,9 @@ func (s *SearchService) SemanticSearch(
 
 // SimilarFeedback returns feedback record IDs and similarity scores for records similar to the given one, scoped to tenantID.
 // Requires non-empty tenantID. Returns ErrEmbeddingNotFound when the record has no embedding for the current model.
-// If cursor is non-empty it is used for keyset paging (offset is ignored); otherwise offset is used.
+// Uses cursor-based pagination.
 func (s *SearchService) SimilarFeedback(
-	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit, offset int, minScore float64, cursor string,
+	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int, minScore float64, cursor string,
 ) (SearchResult, error) {
 	out := SearchResult{}
 	if tenantID == "" {
@@ -191,7 +190,7 @@ func (s *SearchService) SimilarFeedback(
 			ctx, s.model, embedding, tenantID, limit, lastDistance, lastID, &feedbackRecordID, minScore)
 	} else {
 		results, hasMore, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(
-			ctx, s.model, embedding, tenantID, limit, offset, &feedbackRecordID, minScore)
+			ctx, s.model, embedding, tenantID, limit, &feedbackRecordID, minScore)
 	}
 
 	if err != nil {

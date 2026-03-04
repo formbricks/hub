@@ -186,16 +186,13 @@ type ListFeedbackRecordsFilters struct {
 	Since          *time.Time `form:"since"           validate:"omitempty"`
 	Until          *time.Time `form:"until"           validate:"omitempty"`
 	Limit          int        `form:"limit"           validate:"omitempty,min=1,max=1000"`
-	Offset         int        `form:"offset"          validate:"omitempty,min=0"`
-	Cursor         string     `form:"cursor"          validate:"omitempty"` // keyset cursor; when set, offset is ignored
+	Cursor         string     `form:"cursor"          validate:"omitempty"` // keyset; omit for first page, use next_cursor for next
 }
 
 // ListFeedbackRecordsResponse represents the response for listing feedback records.
 type ListFeedbackRecordsResponse struct {
 	Data       []FeedbackRecord `json:"data"`
-	Total      *int64           `json:"total,omitempty"` // set when offset-based; omitted when using cursor (avoids extra COUNT)
 	Limit      int              `json:"limit"`
-	Offset     *int             `json:"offset,omitempty"`      // set when offset-based; omitted when using cursor
 	NextCursor string           `json:"next_cursor,omitempty"` // present when there may be more results
 }
 
