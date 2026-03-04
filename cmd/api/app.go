@@ -43,6 +43,8 @@ type App struct {
 	metrics        *observability.Metrics
 }
 
+const webhookDeliveryBufferOverHTTP = 5 * time.Second // buffer for DB, metrics, disable on max attempts
+
 var (
 	errUnsupportedEmbeddingProvider    = errors.New("unsupported embedding provider")
 	errEmbeddingProviderAPIKeyRequired = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
@@ -166,9 +168,10 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, eventMetrics)
 
-	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhookSender := service.NewWebhookSenderImpl(webhooksRepo, webhookMetrics)
-	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender, webhookMetrics)
+	webhooksRepo := repository.NewDBWebhooksRepository(db)
+	webhookSender := service.NewWebhookSenderImpl(webhooksRepo, webhookMetrics, cfg.WebhookHTTPTimeout)
+	webhookDeliveryTimeout := cfg.WebhookHTTPTimeout + webhookDeliveryBufferOverHTTP
+	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender, webhookMetrics, webhookDeliveryTimeout)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, webhookWorker)
 
@@ -176,7 +179,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		river.QueueDefault: {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
 	}
 
-	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	feedbackRecordsRepo := repository.NewDBFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
 	// Model for DB/jobs: required for embeddings.model column; only set when embeddings are enabled (both provider and model set).
@@ -283,8 +286,16 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	// Enable backfill on the same service instance the embedding worker uses (avoids nil inserter if worker ever calls BackfillEmbeddings).
 	feedbackRecordsService.SetEmbeddingInserter(riverClient)
 
+	webhookInserter := service.NewRetryingWebhookDispatchInserter(service.RetryingWebhookDispatchInserterConfig{
+		MaxRetries:     cfg.WebhookEnqueueMaxRetries,
+		InitialBackoff: cfg.WebhookEnqueueInitialBackoff,
+		MaxBackoff:     cfg.WebhookEnqueueMaxBackoff,
+		Metrics:        webhookMetrics,
+		BaseInserter:   riverClient,
+	})
+
 	webhookProvider := service.NewWebhookProvider(
-		riverClient, webhooksRepo,
+		webhookInserter, webhooksRepo,
 		cfg.WebhookDeliveryMaxAttempts, cfg.WebhookMaxFanOutPerEvent,
 		webhookMetrics,
 	)
@@ -303,7 +314,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		messageManager.RegisterProvider(embeddingProv)
 	}
 
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount, cfg.WebhookURLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
@@ -311,7 +322,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	server := newHTTPServer(
 		cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, searchHandler,
-		meterProvider, tracerProvider,
+		meterProvider, tracerProvider, metrics,
 	)
 
 	return &App{
@@ -327,7 +338,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 }
 
 // newHTTPServer builds the HTTP server and muxes (no auth on /health, API key on /v1/).
-// Handler chain: RequestID -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
+// Handler chain: RequestID -> MaxBody -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
 func newHTTPServer(
 	cfg *config.Config,
 	health *handlers.HealthHandler,
@@ -336,6 +347,7 @@ func newHTTPServer(
 	search *handlers.SearchHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
+	metrics *observability.Metrics,
 ) *http.Server {
 	public := http.NewServeMux()
 	public.HandleFunc("GET /health", health.Check)
@@ -380,6 +392,13 @@ func newHTTPServer(
 	// Logging runs inside otelhttp so r.Context() has the span when we log (trace_id/span_id in access logs).
 	inner := middleware.Logging(mux)
 	handler := otelhttp.NewHandler(inner, "hub-api", otelOpts...)
+
+	var apiMetrics observability.APIMetrics
+	if metrics != nil {
+		apiMetrics = metrics.API
+	}
+
+	handler = middleware.MaxBody(cfg.MaxRequestBodyBytes, apiMetrics)(handler)
 	handler = middleware.RequestID(handler)
 
 	const (

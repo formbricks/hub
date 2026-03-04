@@ -23,9 +23,6 @@ var (
 	ErrWebhookNon2xx = errors.New("webhook returned non-2xx status")
 )
 
-// HTTP client timeout for webhook delivery.
-const webhookHTTPTimeout = 15 * time.Second
-
 // WebhookSender sends a single webhook payload to an endpoint (Standard Webhooks: signing, headers, 410 handling).
 type WebhookSender interface {
 	Send(ctx context.Context, webhook *models.Webhook, payload *WebhookPayload) error
@@ -39,11 +36,11 @@ type WebhookSenderImpl struct {
 }
 
 // NewWebhookSenderImpl creates a sender that uses the given repo.
-// HTTP client uses 15s timeout and does not follow redirects.
+// httpTimeout limits how long a single HTTP POST can take; worker job timeout should exceed it by ~5s.
 // metrics may be nil when metrics are disabled.
-func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.WebhookMetrics) *WebhookSenderImpl {
+func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.WebhookMetrics, httpTimeout time.Duration) *WebhookSenderImpl {
 	client := &http.Client{
-		Timeout: webhookHTTPTimeout,
+		Timeout: httpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

@@ -64,7 +64,7 @@ func (noopPublisher) PublishEventWithChangedFields(_ context.Context, _ datatype
 
 func TestWebhooksService_CreateWebhook_InvalidSigningKey(t *testing.T) {
 	ctx := context.Background()
-	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10)
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, nil)
 
 	req := &models.CreateWebhookRequest{
 		URL:        "https://example.com/webhook",
@@ -80,11 +80,43 @@ func TestWebhooksService_CreateWebhook_InvalidSigningKey(t *testing.T) {
 
 func TestWebhooksService_UpdateWebhook_InvalidSigningKey(t *testing.T) {
 	ctx := context.Background()
-	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10)
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, nil)
 	id := uuid.Must(uuid.NewV7())
 	badKey := "bad_key"
 	req := &models.UpdateWebhookRequest{
 		SigningKey: &badKey,
+	}
+
+	_, err := svc.UpdateWebhook(ctx, id, req)
+	if !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation, got %v", err)
+	}
+}
+
+func TestWebhooksService_CreateWebhook_BlacklistedURL(t *testing.T) {
+	ctx := context.Background()
+	blacklist := map[string]struct{}{"example.com": {}}
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, blacklist)
+
+	req := &models.CreateWebhookRequest{
+		URL:        "https://example.com/webhook",
+		EventTypes: []datatypes.EventType{datatypes.FeedbackRecordCreated},
+	}
+
+	_, err := svc.CreateWebhook(ctx, req)
+	if !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation, got %v", err)
+	}
+}
+
+func TestWebhooksService_UpdateWebhook_BlacklistedURL(t *testing.T) {
+	ctx := context.Background()
+	blacklist := map[string]struct{}{"internal.local": {}}
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, blacklist)
+	id := uuid.Must(uuid.NewV7())
+	badURL := "https://internal.local/hook"
+	req := &models.UpdateWebhookRequest{
+		URL: &badURL,
 	}
 
 	_, err := svc.UpdateWebhook(ctx, id, req)

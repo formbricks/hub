@@ -18,12 +18,14 @@ type WebhookMetrics interface {
 	RecordWebhookDisabled(ctx context.Context, reason string)
 	RecordDispatchError(ctx context.Context, reason string)
 	RecordWebhookDeliveryDuration(ctx context.Context, duration time.Duration, eventType, status string)
+	RecordEnqueueRetry(ctx context.Context)
 }
 
 // webhookMetrics implements WebhookMetrics.
 type webhookMetrics struct {
 	jobsEnqueued     metric.Int64Counter
 	providerErrors   metric.Int64Counter
+	enqueueRetries   metric.Int64Counter
 	deliveries       metric.Int64Counter
 	disabled         metric.Int64Counter
 	dispatchErrors   metric.Int64Counter
@@ -51,6 +53,14 @@ func NewWebhookMetrics(meter metric.Meter) (WebhookMetrics, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create webhook provider errors counter: %w", err)
+	}
+
+	enqueueRetries, err := meter.Int64Counter(
+		MetricNameWebhookEnqueueRetries,
+		metric.WithDescription("Total webhook enqueue retries (InsertMany retried after failure)"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create webhook enqueue retries counter: %w", err)
 	}
 
 	deliveries, err := meter.Int64Counter(
@@ -89,11 +99,16 @@ func NewWebhookMetrics(meter metric.Meter) (WebhookMetrics, error) {
 	return &webhookMetrics{
 		jobsEnqueued:     jobsEnqueued,
 		providerErrors:   providerErrors,
+		enqueueRetries:   enqueueRetries,
 		deliveries:       deliveries,
 		disabled:         disabled,
 		dispatchErrors:   dispatchErrors,
 		deliveryDuration: deliveryDuration,
 	}, nil
+}
+
+func (wm *webhookMetrics) RecordEnqueueRetry(ctx context.Context) {
+	wm.enqueueRetries.Add(ctx, 1)
 }
 
 func (wm *webhookMetrics) RecordJobsEnqueued(ctx context.Context, eventType string, count int64) {

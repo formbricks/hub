@@ -10,24 +10,27 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
-// WebhooksRepository handles data access for webhooks.
-type WebhooksRepository struct {
-	db *pgxpool.Pool
+// DBWebhooksRepository is the database implementation of webhook data access.
+// The interface is defined in service (WebhooksRepository); this struct implements it.
+type DBWebhooksRepository struct {
+	db      *pgxpool.Pool
+	sfGroup singleflight.Group
 }
 
-// NewWebhooksRepository creates a new webhooks repository.
-func NewWebhooksRepository(db *pgxpool.Pool) *WebhooksRepository {
-	return &WebhooksRepository{db: db}
+// NewDBWebhooksRepository creates a new DB webhooks repository.
+func NewDBWebhooksRepository(db *pgxpool.Pool) *DBWebhooksRepository {
+	return &DBWebhooksRepository{db: db}
 }
 
 // Create inserts a new webhook.
-func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+func (r *DBWebhooksRepository) Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -72,38 +75,18 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 	return &webhook, nil
 }
 
-// GetByID retrieves a single webhook by ID.
-func (r *WebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
-	query := `
-		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
-		FROM webhooks
-		WHERE id = $1
-	`
+// GetByID retrieves a single webhook by ID. Concurrent requests for the same ID are coalesced via singleflight.
+func (r *DBWebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
+	key := id.String()
 
-	var (
-		webhook      models.Webhook
-		dbEventTypes []string
-	)
-
-	err := r.db.QueryRow(ctx, query, id).Scan(
-		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
-		&webhook.DisabledReason, &webhook.DisabledAt,
-	)
+	val, err, _ := r.sfGroup.Do(key, func() (any, error) {
+		return r.getByIDDirect(ctx, id)
+	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
-		}
-
-		return nil, fmt.Errorf("failed to get webhook: %w", err)
+		return nil, err //nolint:wrapcheck // pass through repo errors
 	}
 
-	webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
-	if err != nil {
-		return nil, err
-	}
-
-	return &webhook, nil
+	return val.(*models.Webhook), nil
 }
 
 // buildWebhookFilterConditions builds WHERE clause conditions and arguments from filters.
@@ -134,7 +117,7 @@ const webhooksListSelect = `
 
 // List retrieves webhooks with optional filters.
 // Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
-func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, bool, error) {
+func (r *DBWebhooksRepository) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, bool, error) {
 	query := webhooksListSelect
 
 	whereClause, args := buildWebhookFilterConditions(filters)
@@ -168,7 +151,7 @@ func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebho
 // ListAfterCursor retrieves webhooks after the given keyset cursor (created_at, id).
 // Order is created_at DESC, id ASC. The cursor represents the last row of the previous page.
 // Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
-func (r *WebhooksRepository) ListAfterCursor(
+func (r *DBWebhooksRepository) ListAfterCursor(
 	ctx context.Context, filters *models.ListWebhooksFilters, cursorCreatedAt time.Time, cursorID uuid.UUID,
 ) ([]models.Webhook, bool, error) {
 	query := webhooksListSelect
@@ -214,7 +197,7 @@ func (r *WebhooksRepository) ListAfterCursor(
 }
 
 // Count returns the total count of webhooks matching the filters.
-func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error) {
+func (r *DBWebhooksRepository) Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error) {
 	query := `SELECT COUNT(*) FROM webhooks`
 
 	whereClause, args := buildWebhookFilterConditions(filters)
@@ -231,7 +214,7 @@ func (r *WebhooksRepository) Count(ctx context.Context, filters *models.ListWebh
 }
 
 // Update updates an existing webhook.
-func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+func (r *DBWebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	var (
 		updates []string
 		args    []any
@@ -299,7 +282,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 	}
 
 	if len(updates) == 0 {
-		return r.GetByID(ctx, id)
+		return r.getByIDDirect(ctx, id)
 	}
 
 	updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
@@ -342,7 +325,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 }
 
 // Delete removes a webhook.
-func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *DBWebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM webhooks WHERE id = $1`
 
 	result, err := r.db.Exec(ctx, query, id)
@@ -377,7 +360,7 @@ func parseDBEventTypes(ss []string) ([]datatypes.EventType, error) {
 }
 
 // ListEnabled retrieves all enabled webhooks (unbounded; used for delivery fan-out).
-func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
+func (r *DBWebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
 	query := webhooksListSelect + ` WHERE enabled = true ORDER BY created_at DESC, id ASC`
 
 	webhooks, err := r.fetchWebhooks(ctx, query)
@@ -390,7 +373,56 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 
 // ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
 // Order is deterministic (ORDER BY id) so delivery behavior is consistent.
-func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
+// Concurrent requests for the same event type are coalesced via singleflight.
+func (r *DBWebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
+	key := "list:" + eventType
+
+	val, err, _ := r.sfGroup.Do(key, func() (any, error) {
+		return r.listEnabledForEventTypeDirect(ctx, eventType)
+	})
+	if err != nil {
+		return nil, err //nolint:wrapcheck // pass through repo errors
+	}
+
+	return val.([]models.Webhook), nil
+}
+
+// getByIDDirect performs the actual DB query; used by GetByID (via singleflight) and Update (to avoid re-entry).
+func (r *DBWebhooksRepository) getByIDDirect(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
+	query := `
+		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
+		FROM webhooks
+		WHERE id = $1
+	`
+
+	var (
+		webhook      models.Webhook
+		dbEventTypes []string
+	)
+
+	err := r.db.QueryRow(ctx, query, id).Scan(
+		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
+		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+		&webhook.DisabledReason, &webhook.DisabledAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
+		}
+
+		return nil, fmt.Errorf("failed to get webhook: %w", err)
+	}
+
+	webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
+	if err != nil {
+		return nil, err
+	}
+
+	return &webhook, nil
+}
+
+// listEnabledForEventTypeDirect performs the actual DB query; used by ListEnabledForEventType via singleflight.
+func (r *DBWebhooksRepository) listEnabledForEventTypeDirect(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	query := `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
@@ -437,7 +469,7 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 }
 
 // fetchWebhooks executes the given query and scans rows into Webhook slices.
-func (r *WebhooksRepository) fetchWebhooks(ctx context.Context, query string, args ...any) ([]models.Webhook, error) {
+func (r *DBWebhooksRepository) fetchWebhooks(ctx context.Context, query string, args ...any) ([]models.Webhook, error) {
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list webhooks: %w", err)

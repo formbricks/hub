@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -35,17 +36,22 @@ type WebhooksRepository interface {
 
 // WebhooksService handles business logic for webhooks.
 type WebhooksService struct {
-	repo        WebhooksRepository
-	publisher   MessagePublisher
-	maxWebhooks int
+	repo             WebhooksRepository
+	publisher        MessagePublisher
+	maxWebhooks      int
+	urlHostBlacklist map[string]struct{}
 }
 
 // NewWebhooksService creates a new webhooks service.
-func NewWebhooksService(repo WebhooksRepository, publisher MessagePublisher, maxWebhooks int) *WebhooksService {
+// urlHostBlacklist is a set of hostnames/IPs that cannot be used as webhook URLs (SSRF mitigation); may be nil for no restriction.
+func NewWebhooksService(
+	repo WebhooksRepository, publisher MessagePublisher, maxWebhooks int, urlHostBlacklist map[string]struct{},
+) *WebhooksService {
 	return &WebhooksService{
-		repo:        repo,
-		publisher:   publisher,
-		maxWebhooks: maxWebhooks,
+		repo:             repo,
+		publisher:        publisher,
+		maxWebhooks:      maxWebhooks,
+		urlHostBlacklist: urlHostBlacklist,
 	}
 }
 
@@ -58,6 +64,10 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 
 	if count >= int64(s.maxWebhooks) {
 		return nil, huberrors.NewLimitExceededError(fmt.Sprintf("webhook limit reached (max %d)", s.maxWebhooks))
+	}
+
+	if err := validateWebhookURLHost(req.URL, s.urlHostBlacklist); err != nil {
+		return nil, err
 	}
 
 	if req.SigningKey == "" {
@@ -98,6 +108,29 @@ func validateSigningKey(key string) error {
 
 // SigningKeySize is the number of random bytes for Standard Webhooks signing keys.
 const SigningKeySize = 32
+
+// validateWebhookURLHost checks that the URL's host is not in the blacklist (SSRF mitigation).
+func validateWebhookURLHost(urlStr string, blacklist map[string]struct{}) error {
+	if len(blacklist) == 0 {
+		return nil
+	}
+
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return huberrors.NewValidationError("url", "invalid URL: "+err.Error())
+	}
+
+	host := strings.TrimSpace(strings.ToLower(u.Hostname()))
+	if host == "" {
+		return huberrors.NewValidationError("url", "URL host is empty")
+	}
+
+	if _, blocked := blacklist[host]; blocked {
+		return huberrors.NewValidationError("url", "webhook URL host is not allowed (blacklisted)")
+	}
+
+	return nil
+}
 
 // generateSigningKey generates a cryptographically secure signing key
 // in the format expected by Standard Webhooks: "whsec_" + base64(32 random bytes).
@@ -172,6 +205,12 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 
 // UpdateWebhook updates an existing webhook.
 func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+	if req.URL != nil {
+		if err := validateWebhookURLHost(*req.URL, s.urlHostBlacklist); err != nil {
+			return nil, err
+		}
+	}
+
 	if req.SigningKey != nil {
 		if err := validateSigningKey(*req.SigningKey); err != nil {
 			return nil, err

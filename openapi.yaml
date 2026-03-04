@@ -356,6 +356,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds maximum allowed size (configured via MAX_REQUEST_BODY_BYTES, default 10 MiB)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -539,6 +545,12 @@ paths:
                                             tags:
                                                 - "important"
                                                 - "follow-up"
+                "413":
+                    description: Request body exceeds maximum allowed size (configured via MAX_REQUEST_BODY_BYTES, default 10 MiB)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -627,6 +639,12 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                 "503":
                     description: Service Unavailable (embeddings are not configured)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds maximum allowed size (configured via MAX_REQUEST_BODY_BYTES, default 10 MiB)
                     content:
                         application/problem+json:
                             schema:
@@ -833,6 +851,12 @@ paths:
                             parameters:
                                 id: '$response.body#/id'
                             description: Delete the webhook by ID
+                "413":
+                    description: Request body exceeds maximum allowed size (configured via MAX_REQUEST_BODY_BYTES, default 10 MiB)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -844,7 +868,7 @@ paths:
             tags:
                 - Webhooks
             summary: Get a webhook by ID
-            description: Retrieves a single webhook endpoint by its UUID
+            description: Retrieves a single webhook endpoint by its UUID. signing_key is omitted for security.
             operationId: get-webhook
             parameters:
                 - name: id
@@ -861,7 +885,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/WebhookData'
+                                $ref: '#/components/schemas/WebhookPublicData'
                 default:
                     description: Error
                     content:
@@ -891,11 +915,17 @@ paths:
                 required: true
             responses:
                 "200":
-                    description: OK
+                    description: OK. Returns WebhookPublicData (signing_key omitted).
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/WebhookData'
+                                $ref: '#/components/schemas/WebhookPublicData'
+                "413":
+                    description: Request body exceeds maximum allowed size (configured via MAX_REQUEST_BODY_BYTES, default 10 MiB)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -1350,9 +1380,13 @@ components:
             properties:
                 data:
                     type: array
-                    description: List of webhooks
+                    description: List of webhooks (signing_key omitted for security)
                     items:
-                        $ref: '#/components/schemas/WebhookData'
+                        $ref: '#/components/schemas/WebhookPublicData'
+                total:
+                    type: integer
+                    description: Total count matching filters (present when offset-based; omitted when using cursor)
+                    format: int64
                 limit:
                     type: integer
                     description: Limit used in query
@@ -1397,6 +1431,52 @@ components:
                     description: New list of event types (use empty array to clear). Each value must be one of WebhookEventType.
                     items:
                         $ref: '#/components/schemas/WebhookEventType'
+        WebhookPublicData:
+            type: object
+            description: Webhook data for GET and LIST responses; signing_key is omitted for security
+            additionalProperties: false
+            properties:
+                id:
+                    type: string
+                    format: uuid
+                    description: Webhook ID (UUID)
+                url:
+                    type: string
+                    description: URL that receives webhook POSTs
+                enabled:
+                    type: boolean
+                    description: Whether the webhook is active
+                tenant_id:
+                    type: string
+                    description: Tenant/organization identifier
+                event_types:
+                    type: array
+                    description: Event types this webhook subscribes to (empty = all)
+                    items:
+                        $ref: '#/components/schemas/WebhookEventType'
+                created_at:
+                    type: string
+                    format: date-time
+                    description: When the webhook was created
+                updated_at:
+                    type: string
+                    format: date-time
+                    description: When the webhook was last updated
+                disabled_reason:
+                    type: string
+                    nullable: true
+                    description: Read-only. Set by the system when the webhook was disabled. Omitted when null.
+                disabled_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Read-only. When the webhook was disabled. Omitted when null.
+            required:
+                - id
+                - url
+                - enabled
+                - created_at
+                - updated_at
         WebhookData:
             type: object
             additionalProperties: false

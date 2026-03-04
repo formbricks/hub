@@ -20,7 +20,11 @@ func CleanupTestData(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL,
+		database.WithMaxConns(cfg.DatabaseMaxConns),
+		database.WithMinConns(cfg.DatabaseMinConns),
+		database.WithMaxConnLifetime(cfg.DatabaseMaxConnLifetime),
+	)
 	require.NoError(t, err)
 
 	defer db.Close()

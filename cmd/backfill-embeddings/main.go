@@ -91,7 +91,7 @@ func run() int {
 
 	embeddingModelForDB := embeddingModel
 
-	repo := repository.NewFeedbackRecordsRepository(db)
+	repo := repository.NewDBFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(

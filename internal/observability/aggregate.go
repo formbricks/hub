@@ -6,15 +6,16 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// Metrics holds all hub metric collectors (events, webhooks, embeddings, cache).
+// Metrics holds all hub metric collectors (events, webhooks, embeddings, cache, API).
 // When metrics are disabled, Metrics is nil and all fields are nil.
-// Components that accept an interface (EventMetrics, WebhookMetrics, EmbeddingMetrics, CacheMetrics)
+// Components that accept an interface (EventMetrics, WebhookMetrics, EmbeddingMetrics, CacheMetrics, APIMetrics)
 // can receive the corresponding field; they already handle nil.
 type Metrics struct {
 	Events     EventMetrics
 	Webhooks   WebhookMetrics
 	Embeddings EmbeddingMetrics
 	Cache      CacheMetrics
+	API        APIMetrics
 }
 
 // NewMetrics creates EventMetrics, WebhookMetrics, and EmbeddingMetrics from the given meter.
@@ -45,10 +46,16 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("cache metrics: %w", err)
 	}
 
+	api, err := NewAPIMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("api metrics: %w", err)
+	}
+
 	return &Metrics{
 		Events:     events,
 		Webhooks:   webhooks,
 		Embeddings: embeddings,
 		Cache:      cache,
+		API:        api,
 	}, nil
 }

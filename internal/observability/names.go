@@ -13,6 +13,7 @@ const (
 	MetricNameRiverQueueDepth         = "hub_river_queue_depth"
 	MetricNameWebhookJobsEnqueued     = "hub_webhook_jobs_enqueued_total"
 	MetricNameWebhookProviderErrors   = "hub_webhook_provider_errors_total"
+	MetricNameWebhookEnqueueRetries   = "hub_webhook_enqueue_retries_total"
 	MetricNameWebhookDeliveries       = "hub_webhook_deliveries_total"
 	MetricNameWebhookDisabled         = "hub_webhook_disabled_total"
 	MetricNameWebhookDispatchErrors   = "hub_webhook_dispatch_errors_total"
@@ -25,8 +26,9 @@ const (
 	MetricNameEmbeddingWorkerErrors   = "hub_embedding_worker_errors_total"
 	MetricNameEmbeddingDuration       = "hub_embedding_duration_seconds"
 
-	MetricNameCacheHits   = "hub_cache_hits_total"
-	MetricNameCacheMisses = "hub_cache_misses_total"
+	MetricNameCacheHits           = "hub_cache_hits_total"
+	MetricNameCacheMisses         = "hub_cache_misses_total"
+	MetricNameRequestBodyTooLarge = "hub_request_body_too_large_total"
 )
 
 // Attribute keys.

@@ -42,13 +42,14 @@ type EmbeddingsRepositoryForSearch interface {
 
 // SearchService performs semantic search and similar-feedback lookups using embeddings.
 type SearchService struct {
-	embeddingClient EmbeddingClient
-	embeddingsRepo  EmbeddingsRepositoryForSearch
-	model           string
-	queryCache      *lru.Cache[string, []float32]
-	queryLoadGroup  singleflight.Group
-	cacheMetrics    observability.CacheMetrics
-	logger          *slog.Logger
+	embeddingClient    EmbeddingClient
+	embeddingsRepo     EmbeddingsRepositoryForSearch
+	model              string
+	queryCache         *lru.Cache[string, []float32]
+	queryLoadGroup     singleflight.Group
+	embeddingLoadGroup singleflight.Group
+	cacheMetrics       observability.CacheMetrics
+	logger             *slog.Logger
 }
 
 // SearchServiceParams configures SearchService. QueryCache and CacheMetrics may be nil (no caching).
@@ -161,7 +162,12 @@ func (s *SearchService) SimilarFeedback(
 	}
 
 	// Load source embedding only if the record belongs to this tenant (tenant isolation).
-	embedding, err := s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(ctx, feedbackRecordID, s.model, tenantID)
+	// Concurrent requests for the same (recordID, model, tenantID) are coalesced via singleflight.
+	embedKey := fmt.Sprintf("%s:%s:%s", feedbackRecordID, s.model, tenantID)
+
+	embedVal, err, _ := s.embeddingLoadGroup.Do(embedKey, func() (any, error) {
+		return s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(ctx, feedbackRecordID, s.model, tenantID)
+	})
 	if err != nil {
 		if errors.Is(err, repository.ErrEmbeddingNotFound) {
 			s.logger.Debug("similar feedback: no embedding or tenant mismatch",
@@ -174,6 +180,8 @@ func (s *SearchService) SimilarFeedback(
 
 		return out, fmt.Errorf("get embedding: %w", err)
 	}
+
+	embedding := embedVal.([]float32)
 
 	var (
 		results []models.FeedbackRecordWithScore

@@ -56,19 +56,23 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	require.NoError(t, err, "Failed to load configuration")
 
 	// Initialize database connection
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL,
+		database.WithMaxConns(cfg.DatabaseMaxConns),
+		database.WithMinConns(cfg.DatabaseMinConns),
+		database.WithMaxConnLifetime(cfg.DatabaseMaxConnLifetime),
+	)
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize message publisher manager for tests (no providers required)
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, nil)
 
 	// Webhooks
-	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
+	webhooksRepo := repository.NewDBWebhooksRepository(db)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount, cfg.WebhookURLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
-	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	feedbackRecordsRepo := repository.NewDBFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
@@ -104,6 +108,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	var protectedHandler http.Handler = protectedMux
 
+	protectedHandler = middleware.MaxBody(cfg.MaxRequestBodyBytes, nil)(protectedHandler)
 	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
 
 	// Combine both handlers
@@ -988,7 +993,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	defer db.Close()
 
-	repo := repository.NewFeedbackRecordsRepository(db)
+	repo := repository.NewDBFeedbackRecordsRepository(db)
 	userID := "repo-bulk-delete-user"
 	sourceType := "formbricks"
 
@@ -1076,13 +1081,15 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, getResp.StatusCode)
 
-	var got models.Webhook
+	var got map[string]any
 
-	err = decodeData(getResp, &got)
+	err = json.NewDecoder(getResp.Body).Decode(&got)
 	require.NoError(t, err)
 	require.NoError(t, getResp.Body.Close())
-	assert.Equal(t, created.ID, got.ID)
-	assert.Equal(t, created.URL, got.URL)
+	assert.Equal(t, created.ID.String(), got["id"])
+	assert.Equal(t, created.URL, got["url"])
+	_, hasSigningKey := got["signing_key"]
+	assert.False(t, hasSigningKey, "GET response must not include signing_key")
 
 	// List webhooks
 	listReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/webhooks", http.NoBody)
@@ -1092,12 +1099,29 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, listResp.StatusCode)
 
-	var listResult models.ListWebhooksResponse
+	var listRaw map[string]any
 
-	err = decodeData(listResp, &listResult)
+	err = json.NewDecoder(listResp.Body).Decode(&listRaw)
 	require.NoError(t, err)
 	require.NoError(t, listResp.Body.Close())
-	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	data, ok := listRaw["data"].([]any)
+	require.True(t, ok)
+
+	totalVal, hasTotal := listRaw["total"]
+	if hasTotal {
+		assert.GreaterOrEqual(t, int(totalVal.(float64)), 1)
+	}
+
+	assert.GreaterOrEqual(t, len(data), 1)
+	// signing_key must not be in LIST response (redacted for security)
+	for i, item := range data {
+		itemMap, ok := item.(map[string]any)
+		require.True(t, ok)
+
+		_, hasSigningKey := itemMap["signing_key"]
+		assert.False(t, hasSigningKey, "LIST response item %d must not include signing_key", i)
+	}
 
 	// Test invalid cursor returns 400
 	invalidCursorReq, err := http.NewRequestWithContext(
@@ -1129,7 +1153,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
 
-	var updated models.Webhook
+	var updated models.WebhookPublic
 
 	err = decodeData(updateResp, &updated)
 	require.NoError(t, err)
@@ -1153,7 +1177,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
 
-	var afterClear models.Webhook
+	var afterClear models.WebhookPublic
 
 	err = decodeData(clearTenantResp, &afterClear)
 	require.NoError(t, err)
@@ -1258,4 +1282,69 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	require.NoError(t, updateResp.Body.Close())
 	require.Len(t, updateProblem.Errors, 1)
 	assert.Equal(t, "signing_key", updateProblem.Errors[0].Location)
+}
+
+// TestWebhookURLBlacklist asserts that webhook URLs with blacklisted hosts are rejected.
+func TestWebhookURLBlacklist(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+
+	// Create with blacklisted host (localhost is in default blacklist)
+	createBody := map[string]any{
+		"url":         "https://localhost/webhook",
+		"event_types": []string{"feedback_record.created"},
+	}
+	body, err := json.Marshal(createBody)
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	createResp, err := client.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, createResp.StatusCode)
+
+	var problem response.ProblemDetails
+
+	err = json.NewDecoder(createResp.Body).Decode(&problem)
+	require.NoError(t, err)
+	require.NoError(t, createResp.Body.Close())
+	require.Len(t, problem.Errors, 1)
+	assert.Equal(t, "url", problem.Errors[0].Location)
+	assert.Contains(t, problem.Errors[0].Message, "blacklisted")
+}
+
+// TestRequestBodyTooLarge asserts that requests with body exceeding MAX_REQUEST_BODY_BYTES return 413.
+func TestRequestBodyTooLarge(t *testing.T) {
+	t.Setenv("MAX_REQUEST_BODY_BYTES", "100")
+
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+
+	// Body > 100 bytes
+	largeBody := bytes.Repeat([]byte("x"), 150)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(largeBody))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/problem+json")
+
+	var problem response.ProblemDetails
+
+	err = json.NewDecoder(resp.Body).Decode(&problem)
+	require.NoError(t, err)
+	assert.Equal(t, "Request Entity Too Large", problem.Title)
+	assert.Contains(t, problem.Detail, "exceeds maximum")
 }

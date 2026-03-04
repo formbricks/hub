@@ -52,6 +52,34 @@ type Config struct {
 	// Max total webhooks allowed (creation rejected when count >= this); default 500
 	WebhookMaxCount int
 
+	// Webhook delivery: HTTP client timeout for each POST; default 15s. Job timeout = this + 5s.
+	WebhookHTTPTimeout time.Duration
+
+	// Webhook enqueue: retries when InsertMany fails (transient River/DB errors). Defaults: 3, 100ms, 2s.
+	WebhookEnqueueMaxRetries     int           // Number of retries after first attempt
+	WebhookEnqueueInitialBackoff time.Duration // First backoff
+	WebhookEnqueueMaxBackoff     time.Duration // Max backoff cap
+
+	// Max request body size in bytes (global limit); default 10 MiB. Prevents OOM and DoS from large bodies.
+	MaxRequestBodyBytes int64
+
+	// Database connection pool: max connections; default 25
+	DatabaseMaxConns int
+	// Database connection pool: min connections to keep open; default 0
+	DatabaseMinConns int
+	// Database connection pool: max lifetime of a connection before it is closed; default 1h
+	DatabaseMaxConnLifetime time.Duration
+	// Database connection pool: max idle time before closing a connection; default 30m
+	DatabaseMaxConnIdleTime time.Duration
+	// Database connection pool: interval between health checks of idle connections; default 1m
+	DatabaseHealthCheckPeriod time.Duration
+	// Database connection: timeout when establishing a new connection; default 10s
+	DatabaseConnectTimeout time.Duration
+
+	// WebhookURLBlacklist: hosts (and IPs) that cannot be used as webhook endpoints (SSRF mitigation).
+	// Loaded from WEBHOOK_BLACKLIST (comma-separated). Defaults to localhost, 127.0.0.1, ::1.
+	WebhookURLBlacklist map[string]struct{}
+
 	// Embeddings: optional. Enabled only when both EMBEDDING_PROVIDER and EMBEDDING_MODEL are set and provider is supported.
 	EmbeddingProviderAPIKey string
 	// Embeddings: provider name (e.g. openai, google); env EMBEDDING_PROVIDER. Required (with EmbeddingModel) to enable embeddings.
@@ -96,6 +124,21 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return value
 }
 
+// getEnvAsInt64 retrieves an environment variable as int64 or returns a default value.
+func getEnvAsInt64(key string, defaultValue int64) int64 {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+
+	value, err := strconv.ParseInt(valueStr, 10, 64)
+	if err != nil {
+		return defaultValue
+	}
+
+	return value
+}
+
 // GetEnvAsBool retrieves an environment variable as a boolean. "true", "1", "yes" (case-insensitive) => true; else false.
 // Exported so other cmd packages (e.g. backfill-embeddings) can reuse it without duplicating logic.
 func GetEnvAsBool(key string, defaultValue bool) bool {
@@ -124,16 +167,29 @@ func Load() (*Config, error) {
 		slog.Warn("Failed to load .env file", "error", err)
 	}
 
+	webhookBlacklist := parseWebhookURLBlacklist(getEnv("WEBHOOK_BLACKLIST", "localhost,127.0.0.1,::1"))
+
 	const (
-		defaultWebhookDeliveryMaxConcurrent    = 100
-		defaultWebhookDeliveryMaxAttempts      = 3
-		defaultWebhookMaxFanOutPerEvent        = 500
-		defaultMessagePublisherQueueMaxSize    = 16384
-		defaultMessagePublisherPerEventTimeout = 10
-		defaultShutdownTimeoutSeconds          = 30
-		defaultWebhookMaxCount                 = 500
-		defaultEmbeddingMaxConcurrent          = 5
-		defaultEmbeddingMaxAttempts            = 3
+		defaultWebhookDeliveryMaxConcurrent     = 100
+		defaultWebhookDeliveryMaxAttempts       = 3
+		defaultWebhookMaxFanOutPerEvent         = 500
+		defaultMessagePublisherQueueMaxSize     = 16384
+		defaultMessagePublisherPerEventTimeout  = 10
+		defaultShutdownTimeoutSeconds           = 30
+		defaultWebhookMaxCount                  = 500
+		defaultWebhookHTTPTimeoutSeconds        = 15
+		defaultWebhookEnqueueMaxRetries         = 3
+		defaultWebhookEnqueueInitialBackoffMs   = 100
+		defaultWebhookEnqueueMaxBackoffMs       = 2000
+		defaultEmbeddingMaxConcurrent           = 5
+		defaultEmbeddingMaxAttempts             = 3
+		defaultMaxRequestBodyBytes              = 10 * 1024 * 1024 // 10 MiB
+		defaultDatabaseMaxConns                 = 25
+		defaultDatabaseMinConns                 = 0
+		defaultDatabaseMaxConnLifetimeSeconds   = 3600 // 1 hour
+		defaultDatabaseMaxConnIdleTimeSeconds   = 1800 // 30 minutes
+		defaultDatabaseHealthCheckPeriodSeconds = 60   // 1 minute
+		defaultDatabaseConnectTimeoutSeconds    = 10
 	)
 
 	apiKey := os.Getenv("API_KEY")
@@ -176,6 +232,75 @@ func Load() (*Config, error) {
 		return nil, ErrWebhookMaxCount
 	}
 
+	webhookHTTPTimeoutSecs := getEnvAsInt("WEBHOOK_HTTP_TIMEOUT_SECONDS", defaultWebhookHTTPTimeoutSeconds)
+	if webhookHTTPTimeoutSecs <= 0 {
+		webhookHTTPTimeoutSecs = defaultWebhookHTTPTimeoutSeconds
+	}
+
+	webhookHTTPTimeout := time.Duration(webhookHTTPTimeoutSecs) * time.Second
+
+	webhookEnqueueMaxRetries := getEnvAsInt("WEBHOOK_ENQUEUE_MAX_RETRIES", defaultWebhookEnqueueMaxRetries)
+	if webhookEnqueueMaxRetries < 0 {
+		webhookEnqueueMaxRetries = defaultWebhookEnqueueMaxRetries
+	}
+
+	webhookEnqueueInitialBackoff := time.Duration(
+		getEnvAsInt("WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS", defaultWebhookEnqueueInitialBackoffMs),
+	) * time.Millisecond
+	if webhookEnqueueInitialBackoff <= 0 {
+		webhookEnqueueInitialBackoff = defaultWebhookEnqueueInitialBackoffMs * time.Millisecond
+	}
+
+	webhookEnqueueMaxBackoffMs := getEnvAsInt("WEBHOOK_ENQUEUE_MAX_BACKOFF_MS", defaultWebhookEnqueueMaxBackoffMs)
+	if webhookEnqueueMaxBackoffMs <= 0 {
+		webhookEnqueueMaxBackoffMs = defaultWebhookEnqueueMaxBackoffMs
+	}
+
+	webhookEnqueueMaxBackoff := max(time.Duration(webhookEnqueueMaxBackoffMs)*time.Millisecond, webhookEnqueueInitialBackoff)
+
+	maxRequestBodyBytes := getEnvAsInt64("MAX_REQUEST_BODY_BYTES", defaultMaxRequestBodyBytes)
+	if maxRequestBodyBytes <= 0 {
+		maxRequestBodyBytes = defaultMaxRequestBodyBytes
+	}
+
+	databaseMaxConns := getEnvAsInt("DATABASE_MAX_CONNS", defaultDatabaseMaxConns)
+	if databaseMaxConns <= 0 {
+		databaseMaxConns = defaultDatabaseMaxConns
+	}
+
+	databaseMinConns := getEnvAsInt("DATABASE_MIN_CONNS", defaultDatabaseMinConns)
+	if databaseMinConns < 0 {
+		databaseMinConns = defaultDatabaseMinConns
+	}
+
+	databaseMaxConnLifetimeSecs := getEnvAsInt("DATABASE_MAX_CONN_LIFETIME_SECONDS", defaultDatabaseMaxConnLifetimeSeconds)
+	if databaseMaxConnLifetimeSecs <= 0 {
+		databaseMaxConnLifetimeSecs = defaultDatabaseMaxConnLifetimeSeconds
+	}
+
+	databaseMaxConnLifetime := time.Duration(databaseMaxConnLifetimeSecs) * time.Second
+
+	databaseMaxConnIdleTimeSecs := getEnvAsInt("DATABASE_MAX_CONN_IDLE_TIME_SECONDS", defaultDatabaseMaxConnIdleTimeSeconds)
+	if databaseMaxConnIdleTimeSecs <= 0 {
+		databaseMaxConnIdleTimeSecs = defaultDatabaseMaxConnIdleTimeSeconds
+	}
+
+	databaseMaxConnIdleTime := time.Duration(databaseMaxConnIdleTimeSecs) * time.Second
+
+	databaseHealthCheckPeriodSecs := getEnvAsInt("DATABASE_HEALTH_CHECK_PERIOD_SECONDS", defaultDatabaseHealthCheckPeriodSeconds)
+	if databaseHealthCheckPeriodSecs <= 0 {
+		databaseHealthCheckPeriodSecs = defaultDatabaseHealthCheckPeriodSeconds
+	}
+
+	databaseHealthCheckPeriod := time.Duration(databaseHealthCheckPeriodSecs) * time.Second
+
+	databaseConnectTimeoutSecs := getEnvAsInt("DATABASE_CONNECT_TIMEOUT_SECONDS", defaultDatabaseConnectTimeoutSeconds)
+	if databaseConnectTimeoutSecs <= 0 {
+		databaseConnectTimeoutSecs = defaultDatabaseConnectTimeoutSeconds
+	}
+
+	databaseConnectTimeout := time.Duration(databaseConnectTimeoutSecs) * time.Second
+
 	embeddingMaxConcurrent := getEnvAsInt("EMBEDDING_MAX_CONCURRENT", defaultEmbeddingMaxConcurrent)
 	if embeddingMaxConcurrent <= 0 {
 		embeddingMaxConcurrent = defaultEmbeddingMaxConcurrent
@@ -199,6 +324,21 @@ func Load() (*Config, error) {
 		MessagePublisherPerEventTimeout: time.Duration(perEventTimeoutSecs) * time.Second,
 		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
 		WebhookMaxCount:                 webhookMaxCount,
+		WebhookHTTPTimeout:              webhookHTTPTimeout,
+
+		WebhookEnqueueMaxRetries:     webhookEnqueueMaxRetries,
+		WebhookEnqueueInitialBackoff: webhookEnqueueInitialBackoff,
+		WebhookEnqueueMaxBackoff:     webhookEnqueueMaxBackoff,
+
+		MaxRequestBodyBytes:       maxRequestBodyBytes,
+		DatabaseMaxConns:          databaseMaxConns,
+		DatabaseMinConns:          databaseMinConns,
+		DatabaseMaxConnLifetime:   databaseMaxConnLifetime,
+		DatabaseMaxConnIdleTime:   databaseMaxConnIdleTime,
+		DatabaseHealthCheckPeriod: databaseHealthCheckPeriod,
+		DatabaseConnectTimeout:    databaseConnectTimeout,
+
+		WebhookURLBlacklist: webhookBlacklist,
 
 		EmbeddingProviderAPIKey: getEnv("EMBEDDING_PROVIDER_API_KEY", ""),
 		EmbeddingProvider:       getEnv("EMBEDDING_PROVIDER", ""),
@@ -212,4 +352,20 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseWebhookURLBlacklist parses a comma-separated list of hosts into a map for O(1) lookups.
+// Each host is normalized (trimmed, lowercased). Empty entries are ignored.
+func parseWebhookURLBlacklist(s string) map[string]struct{} {
+	out := make(map[string]struct{})
+
+	parts := strings.SplitSeq(s, ",")
+	for p := range parts {
+		h := strings.TrimSpace(strings.ToLower(p))
+		if h != "" {
+			out[h] = struct{}{}
+		}
+	}
+
+	return out
 }
