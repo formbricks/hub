@@ -376,19 +376,16 @@ func parseDBEventTypes(ss []string) ([]datatypes.EventType, error) {
 	return out, nil
 }
 
-// ListEnabled retrieves all enabled webhooks.
+// ListEnabled retrieves all enabled webhooks (unbounded; used for delivery fan-out).
 func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
-	filters := &models.ListWebhooksFilters{
-		Enabled: func() *bool {
-			b := true
+	query := webhooksListSelect + ` WHERE enabled = true ORDER BY created_at DESC, id ASC`
 
-			return &b
-		}(),
+	webhooks, err := r.fetchWebhooks(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled webhooks: %w", err)
 	}
 
-	webhooks, _, err := r.List(ctx, filters)
-
-	return webhooks, err
+	return webhooks, nil
 }
 
 // ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
