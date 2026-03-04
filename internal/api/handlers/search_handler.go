@@ -18,7 +18,7 @@ import (
 
 // SearchService defines the interface for semantic search and similar feedback.
 type SearchService interface {
-	SemanticSearch(ctx context.Context, query, tenantID string, topK, offset int, minScore float64, cursor string) (
+	SemanticSearch(ctx context.Context, query, tenantID string, limit, offset int, minScore float64, cursor string) (
 		service.SearchResult, error)
 	SimilarFeedback(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit, offset int,
 		minScore float64, cursor string) (service.SearchResult, error)
@@ -37,13 +37,13 @@ func NewSearchHandler(service SearchService) *SearchHandler {
 // SemanticSearchRequest is the body for POST /v1/feedback-records/search/semantic (snake_case for consistency with data model).
 type SemanticSearchRequest struct {
 	Query    string `json:"query"`
-	TopK     int    `json:"top_k"`
 	TenantID string `json:"tenant_id"`
 }
 
-// SemanticSearchResponse is the response for semantic search and similar feedback.
+// SemanticSearchResponse is the response for semantic search and similar feedback (consistent with list endpoints: data, limit).
 type SemanticSearchResponse struct {
-	Results    []SemanticSearchResultItem `json:"results"`
+	Data       []SemanticSearchResultItem `json:"data"`
+	Limit      int                        `json:"limit"`
 	NextCursor string                     `json:"next_cursor,omitempty"`
 }
 
@@ -61,7 +61,11 @@ type SemanticSearchResultItem struct {
 // To support deeper paging without this limit, switch to cursor-based (keyset) pagination:
 // return a cursor (e.g. last score + last feedback_record_id), and query WHERE (score, id) after cursor
 // instead of OFFSET.
-const maxSearchOffset = 1000
+const (
+	maxSearchOffset    = 1000
+	defaultSearchLimit = 10
+	maxSearchLimit     = 100
+)
 
 // SemanticSearch handles POST /v1/feedback-records/search/semantic.
 func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
@@ -94,15 +98,7 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	topK := req.TopK
-	if topK <= 0 {
-		topK = 10
-	}
-
-	const maxTopK = 100
-	if topK > maxTopK {
-		topK = maxTopK
-	}
+	limit := parseLimit(r.URL.Query().Get("limit"), defaultSearchLimit, maxSearchLimit)
 
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
 
@@ -113,7 +109,7 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 
 	minScore := parseMinScore(r.URL.Query().Get("min_score"))
 
-	res, err := h.service.SemanticSearch(r.Context(), req.Query, req.TenantID, topK, offset, minScore, cursor)
+	res, err := h.service.SemanticSearch(r.Context(), req.Query, req.TenantID, limit, offset, minScore, cursor)
 	if err != nil {
 		if errors.Is(err, service.ErrMissingTenantID) {
 			response.RespondBadRequest(w, "tenant_id is required")
@@ -139,7 +135,8 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.RespondJSON(w, http.StatusOK, SemanticSearchResponse{
-		Results:    toResultItems(res.Results),
+		Data:       toResultItems(res.Results),
+		Limit:      limit,
 		NextCursor: res.NextCursor,
 	})
 }
@@ -179,16 +176,7 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	topKStr := r.URL.Query().Get("top_k")
-	limit := 10
-
-	const maxSimilarLimit = 100
-
-	if topKStr != "" {
-		if l, err := strconv.Atoi(topKStr); err == nil && l > 0 {
-			limit = min(l, maxSimilarLimit)
-		}
-	}
+	limit := parseLimit(r.URL.Query().Get("limit"), defaultSearchLimit, maxSearchLimit)
 
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
 
@@ -225,9 +213,24 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	response.RespondJSON(w, http.StatusOK, SemanticSearchResponse{
-		Results:    toResultItems(res.Results),
+		Data:       toResultItems(res.Results),
+		Limit:      limit,
 		NextCursor: res.NextCursor,
 	})
+}
+
+// parseLimit returns the query param as int clamped to [1, upperBound]; default def when param is missing or invalid.
+func parseLimit(s string, def, upperBound int) int {
+	if s == "" {
+		return def
+	}
+
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return def
+	}
+
+	return min(n, upperBound)
 }
 
 // parseOffset returns the query param "offset" as a non-negative int; default 0.

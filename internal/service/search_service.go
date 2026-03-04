@@ -82,7 +82,7 @@ func NewSearchService(p SearchServiceParams) *SearchService {
 // keyset paging (offset is ignored); otherwise offset is used. minScore is the minimum similarity score (0..1).
 // NextCursor is set when there may be a next page (full page returned).
 func (s *SearchService) SemanticSearch(
-	ctx context.Context, query, tenantID string, topK, offset int, minScore float64, cursor string,
+	ctx context.Context, query, tenantID string, limit, offset int, minScore float64, cursor string,
 ) (SearchResult, error) {
 	out := SearchResult{}
 	if tenantID == "" {
@@ -106,7 +106,7 @@ func (s *SearchService) SemanticSearch(
 	}
 
 	if err != nil {
-		s.logger.Error("semantic search: create embedding failed", "error", err, "model", s.model, "topK", topK)
+		s.logger.Error("semantic search: create embedding failed", "error", err, "model", s.model, "limit", limit)
 
 		return out, fmt.Errorf("create embedding: %w", err)
 	}
@@ -120,9 +120,9 @@ func (s *SearchService) SemanticSearch(
 		}
 
 		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbeddingAfterCursor(
-			ctx, s.model, embedding, tenantID, topK, lastDistance, lastID, nil, minScore)
+			ctx, s.model, embedding, tenantID, limit, lastDistance, lastID, nil, minScore)
 	} else {
-		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(ctx, s.model, embedding, tenantID, topK, offset, nil, minScore)
+		results, err = s.embeddingsRepo.NearestFeedbackRecordsByEmbedding(ctx, s.model, embedding, tenantID, limit, offset, nil, minScore)
 	}
 
 	if err != nil {
@@ -132,7 +132,7 @@ func (s *SearchService) SemanticSearch(
 	}
 
 	out.Results = results
-	if len(results) == topK {
+	if len(results) == limit {
 		last := results[len(results)-1]
 
 		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)

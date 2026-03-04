@@ -563,6 +563,14 @@ paths:
                 Request body must include query and tenant_id (required for tenant isolation).
             operationId: semantic-search-feedback-records
             parameters:
+                - name: limit
+                  in: query
+                  description: Number of results to return (default 10, max 100). Consistent with list endpoints.
+                  schema:
+                    type: integer
+                    default: 10
+                    minimum: 1
+                    maximum: 100
                 - name: offset
                   in: query
                   description: Number of results to skip (OFFSET-based paging). Ignored if cursor is set. Capped at 1000 for performance.
@@ -595,7 +603,6 @@ paths:
                         example:
                             query: "What do users think about login speed?"
                             tenant_id: "org-123"
-                            top_k: 10
                 required: true
             responses:
                 "200":
@@ -648,9 +655,9 @@ paths:
                   schema:
                     type: string
                     minLength: 1
-                - name: top_k
+                - name: limit
                   in: query
-                  description: Maximum number of similar records to return (default 10, max 100)
+                  description: Number of results to return (default 10, max 100). Consistent with list endpoints.
                   schema:
                     type: integer
                     default: 10
@@ -937,12 +944,6 @@ components:
                     type: string
                     minLength: 1
                     description: Search query text (embedded and compared via cosine similarity)
-                top_k:
-                    type: integer
-                    description: Maximum number of results (default 10, max 100)
-                    default: 10
-                    minimum: 1
-                    maximum: 100
                 tenant_id:
                     type: string
                     minLength: 1
@@ -956,18 +957,22 @@ components:
             type: object
             additionalProperties: false
             properties:
-                results:
+                data:
                     type: array
                     maxItems: 100
-                    description: List of feedback record IDs with similarity scores (0 = unrelated, 1 = identical)
+                    description: List of feedback record IDs with similarity scores (0 = unrelated, 1 = identical). Consistent with list endpoints.
                     items:
                         $ref: '#/components/schemas/SemanticSearchResultItem'
+                limit:
+                    type: integer
+                    description: Limit used in query (echoed for consistency with list endpoints)
                 next_cursor:
                     type: string
                     description: Opaque cursor for the next page (keyset paging). Present only when there may be more results (full page returned). Omit when no next page. Use this exact value as the cursor query param for the next page.
                     example: "eyJkIjowLjEsImkiOiIwMThlMTIzNC01Njc4LTlhYmMtZGVmMC0xMTExMTExMTExMTEifQ=="
             required:
-                - results
+                - data
+                - limit
         SemanticSearchResultItem:
             type: object
             additionalProperties: false
