@@ -106,14 +106,14 @@ jobs:
 
       - name: Run River migrations
         run: |
-          go install github.com/riverqueue/river/cmd/river@latest
+          go install github.com/riverqueue/river/cmd/river@v0.30.2
           make river-migrate
 
       - name: Run integration tests
         run: make tests
 
   coverage:
-    name: Coverage (≥16%)
+    name: Coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -166,10 +166,10 @@ jobs:
 
       - name: Run River migrations
         run: |
-          go install github.com/riverqueue/river/cmd/river@latest
+          go install github.com/riverqueue/river/cmd/river@v0.30.2
           make river-migrate
 
-      - name: Check coverage (≥16%, excludes cmd/api)
+      - name: Check coverage (excludes cmd/api)
         run: make check-coverage
 
   tests:

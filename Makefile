@@ -17,7 +17,7 @@ help:
 	@echo "  make tests            - Run integration tests"
 	@echo "  make test-all         - Run all tests (unit + integration)"
 	@echo "  make tests-coverage   - Run tests with coverage report"
-	@echo "  make check-coverage   - Run tests and fail if coverage < 16% (excludes cmd/api)"
+	@echo "  make check-coverage   - Run tests and fail if coverage below COVERAGE_THRESHOLD (excludes cmd/api)"
 	@echo "  make init-db          - Initialize database schema (run migrations with goose)"
 	@echo "  make migrate-status   - Show migration status"
 	@echo "  make migrate-validate - Validate migration files (no DB)"
@@ -50,10 +50,10 @@ test-all: test-unit tests
 	@echo "All tests passed!"
 
 # Run tests with coverage (unit + integration).
-# cmd/api (app.go, main.go) is excluded—coverage is for internal/ and tests/ only.
+# cmd/api (app.go, main.go) is excluded—coverage is for internal/, pkg/, and tests/.
 tests-coverage:
 	@echo "Running tests with coverage..."
-	go test ./internal/... ./tests/... -v -cover -coverprofile=coverage.out
+	go test ./internal/... ./pkg/... ./tests/... -v -cover -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
@@ -61,10 +61,10 @@ tests-coverage:
 COVERAGE_THRESHOLD ?= 16
 
 # Check coverage threshold (fail if below COVERAGE_THRESHOLD).
-# Excludes cmd/api (app.go, main.go) from coverage.
+# Excludes cmd/api (app.go, main.go) from coverage. Includes internal/, tests/, and pkg/.
 check-coverage:
 	@echo "Running tests with coverage (threshold: $(COVERAGE_THRESHOLD)%)..."
-	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./internal/... ./tests/... -coverprofile=coverage.out)
+	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./internal/... ./pkg/... ./tests/... -coverprofile=coverage.out)
 	@COV=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub(/%/, ""); print $$3}') && \
 	if [ -z "$$COV" ] || ! awk -v c="$$COV" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { exit (c+0 >= t) ? 0 : 1 }'; then \
 		echo ""; \
