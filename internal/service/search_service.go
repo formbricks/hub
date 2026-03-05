@@ -163,16 +163,32 @@ func (s *SearchService) SimilarFeedback(
 
 	// Load source embedding only if the record belongs to this tenant (tenant isolation).
 	// Concurrent requests for the same (recordID, model, tenantID) are coalesced via singleflight.
+	// Use DoChan so shared work runs with context.Background(); each caller selects on their own ctx.Done()
+	// to avoid one caller's cancellation/timeout aborting the coalesced work for all waiters.
 	embedKey := fmt.Sprintf("%s:%s:%s", feedbackRecordID, s.model, tenantID)
 
-	embedVal, err, _ := s.embeddingLoadGroup.Do(embedKey, func() (any, error) {
-		return s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(ctx, feedbackRecordID, s.model, tenantID)
+	resultCh := s.embeddingLoadGroup.DoChan(embedKey, func() (any, error) { //nolint:contextcheck // shared work must not use caller ctx
+		return s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(
+			context.Background(), feedbackRecordID, s.model, tenantID)
 	})
+
+	var (
+		embedVal any
+		err      error
+	)
+
+	select {
+	case res := <-resultCh:
+		embedVal, err = res.Val, res.Err
+	case <-ctx.Done():
+		return out, fmt.Errorf("get embedding: %w", ctx.Err())
+	}
+
 	if err != nil {
 		if errors.Is(err, repository.ErrEmbeddingNotFound) {
 			s.logger.Debug("similar feedback: no embedding or tenant mismatch",
 				"feedbackRecordId", feedbackRecordID.String(), "model", s.model)
-			//nolint:wrapcheck // return as-is so handler can map to 404
+
 			return out, err
 		}
 
@@ -231,8 +247,10 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 		return vec, nil
 	}
 
-	val, err, shared := s.queryLoadGroup.Do(query, func() (any, error) {
-		vec, loadErr := s.embeddingClient.CreateEmbeddingForQuery(ctx, query)
+	// Use DoChan so shared work runs with context.Background(); each caller selects on their own ctx.Done()
+	// to avoid one caller's cancellation/timeout aborting the coalesced work for all waiters.
+	resultCh := s.queryLoadGroup.DoChan(query, func() (any, error) { //nolint:contextcheck // shared work must not use caller ctx
+		vec, loadErr := s.embeddingClient.CreateEmbeddingForQuery(context.Background(), query)
 		if loadErr != nil {
 			return nil, fmt.Errorf("create embedding: %w", loadErr)
 		}
@@ -241,6 +259,20 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 
 		return vec, nil
 	})
+
+	var (
+		val    any
+		err    error
+		shared bool
+	)
+
+	select {
+	case res := <-resultCh:
+		val, err, shared = res.Val, res.Err, res.Shared
+	case <-ctx.Done():
+		return nil, fmt.Errorf("query embedding: %w", ctx.Err())
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("query embedding: %w", err)
 	}
