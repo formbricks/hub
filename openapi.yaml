@@ -593,8 +593,6 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
-                "413":
-                    description: Request body exceeds maximum allowed size (configured via MAX_REQUEST_BODY_BYTES, default 10 MiB)
                 default:
                     description: Error
                     content:
@@ -907,8 +905,6 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
-                "413":
-                    description: Request body exceeds maximum allowed size (configured via MAX_REQUEST_BODY_BYTES, default 10 MiB)
                 default:
                     description: Error
                     content:
@@ -992,12 +988,6 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                 "404":
                     description: Not Found
-                    content:
-                        application/problem+json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorModel'
-                "413":
-                    description: Request body exceeds maximum allowed size (configured via MAX_REQUEST_BODY_BYTES, default 10 MiB)
                     content:
                         application/problem+json:
                             schema:
