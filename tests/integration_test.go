@@ -1,3 +1,4 @@
+//nolint:gosec // G101/G704: test DB URLs and HTTP client by design
 package tests
 
 import (
@@ -1009,7 +1010,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		FieldID:        "f1",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    ptrFloat64(1),
-		UserIdentifier: strPtr(userID),
+		UserIdentifier: new(userID),
 	}
 	rec1, err := repo.Create(ctx, req1)
 	require.NoError(t, err)
@@ -1022,7 +1023,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		FieldID:        "f2",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    ptrFloat64(2),
-		UserIdentifier: strPtr(userID),
+		UserIdentifier: new(userID),
 	}
 	rec2, err := repo.Create(ctx, req2)
 	require.NoError(t, err)
@@ -1037,8 +1038,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	assert.True(t, ids[rec2.ID.String()])
 }
 
-func strPtr(s string) *string       { return &s }
-func ptrFloat64(f float64) *float64 { return &f }
+func ptrFloat64(f float64) *float64 { return new(f) }
 
 // TestWebhooksCRUD tests webhook create, get, list, update, delete.
 func TestWebhooksCRUD(t *testing.T) {

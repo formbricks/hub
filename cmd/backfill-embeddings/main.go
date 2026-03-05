@@ -141,7 +141,7 @@ func run() int {
 		return exitFailure
 	}
 
-	slog.Info("Backfill complete", "enqueued", enqueued)
+	slog.Info("Backfill complete", "enqueued", enqueued) //nolint:gosec // G706: enqueued is int, structured logging
 
 	fmt.Printf("Enqueued %d embedding job(s).\n", enqueued)
 

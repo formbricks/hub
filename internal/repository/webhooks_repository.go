@@ -76,6 +76,7 @@ func (r *DBWebhooksRepository) Create(ctx context.Context, req *models.CreateWeb
 }
 
 // GetByID retrieves a single webhook by ID. Concurrent requests for the same ID are coalesced via singleflight.
+// Uses context.WithoutCancel so one caller's cancellation does not abort the shared coalesced work for other waiters.
 func (r *DBWebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
 	key := id.String()
 
@@ -381,6 +382,7 @@ func (r *DBWebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhoo
 // ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
 // Order is deterministic (ORDER BY id) so delivery behavior is consistent.
 // Concurrent requests for the same event type are coalesced via singleflight.
+// Uses context.WithoutCancel so one caller's cancellation does not abort the shared coalesced work for other waiters.
 func (r *DBWebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
 	key := "list:" + eventType
 

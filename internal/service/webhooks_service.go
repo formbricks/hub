@@ -195,11 +195,21 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 		return nil, fmt.Errorf("list webhooks: %w", err)
 	}
 
-	meta, err := BuildListPaginationMeta(filters.Limit, hasMore, func() (string, error) {
-		last := webhooks[len(webhooks)-1]
+	// encodeLast requires non-empty webhooks when hasMore; avoid panic from invariant violation.
+	if hasMore && len(webhooks) == 0 {
+		return nil, fmt.Errorf("list webhooks: %w", ErrPaginationInvariantViolated)
+	}
 
-		return cursor.Encode(last.CreatedAt, last.ID)
-	})
+	var encodeLast func() (string, error)
+	if hasMore && len(webhooks) > 0 {
+		encodeLast = func() (string, error) {
+			last := webhooks[len(webhooks)-1]
+
+			return cursor.Encode(last.CreatedAt, last.ID)
+		}
+	}
+
+	meta, err := BuildListPaginationMeta(filters.Limit, hasMore, encodeLast)
 	if err != nil {
 		return nil, fmt.Errorf("encode next cursor: %w", err)
 	}

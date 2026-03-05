@@ -124,3 +124,23 @@ func TestWebhooksService_UpdateWebhook_BlacklistedURL(t *testing.T) {
 		t.Fatalf("expected ErrValidation, got %v", err)
 	}
 }
+
+// mockWebhooksRepoHasMoreEmpty returns hasMore=true with empty list (invariant violation).
+type mockWebhooksRepoHasMoreEmpty struct {
+	mockWebhooksRepo
+}
+
+func (m *mockWebhooksRepoHasMoreEmpty) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, bool, error) {
+	return nil, true, nil
+}
+
+func TestWebhooksService_ListWebhooks_InvariantViolation(t *testing.T) {
+	ctx := context.Background()
+	svc := NewWebhooksService(&mockWebhooksRepoHasMoreEmpty{mockWebhooksRepo{count: 0}}, noopPublisher{}, 10, nil)
+	filters := &models.ListWebhooksFilters{Limit: 10}
+
+	_, err := svc.ListWebhooks(ctx, filters)
+	if !errors.Is(err, ErrPaginationInvariantViolated) {
+		t.Fatalf("expected ErrPaginationInvariantViolated, got %v", err)
+	}
+}

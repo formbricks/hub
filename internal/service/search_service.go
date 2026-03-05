@@ -175,8 +175,8 @@ func (s *SearchService) SimilarFeedback(
 
 	// Load source embedding only if the record belongs to this tenant (tenant isolation).
 	// Concurrent requests for the same (recordID, model, tenantID) are coalesced via singleflight.
-	// Use DoChan so shared work runs with context.Background(); each caller selects on their own ctx.Done()
-	// to avoid one caller's cancellation/timeout aborting the coalesced work for all waiters.
+	// Uses context.WithTimeout(context.Background(), coalescedLoadTimeout) so shared work has its own bound;
+	// each caller selects on their own ctx.Done() so one caller's cancellation does not abort work for other waiters.
 	embedKey := fmt.Sprintf("%s:%s:%s", feedbackRecordID, s.model, tenantID)
 
 	resultCh := s.embeddingLoadGroup.DoChan(embedKey, func() (any, error) { //nolint:contextcheck // shared work must not use caller ctx
@@ -262,8 +262,8 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 		return vec, nil
 	}
 
-	// Use DoChan so shared work runs with context.Background(); each caller selects on their own ctx.Done()
-	// to avoid one caller's cancellation/timeout aborting the coalesced work for all waiters.
+	// Uses context.WithTimeout(context.Background(), coalescedLoadTimeout) so shared work has its own bound;
+	// each caller selects on their own ctx.Done() so one caller's cancellation does not abort work for other waiters.
 	resultCh := s.queryLoadGroup.DoChan(query, func() (any, error) { //nolint:contextcheck // shared work must not use caller ctx
 		workCtx, cancel := context.WithTimeout(context.Background(), s.coalescedLoadTimeout)
 		defer cancel()

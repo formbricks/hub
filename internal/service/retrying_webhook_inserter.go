@@ -127,7 +127,8 @@ func computeBackoff(initial, maxBackoff time.Duration, attempt int) time.Duratio
 		}
 	}
 
-	// Full jitter: sleep random(0, backoff) to avoid thundering herd
+	// Full jitter: sleep random(0, backoff) to avoid thundering herd.
+	// math/rand is acceptable here: Go 1.20+ auto-seeds; we need non-crypto randomness for backoff jitter only.
 	jitter := time.Duration(rand.Int63n(int64(backoff))) //nolint:gosec // G404: non-crypto randomness is fine for backoff jitter
 
 	return jitter

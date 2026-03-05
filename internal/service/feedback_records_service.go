@@ -149,11 +149,21 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 		return nil, fmt.Errorf("list feedback records: %w", err)
 	}
 
-	meta, err := BuildListPaginationMeta(filters.Limit, hasMore, func() (string, error) {
-		last := records[len(records)-1]
+	// encodeLast requires non-empty records when hasMore; avoid panic from invariant violation.
+	if hasMore && len(records) == 0 {
+		return nil, fmt.Errorf("list feedback records: %w", ErrPaginationInvariantViolated)
+	}
 
-		return cursor.Encode(last.CollectedAt, last.ID)
-	})
+	var encodeLast func() (string, error)
+	if hasMore && len(records) > 0 {
+		encodeLast = func() (string, error) {
+			last := records[len(records)-1]
+
+			return cursor.Encode(last.CollectedAt, last.ID)
+		}
+	}
+
+	meta, err := BuildListPaginationMeta(filters.Limit, hasMore, encodeLast)
 	if err != nil {
 		return nil, fmt.Errorf("encode next cursor: %w", err)
 	}
