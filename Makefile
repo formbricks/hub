@@ -1,4 +1,4 @@
-.PHONY: all test help tests tests-coverage build build-backfill-embeddings run run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: all test help tests tests-coverage build build-backfill-embeddings run run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Aliases for checkmake/lint expectations
 all: build
@@ -32,6 +32,11 @@ help:
 	@echo "  make docker-clean     - Stop Docker containers and remove volumes"
 	@echo "  make clean            - Clean build artifacts"
 	@echo "  make schemathesis     - Run Schemathesis API tests (requires API server running)"
+	@echo "  make lint-openapi     - Lint OpenAPI spec with Spectral"
+
+# Lint OpenAPI spec with Spectral
+lint-openapi:
+	npx --yes @stoplight/spectral-cli@6 lint openapi.yaml
 
 # Run all tests (integration tests in tests/ directory).
 # Loads .env if present so DATABASE_URL (e.g. port 5433) is used when Postgres runs on a non-default port.

@@ -18,6 +18,13 @@ info:
 servers:
     - url: http://localhost:8080
       description: Local development server
+tags:
+    - name: Health
+      description: Health check endpoints
+    - name: Feedback Records
+      description: Feedback record CRUD and search
+    - name: Webhooks
+      description: Webhook subscription management
 security:
     - ApiKeyAuth: []
 paths:
@@ -178,6 +185,7 @@ paths:
                                               source_name: "Q1 NPS Survey"
                                               user_identifier: "user-abc-123"
                                               tenant_id: "org-123"
+                                              submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                         limit: 100
                 "400":
                     description: Bad Request (e.g. invalid cursor)
@@ -199,7 +207,7 @@ paths:
                                         title: "Bad Request"
                                         status: 400
                                         detail: "Validation failed"
-                                        instance: "/v1/feedback-records"
+                                        instance: "https://hub.formbricks.com/v1/feedback-records"
                                         errors:
                                             - location: "body.field_id"
                                               message: "Field is required"
@@ -370,7 +378,7 @@ paths:
                                         title: "Bad Request"
                                         status: 400
                                         detail: "Required field 'field_id' is missing"
-                                        instance: "/v1/feedback-records"
+                                        instance: "https://hub.formbricks.com/v1/feedback-records"
         delete:
             tags:
                 - Feedback Records
@@ -438,6 +446,18 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/FeedbackRecordData'
+                "400":
+                    description: Bad Request (e.g. invalid UUID)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -462,6 +482,18 @@ paths:
             responses:
                 "204":
                     description: No Content
+                "400":
+                    description: Bad Request (e.g. invalid UUID)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -534,11 +566,24 @@ paths:
                                         source_name: "Q1 NPS Survey"
                                         user_identifier: "user-abc-123"
                                         tenant_id: "org-123"
+                                        submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                         language: "en"
                                         metadata:
                                             tags:
                                                 - "important"
                                                 - "follow-up"
+                "400":
+                    description: Bad Request (e.g. invalid UUID, validation error)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -553,7 +598,7 @@ paths:
                                         title: "Not Found"
                                         status: 404
                                         detail: "Feedback record with ID '018e1234-5678-9abc-def0-123456789abc' not found"
-                                        instance: "/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
+                                        instance: "https://hub.formbricks.com/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
                                 validation_error:
                                     summary: Validation error
                                     value:
@@ -561,7 +606,7 @@ paths:
                                         title: "Bad Request"
                                         status: 400
                                         detail: "Invalid update request"
-                                        instance: "/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
+                                        instance: "https://hub.formbricks.com/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
                                         errors:
                                             - location: "body.value_text"
                                               message: "Text value cannot be empty"
@@ -833,6 +878,18 @@ paths:
                             parameters:
                                 id: '$response.body#/id'
                             description: Delete the webhook by ID
+                "400":
+                    description: Bad Request (e.g. validation error)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "403":
+                    description: Forbidden (e.g. webhook limit exceeded)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -862,6 +919,18 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/WebhookData'
+                "400":
+                    description: Bad Request (e.g. invalid UUID)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -896,6 +965,18 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/WebhookData'
+                "400":
+                    description: Bad Request (e.g. invalid UUID)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -920,6 +1001,18 @@ paths:
             responses:
                 "204":
                     description: No Content
+                "400":
+                    description: Bad Request (e.g. invalid UUID)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -1003,11 +1096,12 @@ components:
                     description: Label of the feedback field (included in embedding for context)
                 value_text:
                     type: string
-                    description: value_text of the feedback record (the text that was embedded); omitted if null
-                    nullable: true
+                    description: value_text of the feedback record (the text that was embedded)
             required:
                 - feedback_record_id
                 - score
+                - field_label
+                - value_text
         CreateFeedbackRecordInputBody:
             type: object
             additionalProperties: false
@@ -1129,8 +1223,7 @@ components:
                     examples:
                         - 9
                 value_text:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
                     description: For open-ended text responses. Omit or null if not applicable. NULL bytes not allowed when present.
                     examples:
                         - Great service!
@@ -1314,11 +1407,11 @@ components:
             properties:
                 url:
                     type: string
-                    description: URL to receive webhook POSTs. NULL bytes not allowed.
+                    description: URL to receive webhook POSTs. Must be an HTTP or HTTPS URL. NULL bytes not allowed.
                     minLength: 1
                     maxLength: 2048
                     format: uri
-                    pattern: '^[^\x00]*$'
+                    pattern: '^https?://[^\x00]*$'
                     example: "https://example.com/hub-events"
                 signing_key:
                     type: string
@@ -1369,11 +1462,11 @@ components:
             properties:
                 url:
                     type: string
-                    description: New webhook URL. NULL bytes not allowed.
+                    description: New webhook URL. Must be an HTTP or HTTPS URL. NULL bytes not allowed.
                     minLength: 1
                     maxLength: 2048
                     format: uri
-                    pattern: '^[^\x00]*$'
+                    pattern: '^https?://[^\x00]*$'
                     example: "https://example.com/hub-events"
                 signing_key:
                     type: string
@@ -1386,9 +1479,8 @@ components:
                     type: boolean
                     description: Enable or disable the webhook
                 tenant_id:
-                    type: string
-                    nullable: true
-                    description: Tenant/organization identifier. NULL bytes not allowed. Send empty string to clear (store as null).
+                    type: [string, "null"]
+                    description: Omit or send null to leave unchanged. Send empty string to clear (store as null).
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
@@ -1431,13 +1523,11 @@ components:
                     format: date-time
                     description: When the webhook was last updated
                 disabled_reason:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
                     description: Read-only. Set by the system when the webhook was disabled (e.g. after 410 Gone or max delivery failures). Omitted when null.
                 disabled_at:
-                    type: string
+                    type: [string, "null"]
                     format: date-time
-                    nullable: true
                     description: Read-only. When the webhook was disabled. Omitted when null. Cleared when the webhook is re-enabled via PATCH.
             required:
                 - id
