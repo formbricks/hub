@@ -1122,7 +1122,7 @@ components:
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                 field_label:
-                    type: string
+                    type: [string, "null"]
                     description: The actual question text
                     examples:
                         - How satisfied are you?
@@ -1134,7 +1134,7 @@ components:
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                 field_group_label:
-                    type: string
+                    type: [string, "null"]
                     description: Human-readable question text for the group
                     examples:
                         - Rank these features by importance
@@ -1167,12 +1167,12 @@ components:
                     description: User agent, device, location, referrer, tags, etc. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
                     additionalProperties: {}
                 source_id:
-                    type: string
+                    type: [string, "null"]
                     description: Reference to survey/form/ticket ID
                     examples:
                         - survey-123
                 source_name:
-                    type: string
+                    type: [string, "null"]
                     description: Human-readable name
                     examples:
                         - Q1 NPS Survey
