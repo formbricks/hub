@@ -64,5 +64,13 @@ if ! make lint; then
     exit 1
 fi
 
+# Fast unit tests (no DB); coverage is enforced in CI only
+echo "Running unit tests..."
+if ! make test-unit; then
+    echo ""
+    echo "❌ Unit tests failed. Fix the errors above before committing."
+    exit 1
+fi
+
 echo "✅ Pre-commit checks passed!"
 exit 0
