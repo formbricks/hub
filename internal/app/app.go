@@ -1,4 +1,5 @@
-package main
+// Package app provides application bootstrap, wiring, and lifecycle (Run, Shutdown).
+package app
 
 import (
 	"context"
@@ -6,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -31,6 +31,16 @@ import (
 	"github.com/formbricks/hub/internal/workers"
 )
 
+var (
+	errUnsupportedEmbeddingProvider    = errors.New("unsupported embedding provider")
+	errEmbeddingProviderAPIKeyRequired = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
+)
+
+const (
+	webhookDeliveryBufferOverHTTP = 5 * time.Second
+	riverQueueDepthInterval       = 15 * time.Second
+)
+
 // App holds all server dependencies and coordinates startup and shutdown.
 type App struct {
 	cfg            *config.Config
@@ -43,48 +53,7 @@ type App struct {
 	metrics        *observability.Metrics
 }
 
-const webhookDeliveryBufferOverHTTP = 5 * time.Second // buffer for DB, metrics, disable on max attempts
-
-var (
-	errUnsupportedEmbeddingProvider    = errors.New("unsupported embedding provider")
-	errEmbeddingProviderAPIKeyRequired = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
-)
-
-const (
-	embeddingProviderOpenAI = "openai"
-	embeddingProviderGoogle = "google"
-)
-
-var supportedEmbeddingProviders = map[string]struct{}{
-	embeddingProviderOpenAI: {},
-	embeddingProviderGoogle: {},
-}
-
-const riverQueueDepthInterval = 15 * time.Second
-
-// embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
-// and EMBEDDING_MODEL must be set and the provider must be supported. Otherwise returns ("", "") so no
-// embedding provider or jobs run. No default for model; embeddings are disabled if either is unset.
-// Provider name is normalized to lowercase so that "OpenAI", "openai", and "OPENAI" behave the same
-// (consistent with backfill-embeddings and EmbeddingPrefixForProvider).
-func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
-	if cfg.EmbeddingProvider == "" || cfg.EmbeddingModel == "" {
-		return "", ""
-	}
-
-	providerCanonical := strings.ToLower(strings.TrimSpace(cfg.EmbeddingProvider))
-	if _, ok := supportedEmbeddingProviders[providerCanonical]; !ok {
-		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
-			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
-
-		return "", ""
-	}
-
-	return providerCanonical, cfg.EmbeddingModel
-}
-
 // setupMetrics creates meter provider and hub metrics when metrics are enabled.
-// When NewMeterProvider returns nil (unsupported or disabled exporter), returns (nil, nil, nil) (metrics disabled).
 func setupMetrics(cfg *config.Config) (*sdkmetric.MeterProvider, *observability.Metrics, error) {
 	mp, err := observability.NewMeterProvider(cfg)
 	if err != nil {
@@ -154,7 +123,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		}
 	}
 
-	// Install TraceContextHandler unconditionally so request_id (and trace_id/span_id when tracing is on) appear in logs.
 	defaultHandler := slog.Default().Handler()
 	slog.SetDefault(slog.New(observability.NewTraceContextHandler(defaultHandler)))
 
@@ -181,8 +149,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	feedbackRecordsRepo := repository.NewDBFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
-	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
-	// Model for DB/jobs: required for embeddings.model column; only set when embeddings are enabled (both provider and model set).
+	embeddingProviderName, embeddingModel := EmbeddingProviderAndModel(cfg)
 	embeddingModelForDB := embeddingModel
 
 	var embeddingDocPrefix string
@@ -196,7 +163,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		embeddingsRepo,
 		embeddingModelForDB,
 		messageManager,
-		nil, // riverClient set below after creation
+		nil,
 		service.EmbeddingsQueueName,
 		cfg.EmbeddingMaxAttempts,
 	)
@@ -204,7 +171,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	var searchHandler *handlers.SearchHandler
 
 	if embeddingProviderName != "" {
-		// Fail fast when a provider that requires an API key is configured without one (consistent with backfill-embeddings).
 		if (embeddingProviderName == embeddingProviderOpenAI || embeddingProviderName == embeddingProviderGoogle) &&
 			cfg.EmbeddingProviderAPIKey == "" {
 			return nil, fmt.Errorf("%w: %s", errEmbeddingProviderAPIKeyRequired, embeddingProviderName)
@@ -258,7 +224,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		})
 		searchHandler = handlers.NewSearchHandler(searchService)
 	} else {
-		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
+		searchHandler = handlers.NewSearchHandler(nil)
 	}
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
@@ -283,7 +249,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		return nil, fmt.Errorf("create River client: %w", err)
 	}
 
-	// Enable backfill on the same service instance the embedding worker uses (avoids nil inserter if worker ever calls BackfillEmbeddings).
 	feedbackRecordsService.SetEmbeddingInserter(riverClient)
 
 	webhookInserter := service.NewRetryingWebhookDispatchInserter(service.RetryingWebhookDispatchInserterConfig{
@@ -337,8 +302,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}, nil
 }
 
-// newHTTPServer builds the HTTP server and muxes (no auth on /health, API key on /v1/).
-// Handler chain: RequestID -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
 func newHTTPServer(
 	cfg *config.Config,
 	health *handlers.HealthHandler,
@@ -365,7 +328,6 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
 
-	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
 	protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
 
@@ -375,7 +337,6 @@ func newHTTPServer(
 	mux.Handle("/", public)
 
 	otelOpts := []otelhttp.Option{
-		// Skip tracing and HTTP metrics for health checks to reduce noise.
 		otelhttp.WithFilter(func(r *http.Request) bool {
 			return r.URL.Path != "/health"
 		}),
@@ -388,7 +349,6 @@ func newHTTPServer(
 		otelOpts = append(otelOpts, otelhttp.WithTracerProvider(tracerProvider))
 	}
 
-	// Logging runs inside otelhttp so r.Context() has the span when we log (trace_id/span_id in access logs).
 	inner := middleware.Logging(mux)
 	handler := otelhttp.NewHandler(inner, "hub-api", otelOpts...)
 	handler = middleware.RequestID(handler)
@@ -408,9 +368,7 @@ func newHTTPServer(
 	}
 }
 
-// Run starts the HTTP server and River, then blocks until ctx is cancelled (e.g. signal)
-// or a component fails. When ctx is cancelled or a component fails, it cancels the internal
-// River context so River and the queue depth poller stop before Run returns. Caller should then call Shutdown.
+// Run starts the HTTP server and River, then blocks until ctx is cancelled or a component fails.
 func (a *App) Run(ctx context.Context) error {
 	runErr := make(chan error, 1)
 
@@ -453,7 +411,6 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
-// runRiverQueueDepthPoller periodically updates the River default-queue depth gauge.
 func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetrics observability.EventMetrics) {
 	ticker := time.NewTicker(riverQueueDepthInterval)
 	defer ticker.Stop()
@@ -487,8 +444,9 @@ func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetric
 	}
 }
 
-// shutdownObservability shuts down tracer and meter providers. Logs secondary errors, returns the first.
-func shutdownObservability(ctx context.Context, tracer *sdktrace.TracerProvider, meter *sdkmetric.MeterProvider) error {
+// ShutdownObservability shuts down tracer and meter providers. Logs secondary errors, returns the first.
+// Exported for testing. Safe to call with nil providers.
+func ShutdownObservability(ctx context.Context, tracer *sdktrace.TracerProvider, meter *sdkmetric.MeterProvider) error {
 	var first error
 
 	if tracer != nil {
@@ -511,12 +469,11 @@ func shutdownObservability(ctx context.Context, tracer *sdktrace.TracerProvider,
 }
 
 // Shutdown stops the server, message publisher, and River in order. Call after Run returns.
-// Observability is shut down once via defer; its error is returned only when server and River shut down successfully.
 func (a *App) Shutdown(ctx context.Context) (err error) {
 	defer a.message.Shutdown()
 
 	defer func() {
-		obsErr := shutdownObservability(ctx, a.tracerProvider, a.meterProvider)
+		obsErr := ShutdownObservability(ctx, a.tracerProvider, a.meterProvider)
 		if err == nil {
 			err = obsErr
 		} else if obsErr != nil {

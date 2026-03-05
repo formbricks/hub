@@ -11,6 +11,7 @@ import (
 
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 
+	"github.com/formbricks/hub/internal/app"
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/pkg/database"
 )
@@ -53,7 +54,7 @@ func run() int {
 	}
 	defer db.Close()
 
-	app, err := NewApp(cfg, db)
+	application, err := app.NewApp(cfg, db)
 	if err != nil {
 		slog.Error("Failed to create application", "error", err)
 
@@ -63,13 +64,13 @@ func run() int {
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := app.Run(sigCtx); err != nil {
+	if err := application.Run(sigCtx); err != nil {
 		slog.Error("Component failed, exiting", "error", err)
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
 
-		if shutdownErr := app.Shutdown(shutdownCtx); shutdownErr != nil {
+		if shutdownErr := application.Shutdown(shutdownCtx); shutdownErr != nil {
 			slog.Warn("Shutdown error", "error", shutdownErr)
 		}
 
@@ -79,7 +80,7 @@ func run() int {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
-	if err := app.Shutdown(shutdownCtx); err != nil {
+	if err := application.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Shutdown failed", "error", err)
 
 		return exitFailure
