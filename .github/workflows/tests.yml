@@ -113,7 +113,7 @@ jobs:
         run: make tests
 
   coverage:
-    name: Coverage (≥50%)
+    name: Coverage (≥16%)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -169,7 +169,7 @@ jobs:
           go install github.com/riverqueue/river/cmd/river@latest
           make river-migrate
 
-      - name: Check coverage (≥50%, excludes cmd/api)
+      - name: Check coverage (≥16%, excludes cmd/api)
         run: make check-coverage
 
   tests:

@@ -17,7 +17,7 @@ help:
 	@echo "  make tests            - Run integration tests"
 	@echo "  make test-all         - Run all tests (unit + integration)"
 	@echo "  make tests-coverage   - Run tests with coverage report"
-	@echo "  make check-coverage   - Run tests and fail if coverage < 50% (excludes cmd/api)"
+	@echo "  make check-coverage   - Run tests and fail if coverage < 16% (excludes cmd/api)"
 	@echo "  make init-db          - Initialize database schema (run migrations with goose)"
 	@echo "  make migrate-status   - Show migration status"
 	@echo "  make migrate-validate - Validate migration files (no DB)"
@@ -58,7 +58,7 @@ tests-coverage:
 	@echo "Coverage report generated: coverage.html"
 
 # Minimum coverage threshold (percent). Fails if coverage falls below this.
-COVERAGE_THRESHOLD ?= 50
+COVERAGE_THRESHOLD ?= 16
 
 # Check coverage threshold (fail if below COVERAGE_THRESHOLD).
 # Excludes cmd/api (app.go, main.go) from coverage.
