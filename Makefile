@@ -1,4 +1,4 @@
-.PHONY: all test help tests tests-coverage build build-backfill-embeddings run run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: all test help tests tests-coverage check-coverage build build-backfill-embeddings run run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Aliases for checkmake/lint expectations
 all: build
@@ -17,6 +17,7 @@ help:
 	@echo "  make tests            - Run integration tests"
 	@echo "  make test-all         - Run all tests (unit + integration)"
 	@echo "  make tests-coverage   - Run tests with coverage report"
+	@echo "  make check-coverage   - Run tests and fail if coverage below COVERAGE_THRESHOLD (excludes cmd/api)"
 	@echo "  make init-db          - Initialize database schema (run migrations with goose)"
 	@echo "  make migrate-status   - Show migration status"
 	@echo "  make migrate-validate - Validate migration files (no DB)"
@@ -53,12 +54,30 @@ test-unit:
 test-all: test-unit tests
 	@echo "All tests passed!"
 
-# Run tests with coverage (unit + integration)
+# Run tests with coverage (unit + integration).
+# cmd/api (app.go, main.go) is excluded—coverage is for internal/, pkg/, and tests/.
 tests-coverage:
 	@echo "Running tests with coverage..."
-	go test ./internal/... ./tests/... -v -cover -coverprofile=coverage.out
+	go test ./internal/... ./pkg/... ./tests/... -v -cover -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
+
+# Minimum coverage threshold (percent). Fails if coverage falls below this.
+COVERAGE_THRESHOLD ?= 16
+
+# Check coverage threshold (fail if below COVERAGE_THRESHOLD).
+# Excludes cmd/api (app.go, main.go) from coverage. Includes internal/, tests/, and pkg/.
+check-coverage:
+	@echo "Running tests with coverage (threshold: $(COVERAGE_THRESHOLD)%)..."
+	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./internal/... ./pkg/... ./tests/... -coverprofile=coverage.out)
+	@COV=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub(/%/, ""); print $$3}') && \
+	if [ -z "$$COV" ] || ! awk -v c="$$COV" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { exit (c+0 >= t) ? 0 : 1 }'; then \
+		echo ""; \
+		echo "❌ Coverage $$COV% is below threshold $(COVERAGE_THRESHOLD)%"; \
+		go tool cover -func=coverage.out | tail -5; \
+		exit 1; \
+	fi && \
+	echo "✅ Coverage $$COV% meets threshold $(COVERAGE_THRESHOLD)%"
 
 # Build the API server
 build:
