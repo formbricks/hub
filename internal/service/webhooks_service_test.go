@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -24,8 +25,14 @@ func (m *mockWebhooksRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webh
 	return nil, nil
 }
 
-func (m *mockWebhooksRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, error) {
-	return nil, nil
+func (m *mockWebhooksRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, bool, error) {
+	return nil, false, nil
+}
+
+func (m *mockWebhooksRepo) ListAfterCursor(
+	_ context.Context, _ *models.ListWebhooksFilters, _ time.Time, _ uuid.UUID,
+) ([]models.Webhook, bool, error) {
+	return nil, false, nil
 }
 
 func (m *mockWebhooksRepo) Count(_ context.Context, _ *models.ListWebhooksFilters) (int64, error) {

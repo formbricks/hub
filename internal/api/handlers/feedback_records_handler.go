@@ -14,6 +14,7 @@ import (
 	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/cursor"
 )
 
 // FeedbackRecordsService defines the interface for feedback records business logic.
@@ -123,6 +124,12 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
 	if err != nil {
+		if errors.Is(err, cursor.ErrInvalidCursor) {
+			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
+
+			return
+		}
+
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return

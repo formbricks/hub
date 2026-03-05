@@ -180,9 +180,7 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 	return whereClause, args
 }
 
-// List retrieves feedback records with optional filters. Embedding is not selected (API reads stay lean).
-func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, error) {
-	query := `
+const feedbackRecordsListSelect = `
 		SELECT id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
@@ -191,72 +189,88 @@ func (r *FeedbackRecordsRepository) List(ctx context.Context, filters *models.Li
 		FROM feedback_records
 	`
 
+// List retrieves feedback records with optional filters. Embedding is not selected (API reads stay lean).
+// Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
+func (r *FeedbackRecordsRepository) List(
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
+) ([]models.FeedbackRecord, bool, error) {
+	query := feedbackRecordsListSelect
+
 	whereClause, args := buildFilterConditions(filters)
 	query += whereClause
 	argCount := len(args) + 1
 
-	query += " ORDER BY collected_at DESC"
+	query += " ORDER BY collected_at DESC, id ASC"
 
-	if filters.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", argCount)
-
-		args = append(args, filters.Limit)
-		argCount++
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 100
 	}
 
-	if filters.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", argCount)
+	query += fmt.Sprintf(" LIMIT $%d", argCount)
 
-		args = append(args, filters.Offset)
-	}
+	args = append(args, limit+1)
 
-	rows, err := r.db.Query(ctx, query, args...)
+	records, err := r.fetchFeedbackRecords(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list feedback records: %w", err)
-	}
-	defer rows.Close()
-
-	records := []models.FeedbackRecord{} // Initialize as empty slice, not nil
-
-	for rows.Next() {
-		var record models.FeedbackRecord
-
-		err := rows.Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
-		}
-
-		records = append(records, record)
+		return nil, false, err
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating feedback records: %w", err)
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
 	}
 
-	return records, nil
+	return records, hasMore, nil
 }
 
-// Count returns the total count of feedback records matching the filters.
-func (r *FeedbackRecordsRepository) Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int64, error) {
-	query := `SELECT COUNT(*) FROM feedback_records`
+// ListAfterCursor retrieves feedback records after the given keyset cursor (collected_at, id).
+// Order is collected_at DESC, id ASC. The cursor represents the last row of the previous page.
+// Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
+func (r *FeedbackRecordsRepository) ListAfterCursor(
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters, cursorCollectedAt time.Time, cursorID uuid.UUID,
+) ([]models.FeedbackRecord, bool, error) {
+	query := feedbackRecordsListSelect
 
 	whereClause, args := buildFilterConditions(filters)
 	query += whereClause
 
-	var count int64
+	// Keyset condition: next page = (collected_at < cursor) OR (collected_at = cursor AND id > cursorID)
+	// For ORDER BY collected_at DESC, id ASC (two cursor params: collected_at, id)
+	argTime := len(args) + 1
 
-	err := r.db.QueryRow(ctx, query, args...).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count feedback records: %w", err)
+	argID := len(args) + 2 //nolint:mnd // second keyset param
+	if whereClause != "" {
+		query += fmt.Sprintf(" AND (collected_at < $%d OR (collected_at = $%d AND id > $%d))", argTime, argTime, argID)
+	} else {
+		query += fmt.Sprintf(" WHERE (collected_at < $%d OR (collected_at = $%d AND id > $%d))", argTime, argTime, argID)
 	}
 
-	return count, nil
+	args = append(args, cursorCollectedAt, cursorID)
+	argCount := len(args) + 1
+
+	query += " ORDER BY collected_at DESC, id ASC"
+
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query += fmt.Sprintf(" LIMIT $%d", argCount)
+
+	args = append(args, limit+1)
+
+	records, err := r.fetchFeedbackRecords(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+
+	return records, hasMore, nil
 }
 
 // buildUpdateQuery builds an UPDATE query with SET clause and arguments.
@@ -419,4 +433,41 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifi
 	}
 
 	return ids, nil
+}
+
+// fetchFeedbackRecords executes the given query and scans rows into FeedbackRecord slices.
+// Used by List and ListAfterCursor to avoid duplicating SELECT/scan logic.
+func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
+	ctx context.Context, query string, args ...any,
+) ([]models.FeedbackRecord, error) {
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list feedback records: %w", err)
+	}
+	defer rows.Close()
+
+	records := []models.FeedbackRecord{}
+
+	for rows.Next() {
+		var record models.FeedbackRecord
+
+		err := rows.Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
+		}
+
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating feedback records: %w", err)
+	}
+
+	return records, nil
 }

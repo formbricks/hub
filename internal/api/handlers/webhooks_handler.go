@@ -13,6 +13,7 @@ import (
 	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/cursor"
 )
 
 // WebhooksService defines the interface for webhooks business logic.
@@ -122,6 +123,12 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.ListWebhooks(r.Context(), filters)
 	if err != nil {
+		if errors.Is(err, cursor.ErrInvalidCursor) {
+			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
+
+			return
+		}
+
 		slog.Error("Failed to list webhooks", "method", r.Method, "path", r.URL.Path, "error", err)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 

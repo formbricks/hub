@@ -127,68 +127,90 @@ func buildWebhookFilterConditions(filters *models.ListWebhooksFilters) (whereCla
 	return whereClause, args
 }
 
-// List retrieves webhooks with optional filters.
-func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, error) {
-	query := `
+const webhooksListSelect = `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
 	`
+
+// List retrieves webhooks with optional filters.
+// Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
+func (r *WebhooksRepository) List(ctx context.Context, filters *models.ListWebhooksFilters) ([]models.Webhook, bool, error) {
+	query := webhooksListSelect
 
 	whereClause, args := buildWebhookFilterConditions(filters)
 	query += whereClause
 	argCount := len(args) + 1
 
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY created_at DESC, id ASC"
 
-	if filters.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", argCount)
-
-		args = append(args, filters.Limit)
-		argCount++
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 100
 	}
 
-	if filters.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", argCount)
+	query += fmt.Sprintf(" LIMIT $%d", argCount)
 
-		args = append(args, filters.Offset)
-	}
+	args = append(args, limit+1)
 
-	rows, err := r.db.Query(ctx, query, args...)
+	webhooks, err := r.fetchWebhooks(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list webhooks: %w", err)
-	}
-	defer rows.Close()
-
-	webhooks := []models.Webhook{}
-
-	for rows.Next() {
-		var (
-			webhook      models.Webhook
-			dbEventTypes []string
-		)
-
-		err := rows.Scan(
-			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
-			&webhook.DisabledReason, &webhook.DisabledAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan webhook: %w", err)
-		}
-
-		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
-		if err != nil {
-			return nil, err
-		}
-
-		webhooks = append(webhooks, webhook)
+		return nil, false, err
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating webhooks: %w", err)
+	hasMore := len(webhooks) > limit
+	if hasMore {
+		webhooks = webhooks[:limit]
 	}
 
-	return webhooks, nil
+	return webhooks, hasMore, nil
+}
+
+// ListAfterCursor retrieves webhooks after the given keyset cursor (created_at, id).
+// Order is created_at DESC, id ASC. The cursor represents the last row of the previous page.
+// Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
+func (r *WebhooksRepository) ListAfterCursor(
+	ctx context.Context, filters *models.ListWebhooksFilters, cursorCreatedAt time.Time, cursorID uuid.UUID,
+) ([]models.Webhook, bool, error) {
+	query := webhooksListSelect
+
+	whereClause, args := buildWebhookFilterConditions(filters)
+	query += whereClause
+
+	// Keyset condition: next page = (created_at < cursor) OR (created_at = cursor AND id > cursorID)
+	argTime := len(args) + 1
+
+	argID := len(args) + 2 //nolint:mnd // second keyset param
+	if whereClause != "" {
+		query += fmt.Sprintf(" AND (created_at < $%d OR (created_at = $%d AND id > $%d))", argTime, argTime, argID)
+	} else {
+		query += fmt.Sprintf(" WHERE (created_at < $%d OR (created_at = $%d AND id > $%d))", argTime, argTime, argID)
+	}
+
+	args = append(args, cursorCreatedAt, cursorID)
+	argCount := len(args) + 1
+
+	query += " ORDER BY created_at DESC, id ASC"
+
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query += fmt.Sprintf(" LIMIT $%d", argCount)
+
+	args = append(args, limit+1)
+
+	webhooks, err := r.fetchWebhooks(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(webhooks) > limit
+	if hasMore {
+		webhooks = webhooks[:limit]
+	}
+
+	return webhooks, hasMore, nil
 }
 
 // Count returns the total count of webhooks matching the filters.
@@ -354,17 +376,16 @@ func parseDBEventTypes(ss []string) ([]datatypes.EventType, error) {
 	return out, nil
 }
 
-// ListEnabled retrieves all enabled webhooks.
+// ListEnabled retrieves all enabled webhooks (unbounded; used for delivery fan-out).
 func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
-	filters := &models.ListWebhooksFilters{
-		Enabled: func() *bool {
-			b := true
+	query := webhooksListSelect + ` WHERE enabled = true ORDER BY created_at DESC, id ASC`
 
-			return &b
-		}(),
+	webhooks, err := r.fetchWebhooks(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled webhooks: %w", err)
 	}
 
-	return r.List(ctx, filters)
+	return webhooks, nil
 }
 
 // ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
@@ -375,11 +396,52 @@ func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventT
 		FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
+		ORDER BY id
 	`
 
 	rows, err := r.db.Query(ctx, query, eventType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list enabled webhooks for event type: %w", err)
+	}
+	defer rows.Close()
+
+	webhooks := []models.Webhook{}
+
+	for rows.Next() {
+		var (
+			webhook      models.Webhook
+			dbEventTypes []string
+		)
+
+		err := rows.Scan(
+			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
+			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+			&webhook.DisabledReason, &webhook.DisabledAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan webhook: %w", err)
+		}
+
+		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
+		if err != nil {
+			return nil, err
+		}
+
+		webhooks = append(webhooks, webhook)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating webhooks: %w", err)
+	}
+
+	return webhooks, nil
+}
+
+// fetchWebhooks executes the given query and scans rows into Webhook slices.
+func (r *WebhooksRepository) fetchWebhooks(ctx context.Context, query string, args ...any) ([]models.Webhook, error) {
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list webhooks: %w", err)
 	}
 	defer rows.Close()
 
