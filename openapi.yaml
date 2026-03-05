@@ -1093,15 +1093,13 @@ components:
                     description: Similarity score (0..1)
                 field_label:
                     type: string
-                    description: Label of the feedback field (included in embedding for context)
+                    description: Label of the feedback field (included in embedding for context). May be empty if the source record had no label.
                 value_text:
                     type: string
-                    description: value_text of the feedback record (the text that was embedded)
+                    description: value_text of the feedback record (the text that was embedded). May be empty if the source had no text; embeddings are only created for records with non-empty value_text, but the field can be cleared after embedding creation.
             required:
                 - feedback_record_id
                 - score
-                - field_label
-                - value_text
         CreateFeedbackRecordInputBody:
             type: object
             additionalProperties: false
