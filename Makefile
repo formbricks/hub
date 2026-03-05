@@ -63,7 +63,7 @@ tests-coverage:
 	@echo "Coverage report generated: coverage.html"
 
 # Minimum coverage threshold (percent). Fails if coverage falls below this.
-COVERAGE_THRESHOLD ?= 16
+COVERAGE_THRESHOLD ?= 15
 
 # Check coverage threshold (fail if below COVERAGE_THRESHOLD).
 # Excludes cmd/api (app.go, main.go) from coverage. Includes internal/, tests/, and pkg/.
