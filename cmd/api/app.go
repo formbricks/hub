@@ -338,7 +338,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 }
 
 // newHTTPServer builds the HTTP server and muxes (no auth on /health, API key on /v1/).
-// Handler chain: RequestID -> MaxBody -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
+// Handler chain: RequestID -> otelhttp(Logging(MaxBody(mux))) so 413 and other responses are logged and traced.
 func newHTTPServer(
 	cfg *config.Config,
 	health *handlers.HealthHandler,
@@ -389,16 +389,15 @@ func newHTTPServer(
 		otelOpts = append(otelOpts, otelhttp.WithTracerProvider(tracerProvider))
 	}
 
-	// Logging runs inside otelhttp so r.Context() has the span when we log (trace_id/span_id in access logs).
-	inner := middleware.Logging(mux)
-	handler := otelhttp.NewHandler(inner, "hub-api", otelOpts...)
-
+	// MaxBody runs inside Logging so 413 rejections are logged and traced like other responses.
 	var apiMetrics observability.APIMetrics
 	if metrics != nil {
 		apiMetrics = metrics.API
 	}
 
-	handler = middleware.MaxBody(cfg.MaxRequestBodyBytes, apiMetrics)(handler)
+	inner := middleware.MaxBody(cfg.MaxRequestBodyBytes, apiMetrics)(mux)
+	inner = middleware.Logging(inner)
+	handler := otelhttp.NewHandler(inner, "hub-api", otelOpts...)
 	handler = middleware.RequestID(handler)
 
 	const (
