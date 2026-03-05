@@ -86,7 +86,12 @@ func (r *DBWebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*mode
 		return nil, err //nolint:wrapcheck // pass through repo errors
 	}
 
-	return val.(*models.Webhook), nil
+	got := *(val.(*models.Webhook))
+	if got.EventTypes != nil {
+		got.EventTypes = append([]datatypes.EventType(nil), got.EventTypes...)
+	}
+
+	return &got, nil
 }
 
 // buildWebhookFilterConditions builds WHERE clause conditions and arguments from filters.
@@ -384,7 +389,17 @@ func (r *DBWebhooksRepository) ListEnabledForEventType(ctx context.Context, even
 		return nil, err //nolint:wrapcheck // pass through repo errors
 	}
 
-	return val.([]models.Webhook), nil
+	shared := val.([]models.Webhook)
+	out := make([]models.Webhook, len(shared))
+	copy(out, shared)
+
+	for i := range out {
+		if out[i].EventTypes != nil {
+			out[i].EventTypes = append([]datatypes.EventType(nil), out[i].EventTypes...)
+		}
+	}
+
+	return out, nil
 }
 
 // getByIDDirect performs the actual DB query; used by GetByID (via singleflight) and Update (to avoid re-entry).
