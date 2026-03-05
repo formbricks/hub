@@ -112,7 +112,7 @@ const SigningKeySize = 32
 // canonicalizeHost normalizes host for blacklist lookup (trim trailing dots, lowercase).
 func canonicalizeHost(host string) string {
 	h := strings.TrimSpace(strings.ToLower(host))
-	h = strings.TrimSuffix(h, ".")
+	h = strings.TrimRight(h, ".")
 
 	return h
 }

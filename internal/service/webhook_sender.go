@@ -35,10 +35,16 @@ type WebhookSenderImpl struct {
 	metrics    observability.WebhookMetrics
 }
 
+const defaultWebhookHTTPTimeout = 15 * time.Second
+
 // NewWebhookSenderImpl creates a sender that uses the given repo.
 // httpTimeout limits how long a single HTTP POST can take; worker job timeout should exceed it by ~5s.
 // metrics may be nil when metrics are disabled.
 func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.WebhookMetrics, httpTimeout time.Duration) *WebhookSenderImpl {
+	if httpTimeout <= 0 {
+		httpTimeout = defaultWebhookHTTPTimeout
+	}
+
 	client := &http.Client{
 		Timeout: httpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {

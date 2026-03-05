@@ -60,6 +60,9 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 		database.WithMaxConns(cfg.DatabaseMaxConns),
 		database.WithMinConns(cfg.DatabaseMinConns),
 		database.WithMaxConnLifetime(cfg.DatabaseMaxConnLifetime),
+		database.WithMaxConnIdleTime(cfg.DatabaseMaxConnIdleTime),
+		database.WithHealthCheckPeriod(cfg.DatabaseHealthCheckPeriod),
+		database.WithConnectTimeout(cfg.DatabaseConnectTimeout),
 	)
 	require.NoError(t, err, "Failed to connect to database")
 

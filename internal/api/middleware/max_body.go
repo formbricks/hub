@@ -61,6 +61,11 @@ func MaxBody(maxBytes int64, recorder RequestBodyTooLargeRecorder) func(http.Han
 				buf := &responseBuffer{ResponseWriter: w}
 				next.ServeHTTP(buf, r)
 
+				if !limitExceeded {
+					limitExceeded = drainAndDetectMaxBytesError(r.Body)
+					_ = r.Body.Close()
+				}
+
 				if limitExceeded {
 					if recorder != nil {
 						recorder.RecordRequestBodyTooLarge(r.Context())
@@ -95,6 +100,15 @@ func (r *maxBodyReader) Read(p []byte) (n int, err error) {
 	}
 
 	return n, err //nolint:wrapcheck // must return raw error so io.EOF and *http.MaxBytesError propagate
+}
+
+// drainAndDetectMaxBytesError drains r and returns true if MaxBytesError occurred.
+func drainAndDetectMaxBytesError(r io.Reader) bool {
+	_, err := io.Copy(io.Discard, r)
+
+	var maxBytesErr *http.MaxBytesError
+
+	return errors.As(err, &maxBytesErr)
 }
 
 // responseBuffer captures status, headers, and body so we can optionally discard and send 413 instead.

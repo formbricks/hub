@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/golang-lru/v2"
@@ -16,7 +17,10 @@ import (
 	"github.com/formbricks/hub/internal/repository"
 )
 
-const searchQueryEmbeddingCacheName = "search_query_embedding"
+const (
+	searchQueryEmbeddingCacheName = "search_query_embedding"
+	defaultCoalescedLoadTimeout   = 30 * time.Second
+)
 
 // Sentinel errors for search (used by handlers for status mapping).
 var (
@@ -42,24 +46,26 @@ type EmbeddingsRepositoryForSearch interface {
 
 // SearchService performs semantic search and similar-feedback lookups using embeddings.
 type SearchService struct {
-	embeddingClient    EmbeddingClient
-	embeddingsRepo     EmbeddingsRepositoryForSearch
-	model              string
-	queryCache         *lru.Cache[string, []float32]
-	queryLoadGroup     singleflight.Group
-	embeddingLoadGroup singleflight.Group
-	cacheMetrics       observability.CacheMetrics
-	logger             *slog.Logger
+	embeddingClient      EmbeddingClient
+	embeddingsRepo       EmbeddingsRepositoryForSearch
+	model                string
+	queryCache           *lru.Cache[string, []float32]
+	queryLoadGroup       singleflight.Group
+	embeddingLoadGroup   singleflight.Group
+	cacheMetrics         observability.CacheMetrics
+	logger               *slog.Logger
+	coalescedLoadTimeout time.Duration
 }
 
 // SearchServiceParams configures SearchService. QueryCache and CacheMetrics may be nil (no caching).
 type SearchServiceParams struct {
-	EmbeddingClient EmbeddingClient
-	EmbeddingsRepo  EmbeddingsRepositoryForSearch
-	Model           string
-	QueryCache      *lru.Cache[string, []float32]
-	CacheMetrics    observability.CacheMetrics
-	Logger          *slog.Logger
+	EmbeddingClient      EmbeddingClient
+	EmbeddingsRepo       EmbeddingsRepositoryForSearch
+	Model                string
+	QueryCache           *lru.Cache[string, []float32]
+	CacheMetrics         observability.CacheMetrics
+	Logger               *slog.Logger
+	CoalescedLoadTimeout time.Duration // timeout for shared singleflight workers; 0 => defaultCoalescedLoadTimeout
 }
 
 // NewSearchService creates a SearchService.
@@ -69,13 +75,19 @@ func NewSearchService(p SearchServiceParams) *SearchService {
 		logger = slog.Default()
 	}
 
+	timeout := p.CoalescedLoadTimeout
+	if timeout <= 0 {
+		timeout = defaultCoalescedLoadTimeout
+	}
+
 	return &SearchService{
-		embeddingClient: p.EmbeddingClient,
-		embeddingsRepo:  p.EmbeddingsRepo,
-		model:           p.Model,
-		queryCache:      p.QueryCache,
-		cacheMetrics:    p.CacheMetrics,
-		logger:          logger,
+		embeddingClient:      p.EmbeddingClient,
+		embeddingsRepo:       p.EmbeddingsRepo,
+		model:                p.Model,
+		queryCache:           p.QueryCache,
+		cacheMetrics:         p.CacheMetrics,
+		logger:               logger,
+		coalescedLoadTimeout: timeout,
 	}
 }
 
@@ -168,8 +180,11 @@ func (s *SearchService) SimilarFeedback(
 	embedKey := fmt.Sprintf("%s:%s:%s", feedbackRecordID, s.model, tenantID)
 
 	resultCh := s.embeddingLoadGroup.DoChan(embedKey, func() (any, error) { //nolint:contextcheck // shared work must not use caller ctx
+		workCtx, cancel := context.WithTimeout(context.Background(), s.coalescedLoadTimeout)
+		defer cancel()
+
 		return s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(
-			context.Background(), feedbackRecordID, s.model, tenantID)
+			workCtx, feedbackRecordID, s.model, tenantID)
 	})
 
 	var (
@@ -250,7 +265,10 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 	// Use DoChan so shared work runs with context.Background(); each caller selects on their own ctx.Done()
 	// to avoid one caller's cancellation/timeout aborting the coalesced work for all waiters.
 	resultCh := s.queryLoadGroup.DoChan(query, func() (any, error) { //nolint:contextcheck // shared work must not use caller ctx
-		vec, loadErr := s.embeddingClient.CreateEmbeddingForQuery(context.Background(), query)
+		workCtx, cancel := context.WithTimeout(context.Background(), s.coalescedLoadTimeout)
+		defer cancel()
+
+		vec, loadErr := s.embeddingClient.CreateEmbeddingForQuery(workCtx, query)
 		if loadErr != nil {
 			return nil, fmt.Errorf("create embedding: %w", loadErr)
 		}

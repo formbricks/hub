@@ -49,7 +49,7 @@ func TestRetryingWebhookDispatchInserter_SuccessAfterRetry(t *testing.T) {
 	result, err := r.InsertMany(ctx, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.GreaterOrEqual(t, base.calls.Load(), int32(2))
+	assert.Equal(t, int32(2), base.calls.Load())
 }
 
 func TestRetryingWebhookDispatchInserter_FailureAfterAllRetries(t *testing.T) {

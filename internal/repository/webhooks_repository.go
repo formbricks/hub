@@ -80,7 +80,7 @@ func (r *DBWebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*mode
 	key := id.String()
 
 	val, err, _ := r.sfGroup.Do(key, func() (any, error) {
-		return r.getByIDDirect(ctx, id)
+		return r.getByIDDirect(context.WithoutCancel(ctx), id)
 	})
 	if err != nil {
 		return nil, err //nolint:wrapcheck // pass through repo errors
@@ -90,6 +90,8 @@ func (r *DBWebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*mode
 	if got.EventTypes != nil {
 		got.EventTypes = append([]datatypes.EventType(nil), got.EventTypes...)
 	}
+
+	deepCopyWebhookPointers(&got)
 
 	return &got, nil
 }
@@ -383,7 +385,7 @@ func (r *DBWebhooksRepository) ListEnabledForEventType(ctx context.Context, even
 	key := "list:" + eventType
 
 	val, err, _ := r.sfGroup.Do(key, func() (any, error) {
-		return r.listEnabledForEventTypeDirect(ctx, eventType)
+		return r.listEnabledForEventTypeDirect(context.WithoutCancel(ctx), eventType)
 	})
 	if err != nil {
 		return nil, err //nolint:wrapcheck // pass through repo errors
@@ -397,9 +399,29 @@ func (r *DBWebhooksRepository) ListEnabledForEventType(ctx context.Context, even
 		if out[i].EventTypes != nil {
 			out[i].EventTypes = append([]datatypes.EventType(nil), out[i].EventTypes...)
 		}
+
+		deepCopyWebhookPointers(&out[i])
 	}
 
 	return out, nil
+}
+
+// deepCopyWebhookPointers allocates new pointers for pointer fields so callers receive independent copies.
+func deepCopyWebhookPointers(w *models.Webhook) {
+	if w.TenantID != nil {
+		v := *w.TenantID
+		w.TenantID = &v
+	}
+
+	if w.DisabledReason != nil {
+		v := *w.DisabledReason
+		w.DisabledReason = &v
+	}
+
+	if w.DisabledAt != nil {
+		v := *w.DisabledAt
+		w.DisabledAt = &v
+	}
 }
 
 // getByIDDirect performs the actual DB query; used by GetByID (via singleflight) and Update (to avoid re-entry).

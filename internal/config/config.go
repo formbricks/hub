@@ -78,7 +78,7 @@ type Config struct {
 	DatabaseConnectTimeout time.Duration
 
 	// WebhookURLBlacklist: hosts (and IPs) that cannot be used as webhook endpoints (SSRF mitigation).
-	// Loaded from WEBHOOK_BLACKLIST (comma-separated). Defaults to localhost, 127.0.0.1, ::1.
+	// Loaded from WEBHOOK_BLACKLIST (comma-separated). Defaults: localhost, 127.0.0.1, ::1, 169.254.169.254.
 	WebhookURLBlacklist map[string]struct{}
 
 	// Embeddings: optional. Enabled only when both EMBEDDING_PROVIDER and EMBEDDING_MODEL are set and provider is supported.
@@ -168,7 +168,7 @@ func Load() (*Config, error) {
 		slog.Warn("Failed to load .env file", "error", err)
 	}
 
-	webhookBlacklist := parseWebhookURLBlacklist(getEnv("WEBHOOK_BLACKLIST", "localhost,127.0.0.1,::1"))
+	webhookBlacklist := parseWebhookURLBlacklist(getEnv("WEBHOOK_BLACKLIST", "localhost,127.0.0.1,::1,169.254.169.254"))
 
 	const (
 		defaultWebhookDeliveryMaxConcurrent     = 100
