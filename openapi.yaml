@@ -358,6 +358,12 @@ paths:
                             parameters:
                                 id: '$response.body#/id'
                             description: Delete the created feedback record by ID
+                "400":
+                    description: Bad Request (e.g. validation error)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "409":
                     description: Conflict – a feedback record with the same tenant_id, submission_id, and field_id already exists (idempotent create).
                     content:
@@ -370,15 +376,6 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
-                            examples:
-                                validation_error:
-                                    summary: Validation error
-                                    value:
-                                        type: "about:blank"
-                                        title: "Bad Request"
-                                        status: 400
-                                        detail: "Required field 'field_id' is missing"
-                                        instance: "https://hub.formbricks.com/v1/feedback-records"
         delete:
             tags:
                 - Feedback Records
@@ -417,6 +414,12 @@ paths:
                                     value:
                                         deleted_count: 42
                                         message: "Successfully deleted 42 feedback records"
+                "400":
+                    description: Bad Request (e.g. validation error on query parameters)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -1100,6 +1103,8 @@ components:
             required:
                 - feedback_record_id
                 - score
+                - field_label
+                - value_text
         CreateFeedbackRecordInputBody:
             type: object
             additionalProperties: false
@@ -1430,7 +1435,7 @@ components:
                     type: array
                     description: |
                         Event types this webhook subscribes to. Each value must be one of WebhookEventType.
-                        If empty or null, the webhook receives all event types.
+                        If empty, the webhook receives all event types.
                     items:
                         $ref: '#/components/schemas/WebhookEventType'
             required:
