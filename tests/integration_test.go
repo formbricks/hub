@@ -111,7 +111,6 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	var protectedHandler http.Handler = protectedMux
 
-	protectedHandler = middleware.MaxBody(cfg.MaxRequestBodyBytes, nil)(protectedHandler)
 	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
 
 	// Combine both handlers
@@ -1399,36 +1398,4 @@ func TestWebhookURLBlacklist(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 	require.NoError(t, resp2.Body.Close())
-}
-
-// TestRequestBodyTooLarge asserts that requests with body exceeding MAX_REQUEST_BODY_BYTES return 413.
-func TestRequestBodyTooLarge(t *testing.T) {
-	t.Setenv("MAX_REQUEST_BODY_BYTES", "100")
-
-	server, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	client := &http.Client{}
-
-	// Body > 100 bytes
-	largeBody := bytes.Repeat([]byte("x"), 150)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(largeBody))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+testAPIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-
-	defer func() { _ = resp.Body.Close() }()
-
-	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
-	assert.Contains(t, resp.Header.Get("Content-Type"), "application/problem+json")
-
-	var problem response.ProblemDetails
-
-	err = json.NewDecoder(resp.Body).Decode(&problem)
-	require.NoError(t, err)
-	assert.Equal(t, "Request Entity Too Large", problem.Title)
-	assert.Contains(t, problem.Detail, "exceeds maximum")
 }

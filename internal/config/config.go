@@ -61,9 +61,6 @@ type Config struct {
 	WebhookEnqueueInitialBackoff time.Duration // First backoff
 	WebhookEnqueueMaxBackoff     time.Duration // Max backoff cap
 
-	// Max request body size in bytes (global limit); default 10 MiB. Prevents OOM and DoS from large bodies.
-	MaxRequestBodyBytes int64
-
 	// Database connection pool: max connections; default 25
 	DatabaseMaxConns int
 	// Database connection pool: min connections to keep open; default 0
@@ -125,21 +122,6 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return value
 }
 
-// getEnvAsInt64 retrieves an environment variable as int64 or returns a default value.
-func getEnvAsInt64(key string, defaultValue int64) int64 {
-	valueStr := os.Getenv(key)
-	if valueStr == "" {
-		return defaultValue
-	}
-
-	value, err := strconv.ParseInt(valueStr, 10, 64)
-	if err != nil {
-		return defaultValue
-	}
-
-	return value
-}
-
 // GetEnvAsBool retrieves an environment variable as a boolean. "true", "1", "yes" (case-insensitive) => true; else false.
 // Exported so other cmd packages (e.g. backfill-embeddings) can reuse it without duplicating logic.
 func GetEnvAsBool(key string, defaultValue bool) bool {
@@ -184,7 +166,6 @@ func Load() (*Config, error) {
 		defaultWebhookEnqueueMaxBackoffMs       = 2000
 		defaultEmbeddingMaxConcurrent           = 5
 		defaultEmbeddingMaxAttempts             = 3
-		defaultMaxRequestBodyBytes              = 10 * 1024 * 1024 // 10 MiB
 		defaultDatabaseMaxConns                 = 25
 		defaultDatabaseMinConns                 = 0
 		defaultDatabaseMaxConnLifetimeSeconds   = 3600 // 1 hour
@@ -259,11 +240,6 @@ func Load() (*Config, error) {
 
 	webhookEnqueueMaxBackoff := max(time.Duration(webhookEnqueueMaxBackoffMs)*time.Millisecond, webhookEnqueueInitialBackoff)
 
-	maxRequestBodyBytes := getEnvAsInt64("MAX_REQUEST_BODY_BYTES", defaultMaxRequestBodyBytes)
-	if maxRequestBodyBytes <= 0 {
-		maxRequestBodyBytes = defaultMaxRequestBodyBytes
-	}
-
 	databaseMaxConns := getEnvAsInt("DATABASE_MAX_CONNS", defaultDatabaseMaxConns)
 	if databaseMaxConns <= 0 {
 		databaseMaxConns = defaultDatabaseMaxConns
@@ -335,7 +311,6 @@ func Load() (*Config, error) {
 		WebhookEnqueueInitialBackoff: webhookEnqueueInitialBackoff,
 		WebhookEnqueueMaxBackoff:     webhookEnqueueMaxBackoff,
 
-		MaxRequestBodyBytes:       maxRequestBodyBytes,
 		DatabaseMaxConns:          databaseMaxConns,
 		DatabaseMinConns:          databaseMinConns,
 		DatabaseMaxConnLifetime:   databaseMaxConnLifetime,

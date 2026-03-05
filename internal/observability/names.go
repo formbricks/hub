@@ -26,9 +26,8 @@ const (
 	MetricNameEmbeddingWorkerErrors   = "hub_embedding_worker_errors_total"
 	MetricNameEmbeddingDuration       = "hub_embedding_duration_seconds"
 
-	MetricNameCacheHits           = "hub_cache_hits_total"
-	MetricNameCacheMisses         = "hub_cache_misses_total"
-	MetricNameRequestBodyTooLarge = "hub_request_body_too_large_total"
+	MetricNameCacheHits   = "hub_cache_hits_total"
+	MetricNameCacheMisses = "hub_cache_misses_total"
 )
 
 // Attribute keys.
