@@ -1001,7 +1001,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		TenantID:       bulkDeleteTenant,
 		FieldID:        "f1",
 		FieldType:      models.FieldTypeNumber,
-		ValueNumber:    ptrFloat64(1),
+		ValueNumber:    new(1.0),
 		UserIdentifier: strPtr(userID),
 	}
 	rec1, err := repo.Create(ctx, req1)
@@ -1014,7 +1014,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		TenantID:       bulkDeleteTenant,
 		FieldID:        "f2",
 		FieldType:      models.FieldTypeNumber,
-		ValueNumber:    ptrFloat64(2),
+		ValueNumber:    new(2.0),
 		UserIdentifier: strPtr(userID),
 	}
 	rec2, err := repo.Create(ctx, req2)
@@ -1030,8 +1030,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	assert.True(t, ids[rec2.ID.String()])
 }
 
-func strPtr(s string) *string       { return &s }
-func ptrFloat64(f float64) *float64 { return &f }
+func strPtr(s string) *string { return &s }
 
 // TestWebhooksCRUD tests webhook create, get, list, update, delete.
 func TestWebhooksCRUD(t *testing.T) {
