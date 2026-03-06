@@ -1091,13 +1091,15 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, getResp.StatusCode)
 
-	var got models.Webhook
+	var got map[string]any
 
-	err = decodeData(getResp, &got)
+	err = json.NewDecoder(getResp.Body).Decode(&got)
 	require.NoError(t, err)
 	require.NoError(t, getResp.Body.Close())
-	assert.Equal(t, created.ID, got.ID)
-	assert.Equal(t, created.URL, got.URL)
+	assert.Equal(t, created.ID.String(), got["id"])
+	assert.Equal(t, created.URL, got["url"])
+	_, hasSigningKey := got["signing_key"]
+	assert.False(t, hasSigningKey, "GET response must not include signing_key")
 
 	// List webhooks
 	listReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/webhooks", http.NoBody)
@@ -1107,12 +1109,29 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, listResp.StatusCode)
 
-	var listResult models.ListWebhooksResponse
+	var listRaw map[string]any
 
-	err = decodeData(listResp, &listResult)
+	err = json.NewDecoder(listResp.Body).Decode(&listRaw)
 	require.NoError(t, err)
 	require.NoError(t, listResp.Body.Close())
-	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	data, ok := listRaw["data"].([]any)
+	require.True(t, ok)
+
+	totalVal, hasTotal := listRaw["total"]
+	if hasTotal {
+		assert.GreaterOrEqual(t, int(totalVal.(float64)), 1)
+	}
+
+	assert.GreaterOrEqual(t, len(data), 1)
+	// signing_key must not be in LIST response (redacted for security)
+	for i, item := range data {
+		itemMap, ok := item.(map[string]any)
+		require.True(t, ok)
+
+		_, hasSigningKey := itemMap["signing_key"]
+		assert.False(t, hasSigningKey, "LIST response item %d must not include signing_key", i)
+	}
 
 	// Test invalid cursor returns 400
 	invalidCursorReq, err := http.NewRequestWithContext(

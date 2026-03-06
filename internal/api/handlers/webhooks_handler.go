@@ -108,7 +108,8 @@ func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, webhook)
+	public := models.ToWebhookPublic(*webhook)
+	response.RespondJSON(w, http.StatusOK, &public)
 }
 
 // List handles GET /v1/webhooks.
@@ -135,7 +136,16 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, result)
+	publicData := make([]models.WebhookPublic, len(result.Data))
+	for i := range result.Data {
+		publicData[i] = models.ToWebhookPublic(result.Data[i])
+	}
+
+	response.RespondJSON(w, http.StatusOK, &models.ListWebhooksPublicResponse{
+		Data:       publicData,
+		Limit:      result.Limit,
+		NextCursor: result.NextCursor,
+	})
 }
 
 // Update handles PATCH /v1/webhooks/{id}.
@@ -192,7 +202,8 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, webhook)
+	public := models.ToWebhookPublic(*webhook)
+	response.RespondJSON(w, http.StatusOK, &public)
 }
 
 // Delete handles DELETE /v1/webhooks/{id}.
