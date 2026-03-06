@@ -9,7 +9,7 @@ run:
   timeout: 5m
   concurrency: 4
   modules-download-mode: readonly
-  go: "1.25"
+  go: "1.26.1"
   # Allow linting test files but suppress specific strict rules via exclusion below
   tests: true
 
@@ -43,6 +43,15 @@ linters:
         linters:
           - nilnil       # mocks often return (nil, nil) for success
           - err113       # mocks and test helpers use dynamic errors
+      # gosec false positives in tests only: G706 log injection, G704 SSRF (localhost), G101 test DB credential
+      - path: _test\.go$
+        linters:
+          - gosec
+        text: "G70[46]|G101"
+      - path: tests/
+        linters:
+          - gosec
+        text: "G70[46]|G101"
   settings:
     lll:
       line-length: 140  # consider 120–140 for new code

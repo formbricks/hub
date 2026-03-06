@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -38,8 +39,19 @@ func Auth(apiKey string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Compare the provided key with the configured key
-			if providedKey != apiKey {
+			// Compare the provided key with the configured key (constant-time to avoid timing side-channels).
+			// Pad both to the same length so ConstantTimeCompare always does full O(n) work; otherwise
+			// it returns 0 immediately for length mismatch (O(1)), leaking length via timing.
+			provided := []byte(providedKey)
+			expected := []byte(apiKey)
+			maxLen := max(len(provided), len(expected))
+			paddedProvided := make([]byte, maxLen)
+			paddedExpected := make([]byte, maxLen)
+
+			copy(paddedProvided, provided)
+			copy(paddedExpected, expected)
+
+			if subtle.ConstantTimeCompare(paddedProvided, paddedExpected) != 1 {
 				response.RespondUnauthorized(w, "Invalid API key")
 
 				return

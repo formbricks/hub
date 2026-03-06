@@ -56,7 +56,16 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	require.NoError(t, err, "Failed to load configuration")
 
 	// Initialize database connection
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL,
+		database.WithPoolConfig(database.PoolConfig{
+			MaxConns:          cfg.DatabaseMaxConns,
+			MinConns:          cfg.DatabaseMinConns,
+			MaxConnLifetime:   cfg.DatabaseMaxConnLifetime,
+			MaxConnIdleTime:   cfg.DatabaseMaxConnIdleTime,
+			HealthCheckPeriod: cfg.DatabaseHealthCheckPeriod,
+			ConnectTimeout:    cfg.DatabaseConnectTimeout,
+		}),
+	)
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize message publisher manager for tests (no providers required)
@@ -64,7 +73,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount, cfg.WebhookURLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
@@ -983,7 +992,16 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL,
+		database.WithPoolConfig(database.PoolConfig{
+			MaxConns:          cfg.DatabaseMaxConns,
+			MinConns:          cfg.DatabaseMinConns,
+			MaxConnLifetime:   cfg.DatabaseMaxConnLifetime,
+			MaxConnIdleTime:   cfg.DatabaseMaxConnIdleTime,
+			HealthCheckPeriod: cfg.DatabaseHealthCheckPeriod,
+			ConnectTimeout:    cfg.DatabaseConnectTimeout,
+		}),
+	)
 	require.NoError(t, err)
 
 	defer db.Close()
@@ -1001,8 +1019,8 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		TenantID:       bulkDeleteTenant,
 		FieldID:        "f1",
 		FieldType:      models.FieldTypeNumber,
-		ValueNumber:    ptrFloat64(1),
-		UserIdentifier: strPtr(userID),
+		ValueNumber:    new(1.0),
+		UserIdentifier: new(userID),
 	}
 	rec1, err := repo.Create(ctx, req1)
 	require.NoError(t, err)
@@ -1014,8 +1032,8 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		TenantID:       bulkDeleteTenant,
 		FieldID:        "f2",
 		FieldType:      models.FieldTypeNumber,
-		ValueNumber:    ptrFloat64(2),
-		UserIdentifier: strPtr(userID),
+		ValueNumber:    new(2.0),
+		UserIdentifier: new(userID),
 	}
 	rec2, err := repo.Create(ctx, req2)
 	require.NoError(t, err)
@@ -1029,9 +1047,6 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	assert.True(t, ids[rec1.ID.String()])
 	assert.True(t, ids[rec2.ID.String()])
 }
-
-func strPtr(s string) *string       { return &s }
-func ptrFloat64(f float64) *float64 { return &f }
 
 // TestWebhooksCRUD tests webhook create, get, list, update, delete.
 func TestWebhooksCRUD(t *testing.T) {
@@ -1076,13 +1091,15 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, getResp.StatusCode)
 
-	var got models.Webhook
+	var got map[string]any
 
-	err = decodeData(getResp, &got)
+	err = json.NewDecoder(getResp.Body).Decode(&got)
 	require.NoError(t, err)
 	require.NoError(t, getResp.Body.Close())
-	assert.Equal(t, created.ID, got.ID)
-	assert.Equal(t, created.URL, got.URL)
+	assert.Equal(t, created.ID.String(), got["id"])
+	assert.Equal(t, created.URL, got["url"])
+	_, hasSigningKey := got["signing_key"]
+	assert.False(t, hasSigningKey, "GET response must not include signing_key")
 
 	// List webhooks
 	listReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/webhooks", http.NoBody)
@@ -1092,12 +1109,29 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, listResp.StatusCode)
 
-	var listResult models.ListWebhooksResponse
+	var listRaw map[string]any
 
-	err = decodeData(listResp, &listResult)
+	err = json.NewDecoder(listResp.Body).Decode(&listRaw)
 	require.NoError(t, err)
 	require.NoError(t, listResp.Body.Close())
-	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	data, ok := listRaw["data"].([]any)
+	require.True(t, ok)
+
+	totalVal, hasTotal := listRaw["total"]
+	if hasTotal {
+		assert.GreaterOrEqual(t, int(totalVal.(float64)), 1)
+	}
+
+	assert.GreaterOrEqual(t, len(data), 1)
+	// signing_key must not be in LIST response (redacted for security)
+	for i, item := range data {
+		itemMap, ok := item.(map[string]any)
+		require.True(t, ok)
+
+		_, hasSigningKey := itemMap["signing_key"]
+		assert.False(t, hasSigningKey, "LIST response item %d must not include signing_key", i)
+	}
 
 	// Test invalid cursor returns 400
 	invalidCursorReq, err := http.NewRequestWithContext(

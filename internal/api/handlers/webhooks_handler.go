@@ -43,7 +43,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		slog.Warn("Invalid request body", "method", r.Method, "path", r.URL.Path, "error", err)
+		slog.Warn("Invalid request body", "method", r.Method, "path", r.URL.Path, "error", err) // #nosec G706 -- slog key-values
 		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
 
 		return
@@ -69,7 +69,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		slog.Error("Failed to create webhook", "method", r.Method, "path", r.URL.Path, "error", err)
+		slog.Error("Failed to create webhook", "method", r.Method, "path", r.URL.Path, "error", err) // #nosec G706 -- slog key-values
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return
@@ -102,13 +102,14 @@ func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		slog.Error("Failed to get webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
+		slog.Error("Failed to get webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err) // #nosec G706 -- slog key-values
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, webhook)
+	public := models.ToWebhookPublic(*webhook)
+	response.RespondJSON(w, http.StatusOK, &public)
 }
 
 // List handles GET /v1/webhooks.
@@ -129,13 +130,22 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		slog.Error("Failed to list webhooks", "method", r.Method, "path", r.URL.Path, "error", err)
+		slog.Error("Failed to list webhooks", "method", r.Method, "path", r.URL.Path, "error", err) // #nosec G706 -- slog key-values
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, result)
+	publicData := make([]models.WebhookPublic, len(result.Data))
+	for i := range result.Data {
+		publicData[i] = models.ToWebhookPublic(result.Data[i])
+	}
+
+	response.RespondJSON(w, http.StatusOK, &models.ListWebhooksPublicResponse{
+		Data:       publicData,
+		Limit:      result.Limit,
+		NextCursor: result.NextCursor,
+	})
 }
 
 // Update handles PATCH /v1/webhooks/{id}.
@@ -160,7 +170,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		slog.Warn("Invalid request body for update", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
+		slog.Warn("Invalid request body for update", "method", r.Method, "path", r.URL.Path, "id", id, "error", err) // #nosec G706
 		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
 
 		return
@@ -186,13 +196,14 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		slog.Error("Failed to update webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
+		slog.Error("Failed to update webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err) // #nosec G706 -- slog key-values
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, webhook)
+	public := models.ToWebhookPublic(*webhook)
+	response.RespondJSON(w, http.StatusOK, &public)
 }
 
 // Delete handles DELETE /v1/webhooks/{id}.
@@ -218,7 +229,7 @@ func (h *WebhooksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		slog.Error("Failed to delete webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err)
+		slog.Error("Failed to delete webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err) // #nosec G706 -- slog key-values
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return

@@ -43,7 +43,7 @@ lint-openapi:
 # Loads .env if present so DATABASE_URL (e.g. port 5433) is used when Postgres runs on a non-default port.
 tests:
 	@echo "Running integration tests..."
-	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./tests/... -v)
+	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./tests/... -v -timeout 120s)
 
 # Run unit tests (fast, no database required)
 test-unit:
@@ -70,7 +70,7 @@ COVERAGE_THRESHOLD ?= 15
 check-coverage:
 	@echo "Running tests with coverage (threshold: $(COVERAGE_THRESHOLD)%)..."
 	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./internal/... ./pkg/... ./tests/... -coverprofile=coverage.out)
-	@COV=$$(go tool cover -func=coverage.out | tail -1 | awk '{gsub(/%/, ""); print $$3}') && \
+	@COV=$$(go tool cover -func=coverage.out | \tail -1 | awk '{gsub(/%/, ""); print $$3}') && \
 	if [ -z "$$COV" ] || ! awk -v c="$$COV" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { exit (c+0 >= t) ? 0 : 1 }'; then \
 		echo ""; \
 		echo "❌ Coverage $$COV% is below threshold $(COVERAGE_THRESHOLD)%"; \
@@ -155,7 +155,7 @@ migrate-validate:
 
 # Run River job queue migrations (required for webhook delivery)
 river-migrate:
-	@command -v river >/dev/null 2>&1 || { echo "Error: river CLI not found. Install with: go install github.com/riverqueue/river/cmd/river@latest"; exit 1; }
+	@command -v river >/dev/null 2>&1 || { echo "Error: river CLI not found. Install with: make install-tools or go install github.com/riverqueue/river/cmd/river@$(RIVER_VERSION)"; exit 1; }
 	@if [ -f .env ]; then \
 		export $$(grep -v '^#' .env | xargs) && \
 		if [ -z "$$DATABASE_URL" ]; then echo "Error: DATABASE_URL not found in .env"; exit 1; fi && \
@@ -200,10 +200,10 @@ deps:
 
 # Install development tools
 # Tool versions - update these periodically
-GOLANGCI_LINT_VERSION := v2.8.0
+GOLANGCI_LINT_VERSION := v2.10.1
 GOVULNCHECK_VERSION := v1.1.4
-GOOSE_VERSION := v3.26.0
-RIVER_VERSION := v0.30.2
+GOOSE_VERSION := v3.27.0
+RIVER_VERSION := v0.31.0
 # Use pinned path so lint uses the version from make install-tools, not PATH
 GOLANGCI_LINT ?= $(HOME)/go/bin/golangci-lint
 

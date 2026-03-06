@@ -167,7 +167,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, eventMetrics)
 
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhookSender := service.NewWebhookSenderImpl(webhooksRepo, webhookMetrics)
+	webhookSender := service.NewWebhookSenderImpl(webhooksRepo, webhookMetrics, cfg.WebhookURLBlacklist, nil)
 	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender, webhookMetrics)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, webhookWorker)
@@ -303,7 +303,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		messageManager.RegisterProvider(embeddingProv)
 	}
 
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount, cfg.WebhookURLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
