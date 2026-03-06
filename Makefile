@@ -155,7 +155,7 @@ migrate-validate:
 
 # Run River job queue migrations (required for webhook delivery)
 river-migrate:
-	@command -v river >/dev/null 2>&1 || { echo "Error: river CLI not found. Install with: go install github.com/riverqueue/river/cmd/river@latest"; exit 1; }
+	@command -v river >/dev/null 2>&1 || { echo "Error: river CLI not found. Install with: make install-tools or go install github.com/riverqueue/river/cmd/river@$(RIVER_VERSION)"; exit 1; }
 	@if [ -f .env ]; then \
 		export $$(grep -v '^#' .env | xargs) && \
 		if [ -z "$$DATABASE_URL" ]; then echo "Error: DATABASE_URL not found in .env"; exit 1; fi && \
