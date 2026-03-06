@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -98,7 +99,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil)
+		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
 		payload := &WebhookPayload{
 			ID:        uuid.Must(uuid.NewV7()),
 			Type:      "feedback_record.created",
@@ -125,7 +126,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil)
+		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
@@ -147,7 +148,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil)
+		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
@@ -157,6 +158,82 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 
 		if repo.updateCalled {
 			t.Error("Update should not be called on 500")
+		}
+	})
+
+	t.Run("redirect not followed returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/redirect" {
+				http.Redirect(w, r, "/dest", http.StatusFound)
+
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		webhook.URL = server.URL + "/redirect"
+
+		repo := &mockSenderRepo{}
+		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
+
+		err := sender.Send(ctx, webhook, payload)
+		if err == nil {
+			t.Error("Send() error = nil, want error on 302 (redirects not followed)")
+		}
+
+		if !errors.Is(err, ErrWebhookNon2xx) {
+			t.Errorf("Send() error = %v, want ErrWebhookNon2xx", err)
+		}
+
+		if repo.updateCalled {
+			t.Error("Update should not be called on redirect")
+		}
+	})
+
+	t.Run("410 returns ErrWebhookGone", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusGone)
+		}))
+		defer server.Close()
+
+		webhook.URL = server.URL
+
+		repo := &mockSenderRepo{}
+		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
+
+		err := sender.Send(ctx, webhook, payload)
+		if err == nil {
+			t.Error("Send() error = nil, want error on 410")
+		}
+
+		if !errors.Is(err, ErrWebhookGone) {
+			t.Errorf("Send() error = %v, want ErrWebhookGone", err)
+		}
+	})
+
+	t.Run("4xx non-410 returns ErrWebhookNon2xx", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		defer server.Close()
+
+		webhook.URL = server.URL
+
+		repo := &mockSenderRepo{}
+		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
+
+		err := sender.Send(ctx, webhook, payload)
+		if err == nil {
+			t.Error("Send() error = nil, want error on 400")
+		}
+
+		if !errors.Is(err, ErrWebhookNon2xx) {
+			t.Errorf("Send() error = %v, want ErrWebhookNon2xx", err)
 		}
 	})
 }

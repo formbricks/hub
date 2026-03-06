@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/golang-lru/v2"
@@ -16,7 +17,10 @@ import (
 	"github.com/formbricks/hub/internal/repository"
 )
 
-const searchQueryEmbeddingCacheName = "search_query_embedding"
+const (
+	searchQueryEmbeddingCacheName = "search_query_embedding"
+	defaultCoalescedLoadTimeout   = 30 * time.Second
+)
 
 // Sentinel errors for search (used by handlers for status mapping).
 var (
@@ -42,23 +46,26 @@ type EmbeddingsRepositoryForSearch interface {
 
 // SearchService performs semantic search and similar-feedback lookups using embeddings.
 type SearchService struct {
-	embeddingClient EmbeddingClient
-	embeddingsRepo  EmbeddingsRepositoryForSearch
-	model           string
-	queryCache      *lru.Cache[string, []float32]
-	queryLoadGroup  singleflight.Group
-	cacheMetrics    observability.CacheMetrics
-	logger          *slog.Logger
+	embeddingClient      EmbeddingClient
+	embeddingsRepo       EmbeddingsRepositoryForSearch
+	model                string
+	queryCache           *lru.Cache[string, []float32]
+	queryLoadGroup       singleflight.Group
+	embeddingLoadGroup   singleflight.Group
+	cacheMetrics         observability.CacheMetrics
+	logger               *slog.Logger
+	coalescedLoadTimeout time.Duration
 }
 
 // SearchServiceParams configures SearchService. QueryCache and CacheMetrics may be nil (no caching).
 type SearchServiceParams struct {
-	EmbeddingClient EmbeddingClient
-	EmbeddingsRepo  EmbeddingsRepositoryForSearch
-	Model           string
-	QueryCache      *lru.Cache[string, []float32]
-	CacheMetrics    observability.CacheMetrics
-	Logger          *slog.Logger
+	EmbeddingClient      EmbeddingClient
+	EmbeddingsRepo       EmbeddingsRepositoryForSearch
+	Model                string
+	QueryCache           *lru.Cache[string, []float32]
+	CacheMetrics         observability.CacheMetrics
+	Logger               *slog.Logger
+	CoalescedLoadTimeout time.Duration // timeout for shared singleflight workers; 0 => defaultCoalescedLoadTimeout
 }
 
 // NewSearchService creates a SearchService.
@@ -68,13 +75,19 @@ func NewSearchService(p SearchServiceParams) *SearchService {
 		logger = slog.Default()
 	}
 
+	timeout := p.CoalescedLoadTimeout
+	if timeout <= 0 {
+		timeout = defaultCoalescedLoadTimeout
+	}
+
 	return &SearchService{
-		embeddingClient: p.EmbeddingClient,
-		embeddingsRepo:  p.EmbeddingsRepo,
-		model:           p.Model,
-		queryCache:      p.QueryCache,
-		cacheMetrics:    p.CacheMetrics,
-		logger:          logger,
+		embeddingClient:      p.EmbeddingClient,
+		embeddingsRepo:       p.EmbeddingsRepo,
+		model:                p.Model,
+		queryCache:           p.QueryCache,
+		cacheMetrics:         p.CacheMetrics,
+		logger:               logger,
+		coalescedLoadTimeout: timeout,
 	}
 }
 
@@ -161,18 +174,47 @@ func (s *SearchService) SimilarFeedback(
 	}
 
 	// Load source embedding only if the record belongs to this tenant (tenant isolation).
-	embedding, err := s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(ctx, feedbackRecordID, s.model, tenantID)
+	// Concurrent requests for the same (recordID, model, tenantID) are coalesced via singleflight.
+	// Uses context.WithTimeout(context.Background(), coalescedLoadTimeout) so shared work has its own bound;
+	// each caller selects on their own ctx.Done() so one caller's cancellation does not abort work for other waiters.
+	embedKey := fmt.Sprintf("%s:%s:%s", feedbackRecordID, s.model, tenantID)
+
+	resultCh := s.embeddingLoadGroup.DoChan(embedKey, func() (any, error) { //nolint:contextcheck // shared work must not use caller ctx
+		workCtx, cancel := context.WithTimeout(context.Background(), s.coalescedLoadTimeout)
+		defer cancel()
+
+		return s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(
+			workCtx, feedbackRecordID, s.model, tenantID)
+	})
+
+	var (
+		embedVal any
+		err      error
+	)
+
+	select {
+	case res := <-resultCh:
+		embedVal, err = res.Val, res.Err
+	case <-ctx.Done():
+		return out, fmt.Errorf("get embedding: %w", ctx.Err())
+	}
+
 	if err != nil {
 		if errors.Is(err, repository.ErrEmbeddingNotFound) {
 			s.logger.Debug("similar feedback: no embedding or tenant mismatch",
 				"feedbackRecordId", feedbackRecordID.String(), "model", s.model)
-			//nolint:wrapcheck // return as-is so handler can map to 404
+
 			return out, err
 		}
 
 		s.logger.Error("similar feedback: get embedding failed", "error", err, "feedbackRecordId", feedbackRecordID.String())
 
 		return out, fmt.Errorf("get embedding: %w", err)
+	}
+
+	embedding, ok := embedVal.([]float32)
+	if !ok {
+		return out, fmt.Errorf("get embedding: unexpected result type %T", embedVal) //nolint:err113 // type info valuable for debugging
 	}
 
 	var (
@@ -223,8 +265,13 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 		return vec, nil
 	}
 
-	val, err, shared := s.queryLoadGroup.Do(query, func() (any, error) {
-		vec, loadErr := s.embeddingClient.CreateEmbeddingForQuery(ctx, query)
+	// Uses context.WithTimeout(context.Background(), coalescedLoadTimeout) so shared work has its own bound;
+	// each caller selects on their own ctx.Done() so one caller's cancellation does not abort work for other waiters.
+	resultCh := s.queryLoadGroup.DoChan(query, func() (any, error) { //nolint:contextcheck // shared work must not use caller ctx
+		workCtx, cancel := context.WithTimeout(context.Background(), s.coalescedLoadTimeout)
+		defer cancel()
+
+		vec, loadErr := s.embeddingClient.CreateEmbeddingForQuery(workCtx, query)
 		if loadErr != nil {
 			return nil, fmt.Errorf("create embedding: %w", loadErr)
 		}
@@ -233,6 +280,20 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 
 		return vec, nil
 	})
+
+	var (
+		val    any
+		err    error
+		shared bool
+	)
+
+	select {
+	case res := <-resultCh:
+		val, err, shared = res.Val, res.Err, res.Shared
+	case <-ctx.Done():
+		return nil, fmt.Errorf("query embedding: %w", ctx.Err())
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("query embedding: %w", err)
 	}
@@ -247,5 +308,10 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 		}
 	}
 
-	return val.([]float32), nil
+	vec, ok := val.([]float32)
+	if !ok {
+		return nil, fmt.Errorf("query embedding: unexpected result type %T", val) //nolint:err113 // type info valuable for debugging
+	}
+
+	return vec, nil
 }

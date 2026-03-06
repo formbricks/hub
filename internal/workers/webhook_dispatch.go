@@ -18,9 +18,10 @@ import (
 type WebhookDispatchWorker struct {
 	river.WorkerDefaults[service.WebhookDispatchArgs]
 
-	repo    webhookDispatchRepo
-	sender  service.WebhookSender
-	metrics observability.WebhookMetrics
+	repo            webhookDispatchRepo
+	sender          service.WebhookSender
+	metrics         observability.WebhookMetrics
+	deliveryTimeout time.Duration
 }
 
 // webhookDispatchRepo is the minimal repo interface needed by the worker.
@@ -30,19 +31,23 @@ type webhookDispatchRepo interface {
 }
 
 // NewWebhookDispatchWorker creates a worker that uses the given repo and sender.
+// deliveryTimeout must exceed the HTTP client timeout by ~5s for setup/teardown (DB, metrics, disable on max attempts).
 // metrics may be nil when metrics are disabled.
 func NewWebhookDispatchWorker(
 	repo webhookDispatchRepo, sender service.WebhookSender, metrics observability.WebhookMetrics,
+	deliveryTimeout time.Duration,
 ) *WebhookDispatchWorker {
-	return &WebhookDispatchWorker{repo: repo, sender: sender, metrics: metrics}
+	return &WebhookDispatchWorker{
+		repo:            repo,
+		sender:          sender,
+		metrics:         metrics,
+		deliveryTimeout: deliveryTimeout,
+	}
 }
 
-// WebhookDeliveryTimeout is the max duration for a single webhook delivery (align with HTTP client timeout).
-const WebhookDeliveryTimeout = 25 * time.Second
-
-// Timeout limits how long a single delivery can run (align with HTTP client timeout).
+// Timeout limits how long a single delivery can run.
 func (w *WebhookDispatchWorker) Timeout(*river.Job[service.WebhookDispatchArgs]) time.Duration {
-	return WebhookDeliveryTimeout
+	return w.deliveryTimeout
 }
 
 // Work loads the webhook, builds the payload, and sends once.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,6 +18,55 @@ type PoolOption func(*pgxpool.Config)
 func WithAfterConnect(fn func(context.Context, *pgx.Conn) error) PoolOption {
 	return func(c *pgxpool.Config) {
 		c.AfterConnect = fn
+	}
+}
+
+// WithMaxConns sets the maximum number of connections in the pool.
+func WithMaxConns(n int) PoolOption {
+	return func(c *pgxpool.Config) {
+		//nolint:gosec // G115: pgxpool requires int32; config validates n is in reasonable range
+		c.MaxConns = int32(n)
+	}
+}
+
+// WithMinConns sets the minimum number of connections to keep in the pool.
+func WithMinConns(n int) PoolOption {
+	return func(c *pgxpool.Config) {
+		//nolint:gosec // G115: pgxpool requires int32; config validates n is in reasonable range
+		c.MinConns = int32(n)
+	}
+}
+
+// WithMaxConnLifetime sets the maximum lifetime of a connection before it is closed.
+func WithMaxConnLifetime(d time.Duration) PoolOption {
+	return func(c *pgxpool.Config) {
+		c.MaxConnLifetime = d
+	}
+}
+
+// WithMaxConnIdleTime sets the duration after which an idle connection is closed by the health check.
+// Use ~30 minutes in production to release idle connections when traffic drops.
+func WithMaxConnIdleTime(d time.Duration) PoolOption {
+	return func(c *pgxpool.Config) {
+		c.MaxConnIdleTime = d
+	}
+}
+
+// WithHealthCheckPeriod sets the duration between health checks of idle connections.
+// Use ~1 minute in production to detect dead connections (e.g. after DB restart or load balancer timeout).
+func WithHealthCheckPeriod(d time.Duration) PoolOption {
+	return func(c *pgxpool.Config) {
+		c.HealthCheckPeriod = d
+	}
+}
+
+// WithConnectTimeout sets the maximum time to wait when establishing a new connection.
+// Prevents indefinite hangs when the database is unreachable.
+func WithConnectTimeout(d time.Duration) PoolOption {
+	return func(c *pgxpool.Config) {
+		if c.ConnConfig != nil {
+			c.ConnConfig.ConnectTimeout = d
+		}
 	}
 }
 

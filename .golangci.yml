@@ -9,7 +9,7 @@ run:
   timeout: 5m
   concurrency: 4
   modules-download-mode: readonly
-  go: "1.25"
+  go: "1.26"
   # Allow linting test files but suppress specific strict rules via exclusion below
   tests: true
 
@@ -195,12 +195,21 @@ issues:
         - exhaustive    # test switch on types often intentionally partial
         - lll           # test URLs and mock signatures are often long
         - err113        # mocks and test helpers use dynamic errors
-    # Integration tests (long URLs, request setup)
+    # Integration tests (long URLs, request setup; HTTP client and test DB URLs by design)
     - path: tests/
       linters:
         - lll
+        - gosec
 
 linters-settings:
+  # gosec: exclude rules that produce false positives for this codebase
+  gosec:
+    excludes:
+      - G101 # Test/example DB URLs; production uses env vars
+      - G117 # APIKey config field; required for auth
+      - G704 # HTTP client: webhook sender calls user URLs (host-validated); tests need client.Do
+      - G706 # Structured logging uses key-value pairs; no log injection risk
+
   # Staticcheck: all checks (default exclusions ST1000/ST1003/ST1016 were not triggering).
   staticcheck:
     checks:

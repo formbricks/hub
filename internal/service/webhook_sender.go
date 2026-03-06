@@ -23,9 +23,6 @@ var (
 	ErrWebhookNon2xx = errors.New("webhook returned non-2xx status")
 )
 
-// HTTP client timeout for webhook delivery.
-const webhookHTTPTimeout = 15 * time.Second
-
 // WebhookSender sends a single webhook payload to an endpoint (Standard Webhooks: signing, headers, 410 handling).
 type WebhookSender interface {
 	Send(ctx context.Context, webhook *models.Webhook, payload *WebhookPayload) error
@@ -38,12 +35,18 @@ type WebhookSenderImpl struct {
 	metrics    observability.WebhookMetrics
 }
 
+const defaultWebhookHTTPTimeout = 15 * time.Second
+
 // NewWebhookSenderImpl creates a sender that uses the given repo.
-// HTTP client uses 15s timeout and does not follow redirects.
+// httpTimeout limits how long a single HTTP POST can take; worker job timeout should exceed it by ~5s.
 // metrics may be nil when metrics are disabled.
-func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.WebhookMetrics) *WebhookSenderImpl {
+func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.WebhookMetrics, httpTimeout time.Duration) *WebhookSenderImpl {
+	if httpTimeout <= 0 {
+		httpTimeout = defaultWebhookHTTPTimeout
+	}
+
 	client := &http.Client{
-		Timeout: webhookHTTPTimeout,
+		Timeout: httpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -87,7 +90,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	req.Header.Set(standardwebhooks.HeaderWebhookSignature, signature)
 	req.Header.Set(standardwebhooks.HeaderWebhookTimestamp, strconv.FormatInt(timestamp.Unix(), 10))
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(req) //nolint:gosec // G704: webhook delivery by design; URL host is validated
 	if err != nil {
 		return fmt.Errorf("send webhook: %w", err)
 	}

@@ -1,3 +1,4 @@
+//nolint:gosec // G101/G704: test DB URLs and HTTP client by design
 package tests
 
 import (
@@ -56,19 +57,26 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	require.NoError(t, err, "Failed to load configuration")
 
 	// Initialize database connection
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL,
+		database.WithMaxConns(cfg.DatabaseMaxConns),
+		database.WithMinConns(cfg.DatabaseMinConns),
+		database.WithMaxConnLifetime(cfg.DatabaseMaxConnLifetime),
+		database.WithMaxConnIdleTime(cfg.DatabaseMaxConnIdleTime),
+		database.WithHealthCheckPeriod(cfg.DatabaseHealthCheckPeriod),
+		database.WithConnectTimeout(cfg.DatabaseConnectTimeout),
+	)
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize message publisher manager for tests (no providers required)
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, nil)
 
 	// Webhooks
-	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
+	webhooksRepo := repository.NewDBWebhooksRepository(db)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount, cfg.WebhookURLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
-	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+	feedbackRecordsRepo := repository.NewDBFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
@@ -988,7 +996,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	defer db.Close()
 
-	repo := repository.NewFeedbackRecordsRepository(db)
+	repo := repository.NewDBFeedbackRecordsRepository(db)
 	userID := "repo-bulk-delete-user"
 	sourceType := "formbricks"
 
@@ -1001,8 +1009,8 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		TenantID:       bulkDeleteTenant,
 		FieldID:        "f1",
 		FieldType:      models.FieldTypeNumber,
-		ValueNumber:    ptrFloat64(1),
-		UserIdentifier: strPtr(userID),
+		ValueNumber:    new(1.0),
+		UserIdentifier: new(userID),
 	}
 	rec1, err := repo.Create(ctx, req1)
 	require.NoError(t, err)
@@ -1014,8 +1022,8 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		TenantID:       bulkDeleteTenant,
 		FieldID:        "f2",
 		FieldType:      models.FieldTypeNumber,
-		ValueNumber:    ptrFloat64(2),
-		UserIdentifier: strPtr(userID),
+		ValueNumber:    new(2.0),
+		UserIdentifier: new(userID),
 	}
 	rec2, err := repo.Create(ctx, req2)
 	require.NoError(t, err)
@@ -1029,9 +1037,6 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	assert.True(t, ids[rec1.ID.String()])
 	assert.True(t, ids[rec2.ID.String()])
 }
-
-func strPtr(s string) *string       { return &s }
-func ptrFloat64(f float64) *float64 { return &f }
 
 // TestWebhooksCRUD tests webhook create, get, list, update, delete.
 func TestWebhooksCRUD(t *testing.T) {
@@ -1076,13 +1081,15 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, getResp.StatusCode)
 
-	var got models.Webhook
+	var got map[string]any
 
-	err = decodeData(getResp, &got)
+	err = json.NewDecoder(getResp.Body).Decode(&got)
 	require.NoError(t, err)
 	require.NoError(t, getResp.Body.Close())
-	assert.Equal(t, created.ID, got.ID)
-	assert.Equal(t, created.URL, got.URL)
+	assert.Equal(t, created.ID.String(), got["id"])
+	assert.Equal(t, created.URL, got["url"])
+	_, hasSigningKey := got["signing_key"]
+	assert.False(t, hasSigningKey, "GET response must not include signing_key")
 
 	// List webhooks
 	listReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/webhooks", http.NoBody)
@@ -1092,12 +1099,29 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, listResp.StatusCode)
 
-	var listResult models.ListWebhooksResponse
+	var listRaw map[string]any
 
-	err = decodeData(listResp, &listResult)
+	err = json.NewDecoder(listResp.Body).Decode(&listRaw)
 	require.NoError(t, err)
 	require.NoError(t, listResp.Body.Close())
-	assert.GreaterOrEqual(t, len(listResult.Data), 1)
+
+	data, ok := listRaw["data"].([]any)
+	require.True(t, ok)
+
+	totalVal, hasTotal := listRaw["total"]
+	if hasTotal {
+		assert.GreaterOrEqual(t, int(totalVal.(float64)), 1)
+	}
+
+	assert.GreaterOrEqual(t, len(data), 1)
+	// signing_key must not be in LIST response (redacted for security)
+	for i, item := range data {
+		itemMap, ok := item.(map[string]any)
+		require.True(t, ok)
+
+		_, hasSigningKey := itemMap["signing_key"]
+		assert.False(t, hasSigningKey, "LIST response item %d must not include signing_key", i)
+	}
 
 	// Test invalid cursor returns 400
 	invalidCursorReq, err := http.NewRequestWithContext(
@@ -1110,6 +1134,68 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusBadRequest, invalidCursorResp.StatusCode)
 	require.NoError(t, invalidCursorResp.Body.Close())
+
+	// Test list cursor pagination: create 3 webhooks, list with limit=2, fetch page 2
+	t.Run("List cursor pagination", func(t *testing.T) {
+		for i := range 3 {
+			createBody := map[string]any{
+				"url":         fmt.Sprintf("https://cursor-test-%d.example.com/webhook", i),
+				"event_types": []string{"feedback_record.created"},
+			}
+			b, err := json.Marshal(createBody)
+			require.NoError(t, err)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(b))
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+			require.NoError(t, resp.Body.Close())
+		}
+
+		// First page
+		listReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/webhooks?limit=2", http.NoBody)
+		require.NoError(t, err)
+		listReq.Header.Set("Authorization", "Bearer "+testAPIKey)
+		listResp, err := client.Do(listReq)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, listResp.StatusCode)
+
+		var page1 struct {
+			Data       []map[string]any `json:"data"`
+			NextCursor string           `json:"next_cursor"`
+		}
+
+		err = json.NewDecoder(listResp.Body).Decode(&page1)
+		require.NoError(t, err)
+		require.NoError(t, listResp.Body.Close())
+
+		// With many webhooks from prior tests we may get more than 2; ensure we got data
+		assert.GreaterOrEqual(t, len(page1.Data), 1)
+
+		if page1.NextCursor == "" {
+			t.Skip("next_cursor empty (fewer webhooks than limit+1); cursor pagination path covered when data exists")
+		}
+
+		// Second page
+		listURL := fmt.Sprintf("%s/v1/webhooks?limit=2&cursor=%s", server.URL, url.QueryEscape(page1.NextCursor))
+		req2, err := http.NewRequestWithContext(context.Background(), http.MethodGet, listURL, http.NoBody)
+		require.NoError(t, err)
+		req2.Header.Set("Authorization", "Bearer "+testAPIKey)
+		resp2, err := client.Do(req2)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp2.StatusCode)
+
+		var page2 struct {
+			Data []map[string]any `json:"data"`
+		}
+
+		err = json.NewDecoder(resp2.Body).Decode(&page2)
+		require.NoError(t, err)
+		require.NoError(t, resp2.Body.Close())
+		assert.GreaterOrEqual(t, len(page2.Data), 1)
+	})
 
 	// Update webhook (including tenant_id)
 	updateBody := map[string]any{
@@ -1129,7 +1215,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
 
-	var updated models.Webhook
+	var updated models.WebhookPublic
 
 	err = decodeData(updateResp, &updated)
 	require.NoError(t, err)
@@ -1153,7 +1239,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
 
-	var afterClear models.Webhook
+	var afterClear models.WebhookPublic
 
 	err = decodeData(clearTenantResp, &afterClear)
 	require.NoError(t, err)
@@ -1258,4 +1344,56 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	require.NoError(t, updateResp.Body.Close())
 	require.Len(t, updateProblem.Errors, 1)
 	assert.Equal(t, "signing_key", updateProblem.Errors[0].Location)
+}
+
+// TestWebhookURLBlacklist asserts that webhook URLs with blacklisted hosts are rejected.
+func TestWebhookURLBlacklist(t *testing.T) {
+	t.Setenv("WEBHOOK_BLACKLIST", "localhost,127.0.0.1,::1")
+
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+
+	// Create with blacklisted host (localhost is in default blacklist)
+	createBody := map[string]any{
+		"url":         "https://localhost/webhook",
+		"event_types": []string{"feedback_record.created"},
+	}
+	body, err := json.Marshal(createBody)
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	createResp, err := client.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, createResp.StatusCode)
+
+	var problem response.ProblemDetails
+
+	err = json.NewDecoder(createResp.Body).Decode(&problem)
+	require.NoError(t, err)
+	require.NoError(t, createResp.Body.Close())
+	require.Len(t, problem.Errors, 1)
+	assert.Equal(t, "url", problem.Errors[0].Location)
+	assert.Contains(t, problem.Errors[0].Message, "blacklisted")
+
+	// Trailing-dot FQDN (localhost.) must match blacklist
+	createBodyTrailingDot := map[string]any{
+		"url":         "https://localhost./webhook",
+		"event_types": []string{"feedback_record.created"},
+	}
+	body2, err := json.Marshal(createBodyTrailingDot)
+	require.NoError(t, err)
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(body2))
+	require.NoError(t, err)
+	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req2.Header.Set("Content-Type", "application/json")
+
+	resp2, err := client.Do(req2)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
+	require.NoError(t, resp2.Body.Close())
 }
