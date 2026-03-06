@@ -192,5 +192,6 @@ func TestBuildEmbeddingInput(t *testing.T) {
 func TestEmbeddingPrefixForProvider(t *testing.T) {
 	t.Run("openai returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("openai")) })
 	t.Run("google returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("google")) })
+	t.Run("google-vertex returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("google-vertex")) })
 	t.Run("unknown returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("unknown")) })
 }

@@ -78,6 +78,29 @@ func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Clien
 	return client, nil
 }
 
+// NewVertexClient creates a Vertex AI embeddings client using Application Default Credentials.
+// project is the GCP project ID; location is the region (e.g. us-central1, global).
+func NewVertexClient(ctx context.Context, project, location string, opts ...ClientOption) (*Client, error) {
+	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+		Project:  project,
+		Location: location,
+		Backend:  genai.BackendVertexAI,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("googleai vertex client: %w", err)
+	}
+
+	client := &Client{
+		client:     genaiClient,
+		dimensions: models.EmbeddingVectorDimensions,
+	}
+	for _, opt := range opts {
+		opt(client)
+	}
+
+	return client, nil
+}
+
 // CreateEmbedding returns the embedding vector for the given text using RETRIEVAL_DOCUMENT task type
 // (for storing documents/feedback records). The returned slice length equals the configured dimensions.
 func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {

@@ -91,6 +91,11 @@ type Config struct {
 	// Embeddings: if true, L2-normalize vectors before storing or caching (env EMBEDDING_NORMALIZE); default false
 	EmbeddingNormalize bool
 
+	// Embeddings: GCP project ID for Vertex AI (google-vertex provider). Env: EMBEDDING_GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT
+	EmbeddingGoogleCloudProject string
+	// Embeddings: GCP region for Vertex AI (e.g. us-central1). Env: EMBEDDING_GOOGLE_CLOUD_LOCATION or GOOGLE_CLOUD_LOCATION
+	EmbeddingGoogleCloudLocation string
+
 	// OpenTelemetry: set to "otlp" to enable metrics (OTLP push); empty = metrics disabled
 	OtelMetricsExporter string
 	// OpenTelemetry: traces exporter (e.g. "otlp", "stdout"); empty = tracing disabled.
@@ -320,12 +325,14 @@ func Load() (*Config, error) {
 
 		WebhookURLBlacklist: webhookBlacklist,
 
-		EmbeddingProviderAPIKey: getEnv("EMBEDDING_PROVIDER_API_KEY", ""),
-		EmbeddingProvider:       getEnv("EMBEDDING_PROVIDER", ""),
-		EmbeddingModel:          getEnv("EMBEDDING_MODEL", ""),
-		EmbeddingMaxConcurrent:  embeddingMaxConcurrent,
-		EmbeddingMaxAttempts:    embeddingMaxAttempts,
-		EmbeddingNormalize:      GetEnvAsBool("EMBEDDING_NORMALIZE", false),
+		EmbeddingProviderAPIKey:      getEnv("EMBEDDING_PROVIDER_API_KEY", ""),
+		EmbeddingProvider:            getEnv("EMBEDDING_PROVIDER", ""),
+		EmbeddingModel:               getEnv("EMBEDDING_MODEL", ""),
+		EmbeddingMaxConcurrent:       embeddingMaxConcurrent,
+		EmbeddingMaxAttempts:         embeddingMaxAttempts,
+		EmbeddingNormalize:           GetEnvAsBool("EMBEDDING_NORMALIZE", false),
+		EmbeddingGoogleCloudProject:  getEnv("EMBEDDING_GOOGLE_CLOUD_PROJECT", getEnv("GOOGLE_CLOUD_PROJECT", "")),
+		EmbeddingGoogleCloudLocation: getEnv("EMBEDDING_GOOGLE_CLOUD_LOCATION", getEnv("GOOGLE_CLOUD_LOCATION", "")),
 
 		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
 		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),

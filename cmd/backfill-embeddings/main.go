@@ -18,23 +18,16 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/formbricks/hub/internal/config"
-	"github.com/formbricks/hub/internal/googleai"
-	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
 	"github.com/formbricks/hub/pkg/database"
 )
 
-const (
-	embeddingProviderOpenAI = "openai"
-	embeddingProviderGoogle = "google"
-)
-
 var (
 	errEmbeddingProviderRequired = errors.New("EMBEDDING_PROVIDER is required")
 	errEmbeddingModelRequired    = errors.New("EMBEDDING_MODEL is required")
-	errUnsupportedProvider       = errors.New("unsupported embedding provider")
+	errEmbeddingVertexConfig     = errors.New("google-vertex requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
 )
 
 const (
@@ -82,11 +75,28 @@ func run() int {
 		return exitFailure
 	}
 
-	apiKey := os.Getenv("EMBEDDING_PROVIDER_API_KEY")
-	if providerRequiresAPIKey(provider) && apiKey == "" {
+	providerCanonical := strings.ToLower(strings.TrimSpace(provider))
+	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
+		slog.Error("unsupported embedding provider", "provider", provider)
+
+		return exitFailure
+	}
+
+	if service.ProviderRequiresAPIKey(providerCanonical) && os.Getenv("EMBEDDING_PROVIDER_API_KEY") == "" {
 		slog.Error("EMBEDDING_PROVIDER_API_KEY is required for this provider", "provider", provider)
 
 		return exitFailure
+	}
+
+	if service.ProviderRequiresVertexConfig(providerCanonical) {
+		project := getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT")
+
+		location := getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_LOCATION")
+		if project == "" || location == "" {
+			slog.Error(errEmbeddingVertexConfig.Error())
+
+			return exitFailure
+		}
 	}
 
 	embeddingModelForDB := embeddingModel
@@ -106,14 +116,21 @@ func run() int {
 
 	normalize := config.GetEnvAsBool("EMBEDDING_NORMALIZE", false)
 
-	embeddingClient, err := newEmbeddingClient(ctx, provider, apiKey, embeddingModel, normalize)
+	embeddingClient, err := service.NewEmbeddingClient(ctx, service.EmbeddingClientConfig{
+		Provider:            providerCanonical,
+		APIKey:              os.Getenv("EMBEDDING_PROVIDER_API_KEY"),
+		Model:               embeddingModel,
+		Normalize:           normalize,
+		GoogleCloudProject:  getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT"),
+		GoogleCloudLocation: getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_LOCATION"),
+	})
 	if err != nil {
 		slog.Error("Failed to create embedding client", "error", err)
 
 		return exitFailure
 	}
 
-	docPrefix := service.EmbeddingPrefixForProvider(provider)
+	docPrefix := service.EmbeddingPrefixForProvider(providerCanonical)
 	embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, docPrefix, nil)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, embeddingWorker)
@@ -162,22 +179,6 @@ func getEnvAsInt(key string, defaultValue int) int {
 	return n
 }
 
-func newEmbeddingClient(ctx context.Context, provider, apiKey, model string, normalize bool) (service.EmbeddingClient, error) {
-	switch strings.ToLower(provider) {
-	case embeddingProviderOpenAI:
-		return openai.NewClient(apiKey, openai.WithModel(model), openai.WithNormalize(normalize)), nil
-	case embeddingProviderGoogle:
-		client, err := googleai.NewClient(ctx, apiKey, googleai.WithModel(model), googleai.WithNormalize(normalize))
-		if err != nil {
-			return nil, fmt.Errorf("create google embedding client: %w", err)
-		}
-
-		return client, nil
-	default:
-		return nil, fmt.Errorf("%w: %s", errUnsupportedProvider, provider)
-	}
-}
-
 func getEmbeddingProviderAndModel() (provider, model string, err error) {
 	provider = os.Getenv("EMBEDDING_PROVIDER")
 	if provider == "" {
@@ -192,12 +193,10 @@ func getEmbeddingProviderAndModel() (provider, model string, err error) {
 	return provider, model, nil
 }
 
-// providerRequiresAPIKey returns true for providers that require EMBEDDING_PROVIDER_API_KEY (openai, google).
-func providerRequiresAPIKey(provider string) bool {
-	switch strings.ToLower(provider) {
-	case embeddingProviderOpenAI, embeddingProviderGoogle:
-		return true
-	default:
-		return false
+func getEnvWithFallback(primary, fallback string) string {
+	if v := os.Getenv(primary); v != "" {
+		return v
 	}
+
+	return os.Getenv(fallback)
 }

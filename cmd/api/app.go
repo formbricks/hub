@@ -23,9 +23,7 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
-	"github.com/formbricks/hub/internal/googleai"
 	"github.com/formbricks/hub/internal/observability"
-	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
@@ -44,19 +42,10 @@ type App struct {
 }
 
 var (
-	errUnsupportedEmbeddingProvider    = errors.New("unsupported embedding provider")
 	errEmbeddingProviderAPIKeyRequired = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
+	errEmbeddingVertexConfigRequired   = errors.New(
+		"google-vertex requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
 )
-
-const (
-	embeddingProviderOpenAI = "openai"
-	embeddingProviderGoogle = "google"
-)
-
-var supportedEmbeddingProviders = map[string]struct{}{
-	embeddingProviderOpenAI: {},
-	embeddingProviderGoogle: {},
-}
 
 const riverQueueDepthInterval = 15 * time.Second
 
@@ -71,7 +60,7 @@ func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 	}
 
 	providerCanonical := strings.ToLower(strings.TrimSpace(cfg.EmbeddingProvider))
-	if _, ok := supportedEmbeddingProviders[providerCanonical]; !ok {
+	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
 		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
 			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
 
@@ -201,32 +190,26 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	var searchHandler *handlers.SearchHandler
 
 	if embeddingProviderName != "" {
-		// Fail fast when a provider that requires an API key is configured without one (consistent with backfill-embeddings).
-		if (embeddingProviderName == embeddingProviderOpenAI || embeddingProviderName == embeddingProviderGoogle) &&
-			cfg.EmbeddingProviderAPIKey == "" {
+		// Fail fast when provider-specific config is missing.
+		if service.ProviderRequiresAPIKey(embeddingProviderName) && cfg.EmbeddingProviderAPIKey == "" {
 			return nil, fmt.Errorf("%w: %s", errEmbeddingProviderAPIKeyRequired, embeddingProviderName)
 		}
 
-		var embeddingClient service.EmbeddingClient
+		if service.ProviderRequiresVertexConfig(embeddingProviderName) &&
+			(cfg.EmbeddingGoogleCloudProject == "" || cfg.EmbeddingGoogleCloudLocation == "") {
+			return nil, errEmbeddingVertexConfigRequired
+		}
 
-		switch embeddingProviderName {
-		case embeddingProviderOpenAI:
-			embeddingClient = openai.NewClient(cfg.EmbeddingProviderAPIKey,
-				openai.WithModel(embeddingModel),
-				openai.WithNormalize(cfg.EmbeddingNormalize),
-			)
-		case embeddingProviderGoogle:
-			googleClient, err := googleai.NewClient(context.Background(), cfg.EmbeddingProviderAPIKey,
-				googleai.WithModel(embeddingModel),
-				googleai.WithNormalize(cfg.EmbeddingNormalize),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("create google embedding client: %w", err)
-			}
-
-			embeddingClient = googleClient
-		default:
-			return nil, fmt.Errorf("%w: %s", errUnsupportedEmbeddingProvider, embeddingProviderName)
+		embeddingClient, err := service.NewEmbeddingClient(context.Background(), service.EmbeddingClientConfig{
+			Provider:            embeddingProviderName,
+			APIKey:              cfg.EmbeddingProviderAPIKey,
+			Model:               embeddingModel,
+			Normalize:           cfg.EmbeddingNormalize,
+			GoogleCloudProject:  cfg.EmbeddingGoogleCloudProject,
+			GoogleCloudLocation: cfg.EmbeddingGoogleCloudLocation,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create embedding client: %w", err)
 		}
 
 		embeddingWorker := workers.NewFeedbackEmbeddingWorker(

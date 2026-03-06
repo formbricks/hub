@@ -194,7 +194,7 @@ func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 }
 
 // EmbeddingPrefixForProvider returns the document prefix for the given embedding provider.
-// OpenAI and Google use no prefix. Returns "" for all supported providers.
+// OpenAI, Google, and Google Vertex AI use no prefix. Returns "" for all supported providers.
 func EmbeddingPrefixForProvider(_ string) string {
 	return ""
 }

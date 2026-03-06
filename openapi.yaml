@@ -622,6 +622,7 @@ paths:
             description: |
                 Embeds the search query and returns feedback record IDs with similarity scores (cosine, 0..1).
                 **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
+                Supported providers: openai, google (AI Studio), google-vertex (Vertex AI, recommended for production).
                 When embeddings are disabled, this endpoint returns 503 Service Unavailable.
                 Request body must include query and tenant_id (required for tenant isolation).
             operationId: semantic-search-feedback-records
@@ -693,6 +694,7 @@ paths:
             description: |
                 Returns feedback record IDs and similarity scores for records similar to the given one (by embedding).
                 **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
+                Supported providers: openai, google (AI Studio), google-vertex (Vertex AI, recommended for production).
                 When embeddings are disabled, this endpoint returns 503 Service Unavailable.
                 The source feedback record must belong to the given tenant_id (enforced).
             operationId: similar-feedback-records
