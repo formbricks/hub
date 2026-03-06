@@ -141,7 +141,7 @@ func run() int {
 		return exitFailure
 	}
 
-	slog.Info("Backfill complete", "enqueued", enqueued)
+	slog.Info("Backfill complete", "enqueued", enqueued) // #nosec G706 -- enqueued is an int, not user input
 
 	fmt.Printf("Enqueued %d embedding job(s).\n", enqueued)
 

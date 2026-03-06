@@ -118,7 +118,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	req.Header.Set(standardwebhooks.HeaderWebhookSignature, signature)
 	req.Header.Set(standardwebhooks.HeaderWebhookTimestamp, strconv.FormatInt(timestamp.Unix(), 10))
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(req) // #nosec G704 -- URL validated at create/update and in DialContext (DNS rebinding)
 	if err != nil {
 		return fmt.Errorf("send webhook: %w", err)
 	}

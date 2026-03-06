@@ -43,8 +43,13 @@ linters:
         linters:
           - nilnil       # mocks often return (nil, nil) for success
           - err113       # mocks and test helpers use dynamic errors
-      # gosec false positives: G706 log injection (slog key-values), G704 SSRF (tests + validated webhook URLs), G101 test DB credential
-      - linters:
+      # gosec false positives in tests only: G706 log injection, G704 SSRF (localhost), G101 test DB credential
+      - path: _test\.go$
+        linters:
+          - gosec
+        text: "G70[46]|G101"
+      - path: tests/
+        linters:
           - gosec
         text: "G70[46]|G101"
   settings:
