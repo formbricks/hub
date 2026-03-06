@@ -1002,7 +1002,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		FieldID:        "f1",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    new(1.0),
-		UserIdentifier: strPtr(userID),
+		UserIdentifier: new(userID),
 	}
 	rec1, err := repo.Create(ctx, req1)
 	require.NoError(t, err)
@@ -1015,7 +1015,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		FieldID:        "f2",
 		FieldType:      models.FieldTypeNumber,
 		ValueNumber:    new(2.0),
-		UserIdentifier: strPtr(userID),
+		UserIdentifier: new(userID),
 	}
 	rec2, err := repo.Create(ctx, req2)
 	require.NoError(t, err)
@@ -1029,8 +1029,6 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	assert.True(t, ids[rec1.ID.String()])
 	assert.True(t, ids[rec2.ID.String()])
 }
-
-func strPtr(s string) *string { return &s }
 
 // TestWebhooksCRUD tests webhook create, get, list, update, delete.
 func TestWebhooksCRUD(t *testing.T) {

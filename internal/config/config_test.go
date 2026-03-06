@@ -1,4 +1,3 @@
-//nolint:gosec // G101: test DB URL strings
 package config
 
 import (

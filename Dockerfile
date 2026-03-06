@@ -2,7 +2,7 @@
 # Stage 1: Build
 # =============================================================================
 # TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
-FROM golang:1.25.7-alpine AS builder
+FROM golang:1.26.1-alpine AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 
