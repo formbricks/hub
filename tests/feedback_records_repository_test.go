@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -71,6 +72,8 @@ func TestFeedbackRecordsRepository_List(t *testing.T) {
 
 	t.Run("with data returns ordered by collected_at desc", func(t *testing.T) {
 		subID := uuid.New().String()
+		collected1 := time.Now().Add(-1 * time.Second)
+		collected2 := time.Now()
 
 		req1 := &models.CreateFeedbackRecordRequest{
 			SourceType:     sourceType,
@@ -78,8 +81,9 @@ func TestFeedbackRecordsRepository_List(t *testing.T) {
 			TenantID:       tenantID,
 			FieldID:        "f1",
 			FieldType:      models.FieldTypeNumber,
-			ValueNumber:    ptrFloat64(1),
+			ValueNumber:    new(1.0),
 			UserIdentifier: &userID,
+			CollectedAt:    &collected1,
 		}
 		record1, err := repo.Create(ctx, req1)
 		require.NoError(t, err)
@@ -90,8 +94,9 @@ func TestFeedbackRecordsRepository_List(t *testing.T) {
 			TenantID:       tenantID,
 			FieldID:        "f2",
 			FieldType:      models.FieldTypeNumber,
-			ValueNumber:    ptrFloat64(2),
+			ValueNumber:    new(2.0),
 			UserIdentifier: &userID,
+			CollectedAt:    &collected2,
 		}
 		record2, err := repo.Create(ctx, req2)
 		require.NoError(t, err)
@@ -121,7 +126,7 @@ func TestFeedbackRecordsRepository_List(t *testing.T) {
 				TenantID:       tenantLimit,
 				FieldID:        fieldID,
 				FieldType:      models.FieldTypeNumber,
-				ValueNumber:    ptrFloat64(float64(i)),
+				ValueNumber:    new(float64(i)),
 				UserIdentifier: &userID,
 			})
 			require.NoError(t, err)
@@ -225,7 +230,7 @@ func TestFeedbackRecordsRepository_ListAfterCursor(t *testing.T) {
 			TenantID:       tenantID,
 			FieldID:        fmt.Sprintf("cursor-%c", 'a'+i),
 			FieldType:      models.FieldTypeNumber,
-			ValueNumber:    ptrFloat64(float64(i)),
+			ValueNumber:    new(float64(i)),
 			UserIdentifier: &userID,
 		}
 		r, err := repo.Create(ctx, req)

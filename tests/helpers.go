@@ -24,6 +24,9 @@ func CleanupTestData(t *testing.T) {
 		database.WithMaxConns(cfg.DatabaseMaxConns),
 		database.WithMinConns(cfg.DatabaseMinConns),
 		database.WithMaxConnLifetime(cfg.DatabaseMaxConnLifetime),
+		database.WithMaxConnIdleTime(cfg.DatabaseMaxConnIdleTime),
+		database.WithHealthCheckPeriod(cfg.DatabaseHealthCheckPeriod),
+		database.WithConnectTimeout(cfg.DatabaseConnectTimeout),
 	)
 	require.NoError(t, err)
 

@@ -20,6 +20,10 @@ func BuildListPaginationMeta(
 ) (ListPaginationMeta, error) {
 	meta := ListPaginationMeta{Limit: limit}
 
+	if hasMore && encodeLast == nil {
+		return meta, ErrPaginationInvariantViolated
+	}
+
 	if hasMore && encodeLast != nil {
 		next, err := encodeLast()
 		if err != nil {

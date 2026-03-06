@@ -43,7 +43,7 @@ lint-openapi:
 # Loads .env if present so DATABASE_URL (e.g. port 5433) is used when Postgres runs on a non-default port.
 tests:
 	@echo "Running integration tests..."
-	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./tests/... -v)
+	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./tests/... -v -timeout 120s)
 
 # Run unit tests (fast, no database required)
 test-unit:

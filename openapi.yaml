@@ -1540,13 +1540,11 @@ components:
                     format: date-time
                     description: When the webhook was last updated
                 disabled_reason:
-                    type: string
-                    nullable: true
+                    type: [string, "null"]
                     description: Read-only. Set by the system when the webhook was disabled. Omitted when null.
                 disabled_at:
-                    type: string
+                    type: [string, "null"]
                     format: date-time
-                    nullable: true
                     description: Read-only. When the webhook was disabled. Omitted when null.
             required:
                 - id

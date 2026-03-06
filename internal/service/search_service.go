@@ -212,7 +212,10 @@ func (s *SearchService) SimilarFeedback(
 		return out, fmt.Errorf("get embedding: %w", err)
 	}
 
-	embedding := embedVal.([]float32)
+	embedding, ok := embedVal.([]float32)
+	if !ok {
+		return out, fmt.Errorf("get embedding: unexpected result type %T", embedVal) //nolint:err113 // type info valuable for debugging
+	}
 
 	var (
 		results []models.FeedbackRecordWithScore
@@ -305,5 +308,10 @@ func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query strin
 		}
 	}
 
-	return val.([]float32), nil
+	vec, ok := val.([]float32)
+	if !ok {
+		return nil, fmt.Errorf("query embedding: unexpected result type %T", val) //nolint:err113 // type info valuable for debugging
+	}
+
+	return vec, nil
 }

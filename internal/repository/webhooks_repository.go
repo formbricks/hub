@@ -75,13 +75,27 @@ func (r *DBWebhooksRepository) Create(ctx context.Context, req *models.CreateWeb
 	return &webhook, nil
 }
 
+const coalescedQueryTimeout = 5 * time.Second
+
+func coalescedCtx(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx := context.WithoutCancel(parent)
+	if deadline, ok := parent.Deadline(); ok {
+		return context.WithDeadline(ctx, deadline)
+	}
+
+	return context.WithTimeout(ctx, coalescedQueryTimeout)
+}
+
 // GetByID retrieves a single webhook by ID. Concurrent requests for the same ID are coalesced via singleflight.
 // Uses context.WithoutCancel so one caller's cancellation does not abort the shared coalesced work for other waiters.
 func (r *DBWebhooksRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Webhook, error) {
 	key := id.String()
 
 	val, err, _ := r.sfGroup.Do(key, func() (any, error) {
-		return r.getByIDDirect(context.WithoutCancel(ctx), id)
+		sharedCtx, cancel := coalescedCtx(ctx)
+		defer cancel()
+
+		return r.getByIDDirect(sharedCtx, id)
 	})
 	if err != nil {
 		return nil, err //nolint:wrapcheck // pass through repo errors
@@ -387,7 +401,10 @@ func (r *DBWebhooksRepository) ListEnabledForEventType(ctx context.Context, even
 	key := "list:" + eventType
 
 	val, err, _ := r.sfGroup.Do(key, func() (any, error) {
-		return r.listEnabledForEventTypeDirect(context.WithoutCancel(ctx), eventType)
+		sharedCtx, cancel := coalescedCtx(ctx)
+		defer cancel()
+
+		return r.listEnabledForEventTypeDirect(sharedCtx, eventType)
 	})
 	if err != nil {
 		return nil, err //nolint:wrapcheck // pass through repo errors

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -69,7 +70,7 @@ func TestWebhooksRepository_List(t *testing.T) {
 	})
 
 	t.Run("with data returns ordered by created_at desc", func(t *testing.T) {
-		// Create webhooks
+		// Create webhooks (sleep between creates so created_at differs; ordering is created_at DESC, id ASC)
 		req1 := &models.CreateWebhookRequest{
 			URL:        "https://example.com/first",
 			TenantID:   &tenantID,
@@ -77,6 +78,8 @@ func TestWebhooksRepository_List(t *testing.T) {
 		}
 		webhook1, err := repo.Create(ctx, req1)
 		require.NoError(t, err)
+
+		time.Sleep(2 * time.Millisecond)
 
 		req2 := &models.CreateWebhookRequest{
 			URL:        "https://example.com/second",

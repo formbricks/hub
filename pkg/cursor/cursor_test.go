@@ -116,17 +116,35 @@ func TestDecode_InvalidUUID(t *testing.T) {
 }
 
 func TestDecode_MissingFields(t *testing.T) {
-	payload := map[string]string{"t": time.Now().UTC().Format(time.RFC3339Nano)}
+	t.Run("missing i", func(t *testing.T) {
+		payload := map[string]string{"t": time.Now().UTC().Format(time.RFC3339Nano)}
 
-	b, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("Marshal payload: %v", err)
-	}
+		b, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("Marshal payload: %v", err)
+		}
 
-	raw := base64.URLEncoding.EncodeToString(b)
+		raw := base64.URLEncoding.EncodeToString(b)
 
-	_, _, err = Decode(raw)
-	if !errors.Is(err, ErrInvalidCursor) {
-		t.Fatalf("Decode missing 'i' field: want ErrInvalidCursor, got %v", err)
-	}
+		_, _, err = Decode(raw)
+		if !errors.Is(err, ErrInvalidCursor) {
+			t.Fatalf("Decode missing 'i' field: want ErrInvalidCursor, got %v", err)
+		}
+	})
+
+	t.Run("missing t", func(t *testing.T) {
+		payload := map[string]string{"i": "01234567-89ab-cdef-0123-456789abcdef"}
+
+		b, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("Marshal payload: %v", err)
+		}
+
+		raw := base64.URLEncoding.EncodeToString(b)
+
+		_, _, err = Decode(raw)
+		if !errors.Is(err, ErrInvalidCursor) {
+			t.Fatalf("Decode missing 't' field: want ErrInvalidCursor, got %v", err)
+		}
+	})
 }

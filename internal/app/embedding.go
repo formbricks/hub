@@ -24,11 +24,17 @@ var supportedEmbeddingProviders = map[string]struct{}{
 // so that "OpenAI", "openai", and "OPENAI" behave the same (consistent with backfill-embeddings
 // and EmbeddingPrefixForProvider).
 func EmbeddingProviderAndModel(cfg *config.Config) (provider, model string) {
-	if cfg == nil || cfg.EmbeddingProvider == "" || cfg.EmbeddingModel == "" {
+	if cfg == nil {
 		return "", ""
 	}
 
 	providerCanonical := strings.ToLower(strings.TrimSpace(cfg.EmbeddingProvider))
+
+	modelCanonical := strings.TrimSpace(cfg.EmbeddingModel)
+	if providerCanonical == "" || modelCanonical == "" {
+		return "", ""
+	}
+
 	if _, ok := supportedEmbeddingProviders[providerCanonical]; !ok {
 		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
 			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
@@ -36,5 +42,5 @@ func EmbeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 		return "", ""
 	}
 
-	return providerCanonical, cfg.EmbeddingModel
+	return providerCanonical, modelCanonical
 }

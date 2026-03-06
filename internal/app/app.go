@@ -37,8 +37,9 @@ var (
 )
 
 const (
-	webhookDeliveryBufferOverHTTP = 5 * time.Second
-	riverQueueDepthInterval       = 15 * time.Second
+	webhookDeliveryBufferOverHTTP     = 5 * time.Second
+	riverQueueDepthInterval           = 15 * time.Second
+	defaultWebhookHTTPTimeoutFallback = 15 * time.Second
 )
 
 // App holds all server dependencies and coordinates startup and shutdown.
@@ -137,8 +138,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, eventMetrics)
 
 	webhooksRepo := repository.NewDBWebhooksRepository(db)
-	webhookSender := service.NewWebhookSenderImpl(webhooksRepo, webhookMetrics, cfg.WebhookHTTPTimeout)
-	webhookDeliveryTimeout := cfg.WebhookHTTPTimeout + webhookDeliveryBufferOverHTTP
+
+	effectiveWebhookHTTPTimeout := cfg.WebhookHTTPTimeout
+	if effectiveWebhookHTTPTimeout <= 0 {
+		effectiveWebhookHTTPTimeout = defaultWebhookHTTPTimeoutFallback
+	}
+
+	webhookSender := service.NewWebhookSenderImpl(webhooksRepo, webhookMetrics, effectiveWebhookHTTPTimeout)
+	webhookDeliveryTimeout := effectiveWebhookHTTPTimeout + webhookDeliveryBufferOverHTTP
 	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender, webhookMetrics, webhookDeliveryTimeout)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, webhookWorker)

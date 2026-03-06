@@ -342,6 +342,8 @@ func parseWebhookURLBlacklist(s string) map[string]struct{} {
 	parts := strings.SplitSeq(s, ",")
 	for p := range parts {
 		h := strings.TrimSpace(strings.ToLower(p))
+
+		h = strings.TrimRight(h, ".")
 		if h != "" {
 			out[h] = struct{}{}
 		}

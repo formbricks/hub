@@ -140,17 +140,41 @@ func (w *WebhookPublic) UnmarshalJSON(data []byte) error {
 }
 
 // ToWebhookPublic converts a Webhook to WebhookPublic (omits signing_key).
+// Returns detached copies (no shared references with the input).
 func ToWebhookPublic(w Webhook) WebhookPublic {
+	var tenantID *string
+
+	if w.TenantID != nil {
+		v := *w.TenantID
+		tenantID = &v
+	}
+
+	var disabledReason *string
+
+	if w.DisabledReason != nil {
+		v := *w.DisabledReason
+		disabledReason = &v
+	}
+
+	var disabledAt *time.Time
+
+	if w.DisabledAt != nil {
+		v := *w.DisabledAt
+		disabledAt = &v
+	}
+
+	eventTypes := append([]datatypes.EventType(nil), w.EventTypes...)
+
 	return WebhookPublic{
 		ID:             w.ID,
 		URL:            w.URL,
 		Enabled:        w.Enabled,
-		TenantID:       w.TenantID,
-		EventTypes:     w.EventTypes,
+		TenantID:       tenantID,
+		EventTypes:     eventTypes,
 		CreatedAt:      w.CreatedAt,
 		UpdatedAt:      w.UpdatedAt,
-		DisabledReason: w.DisabledReason,
-		DisabledAt:     w.DisabledAt,
+		DisabledReason: disabledReason,
+		DisabledAt:     disabledAt,
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -131,6 +132,14 @@ func validateWebhookURLHost(urlStr string, blacklist map[string]struct{}) error 
 	host := canonicalizeHost(u.Hostname())
 	if host == "" {
 		return huberrors.NewValidationError("url", "URL host is empty")
+	}
+
+	if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
+		addr = addr.Unmap()
+		if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+			addr.IsLinkLocalMulticast() || addr.IsUnspecified() {
+			return huberrors.NewValidationError("url", "webhook URL host is not allowed (private/internal)")
+		}
 	}
 
 	if _, blocked := blacklist[host]; blocked {

@@ -71,16 +71,8 @@ func TestBuildListPaginationMeta_HasMore_EncodeError(t *testing.T) {
 }
 
 func TestBuildListPaginationMeta_HasMore_NilEncodeLast(t *testing.T) {
-	meta, err := BuildListPaginationMeta(10, true, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if meta.Limit != 10 {
-		t.Errorf("expected Limit 10, got %d", meta.Limit)
-	}
-
-	if meta.NextCursor != "" {
-		t.Errorf("nil encodeLast with hasMore should produce empty NextCursor, got %q", meta.NextCursor)
+	_, err := BuildListPaginationMeta(10, true, nil)
+	if !errors.Is(err, ErrPaginationInvariantViolated) {
+		t.Fatalf("expected ErrPaginationInvariantViolated, got %v", err)
 	}
 }

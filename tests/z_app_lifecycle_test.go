@@ -15,6 +15,9 @@ import (
 	"github.com/formbricks/hub/pkg/database"
 )
 
+// TestApp_Lifecycle runs last (file prefix z_) so it doesn't block other tests.
+// Starting the full app modifies global state (slog, otel) and River; tests running after
+// it can hang waiting for connections or cleanup. Running last avoids that.
 func TestApp_Lifecycle(t *testing.T) {
 	ctx := context.Background()
 
@@ -28,10 +31,12 @@ func TestApp_Lifecycle(t *testing.T) {
 		databaseURL = defaultTestDatabaseURL
 	}
 
-	// Minimal config: no OTLP, no embeddings, random port
+	// Minimal config: no OTLP, no embeddings, random port.
+	// Use 2 workers to avoid connection pool exhaustion (default 100 would spike DB connections).
 	t.Setenv("API_KEY", testAPIKey)
 	t.Setenv("DATABASE_URL", databaseURL)
 	t.Setenv("PORT", "0")
+	t.Setenv("WEBHOOK_DELIVERY_MAX_CONCURRENT", "2")
 	t.Setenv("OTEL_METRICS_EXPORTER", "")
 	t.Setenv("OTEL_TRACES_EXPORTER", "")
 	t.Setenv("EMBEDDING_PROVIDER", "")
@@ -63,13 +68,22 @@ func TestApp_Lifecycle(t *testing.T) {
 		runDone <- application.Run(runCtx)
 	}()
 
-	// Allow server and River to start
-	time.Sleep(100 * time.Millisecond)
+	// Ensure app doesn't exit immediately before cancellation.
+	select {
+	case err = <-runDone:
+		require.NoError(t, err, "application exited before cancellation")
+	case <-time.After(500 * time.Millisecond):
+	}
 
 	cancel()
 
-	err = <-runDone
-	require.NoError(t, err)
+	// Bound wait to avoid hanging the suite on shutdown regressions.
+	select {
+	case err = <-runDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("application.Run did not return after cancellation")
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
