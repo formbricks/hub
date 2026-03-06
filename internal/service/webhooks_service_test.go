@@ -64,7 +64,7 @@ func (noopPublisher) PublishEventWithChangedFields(_ context.Context, _ datatype
 
 func TestWebhooksService_CreateWebhook_InvalidSigningKey(t *testing.T) {
 	ctx := context.Background()
-	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10)
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, nil)
 
 	req := &models.CreateWebhookRequest{
 		URL:        "https://example.com/webhook",
@@ -80,7 +80,7 @@ func TestWebhooksService_CreateWebhook_InvalidSigningKey(t *testing.T) {
 
 func TestWebhooksService_UpdateWebhook_InvalidSigningKey(t *testing.T) {
 	ctx := context.Background()
-	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10)
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, nil)
 	id := uuid.Must(uuid.NewV7())
 	badKey := "bad_key"
 	req := &models.UpdateWebhookRequest{

@@ -303,7 +303,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		messageManager.RegisterProvider(embeddingProv)
 	}
 
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount, cfg.WebhookURLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
