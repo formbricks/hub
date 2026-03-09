@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"math/rand"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,26 +20,35 @@ type WebhookDispatchInserter interface {
 
 // WebhookProvider implements eventPublisher by enqueueing one River job per (event, webhook).
 type WebhookProvider struct {
-	repo        WebhooksRepository
-	inserter    WebhookDispatchInserter
-	maxAttempts int
-	maxFanOut   int
-	metrics     observability.WebhookMetrics
+	repo                  WebhooksRepository
+	inserter              WebhookDispatchInserter
+	maxAttempts           int
+	maxFanOut             int
+	enqueueMaxRetries     int
+	enqueueInitialBackoff time.Duration
+	enqueueMaxBackoff     time.Duration
+	metrics               observability.WebhookMetrics
 }
 
 // NewWebhookProvider creates a provider that lists enabled webhooks and enqueues jobs via InsertMany.
 // maxFanOut is the batch size for InsertMany (all matching webhooks are enqueued in batches of maxFanOut).
+// enqueueMaxRetries, enqueueInitialBackoff, enqueueMaxBackoff configure retries when InsertMany fails (transient River/DB errors).
 // metrics may be nil when metrics are disabled.
 func NewWebhookProvider(
-	inserter WebhookDispatchInserter, repo WebhooksRepository, maxAttempts, maxFanOut int,
+	inserter WebhookDispatchInserter, repo WebhooksRepository,
+	maxAttempts, maxFanOut int,
+	enqueueMaxRetries int, enqueueInitialBackoff, enqueueMaxBackoff time.Duration,
 	metrics observability.WebhookMetrics,
 ) *WebhookProvider {
 	return &WebhookProvider{
-		repo:        repo,
-		inserter:    inserter,
-		maxAttempts: maxAttempts,
-		maxFanOut:   maxFanOut,
-		metrics:     metrics,
+		repo:                  repo,
+		inserter:              inserter,
+		maxAttempts:           maxAttempts,
+		maxFanOut:             maxFanOut,
+		enqueueMaxRetries:     enqueueMaxRetries,
+		enqueueInitialBackoff: enqueueInitialBackoff,
+		enqueueMaxBackoff:     enqueueMaxBackoff,
+		metrics:               metrics,
 	}
 }
 
@@ -88,19 +98,40 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 			params = append(params, river.InsertManyParams{Args: args, InsertOpts: opts})
 		}
 
-		_, err = p.inserter.InsertMany(ctx, params)
-		if err != nil {
+		var insertErr error
+		for attempt := 0; attempt <= p.enqueueMaxRetries; attempt++ {
+			_, insertErr = p.inserter.InsertMany(ctx, params)
+			if insertErr == nil {
+				break
+			}
+
+			if attempt == p.enqueueMaxRetries {
+				break
+			}
+
+			backoff := p.enqueueBackoffWithJitter(attempt)
+			select {
+			case <-ctx.Done():
+				insertErr = ctx.Err()
+
+				goto afterInsertRetry
+			case <-time.After(backoff):
+				// retry
+			}
+		}
+
+	afterInsertRetry:
+		if insertErr != nil {
 			if p.metrics != nil {
 				p.metrics.RecordProviderError(ctx, "enqueue_failed")
 			}
 
-			slog.Error("failed to enqueue webhook jobs",
+			slog.Error("failed to enqueue webhook jobs after retries",
 				"event_id", event.ID,
 				"event_type", event.Type,
-				"error", err,
+				"error", insertErr,
 			)
 
-			// Record partial success so far before returning
 			if p.metrics != nil && enqueued > 0 {
 				p.metrics.RecordJobsEnqueued(ctx, event.Type.String(), enqueued)
 			}
@@ -114,6 +145,19 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	if p.metrics != nil {
 		p.metrics.RecordJobsEnqueued(ctx, event.Type.String(), enqueued)
 	}
+}
+
+// enqueueBackoffJitterFactor: jitter is up to 50% of backoff.
+const enqueueBackoffJitterFactor = 2
+
+// enqueueBackoffWithJitter returns backoff duration for the given attempt (0-based).
+func (p *WebhookProvider) enqueueBackoffWithJitter(attempt int) time.Duration {
+	exp := min(p.enqueueInitialBackoff*time.Duration(1<<attempt), p.enqueueMaxBackoff)
+
+	//nolint:gosec // G404: jitter for backoff is not security-sensitive
+	jitter := time.Duration(rand.Int63n(int64(exp / enqueueBackoffJitterFactor)))
+
+	return exp + jitter
 }
 
 // eventToArgs converts an Event to WebhookDispatchArgs (WebhookID must be set per webhook).

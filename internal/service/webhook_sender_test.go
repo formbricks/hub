@@ -100,7 +100,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		repo := &mockSenderRepo{}
 		// Use default client for tests (hits loopback httptest server).
 		client := &http.Client{Timeout: 5 * time.Second}
-		sender := NewWebhookSenderImpl(repo, nil, nil, client)
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{
 			ID:        uuid.Must(uuid.NewV7()),
 			Type:      "feedback_record.created",
@@ -129,7 +129,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		repo := &mockSenderRepo{}
 		// Use default client for tests (hits loopback httptest server).
 		client := &http.Client{Timeout: 5 * time.Second}
-		sender := NewWebhookSenderImpl(repo, nil, nil, client)
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
@@ -153,7 +153,7 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		repo := &mockSenderRepo{}
 		// Use default client for tests (hits loopback httptest server).
 		client := &http.Client{Timeout: 5 * time.Second}
-		sender := NewWebhookSenderImpl(repo, nil, nil, client)
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
