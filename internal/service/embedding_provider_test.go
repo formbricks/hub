@@ -45,10 +45,6 @@ func (m *mockEmbeddingInserter) Insert(
 	return &rivertype.JobInsertResult{Job: &rivertype.JobRow{ID: 1}}, nil
 }
 
-func ptrString(s string) *string {
-	return &s
-}
-
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
 	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
@@ -62,7 +58,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 		Data: &models.FeedbackRecord{
 			ID:        recordID,
 			FieldType: models.FieldTypeText,
-			ValueText: ptrString(valueText),
+			ValueText: new(valueText),
 		},
 	}
 
@@ -89,7 +85,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPoin
 		Data: models.FeedbackRecord{
 			ID:        uuid.Must(uuid.NewV7()),
 			FieldType: models.FieldTypeText,
-			ValueText: ptrString("hello"),
+			ValueText: new("hello"),
 		},
 	}
 
@@ -131,7 +127,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChanged
 		Data: &models.FeedbackRecord{
 			ID:        recordID,
 			FieldType: models.FieldTypeText,
-			ValueText: ptrString("updated text"),
+			ValueText: new("updated text"),
 		},
 	}
 
@@ -156,8 +152,8 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_fieldLabelInChange
 		Data: &models.FeedbackRecord{
 			ID:         recordID,
 			FieldType:  models.FieldTypeText,
-			FieldLabel: ptrString("Updated label"),
-			ValueText:  ptrString("same value"),
+			FieldLabel: new("Updated label"),
+			ValueText:  new("same value"),
 		},
 	}
 
@@ -171,24 +167,24 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_fieldLabelInChange
 func TestBuildEmbeddingInput(t *testing.T) {
 	t.Run("label and value produces Question/Answer format", func(t *testing.T) {
 		out := BuildEmbeddingInput(
-			ptrString("What features are you missing?"),
-			ptrString("Dashboards, Charts"),
+			new("What features are you missing?"),
+			new("Dashboards, Charts"),
 			"",
 		)
 		assert.Equal(t, "Question: What features are you missing?\nAnswer: Dashboards, Charts", out)
 	})
 	t.Run("empty label returns value only", func(t *testing.T) {
-		out := BuildEmbeddingInput(nil, ptrString("Just the value"), "")
+		out := BuildEmbeddingInput(nil, new("Just the value"), "")
 		assert.Equal(t, "Just the value", out)
 	})
 	t.Run("nil valueText returns empty", func(t *testing.T) {
-		assert.Empty(t, BuildEmbeddingInput(ptrString("Label"), nil, ""))
+		assert.Empty(t, BuildEmbeddingInput(new("Label"), nil, ""))
 	})
 	t.Run("whitespace value returns empty", func(t *testing.T) {
-		assert.Empty(t, BuildEmbeddingInput(nil, ptrString("   "), ""))
+		assert.Empty(t, BuildEmbeddingInput(nil, new("   "), ""))
 	})
 	t.Run("prefix is prepended", func(t *testing.T) {
-		out := BuildEmbeddingInput(ptrString("Q"), ptrString("A"), "search_document: ")
+		out := BuildEmbeddingInput(new("Q"), new("A"), "search_document: ")
 		assert.Equal(t, "search_document: Question: Q\nAnswer: A", out)
 	})
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func (noopPublisher) PublishEventWithChangedFields(_ context.Context, _ datatype
 
 func TestWebhooksService_CreateWebhook_InvalidSigningKey(t *testing.T) {
 	ctx := context.Background()
-	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10)
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, nil)
 
 	req := &models.CreateWebhookRequest{
 		URL:        "https://example.com/webhook",
@@ -80,7 +81,7 @@ func TestWebhooksService_CreateWebhook_InvalidSigningKey(t *testing.T) {
 
 func TestWebhooksService_UpdateWebhook_InvalidSigningKey(t *testing.T) {
 	ctx := context.Background()
-	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10)
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, nil)
 	id := uuid.Must(uuid.NewV7())
 	badKey := "bad_key"
 	req := &models.UpdateWebhookRequest{
@@ -90,5 +91,80 @@ func TestWebhooksService_UpdateWebhook_InvalidSigningKey(t *testing.T) {
 	_, err := svc.UpdateWebhook(ctx, id, req)
 	if !errors.Is(err, huberrors.ErrValidation) {
 		t.Fatalf("expected ErrValidation, got %v", err)
+	}
+}
+
+// ssrfBlacklist is used by SSRF validation tests (matches default config: localhost, loopback, cloud metadata).
+var ssrfBlacklist = map[string]struct{}{
+	"localhost":       {},
+	"127.0.0.1":       {},
+	"::1":             {},
+	"169.254.169.254": {},
+	"blocked.local":   {},
+}
+
+func TestWebhooksService_CreateWebhook_RejectsSSRFHosts(t *testing.T) {
+	ctx := context.Background()
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, ssrfBlacklist)
+	validKey := "whsec_" + "abcdefghijklmnopqrstuvwxyz123456"
+
+	tests := []struct {
+		name    string
+		url     string
+		wantErr string
+	}{
+		{"loopback IPv4 (blacklisted)", "https://127.0.0.1/webhook", "blacklisted"},
+		{"loopback IPv6 (blacklisted)", "https://[::1]/webhook", "blacklisted"},
+		{"private range (IP check, not in blacklist)", "https://10.0.0.1/webhook", "private/internal"},
+		{"blacklisted hostname", "https://blocked.local/webhook", "blacklisted"},
+		{"blacklisted IP (cloud metadata)", "https://169.254.169.254/metadata", "blacklisted"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &models.CreateWebhookRequest{
+				URL:        tt.url,
+				SigningKey: validKey,
+				EventTypes: []datatypes.EventType{datatypes.FeedbackRecordCreated},
+			}
+
+			_, err := svc.CreateWebhook(ctx, req)
+			if !errors.Is(err, huberrors.ErrValidation) {
+				t.Fatalf("expected ErrValidation, got %v", err)
+			}
+
+			var verr *huberrors.ValidationError
+			if errors.As(err, &verr) && tt.wantErr != "" && !strings.Contains(verr.Message, tt.wantErr) {
+				t.Errorf("error message %q does not contain %q", verr.Message, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestWebhooksService_UpdateWebhook_RejectsSSRFHosts(t *testing.T) {
+	ctx := context.Background()
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, ssrfBlacklist)
+	id := uuid.Must(uuid.NewV7())
+
+	tests := []struct {
+		name    string
+		url     string
+		wantErr string
+	}{
+		{"loopback IPv4 (blacklisted)", "https://127.0.0.1/webhook", "blacklisted"},
+		{"private range", "https://10.0.0.1/webhook", "private/internal"},
+		{"blacklisted hostname", "https://blocked.local/webhook", "blacklisted"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := tt.url
+			req := &models.UpdateWebhookRequest{URL: &url}
+
+			_, err := svc.UpdateWebhook(ctx, id, req)
+			if !errors.Is(err, huberrors.ErrValidation) {
+				t.Fatalf("expected ErrValidation, got %v", err)
+			}
+		})
 	}
 }

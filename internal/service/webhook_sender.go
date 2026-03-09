@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -23,9 +24,6 @@ var (
 	ErrWebhookNon2xx = errors.New("webhook returned non-2xx status")
 )
 
-// HTTP client timeout for webhook delivery.
-const webhookHTTPTimeout = 15 * time.Second
-
 // WebhookSender sends a single webhook payload to an endpoint (Standard Webhooks: signing, headers, 410 handling).
 type WebhookSender interface {
 	Send(ctx context.Context, webhook *models.Webhook, payload *WebhookPayload) error
@@ -33,26 +31,67 @@ type WebhookSender interface {
 
 // WebhookSenderImpl implements WebhookSender with Standard Webhooks conformance.
 type WebhookSenderImpl struct {
-	repo       WebhooksRepository
-	httpClient *http.Client
-	metrics    observability.WebhookMetrics
+	repo             WebhooksRepository
+	httpClient       *http.Client
+	metrics          observability.WebhookMetrics
+	urlHostBlacklist map[string]struct{}
 }
 
 // NewWebhookSenderImpl creates a sender that uses the given repo.
-// HTTP client uses 15s timeout and does not follow redirects.
+// urlHostBlacklist is the SSRF blacklist (hosts/IPs); may be nil (address checks still run).
+// httpTimeout is the HTTP client timeout; job timeout should be httpTimeout + buffer (e.g. 5s).
 // metrics may be nil when metrics are disabled.
-func NewWebhookSenderImpl(repo WebhooksRepository, metrics observability.WebhookMetrics) *WebhookSenderImpl {
-	client := &http.Client{
-		Timeout: webhookHTTPTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+// If httpClient is non-nil, it is used as-is (e.g. for tests that hit loopback); otherwise a secured client is built.
+func NewWebhookSenderImpl(
+	repo WebhooksRepository, metrics observability.WebhookMetrics, urlHostBlacklist map[string]struct{},
+	httpTimeout time.Duration, httpClient *http.Client,
+) *WebhookSenderImpl {
+	if httpClient == nil {
+		dialer := &net.Dialer{}
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+				}
+
+				allowed, err := resolveWebhookHost(ctx, host, urlHostBlacklist)
+				if err != nil {
+					return nil, err
+				}
+
+				// Try each validated IP in order until one connects (preserves multi-address fallback for CDNs, dual-stack).
+				var lastErr error
+
+				for _, a := range allowed {
+					target := net.JoinHostPort(a.String(), port)
+
+					conn, dialErr := dialer.DialContext(ctx, network, target)
+					if dialErr == nil {
+						return conn, nil
+					}
+
+					lastErr = dialErr
+				}
+
+				return nil, lastErr
+			},
+		}
+
+		httpClient = &http.Client{
+			Transport: transport,
+			Timeout:   httpTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 
 	return &WebhookSenderImpl{
-		repo:       repo,
-		httpClient: client,
-		metrics:    metrics,
+		repo:             repo,
+		httpClient:       httpClient,
+		metrics:          metrics,
+		urlHostBlacklist: urlHostBlacklist,
 	}
 }
 
@@ -87,7 +126,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 	req.Header.Set(standardwebhooks.HeaderWebhookSignature, signature)
 	req.Header.Set(standardwebhooks.HeaderWebhookTimestamp, strconv.FormatInt(timestamp.Unix(), 10))
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(req) // #nosec G704 -- URL validated at create/update and in DialContext (DNS rebinding)
 	if err != nil {
 		return fmt.Errorf("send webhook: %w", err)
 	}

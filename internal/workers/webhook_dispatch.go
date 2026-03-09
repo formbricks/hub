@@ -14,13 +14,17 @@ import (
 	"github.com/formbricks/hub/internal/service"
 )
 
+// WebhookDeliveryTimeoutBuffer is added to HTTP timeout for the River job timeout.
+const WebhookDeliveryTimeoutBuffer = 5 * time.Second
+
 // WebhookDispatchWorker delivers one event to one webhook endpoint.
 type WebhookDispatchWorker struct {
 	river.WorkerDefaults[service.WebhookDispatchArgs]
 
-	repo    webhookDispatchRepo
-	sender  service.WebhookSender
-	metrics observability.WebhookMetrics
+	repo       webhookDispatchRepo
+	sender     service.WebhookSender
+	jobTimeout time.Duration // HTTP timeout + buffer
+	metrics    observability.WebhookMetrics
 }
 
 // webhookDispatchRepo is the minimal repo interface needed by the worker.
@@ -30,19 +34,23 @@ type webhookDispatchRepo interface {
 }
 
 // NewWebhookDispatchWorker creates a worker that uses the given repo and sender.
+// httpTimeout is the webhook HTTP client timeout; job timeout is httpTimeout + WebhookDeliveryTimeoutBuffer.
 // metrics may be nil when metrics are disabled.
 func NewWebhookDispatchWorker(
-	repo webhookDispatchRepo, sender service.WebhookSender, metrics observability.WebhookMetrics,
+	repo webhookDispatchRepo, sender service.WebhookSender, httpTimeout time.Duration,
+	metrics observability.WebhookMetrics,
 ) *WebhookDispatchWorker {
-	return &WebhookDispatchWorker{repo: repo, sender: sender, metrics: metrics}
+	return &WebhookDispatchWorker{
+		repo:       repo,
+		sender:     sender,
+		jobTimeout: httpTimeout + WebhookDeliveryTimeoutBuffer,
+		metrics:    metrics,
+	}
 }
 
-// WebhookDeliveryTimeout is the max duration for a single webhook delivery (align with HTTP client timeout).
-const WebhookDeliveryTimeout = 25 * time.Second
-
-// Timeout limits how long a single delivery can run (align with HTTP client timeout).
+// Timeout limits how long a single delivery can run (HTTP timeout + buffer).
 func (w *WebhookDispatchWorker) Timeout(*river.Job[service.WebhookDispatchArgs]) time.Duration {
-	return WebhookDeliveryTimeout
+	return w.jobTimeout
 }
 
 // Work loads the webhook, builds the payload, and sends once.
