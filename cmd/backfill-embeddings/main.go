@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/joho/godotenv"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
@@ -27,7 +26,6 @@ import (
 var (
 	errEmbeddingProviderRequired = errors.New("EMBEDDING_PROVIDER is required")
 	errEmbeddingModelRequired    = errors.New("EMBEDDING_MODEL is required")
-	errEmbeddingVertexConfig     = errors.New("google-vertex requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
 )
 
 const (
@@ -75,28 +73,25 @@ func run() int {
 		return exitFailure
 	}
 
-	providerCanonical := strings.ToLower(strings.TrimSpace(provider))
+	providerCanonical := service.NormalizeEmbeddingProvider(provider)
 	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
 		slog.Error("unsupported embedding provider", "provider", provider)
 
 		return exitFailure
 	}
 
-	if service.ProviderRequiresAPIKey(providerCanonical) && os.Getenv("EMBEDDING_PROVIDER_API_KEY") == "" {
-		slog.Error("EMBEDDING_PROVIDER_API_KEY is required for this provider", "provider", provider)
+	embeddingCfg := service.EmbeddingClientConfig{
+		Provider:            providerCanonical,
+		APIKey:              os.Getenv("EMBEDDING_PROVIDER_API_KEY"),
+		Model:               embeddingModel,
+		Normalize:           config.GetEnvAsBool("EMBEDDING_NORMALIZE", false),
+		GoogleCloudProject:  getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT"),
+		GoogleCloudLocation: getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_LOCATION"),
+	}
+	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
+		slog.Error(err.Error())
 
 		return exitFailure
-	}
-
-	if service.ProviderRequiresVertexConfig(providerCanonical) {
-		project := getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT")
-
-		location := getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_LOCATION")
-		if project == "" || location == "" {
-			slog.Error(errEmbeddingVertexConfig.Error())
-
-			return exitFailure
-		}
 	}
 
 	embeddingModelForDB := embeddingModel
@@ -114,16 +109,7 @@ func run() int {
 		maxAttempts,
 	)
 
-	normalize := config.GetEnvAsBool("EMBEDDING_NORMALIZE", false)
-
-	embeddingClient, err := service.NewEmbeddingClient(ctx, service.EmbeddingClientConfig{
-		Provider:            providerCanonical,
-		APIKey:              os.Getenv("EMBEDDING_PROVIDER_API_KEY"),
-		Model:               embeddingModel,
-		Normalize:           normalize,
-		GoogleCloudProject:  getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT"),
-		GoogleCloudLocation: getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_LOCATION"),
-	})
+	embeddingClient, err := service.NewEmbeddingClient(ctx, embeddingCfg)
 	if err != nil {
 		slog.Error("Failed to create embedding client", "error", err)
 

@@ -93,7 +93,7 @@ type Config struct {
 
 	// Embeddings: GCP project ID for Vertex AI (google-vertex provider). Env: EMBEDDING_GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT
 	EmbeddingGoogleCloudProject string
-	// Embeddings: GCP region for Vertex AI (e.g. us-central1). Env: EMBEDDING_GOOGLE_CLOUD_LOCATION or GOOGLE_CLOUD_LOCATION
+	// Embeddings: GCP region for Vertex AI (e.g. europe-west3). Env: EMBEDDING_GOOGLE_CLOUD_LOCATION or GOOGLE_CLOUD_LOCATION
 	EmbeddingGoogleCloudLocation string
 
 	// OpenTelemetry: set to "otlp" to enable metrics (OTLP push); empty = metrics disabled

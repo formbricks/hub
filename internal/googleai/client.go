@@ -23,6 +23,10 @@ var (
 	ErrNoEmbeddingInResponse = errors.New("googleai: no embedding in response")
 	// ErrDimensionMismatch is returned when the response embedding length does not match configured dimensions.
 	ErrDimensionMismatch = errors.New("googleai: embedding dimension mismatch")
+	// ErrVertexProjectRequired is returned when NewVertexClient is called with empty project.
+	ErrVertexProjectRequired = errors.New("googleai vertex client: project is required")
+	// ErrVertexLocationRequired is returned when NewVertexClient is called with empty location.
+	ErrVertexLocationRequired = errors.New("googleai vertex client: location is required")
 )
 
 // Client calls the Gemini embeddings API via the Google Gen AI SDK.
@@ -79,8 +83,16 @@ func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Clien
 }
 
 // NewVertexClient creates a Vertex AI embeddings client using Application Default Credentials.
-// project is the GCP project ID; location is the region (e.g. us-central1, global).
+// project is the GCP project ID; location is the region (e.g. europe-west3, global).
 func NewVertexClient(ctx context.Context, project, location string, opts ...ClientOption) (*Client, error) {
+	if strings.TrimSpace(project) == "" {
+		return nil, ErrVertexProjectRequired
+	}
+
+	if strings.TrimSpace(location) == "" {
+		return nil, ErrVertexLocationRequired
+	}
+
 	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
 		Project:  project,
 		Location: location,

@@ -63,7 +63,7 @@ func TestNewEmbeddingClient(t *testing.T) {
 				Provider:            EmbeddingProviderGoogleVertex,
 				Model:               "text-embedding-004",
 				GoogleCloudProject:  "",
-				GoogleCloudLocation: "us-central1",
+				GoogleCloudLocation: "europe-west3",
 			},
 			wantErr: true,
 			errIs:   ErrEmbeddingVertexConfig,
@@ -74,6 +74,17 @@ func TestNewEmbeddingClient(t *testing.T) {
 				Provider:            EmbeddingProviderGoogleVertex,
 				Model:               "text-embedding-004",
 				GoogleCloudProject:  "my-project",
+				GoogleCloudLocation: "",
+			},
+			wantErr: true,
+			errIs:   ErrEmbeddingVertexConfig,
+		},
+		{
+			name: "google-vertex with mixed-case and whitespace provider name normalizes and validates",
+			cfg: EmbeddingClientConfig{
+				Provider:            " Google-Vertex ",
+				Model:               "text-embedding-004",
+				GoogleCloudProject:  "p",
 				GoogleCloudLocation: "",
 			},
 			wantErr: true,
@@ -159,4 +170,74 @@ func TestSupportedEmbeddingProviders(t *testing.T) {
 	assert.Contains(t, providers, EmbeddingProviderGoogle)
 	assert.Contains(t, providers, EmbeddingProviderGoogleVertex)
 	assert.Len(t, providers, 3)
+}
+
+func TestValidateEmbeddingConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     EmbeddingClientConfig
+		wantErr bool
+		errIs   error
+	}{
+		{"openai with key valid", EmbeddingClientConfig{Provider: EmbeddingProviderOpenAI, APIKey: "k", Model: "m"}, false, nil},
+		{
+			"openai without key invalid",
+			EmbeddingClientConfig{Provider: EmbeddingProviderOpenAI, APIKey: "", Model: "m"},
+			true, ErrEmbeddingProviderAPIKey,
+		},
+		{"google with key valid", EmbeddingClientConfig{Provider: EmbeddingProviderGoogle, APIKey: "k", Model: "m"}, false, nil},
+		{
+			"google without key invalid",
+			EmbeddingClientConfig{Provider: EmbeddingProviderGoogle, APIKey: "", Model: "m"},
+			true, ErrEmbeddingProviderAPIKey,
+		},
+		{
+			"vertex with project and location valid",
+			EmbeddingClientConfig{
+				Provider: EmbeddingProviderGoogleVertex, Model: "m",
+				GoogleCloudProject: "p", GoogleCloudLocation: "l",
+			},
+			false, nil,
+		},
+		{
+			"vertex without project invalid",
+			EmbeddingClientConfig{Provider: EmbeddingProviderGoogleVertex, Model: "m", GoogleCloudLocation: "l"},
+			true, ErrEmbeddingVertexConfig,
+		},
+		{
+			"vertex without location invalid",
+			EmbeddingClientConfig{Provider: EmbeddingProviderGoogleVertex, Model: "m", GoogleCloudProject: "p"},
+			true, ErrEmbeddingVertexConfig,
+		},
+		{"unsupported provider invalid", EmbeddingClientConfig{Provider: "unknown", APIKey: "k", Model: "m"}, true, ErrEmbeddingConfigInvalid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateEmbeddingConfig(tt.cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+
+				if tt.errIs != nil {
+					require.ErrorIs(t, err, tt.errIs)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestNormalizeEmbeddingProvider(t *testing.T) {
+	assert.Equal(t, "openai", NormalizeEmbeddingProvider("OpenAI"))
+	assert.Equal(t, "openai", NormalizeEmbeddingProvider("  openai  "))
+	assert.Equal(t, "google-vertex", NormalizeEmbeddingProvider(" Google-Vertex "))
+}
+
+func TestEmbeddingPrefixForProvider(t *testing.T) {
+	assert.Empty(t, EmbeddingPrefixForProvider(EmbeddingProviderOpenAI))
+	assert.Empty(t, EmbeddingPrefixForProvider(EmbeddingProviderGoogle))
+	assert.Empty(t, EmbeddingPrefixForProvider(EmbeddingProviderGoogleVertex))
+	assert.Empty(t, EmbeddingPrefixForProvider("unknown"))
 }

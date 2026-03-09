@@ -193,12 +193,6 @@ func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 	return builder.String()
 }
 
-// EmbeddingPrefixForProvider returns the document prefix for the given embedding provider.
-// OpenAI, Google, and Google Vertex AI use no prefix. Returns "" for all supported providers.
-func EmbeddingPrefixForProvider(_ string) string {
-	return ""
-}
-
 // embeddingValueTextHash returns a hash of the embedding input for dedupe (same content => same job within window).
 // Uses BuildEmbeddingInput; empty content returns "empty".
 func embeddingValueTextHash(fieldLabel, valueText *string, prefix string) string {

@@ -11,7 +11,7 @@ import (
 func TestNewVertexClient_emptyProject_returnsError(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := NewVertexClient(ctx, "", "us-central1")
+	_, err := NewVertexClient(ctx, "", "europe-west3")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "vertex")
 }

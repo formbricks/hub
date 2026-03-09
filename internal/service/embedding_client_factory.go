@@ -26,6 +26,69 @@ var (
 	ErrEmbeddingVertexConfig = errors.New("google-vertex requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
 )
 
+// providerEntry describes capabilities and construction for one embedding provider (single source of truth).
+type providerEntry struct {
+	RequiresAPIKey       bool
+	RequiresVertexConfig bool
+	DocPrefix            string
+	Factory              func(context.Context, EmbeddingClientConfig) (EmbeddingClient, error)
+}
+
+// embeddingProviderRegistry is the single source of truth for provider capabilities and client creation.
+var embeddingProviderRegistry = map[string]providerEntry{
+	EmbeddingProviderOpenAI: {
+		RequiresAPIKey: true,
+		DocPrefix:      "",
+		Factory:        openAIEmbeddingFactory,
+	},
+	EmbeddingProviderGoogle: {
+		RequiresAPIKey: true,
+		DocPrefix:      "",
+		Factory:        googleEmbeddingFactory,
+	},
+	EmbeddingProviderGoogleVertex: {
+		RequiresVertexConfig: true,
+		DocPrefix:            "",
+		Factory:              googleVertexEmbeddingFactory,
+	},
+}
+
+func openAIEmbeddingFactory(_ context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
+	return openai.NewClient(cfg.APIKey,
+		openai.WithModel(cfg.Model),
+		openai.WithNormalize(cfg.Normalize),
+	), nil
+}
+
+func googleEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
+	client, err := googleai.NewClient(ctx, cfg.APIKey,
+		googleai.WithModel(cfg.Model),
+		googleai.WithNormalize(cfg.Normalize),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create google embedding client: %w", err)
+	}
+
+	return client, nil
+}
+
+func googleVertexEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
+	client, err := googleai.NewVertexClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
+		googleai.WithModel(cfg.Model),
+		googleai.WithNormalize(cfg.Normalize),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create google-vertex embedding client: %w", err)
+	}
+
+	return client, nil
+}
+
+// NormalizeEmbeddingProvider returns the canonical provider name (lowercase, trimmed).
+func NormalizeEmbeddingProvider(provider string) string {
+	return strings.ToLower(strings.TrimSpace(provider))
+}
+
 // EmbeddingClientConfig holds configuration for creating an embedding client.
 type EmbeddingClientConfig struct {
 	Provider            string
@@ -36,74 +99,75 @@ type EmbeddingClientConfig struct {
 	GoogleCloudLocation string
 }
 
+// ValidateEmbeddingConfig checks provider support and provider-specific requirements (API key, vertex project/location).
+// Use before creating a client or at startup to fail fast with a clear error.
+func ValidateEmbeddingConfig(cfg EmbeddingClientConfig) error {
+	provider := NormalizeEmbeddingProvider(cfg.Provider)
+
+	entry, ok := embeddingProviderRegistry[provider]
+	if !ok {
+		return fmt.Errorf("%w: unsupported provider %q", ErrEmbeddingConfigInvalid, provider)
+	}
+
+	if entry.RequiresAPIKey && cfg.APIKey == "" {
+		return fmt.Errorf("%w: %s", ErrEmbeddingProviderAPIKey, provider)
+	}
+
+	if entry.RequiresVertexConfig && (cfg.GoogleCloudProject == "" || cfg.GoogleCloudLocation == "") {
+		return ErrEmbeddingVertexConfig
+	}
+
+	return nil
+}
+
 // NewEmbeddingClient creates an EmbeddingClient for the given config.
-// Validates provider-specific requirements before creating the client.
+// Validates provider-specific requirements via the registry, then calls the registry factory.
 func NewEmbeddingClient(ctx context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
-	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	provider := NormalizeEmbeddingProvider(cfg.Provider)
 
-	switch provider {
-	case EmbeddingProviderOpenAI:
-		if cfg.APIKey == "" {
-			return nil, fmt.Errorf("%w: %s", ErrEmbeddingProviderAPIKey, provider)
-		}
-
-		return openai.NewClient(cfg.APIKey,
-			openai.WithModel(cfg.Model),
-			openai.WithNormalize(cfg.Normalize),
-		), nil
-	case EmbeddingProviderGoogle:
-		if cfg.APIKey == "" {
-			return nil, fmt.Errorf("%w: %s", ErrEmbeddingProviderAPIKey, provider)
-		}
-
-		client, err := googleai.NewClient(ctx, cfg.APIKey,
-			googleai.WithModel(cfg.Model),
-			googleai.WithNormalize(cfg.Normalize),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("create google embedding client: %w", err)
-		}
-
-		return client, nil
-	case EmbeddingProviderGoogleVertex:
-		if cfg.GoogleCloudProject == "" || cfg.GoogleCloudLocation == "" {
-			return nil, ErrEmbeddingVertexConfig
-		}
-
-		client, err := googleai.NewVertexClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
-			googleai.WithModel(cfg.Model),
-			googleai.WithNormalize(cfg.Normalize),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("create google-vertex embedding client: %w", err)
-		}
-
-		return client, nil
-	default:
+	entry, ok := embeddingProviderRegistry[provider]
+	if !ok {
 		return nil, fmt.Errorf("%w: unsupported provider %q", ErrEmbeddingConfigInvalid, provider)
 	}
+
+	if err := ValidateEmbeddingConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	return entry.Factory(ctx, cfg)
 }
 
-// ProviderRequiresAPIKey returns true for providers that require EMBEDDING_PROVIDER_API_KEY.
+// ProviderRequiresAPIKey returns true for providers that require EMBEDDING_PROVIDER_API_KEY (from registry).
 func ProviderRequiresAPIKey(provider string) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case EmbeddingProviderOpenAI, EmbeddingProviderGoogle:
-		return true
-	default:
-		return false
-	}
+	entry, ok := embeddingProviderRegistry[NormalizeEmbeddingProvider(provider)]
+
+	return ok && entry.RequiresAPIKey
 }
 
-// ProviderRequiresVertexConfig returns true for providers that require project and location.
+// ProviderRequiresVertexConfig returns true for providers that require project and location (from registry).
 func ProviderRequiresVertexConfig(provider string) bool {
-	return strings.ToLower(strings.TrimSpace(provider)) == EmbeddingProviderGoogleVertex
+	entry, ok := embeddingProviderRegistry[NormalizeEmbeddingProvider(provider)]
+
+	return ok && entry.RequiresVertexConfig
 }
 
-// SupportedEmbeddingProviders returns the set of supported provider names.
+// SupportedEmbeddingProviders returns the set of supported provider names (from registry).
 func SupportedEmbeddingProviders() map[string]struct{} {
-	return map[string]struct{}{
-		EmbeddingProviderOpenAI:       {},
-		EmbeddingProviderGoogle:       {},
-		EmbeddingProviderGoogleVertex: {},
+	out := make(map[string]struct{}, len(embeddingProviderRegistry))
+	for k := range embeddingProviderRegistry {
+		out[k] = struct{}{}
 	}
+
+	return out
+}
+
+// EmbeddingPrefixForProvider returns the document prefix for the given embedding provider (from registry).
+// Returns "" for unknown providers.
+func EmbeddingPrefixForProvider(provider string) string {
+	entry, ok := embeddingProviderRegistry[NormalizeEmbeddingProvider(provider)]
+	if !ok {
+		return ""
+	}
+
+	return entry.DocPrefix
 }
