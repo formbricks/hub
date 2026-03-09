@@ -24,9 +24,6 @@ var (
 	ErrWebhookNon2xx = errors.New("webhook returned non-2xx status")
 )
 
-// HTTP client timeout for webhook delivery.
-const webhookHTTPTimeout = 15 * time.Second
-
 // WebhookSender sends a single webhook payload to an endpoint (Standard Webhooks: signing, headers, 410 handling).
 type WebhookSender interface {
 	Send(ctx context.Context, webhook *models.Webhook, payload *WebhookPayload) error
@@ -42,12 +39,13 @@ type WebhookSenderImpl struct {
 
 // NewWebhookSenderImpl creates a sender that uses the given repo.
 // urlHostBlacklist is the SSRF blacklist (hosts/IPs); may be nil (address checks still run).
-// HTTP client uses 15s timeout, does not follow redirects, and validates resolved IPs at dial time (DNS rebinding protection).
+// httpTimeout is the HTTP client timeout; job timeout should be httpTimeout + buffer (e.g. 5s).
+// Client does not follow redirects and validates resolved IPs at dial time (DNS rebinding protection).
 // metrics may be nil when metrics are disabled.
 // If httpClient is non-nil, it is used as-is (e.g. for tests that hit loopback); otherwise a secured client is built.
 func NewWebhookSenderImpl(
 	repo WebhooksRepository, metrics observability.WebhookMetrics, urlHostBlacklist map[string]struct{},
-	httpClient *http.Client,
+	httpTimeout time.Duration, httpClient *http.Client,
 ) *WebhookSenderImpl {
 	if httpClient == nil {
 		dialer := &net.Dialer{}
@@ -63,16 +61,27 @@ func NewWebhookSenderImpl(
 					return nil, err
 				}
 
-				// Dial the first validated IP to prevent DNS rebinding.
-				target := net.JoinHostPort(allowed[0].String(), port)
+				// Try each validated IP in order until one connects (preserves multi-address fallback for CDNs, dual-stack).
+				var lastErr error
 
-				return dialer.DialContext(ctx, network, target)
+				for _, a := range allowed {
+					target := net.JoinHostPort(a.String(), port)
+
+					conn, dialErr := dialer.DialContext(ctx, network, target)
+					if dialErr == nil {
+						return conn, nil
+					}
+
+					lastErr = dialErr
+				}
+
+				return nil, lastErr
 			},
 		}
 
 		httpClient = &http.Client{
 			Transport: transport,
-			Timeout:   webhookHTTPTimeout,
+			Timeout:   httpTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
