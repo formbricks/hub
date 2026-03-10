@@ -82,7 +82,8 @@ func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Clien
 	return client, nil
 }
 
-// NewVertexClient creates a Vertex AI embeddings client using Application Default Credentials.
+// NewVertexClient creates a Vertex AI embeddings client using Application Default Credentials (ADC).
+// When running outside GCP (e.g. EKS, Railway), set GOOGLE_APPLICATION_CREDENTIALS to the path of a service account key JSON file.
 // project is the GCP project ID; location is the region (e.g. europe-west3, global).
 func NewVertexClient(ctx context.Context, project, location string, opts ...ClientOption) (*Client, error) {
 	if strings.TrimSpace(project) == "" {
