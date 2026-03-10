@@ -31,6 +31,7 @@ var (
 type Config struct {
 	Server           ServerConfig
 	Database         DatabaseConfig
+	River            RiverConfig
 	Webhook          WebhookConfig
 	MessagePublisher MessagePublisherConfig
 	Embedding        EmbeddingConfig
@@ -66,6 +67,19 @@ func (d *DatabaseConfig) PoolConfig() database.PoolConfig {
 		HealthCheckPeriod: d.HealthCheckPeriod.Duration(),
 		ConnectTimeout:    d.ConnectTimeout.Duration(),
 	}
+}
+
+// RiverConfig holds River client settings (worker process). Zero values mean use River defaults.
+// See https://pkg.go.dev/github.com/riverqueue/river#Config.
+type RiverConfig struct {
+	// JobTimeoutSec is the max time a job may run before its context is cancelled. 0 = River default (1m).
+	JobTimeoutSec DurationSec `env:"RIVER_JOB_TIMEOUT_SECONDS" env-default:"0"`
+	// RescueStuckJobsAfterSec: how long a "running" job is considered stuck (then retried/discarded). 0 = River default.
+	RescueStuckJobsAfterSec DurationSec `env:"RIVER_RESCUE_STUCK_JOBS_AFTER_SECONDS" env-default:"0"`
+	// CompletedJobRetentionSec is how long to keep completed jobs before cleanup. -1 = disable deletion.
+	CompletedJobRetentionSec int `env:"RIVER_COMPLETED_JOB_RETENTION_SECONDS" env-default:"86400"`
+	// ClientID identifies this client instance (logs, leader election). Empty = auto-generated.
+	ClientID string `env:"RIVER_CLIENT_ID" env-default:""`
 }
 
 // WebhookConfig holds webhook delivery and enqueue settings.

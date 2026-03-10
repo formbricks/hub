@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -145,10 +146,29 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps)
 
-	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
+	riverCfg := &river.Config{
 		Queues:  queues,
 		Workers: riverWorkers,
-	})
+	}
+	if cfg.River.JobTimeoutSec.Duration() > 0 {
+		riverCfg.JobTimeout = cfg.River.JobTimeoutSec.Duration()
+	}
+
+	if cfg.River.RescueStuckJobsAfterSec.Duration() > 0 {
+		riverCfg.RescueStuckJobsAfter = cfg.River.RescueStuckJobsAfterSec.Duration()
+	}
+
+	if cfg.River.CompletedJobRetentionSec >= 0 {
+		riverCfg.CompletedJobRetentionPeriod = time.Duration(cfg.River.CompletedJobRetentionSec) * time.Second
+	} else {
+		riverCfg.CompletedJobRetentionPeriod = -1
+	}
+
+	if cfg.River.ClientID != "" {
+		riverCfg.ID = cfg.River.ClientID
+	}
+
+	riverClient, err := river.NewClient(riverpgxv5.New(db), riverCfg)
 	if err != nil {
 		shutdownObservability(context.Background(), meterProvider, tracerProvider)
 
