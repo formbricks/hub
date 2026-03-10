@@ -33,7 +33,7 @@ func run() int {
 		return exitFailure
 	}
 
-	if cfg.Server.APIKey == "" {
+	if cfg.Server.HubAPIKey == "" {
 		setupLogging(cfg.Server.LogLevel)
 		slog.Error("API_KEY is required for hub-api")
 

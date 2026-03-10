@@ -40,7 +40,7 @@ type Config struct {
 // ServerConfig holds HTTP server and process settings.
 type ServerConfig struct {
 	Port            string      `env:"PORT"                     env-default:"8080"`
-	APIKey          string      `env:"API_KEY"`
+	HubAPIKey       string      `env:"API_KEY"`
 	LogLevel        string      `env:"LOG_LEVEL"                env-default:"info"`
 	ShutdownTimeout DurationSec `env:"SHUTDOWN_TIMEOUT_SECONDS" env-default:"30"`
 }

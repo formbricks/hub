@@ -100,7 +100,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	var protectedHandler http.Handler = protectedMux
 
-	protectedHandler = middleware.Auth(cfg.Server.APIKey)(protectedHandler)
+	protectedHandler = middleware.Auth(cfg.Server.HubAPIKey)(protectedHandler)
 
 	// Combine both handlers
 	mainMux := http.NewServeMux()

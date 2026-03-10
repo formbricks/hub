@@ -353,7 +353,7 @@ func newHTTPServer(
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
 	protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
 
-	protectedWithAuth := middleware.Auth(cfg.Server.APIKey)(protected)
+	protectedWithAuth := middleware.Auth(cfg.Server.HubAPIKey)(protected)
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", protectedWithAuth)
 	mux.Handle("/", public)
