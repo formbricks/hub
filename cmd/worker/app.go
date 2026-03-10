@@ -180,11 +180,27 @@ func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 	return providerCanonical, cfg.Embedding.Model
 }
 
-// Run starts River and blocks until ctx is cancelled or a component fails.
+// Run starts River and blocks until ctx is cancelled (e.g. SIGINT/SIGTERM), then stops River and returns.
+// Uses River's documented pattern: Start() runs workers in background; a goroutine calls Stop() on signal;
+// we block on Stopped() so Run() does not return until River has fully shut down.
+// See https://riverqueue.com/docs/graceful-shutdown and river.Client.Stopped().
 func (a *WorkerApp) Run(ctx context.Context) error {
-	if err := a.river.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("river: %w", err)
+	if err := a.river.Start(ctx); err != nil {
+		return fmt.Errorf("river start: %w", err)
 	}
+
+	slog.Info("Worker running", "client_id", a.river.ID())
+
+	go func() {
+		<-ctx.Done()
+		// Shutdown timeout from a fresh context so Stop() has time to finish; ctx is already cancelled.
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.cfg.Server.ShutdownTimeout.Duration())
+		defer cancel()
+
+		_ = a.river.Stop(stopCtx)
+	}()
+
+	<-a.river.Stopped()
 
 	return nil
 }

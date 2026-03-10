@@ -28,6 +28,7 @@ import (
 	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/internal/workers"
 )
 
 // App holds all server dependencies and coordinates startup and shutdown.
@@ -168,9 +169,17 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	webhooksRepo := repository.NewWebhooksRepository(db)
 
-	// API is insert-only: no workers registered; hub-worker runs the workers.
+	// Register worker types so the client accepts webhook_dispatch and feedback_embedding inserts;
+	// this process never calls river.Start(), so hub-worker runs the jobs.
+	apiWorkers := river.NewWorkers()
+	webhookSender := service.NewWebhookSenderImpl(
+		webhooksRepo, webhookMetrics, cfg.Webhook.URLBlacklist, cfg.Webhook.HTTPTimeout.Duration(), nil)
+	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender, cfg.Webhook.HTTPTimeout.Duration(), webhookMetrics)
+	river.AddWorker(apiWorkers, webhookWorker)
+
+	// River requires MaxWorkers >= 1 for declared queues; we use 1 as a placeholder since this process never calls river.Start().
 	queues := map[string]river.QueueConfig{
-		river.QueueDefault: {MaxWorkers: 0},
+		river.QueueDefault: {MaxWorkers: 1},
 	}
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
@@ -179,7 +188,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	embeddingModelForDB := embeddingModel
 
 	if embeddingProviderName != "" {
-		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: 0}
+		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
@@ -222,6 +231,11 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			return nil, fmt.Errorf("%w: %s", errUnsupportedEmbeddingProvider, embeddingProviderName)
 		}
 
+		embeddingDocPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
+		embeddingWorker := workers.NewFeedbackEmbeddingWorker(
+			feedbackRecordsService, embeddingClient, embeddingDocPrefix, embeddingMetrics)
+		river.AddWorker(apiWorkers, embeddingWorker)
+
 		const searchQueryCacheSize = 1000
 
 		queryCache, err := lru.New[string, []float32](searchQueryCacheSize)
@@ -249,7 +263,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues:  queues,
-		Workers: river.NewWorkers(), // insert-only: no workers in API process
+		Workers: apiWorkers,
 	})
 	if err != nil {
 		messageManager.Shutdown()
@@ -285,14 +299,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	messageManager.RegisterProvider(webhookProvider)
 
 	if embeddingProviderName != "" {
-		embeddingDocPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
+		docPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
 		embeddingProv := service.NewEmbeddingProvider(
 			riverClient,
 			cfg.Embedding.ProviderAPIKey,
 			embeddingModelForDB,
 			service.EmbeddingsQueueName,
 			cfg.Embedding.MaxAttempts,
-			embeddingDocPrefix,
+			docPrefix,
 			embeddingMetrics,
 		)
 		messageManager.RegisterProvider(embeddingProv)
