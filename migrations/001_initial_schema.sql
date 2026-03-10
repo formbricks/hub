@@ -5,9 +5,10 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- UUIDv7: time-ordered UUIDs (PG 16 and below; native in PG 17+).
+-- UUIDv7: time-ordered UUIDs (PG 16 and below; native in PG 18+).
 -- Requires pgcrypto for gen_random_bytes().
-CREATE OR REPLACE FUNCTION uuidv7() RETURNS uuid AS $fn$
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION uuidv7() RETURNS uuid AS $$
 DECLARE
   unix_ts_ms bytea;
   uuid_bytes bytea;
@@ -18,7 +19,8 @@ BEGIN
   uuid_bytes = set_byte(uuid_bytes, 8, (b'10' || get_byte(uuid_bytes, 8)::bit(6))::bit(8)::int);
   RETURN encode(uuid_bytes, 'hex')::uuid;
 END
-$fn$ LANGUAGE plpgsql VOLATILE;
+$$ LANGUAGE plpgsql VOLATILE;
+-- +goose StatementEnd
 
 -- Create ENUM types
 CREATE TYPE field_type_enum AS ENUM (
