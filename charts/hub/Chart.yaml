@@ -2,8 +2,8 @@ apiVersion: v2
 name: hub
 description: Formbricks Hub - Experience Management API
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 keywords:
   - formbricks
   - hub
@@ -14,5 +14,5 @@ maintainers:
   - name: Formbricks
 annotations:
   artifacthub.io/changes: |
-    - kind: added
-      description: Initial chart for Hub API service
+    - kind: changed
+      description: Upgrade to Hub 0.2.0
