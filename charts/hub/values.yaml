@@ -112,6 +112,17 @@ config:
     WEBHOOK_DELIVERY_MAX_ATTEMPTS: "3"
     WEBHOOK_MAX_FAN_OUT_PER_EVENT: "500"
     WEBHOOK_MAX_COUNT: "500"
+    WEBHOOK_HTTP_TIMEOUT_SECONDS: "15"
+    WEBHOOK_BLACKLIST: "localhost,127.0.0.1,::1,169.254.169.254"
+    WEBHOOK_ENQUEUE_MAX_RETRIES: "3"
+    WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS: "100"
+    WEBHOOK_ENQUEUE_MAX_BACKOFF_MS: "2000"
+    DATABASE_MAX_CONNS: "25"
+    DATABASE_MIN_CONNS: "0"
+    DATABASE_MAX_CONN_LIFETIME_SECONDS: "3600"
+    DATABASE_MAX_CONN_IDLE_TIME_SECONDS: "1800"
+    DATABASE_HEALTH_CHECK_PERIOD_SECONDS: "60"
+    DATABASE_CONNECT_TIMEOUT_SECONDS: "10"
 
 secrets:
   create: true
@@ -122,6 +133,8 @@ secrets:
     DATABASE_URL: ""
     # REQUIRED
     API_KEY: ""
+    # Optional: required only when EMBEDDING_PROVIDER is openai or google
+    EMBEDDING_PROVIDER_API_KEY: ""
   externalSecrets:
     enabled: false
     # Name of existing SecretStore resource for AWS Secrets Manager
@@ -134,6 +147,7 @@ secrets:
     keys:
       - DATABASE_URL
       - API_KEY
+      - EMBEDDING_PROVIDER_API_KEY
 
 extraEnv: []
 extraEnvFrom: []
