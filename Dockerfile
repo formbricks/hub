@@ -18,12 +18,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/pr
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Build the application
+# Build the application (hub-api and hub-worker)
 COPY . .
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/hub-api ./cmd/api && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/hub-worker ./cmd/worker
 
 # =============================================================================
-# Stage 2: Runtime
+# Stage 2: Runtime (default: hub-api)
 # =============================================================================
 FROM alpine:3.21
 
@@ -34,8 +35,9 @@ RUN addgroup -S app && adduser -S app -G app
 
 WORKDIR /app
 
-# Copy binary and migration tools from builder
-COPY --from=builder /build/bin/api /app/api
+# Copy binaries and migration tools from builder
+COPY --from=builder /build/bin/hub-api /app/hub-api
+COPY --from=builder /build/bin/hub-worker /app/hub-worker
 COPY --from=builder /go/bin/goose /usr/local/bin/goose
 COPY --from=builder /go/bin/river /usr/local/bin/river
 
@@ -47,4 +49,5 @@ USER app
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/api"]
+# Default: run hub-api. Override with command to run hub-worker: docker run ... hub-worker
+ENTRYPOINT ["/app/hub-api"]

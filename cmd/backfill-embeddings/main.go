@@ -9,10 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 	"strings"
 
-	"github.com/joho/godotenv"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -48,26 +46,30 @@ func main() {
 }
 
 func run() int {
-	// Load .env for consistency with the main API server (godotenv.Load() there).
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("failed to load .env file", "error", err)
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("Failed to load configuration", "error", err)
+
+		return exitFailure
 	}
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
+	if cfg.Database.URL == "" {
 		slog.Error("DATABASE_URL is required")
 
 		return exitFailure
 	}
 
-	maxAttempts := getEnvAsInt("EMBEDDING_MAX_ATTEMPTS", defaultEmbeddingMaxAttempts)
+	maxAttempts := cfg.Embedding.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = defaultEmbeddingMaxAttempts
 	}
 
 	ctx := context.Background()
 
-	db, err := database.NewPostgresPool(ctx, databaseURL, database.WithAfterConnect(pgxvec.RegisterTypes))
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(cfg.Database.PoolConfig()),
+		database.WithAfterConnect(pgxvec.RegisterTypes),
+	)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 
@@ -75,14 +77,14 @@ func run() int {
 	}
 	defer db.Close()
 
-	provider, embeddingModel, err := getEmbeddingProviderAndModel()
+	provider, embeddingModel, err := getEmbeddingProviderAndModel(cfg)
 	if err != nil {
 		slog.Error(err.Error())
 
 		return exitFailure
 	}
 
-	apiKey := os.Getenv("EMBEDDING_PROVIDER_API_KEY")
+	apiKey := cfg.Embedding.ProviderAPIKey
 	if providerRequiresAPIKey(provider) && apiKey == "" {
 		slog.Error("EMBEDDING_PROVIDER_API_KEY is required for this provider", "provider", provider)
 
@@ -104,9 +106,7 @@ func run() int {
 		maxAttempts,
 	)
 
-	normalize := config.GetEnvAsBool("EMBEDDING_NORMALIZE", false)
-
-	embeddingClient, err := newEmbeddingClient(ctx, provider, apiKey, embeddingModel, normalize)
+	embeddingClient, err := newEmbeddingClient(ctx, provider, apiKey, embeddingModel, cfg.Embedding.Normalize)
 	if err != nil {
 		slog.Error("Failed to create embedding client", "error", err)
 
@@ -148,20 +148,6 @@ func run() int {
 	return exitSuccess
 }
 
-func getEnvAsInt(key string, defaultValue int) int {
-	s := os.Getenv(key)
-	if s == "" {
-		return defaultValue
-	}
-
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return defaultValue
-	}
-
-	return n
-}
-
 func newEmbeddingClient(ctx context.Context, provider, apiKey, model string, normalize bool) (service.EmbeddingClient, error) {
 	switch strings.ToLower(provider) {
 	case embeddingProviderOpenAI:
@@ -178,13 +164,13 @@ func newEmbeddingClient(ctx context.Context, provider, apiKey, model string, nor
 	}
 }
 
-func getEmbeddingProviderAndModel() (provider, model string, err error) {
-	provider = os.Getenv("EMBEDDING_PROVIDER")
+func getEmbeddingProviderAndModel(cfg *config.Config) (provider, model string, err error) {
+	provider = cfg.Embedding.Provider
 	if provider == "" {
 		return "", "", errEmbeddingProviderRequired
 	}
 
-	model = os.Getenv("EMBEDDING_MODEL")
+	model = cfg.Embedding.Model
 	if model == "" {
 		return "", "", errEmbeddingModelRequired
 	}

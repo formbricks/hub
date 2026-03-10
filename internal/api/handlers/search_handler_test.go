@@ -47,7 +47,8 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 	t.Run("missing tenant_id returns 400", func(t *testing.T) {
 		handler := NewSearchHandler(&mockSearchService{})
 		body := []byte(`{"query":"login is slow"}`)
-		req := httptest.NewRequest(http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(body))
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
 		rec := httptest.NewRecorder()
@@ -68,7 +69,8 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 		}
 		handler := NewSearchHandler(mock)
 		body := []byte(`{"query":"  ","tenant_id":"env-1"}`)
-		req := httptest.NewRequest(http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(body))
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
 		rec := httptest.NewRecorder()
@@ -104,7 +106,8 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 		}
 		handler := NewSearchHandler(mock)
 		body := []byte(`{"query":"login is slow","tenant_id":"env-1"}`)
-		req := httptest.NewRequest(http.MethodPost, "http://test/v1/feedback-records/search/semantic?limit=10", bytes.NewReader(body))
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodPost, "http://test/v1/feedback-records/search/semantic?limit=10", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
 		rec := httptest.NewRecorder()
@@ -141,7 +144,7 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 		}
 		handler := NewSearchHandler(mock)
 		body := []byte(`{"query":"login is slow","tenant_id":"env-1"}`)
-		req := httptest.NewRequest(http.MethodPost,
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
 			"http://test/v1/feedback-records/search/semantic?cursor=not-valid-base64", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
@@ -158,7 +161,7 @@ const similarURL = "http://test/v1/feedback-records/018e1234-5678-9abc-def0-1234
 func TestSearchHandler_SimilarFeedback(t *testing.T) {
 	t.Run("missing tenant_id returns 400", func(t *testing.T) {
 		handler := NewSearchHandler(&mockSearchService{})
-		req := httptest.NewRequest(http.MethodGet, similarURL, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL, nil)
 		rec := httptest.NewRecorder()
 
 		req.SetPathValue("id", "018e1234-5678-9abc-def0-123456789abc")
@@ -175,7 +178,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 			},
 		}
 		handler := NewSearchHandler(mock)
-		req := httptest.NewRequest(http.MethodGet, similarURL+"?tenant_id=env-1", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL+"?tenant_id=env-1", nil)
 		req.SetPathValue("id", "018e1234-5678-9abc-def0-123456789abc")
 
 		rec := httptest.NewRecorder()
@@ -207,7 +210,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 			},
 		}
 		handler := NewSearchHandler(mock)
-		req := httptest.NewRequest(http.MethodGet, similarURL+"?tenant_id=env-1&limit=10", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL+"?tenant_id=env-1&limit=10", nil)
 		req.SetPathValue("id", id.String())
 
 		rec := httptest.NewRecorder()
