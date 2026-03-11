@@ -28,21 +28,32 @@ type RiverDeps struct {
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
 // When deps.EmbeddingClient is nil, only webhook workers are registered and the embeddings queue is not added.
-func NewRiverWorkersAndQueues(cfg *config.Config, deps RiverDeps) (*river.Workers, map[string]river.QueueConfig) {
+// When placeholderMaxWorkers > 0 (e.g. 1 for insert-only API), all queue MaxWorkers use it; otherwise use cfg.
+func NewRiverWorkersAndQueues(
+	cfg *config.Config, deps RiverDeps, placeholderMaxWorkers int,
+) (*river.Workers, map[string]river.QueueConfig) {
 	workers := river.NewWorkers()
 
 	webhookWorker := NewWebhookDispatchWorker(deps.WebhooksRepo, deps.WebhookSender, deps.WebhookHTTPTimeout, deps.WebhookMetrics)
 	river.AddWorker(workers, webhookWorker)
 
+	maxDefault := cfg.Webhook.DeliveryMaxConcurrent
+	maxEmbedding := cfg.Embedding.MaxConcurrent
+
+	if placeholderMaxWorkers > 0 {
+		maxDefault = placeholderMaxWorkers
+		maxEmbedding = placeholderMaxWorkers
+	}
+
 	queues := map[string]river.QueueConfig{
-		river.QueueDefault: {MaxWorkers: cfg.Webhook.DeliveryMaxConcurrent},
+		river.QueueDefault: {MaxWorkers: maxDefault},
 	}
 
 	if deps.EmbeddingClient != nil {
 		embeddingWorker := NewFeedbackEmbeddingWorker(deps.EmbeddingService, deps.EmbeddingClient, deps.EmbeddingDocPrefix, deps.EmbeddingMetrics)
 		river.AddWorker(workers, embeddingWorker)
 
-		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: cfg.Embedding.MaxConcurrent}
+		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: maxEmbedding}
 	}
 
 	return workers, queues

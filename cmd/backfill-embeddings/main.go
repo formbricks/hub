@@ -53,8 +53,8 @@ func run() int {
 		return exitFailure
 	}
 
-	if cfg.Database.URL == "" {
-		slog.Error("DATABASE_URL is required")
+	if cfg.Database.URL == "" || cfg.Database.URL == config.DefaultDatabaseURL {
+		slog.Error("DATABASE_URL must be set explicitly for this binary (do not use the default test URL)")
 
 		return exitFailure
 	}

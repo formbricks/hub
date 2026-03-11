@@ -51,6 +51,7 @@ type WorkerApp struct {
 // NewWorkerApp builds the River client with all workers and returns an app that runs only River.
 func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	var (
+		metrics        *observability.Metrics
 		meterProvider  *sdkmetric.MeterProvider
 		tracerProvider *sdktrace.TracerProvider
 		err            error
@@ -60,6 +61,15 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		meterProvider, err = observability.NewMeterProvider(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("create meter provider: %w", err)
+		}
+
+		if meterProvider != nil {
+			metrics, err = observability.NewMetrics(meterProvider.Meter("hub"))
+			if err != nil {
+				_ = observability.ShutdownMeterProvider(context.Background(), meterProvider)
+
+				return nil, fmt.Errorf("create metrics: %w", err)
+			}
 		}
 	}
 
@@ -76,7 +86,15 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	webhooksRepo := repository.NewWebhooksRepository(db)
 
-	var webhookMetrics observability.WebhookMetrics
+	var (
+		webhookMetrics   observability.WebhookMetrics
+		embeddingMetrics observability.EmbeddingMetrics
+	)
+
+	if metrics != nil {
+		webhookMetrics = metrics.Webhooks
+		embeddingMetrics = metrics.Embeddings
+	}
 
 	webhookSender := service.NewWebhookSenderImpl(
 		webhooksRepo, webhookMetrics, cfg.Webhook.URLBlacklist, cfg.Webhook.HTTPTimeout.Duration(), nil)
@@ -136,15 +154,13 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		)
 		docPrefix := service.EmbeddingPrefixForProvider(providerName)
 
-		var embeddingMetrics observability.EmbeddingMetrics
-
 		deps.EmbeddingService = feedbackRecordsService
 		deps.EmbeddingClient = embeddingClient
 		deps.EmbeddingDocPrefix = docPrefix
 		deps.EmbeddingMetrics = embeddingMetrics
 	}
 
-	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps)
+	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)
 
 	riverCfg := &river.Config{
 		Queues:  queues,

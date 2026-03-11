@@ -32,6 +32,12 @@ func run() int {
 		return exitFailure
 	}
 
+	if cfg.Database.URL == "" || cfg.Database.URL == config.DefaultDatabaseURL {
+		slog.Error("DATABASE_URL must be set explicitly for hub-worker (do not use the default test URL)")
+
+		return exitFailure
+	}
+
 	ctx := context.Background()
 
 	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,

@@ -28,7 +28,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/h
 # =============================================================================
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata wget
 
 # Create non-root user
 RUN addgroup -S app && adduser -S app -G app
@@ -48,6 +48,11 @@ COPY --from=builder /build/migrations /app/migrations
 USER app
 
 EXPOSE 8080
+
+# Health check for hub-api. Disable or override when running hub-worker (e.g. docker run ... hub-worker)
+# since workers do not expose HTTP.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+	CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
 # Default: run hub-api. Override with command to run hub-worker: docker run ... hub-worker
 ENTRYPOINT ["/app/hub-api"]

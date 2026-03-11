@@ -168,28 +168,20 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisher.BufferSize, perEventTimeout, eventMetrics)
 
 	webhooksRepo := repository.NewWebhooksRepository(db)
-
-	// Register worker types so the client accepts webhook_dispatch and feedback_embedding inserts;
-	// this process never calls river.Start(), so hub-worker runs the jobs.
-	apiWorkers := river.NewWorkers()
 	webhookSender := service.NewWebhookSenderImpl(
 		webhooksRepo, webhookMetrics, cfg.Webhook.URLBlacklist, cfg.Webhook.HTTPTimeout.Duration(), nil)
-	webhookWorker := workers.NewWebhookDispatchWorker(webhooksRepo, webhookSender, cfg.Webhook.HTTPTimeout.Duration(), webhookMetrics)
-	river.AddWorker(apiWorkers, webhookWorker)
 
-	// River requires MaxWorkers >= 1 for declared queues; we use 1 as a placeholder since this process never calls river.Start().
-	queues := map[string]river.QueueConfig{
-		river.QueueDefault: {MaxWorkers: 1},
+	deps := workers.RiverDeps{
+		WebhooksRepo:       webhooksRepo,
+		WebhookSender:      webhookSender,
+		WebhookHTTPTimeout: cfg.Webhook.HTTPTimeout.Duration(),
+		WebhookMetrics:     webhookMetrics,
 	}
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
 	embeddingModelForDB := embeddingModel
-
-	if embeddingProviderName != "" {
-		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: 1}
-	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
@@ -232,9 +224,10 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		}
 
 		embeddingDocPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
-		embeddingWorker := workers.NewFeedbackEmbeddingWorker(
-			feedbackRecordsService, embeddingClient, embeddingDocPrefix, embeddingMetrics)
-		river.AddWorker(apiWorkers, embeddingWorker)
+		deps.EmbeddingService = feedbackRecordsService
+		deps.EmbeddingClient = embeddingClient
+		deps.EmbeddingDocPrefix = embeddingDocPrefix
+		deps.EmbeddingMetrics = embeddingMetrics
 
 		const searchQueryCacheSize = 1000
 
@@ -261,9 +254,12 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
 
+	// Shared worker/queue registration; placeholder MaxWorkers 1 (API is insert-only, never calls Start).
+	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 1)
+
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues:  queues,
-		Workers: apiWorkers,
+		Workers: riverWorkers,
 	})
 	if err != nil {
 		messageManager.Shutdown()

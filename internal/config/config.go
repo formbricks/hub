@@ -27,6 +27,12 @@ var (
 	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
 )
 
+// DefaultDatabaseURL is the default connection URL when DATABASE_URL is unset (local/test only).
+// Runtime binaries (hub-worker, backfill-embeddings) should reject this and require an explicit URL.
+//
+//nolint:gosec // test default URL, not a production secret
+const DefaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+
 // Config holds all application configuration in nested groups.
 type Config struct {
 	Server           ServerConfig
@@ -212,7 +218,7 @@ func applyDefaults(cfg *Config) {
 	}
 
 	if cfg.Database.URL == "" {
-		cfg.Database.URL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+		cfg.Database.URL = DefaultDatabaseURL
 	}
 
 	if cfg.Database.MaxConns <= 0 {
@@ -221,6 +227,23 @@ func applyDefaults(cfg *Config) {
 
 	if len(cfg.Webhook.URLBlacklist) == 0 {
 		cfg.Webhook.URLBlacklist = BlacklistSet(parseBlacklist("localhost,127.0.0.1,::1,169.254.169.254"))
+	}
+
+	const defaultWebhookHTTPTimeoutSec = 15
+	if cfg.Webhook.HTTPTimeout.Duration() <= 0 {
+		cfg.Webhook.HTTPTimeout = DurationSec(time.Duration(defaultWebhookHTTPTimeoutSec) * time.Second)
+	}
+
+	if cfg.Webhook.EnqueueMaxRetries < 0 {
+		cfg.Webhook.EnqueueMaxRetries = 3
+	}
+
+	if cfg.Webhook.EnqueueInitialBackoffMs <= 0 {
+		cfg.Webhook.EnqueueInitialBackoffMs = 100
+	}
+
+	if cfg.Webhook.EnqueueMaxBackoffMs <= 0 {
+		cfg.Webhook.EnqueueMaxBackoffMs = 2000
 	}
 }
 
@@ -260,23 +283,6 @@ func validate(cfg *Config) error {
 
 	if cfg.Webhook.MaxCount <= 0 {
 		return ErrWebhookMaxCount
-	}
-
-	const defaultWebhookHTTPTimeoutSec = 15
-	if cfg.Webhook.HTTPTimeout.Duration() <= 0 {
-		cfg.Webhook.HTTPTimeout = DurationSec(time.Duration(defaultWebhookHTTPTimeoutSec) * time.Second)
-	}
-
-	if cfg.Webhook.EnqueueMaxRetries < 0 {
-		cfg.Webhook.EnqueueMaxRetries = 3
-	}
-
-	if cfg.Webhook.EnqueueInitialBackoffMs <= 0 {
-		cfg.Webhook.EnqueueInitialBackoffMs = 100
-	}
-
-	if cfg.Webhook.EnqueueMaxBackoffMs <= 0 {
-		cfg.Webhook.EnqueueMaxBackoffMs = 2000
 	}
 
 	if cfg.Database.MinConns > cfg.Database.MaxConns {
