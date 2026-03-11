@@ -628,6 +628,7 @@ paths:
             description: |
                 Embeds the search query and returns feedback record IDs with similarity scores (cosine, 0..1).
                 **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
+                Supported providers: openai, google (AI Studio), google-vertex.
                 When embeddings are disabled, this endpoint returns 503 Service Unavailable.
                 Request body must include query and tenant_id (required for tenant isolation).
             operationId: semantic-search-feedback-records
@@ -705,6 +706,7 @@ paths:
             description: |
                 Returns feedback record IDs and similarity scores for records similar to the given one (by embedding).
                 **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
+                Supported providers: openai, google (AI Studio), google-vertex.
                 When embeddings are disabled, this endpoint returns 503 Service Unavailable.
                 The source feedback record must belong to the given tenant_id (enforced).
             operationId: similar-feedback-records
@@ -821,7 +823,7 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: OK
+                    description: OK. Returns ListWebhooksOutputBody (items omit signing_key).
                     content:
                         application/json:
                             schema:
@@ -1469,6 +1471,9 @@ components:
                     type: integer
                     description: Limit used in query
                     format: int64
+                offset:
+                    type: integer
+                    description: Offset used in query (present when offset-based; omitted when using cursor)
                 next_cursor:
                     type: string
                     description: Opaque cursor for the next page (keyset paging). Present only when there may be more results. Use as the cursor query param for the next page.

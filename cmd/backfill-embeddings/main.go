@@ -9,32 +9,21 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
-	"strings"
 
-	"github.com/joho/godotenv"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/formbricks/hub/internal/config"
-	"github.com/formbricks/hub/internal/googleai"
-	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
 	"github.com/formbricks/hub/pkg/database"
 )
 
-const (
-	embeddingProviderOpenAI = "openai"
-	embeddingProviderGoogle = "google"
-)
-
 var (
 	errEmbeddingProviderRequired = errors.New("EMBEDDING_PROVIDER is required")
 	errEmbeddingModelRequired    = errors.New("EMBEDDING_MODEL is required")
-	errUnsupportedProvider       = errors.New("unsupported embedding provider")
 )
 
 const (
@@ -48,26 +37,30 @@ func main() {
 }
 
 func run() int {
-	// Load .env for consistency with the main API server (godotenv.Load() there).
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("failed to load .env file", "error", err)
-	}
-
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		slog.Error("DATABASE_URL is required")
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("Failed to load configuration", "error", err)
 
 		return exitFailure
 	}
 
-	maxAttempts := getEnvAsInt("EMBEDDING_MAX_ATTEMPTS", defaultEmbeddingMaxAttempts)
+	if cfg.Database.URL == "" || cfg.Database.URL == config.DefaultDatabaseURL {
+		slog.Error("DATABASE_URL must be set explicitly for this binary (do not use the default test URL)")
+
+		return exitFailure
+	}
+
+	maxAttempts := cfg.Embedding.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = defaultEmbeddingMaxAttempts
 	}
 
 	ctx := context.Background()
 
-	db, err := database.NewPostgresPool(ctx, databaseURL, database.WithAfterConnect(pgxvec.RegisterTypes))
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(cfg.Database.PoolConfig()),
+		database.WithAfterConnect(pgxvec.RegisterTypes),
+	)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 
@@ -75,16 +68,30 @@ func run() int {
 	}
 	defer db.Close()
 
-	provider, embeddingModel, err := getEmbeddingProviderAndModel()
+	provider, embeddingModel, err := getEmbeddingProviderAndModel(cfg)
 	if err != nil {
 		slog.Error(err.Error())
 
 		return exitFailure
 	}
 
-	apiKey := os.Getenv("EMBEDDING_PROVIDER_API_KEY")
-	if providerRequiresAPIKey(provider) && apiKey == "" {
-		slog.Error("EMBEDDING_PROVIDER_API_KEY is required for this provider", "provider", provider)
+	providerCanonical := service.NormalizeEmbeddingProvider(provider)
+	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
+		slog.Error("unsupported embedding provider", "provider", provider)
+
+		return exitFailure
+	}
+
+	embeddingCfg := service.EmbeddingClientConfig{
+		Provider:            providerCanonical,
+		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
+		Model:               embeddingModel,
+		Normalize:           cfg.Embedding.Normalize,
+		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
+		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+	}
+	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
+		slog.Error(err.Error())
 
 		return exitFailure
 	}
@@ -104,21 +111,19 @@ func run() int {
 		maxAttempts,
 	)
 
-	normalize := config.GetEnvAsBool("EMBEDDING_NORMALIZE", false)
-
-	embeddingClient, err := newEmbeddingClient(ctx, provider, apiKey, embeddingModel, normalize)
+	embeddingClient, err := service.NewEmbeddingClient(ctx, embeddingCfg)
 	if err != nil {
 		slog.Error("Failed to create embedding client", "error", err)
 
 		return exitFailure
 	}
 
-	docPrefix := service.EmbeddingPrefixForProvider(provider)
+	docPrefix := service.EmbeddingPrefixForProvider(providerCanonical)
 	embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, docPrefix, nil)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, embeddingWorker)
 
-	// Producer-only: we only enqueue jobs; workers run in the API. River requires the job kind
+	// Producer-only: we only enqueue jobs; workers run in hub-worker. River requires the job kind
 	// to be registered (worker added above) and MaxWorkers > 0 when a queue is declared.
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -141,63 +146,23 @@ func run() int {
 		return exitFailure
 	}
 
-	slog.Info("Backfill complete", "enqueued", enqueued) //nolint:gosec // G706: enqueued is int, structured logging
+	slog.Info("Backfill complete", "enqueued", enqueued)
 
 	fmt.Printf("Enqueued %d embedding job(s).\n", enqueued)
 
 	return exitSuccess
 }
 
-func getEnvAsInt(key string, defaultValue int) int {
-	s := os.Getenv(key)
-	if s == "" {
-		return defaultValue
-	}
-
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return defaultValue
-	}
-
-	return n
-}
-
-func newEmbeddingClient(ctx context.Context, provider, apiKey, model string, normalize bool) (service.EmbeddingClient, error) {
-	switch strings.ToLower(provider) {
-	case embeddingProviderOpenAI:
-		return openai.NewClient(apiKey, openai.WithModel(model), openai.WithNormalize(normalize)), nil
-	case embeddingProviderGoogle:
-		client, err := googleai.NewClient(ctx, apiKey, googleai.WithModel(model), googleai.WithNormalize(normalize))
-		if err != nil {
-			return nil, fmt.Errorf("create google embedding client: %w", err)
-		}
-
-		return client, nil
-	default:
-		return nil, fmt.Errorf("%w: %s", errUnsupportedProvider, provider)
-	}
-}
-
-func getEmbeddingProviderAndModel() (provider, model string, err error) {
-	provider = os.Getenv("EMBEDDING_PROVIDER")
+func getEmbeddingProviderAndModel(cfg *config.Config) (provider, model string, err error) {
+	provider = cfg.Embedding.Provider
 	if provider == "" {
 		return "", "", errEmbeddingProviderRequired
 	}
 
-	model = os.Getenv("EMBEDDING_MODEL")
+	model = cfg.Embedding.Model
 	if model == "" {
 		return "", "", errEmbeddingModelRequired
 	}
 
 	return provider, model, nil
-}
-
-// providerRequiresAPIKey returns true for providers that require EMBEDDING_PROVIDER_API_KEY (openai, google).
-func providerRequiresAPIKey(provider string) bool {
-	switch strings.ToLower(provider) {
-	case embeddingProviderOpenAI, embeddingProviderGoogle:
-		return true
-	default:
-		return false
-	}
 }

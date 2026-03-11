@@ -31,7 +31,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
-          go-version: '1.26.0'
+          go-version: '1.26.1'
 
       - name: Cache Go modules
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -80,7 +80,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
-          go-version: '1.26.0'
+          go-version: '1.26.1'
 
       - name: Cache Go modules
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -96,7 +96,7 @@ jobs:
         run: go mod download
 
       - name: Install goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.27.0
 
       - name: Validate migrations
         run: make migrate-validate
@@ -106,7 +106,7 @@ jobs:
 
       - name: Run River migrations
         run: |
-          go install github.com/riverqueue/river/cmd/river@v0.30.2
+          go install github.com/riverqueue/river/cmd/river@v0.31.0
           make river-migrate
 
       - name: Run integration tests
@@ -143,7 +143,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
-          go-version: '1.26.0'
+          go-version: '1.26.1'
 
       - name: Cache Go modules
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -159,17 +159,17 @@ jobs:
         run: go mod download
 
       - name: Install goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.27.0
 
       - name: Initialize database schema
         run: make init-db
 
       - name: Run River migrations
         run: |
-          go install github.com/riverqueue/river/cmd/river@v0.30.2
+          go install github.com/riverqueue/river/cmd/river@v0.31.0
           make river-migrate
 
-      - name: Check coverage (excludes cmd/api)
+      - name: Check coverage (excludes cmd/api and cmd/worker)
         run: make check-coverage
 
   tests:

@@ -99,7 +99,9 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		// Use default client for tests (hits loopback httptest server).
+		client := &http.Client{Timeout: 5 * time.Second}
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{
 			ID:        uuid.Must(uuid.NewV7()),
 			Type:      "feedback_record.created",
@@ -126,7 +128,9 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		// Use default client for tests (hits loopback httptest server).
+		client := &http.Client{Timeout: 5 * time.Second}
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
@@ -148,7 +152,9 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		// Use default client for tests (hits loopback httptest server).
+		client := &http.Client{Timeout: 5 * time.Second}
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
@@ -176,7 +182,14 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL + "/redirect"
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		// Do not follow redirects so we get 302 and Send returns ErrWebhookNon2xx (same as production client).
+		client := &http.Client{
+			Timeout: 5 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
@@ -202,7 +215,8 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		client := &http.Client{Timeout: 5 * time.Second}
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)
@@ -224,7 +238,8 @@ func TestWebhookSenderImpl_Send(t *testing.T) {
 		webhook.URL = server.URL
 
 		repo := &mockSenderRepo{}
-		sender := NewWebhookSenderImpl(repo, nil, 15*time.Second)
+		client := &http.Client{Timeout: 5 * time.Second}
+		sender := NewWebhookSenderImpl(repo, nil, nil, 5*time.Second, client)
 		payload := &WebhookPayload{ID: uuid.Must(uuid.NewV7()), Type: "test", Timestamp: time.Now(), Data: nil}
 
 		err := sender.Send(ctx, webhook, payload)

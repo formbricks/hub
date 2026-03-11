@@ -1,15 +1,18 @@
-// Package config provides application configuration loaded from environment variables.
+// Package config provides application configuration loaded from environment variables
+// and optional .env file via cleanenv.
 package config
 
 import (
 	"errors"
-	"log/slog"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
+	"github.com/ilyakaznacheev/cleanenv"
+
+	"github.com/formbricks/hub/pkg/database"
 )
 
 // Sentinel errors for configuration validation (err113).
@@ -25,329 +28,286 @@ var (
 	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
 )
 
-// Config holds all application configuration.
+// DefaultDatabaseURL is the default connection URL when DATABASE_URL is unset (local/test only).
+// Runtime binaries (hub-worker, backfill-embeddings) should reject this and require an explicit URL.
+//
+//nolint:gosec // test default URL, not a production secret
+const DefaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
+
+// Config holds all application configuration in nested groups.
 type Config struct {
-	DatabaseURL string
-	Port        string
-	APIKey      string //nolint:gosec // G117: required config field
-	LogLevel    string
-
-	// Webhook delivery concurrency cap (max concurrent outbound HTTP calls)
-	WebhookDeliveryMaxConcurrent int
-
-	// Webhook delivery max attempts per job (River retries); default 3
-	WebhookDeliveryMaxAttempts int
-
-	// Webhook max fan-out per event (max jobs enqueued per event); default 500
-	WebhookMaxFanOutPerEvent int
-
-	// Message publisher: event channel buffer size; default 1024
-	MessagePublisherBufferSize int
-
-	// Message publisher: per-event timeout (max time to process one event across all providers); default 10s
-	MessagePublisherPerEventTimeout time.Duration
-
-	// Graceful shutdown timeout for HTTP server and River; default 30s
-	ShutdownTimeout time.Duration
-
-	// Max total webhooks allowed (creation rejected when count >= this); default 500
-	WebhookMaxCount int
-
-	// Webhook delivery: HTTP client timeout for each POST; default 15s. Job timeout = this + 5s.
-	WebhookHTTPTimeout time.Duration
-
-	// Webhook enqueue: retries when InsertMany fails (transient River/DB errors). Defaults: 3, 100ms, 2s.
-	WebhookEnqueueMaxRetries     int           // Number of retries after first attempt
-	WebhookEnqueueInitialBackoff time.Duration // First backoff
-	WebhookEnqueueMaxBackoff     time.Duration // Max backoff cap
-
-	// Database connection pool: max connections; default 25
-	DatabaseMaxConns int
-	// Database connection pool: min connections to keep open; default 0
-	DatabaseMinConns int
-	// Database connection pool: max lifetime of a connection before it is closed; default 1h
-	DatabaseMaxConnLifetime time.Duration
-	// Database connection pool: max idle time before closing a connection; default 30m
-	DatabaseMaxConnIdleTime time.Duration
-	// Database connection pool: interval between health checks of idle connections; default 1m
-	DatabaseHealthCheckPeriod time.Duration
-	// Database connection: timeout when establishing a new connection; default 10s
-	DatabaseConnectTimeout time.Duration
-
-	// WebhookURLBlacklist: hosts (and IPs) that cannot be used as webhook endpoints (SSRF mitigation).
-	// Loaded from WEBHOOK_BLACKLIST (comma-separated). Defaults: localhost, 127.0.0.1, ::1, 169.254.169.254.
-	WebhookURLBlacklist map[string]struct{}
-
-	// Embeddings: optional. Enabled only when both EMBEDDING_PROVIDER and EMBEDDING_MODEL are set and provider is supported.
-	EmbeddingProviderAPIKey string
-	// Embeddings: provider name (e.g. openai, google); env EMBEDDING_PROVIDER. Required (with EmbeddingModel) to enable embeddings.
-	EmbeddingProvider string
-	// Embeddings: model name; env EMBEDDING_MODEL. Required (with EmbeddingProvider) to enable embeddings; no default.
-	EmbeddingModel string
-	// Embeddings: max concurrent workers for the embeddings River queue; default 5
-	EmbeddingMaxConcurrent int
-	// Embeddings: max attempts per embedding job (River retries); default 3
-	EmbeddingMaxAttempts int
-	// Embeddings: if true, L2-normalize vectors before storing or caching (env EMBEDDING_NORMALIZE); default false
-	EmbeddingNormalize bool
-
-	// OpenTelemetry: set to "otlp" to enable metrics (OTLP push); empty = metrics disabled
-	OtelMetricsExporter string
-	// OpenTelemetry: traces exporter (e.g. "otlp", "stdout"); empty = tracing disabled.
-	// OTLP endpoint from OTEL_EXPORTER_OTLP_ENDPOINT (SDK reads env).
-	OtelTracesExporter string
+	Server           ServerConfig
+	Database         DatabaseConfig
+	River            RiverConfig
+	Webhook          WebhookConfig
+	MessagePublisher MessagePublisherConfig
+	Embedding        EmbeddingConfig
+	Observability    ObservabilityConfig
 }
 
-// getEnv retrieves an environment variable or returns a default value.
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-
-	return defaultValue
+// ServerConfig holds HTTP server and process settings.
+type ServerConfig struct {
+	Port            string      `env:"PORT"                     env-default:"8080"`
+	HubAPIKey       string      `env:"API_KEY"`
+	LogLevel        string      `env:"LOG_LEVEL"                env-default:"info"`
+	ShutdownTimeout DurationSec `env:"SHUTDOWN_TIMEOUT_SECONDS" env-default:"30"`
 }
 
-// getEnvAsInt retrieves an environment variable as an integer or returns a default value.
-func getEnvAsInt(key string, defaultValue int) int {
-	valueStr := os.Getenv(key)
-	if valueStr == "" {
-		return defaultValue
+// DatabaseConfig holds database connection settings.
+type DatabaseConfig struct {
+	URL               string      `env:"DATABASE_URL"                         env-default:"postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"` //nolint:lll // default connection URL
+	MaxConns          int         `env:"DATABASE_MAX_CONNS"                   env-default:"25"`
+	MinConns          int         `env:"DATABASE_MIN_CONNS"                   env-default:"0"`
+	MaxConnLifetime   DurationSec `env:"DATABASE_MAX_CONN_LIFETIME_SECONDS"   env-default:"3600"`
+	MaxConnIdleTime   DurationSec `env:"DATABASE_MAX_CONN_IDLE_TIME_SECONDS"  env-default:"1800"`
+	HealthCheckPeriod DurationSec `env:"DATABASE_HEALTH_CHECK_PERIOD_SECONDS" env-default:"60"`
+	ConnectTimeout    DurationSec `env:"DATABASE_CONNECT_TIMEOUT_SECONDS"     env-default:"10"`
+}
+
+// PoolConfig returns database pool options for this config (for use with database.NewPostgresPool).
+func (d *DatabaseConfig) PoolConfig() database.PoolConfig {
+	return database.PoolConfig{
+		MaxConns:          d.MaxConns,
+		MinConns:          d.MinConns,
+		MaxConnLifetime:   d.MaxConnLifetime.Duration(),
+		MaxConnIdleTime:   d.MaxConnIdleTime.Duration(),
+		HealthCheckPeriod: d.HealthCheckPeriod.Duration(),
+		ConnectTimeout:    d.ConnectTimeout.Duration(),
+	}
+}
+
+// RiverConfig holds River client settings (worker process). Zero values mean use River defaults.
+// See https://pkg.go.dev/github.com/riverqueue/river#Config.
+type RiverConfig struct {
+	// JobTimeoutSec is the max time a job may run before its context is cancelled. 0 = River default (1m).
+	JobTimeoutSec DurationSec `env:"RIVER_JOB_TIMEOUT_SECONDS" env-default:"0"`
+	// RescueStuckJobsAfterSec: how long a "running" job is considered stuck (then retried/discarded). 0 = River default.
+	RescueStuckJobsAfterSec DurationSec `env:"RIVER_RESCUE_STUCK_JOBS_AFTER_SECONDS" env-default:"0"`
+	// CompletedJobRetentionSec is how long to keep completed jobs before cleanup. -1 = disable deletion.
+	CompletedJobRetentionSec int `env:"RIVER_COMPLETED_JOB_RETENTION_SECONDS" env-default:"86400"`
+	// ClientID identifies this client instance (logs, leader election). Empty = auto-generated.
+	ClientID string `env:"RIVER_CLIENT_ID" env-default:""`
+}
+
+// WebhookConfig holds webhook delivery and enqueue settings.
+type WebhookConfig struct {
+	DeliveryMaxConcurrent   int          `env:"WEBHOOK_DELIVERY_MAX_CONCURRENT"    env-default:"100"`
+	DeliveryMaxAttempts     int          `env:"WEBHOOK_DELIVERY_MAX_ATTEMPTS"      env-default:"3"`
+	MaxFanOutPerEvent       int          `env:"WEBHOOK_MAX_FAN_OUT_PER_EVENT"      env-default:"500"`
+	MaxCount                int          `env:"WEBHOOK_MAX_COUNT"                  env-default:"500"`
+	HTTPTimeout             DurationSec  `env:"WEBHOOK_HTTP_TIMEOUT_SECONDS"       env-default:"15"`
+	EnqueueMaxRetries       int          `env:"WEBHOOK_ENQUEUE_MAX_RETRIES"        env-default:"3"`
+	EnqueueInitialBackoffMs int          `env:"WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS" env-default:"100"`
+	EnqueueMaxBackoffMs     int          `env:"WEBHOOK_ENQUEUE_MAX_BACKOFF_MS"     env-default:"2000"`
+	URLBlacklist            BlacklistSet `env:"WEBHOOK_BLACKLIST"                  env-default:"localhost,127.0.0.1,::1,169.254.169.254"`
+}
+
+// MessagePublisherConfig holds event channel and timeout settings.
+type MessagePublisherConfig struct {
+	BufferSize         int `env:"MESSAGE_PUBLISHER_QUEUE_MAX_SIZE"            env-default:"16384"`
+	PerEventTimeoutSec int `env:"MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS" env-default:"10"`
+}
+
+// EmbeddingConfig holds embedding provider and queue settings.
+type EmbeddingConfig struct {
+	ProviderAPIKey      string `env:"EMBEDDING_PROVIDER_API_KEY"`
+	Provider            string `env:"EMBEDDING_PROVIDER"`
+	Model               string `env:"EMBEDDING_MODEL"`
+	MaxConcurrent       int    `env:"EMBEDDING_MAX_CONCURRENT"        env-default:"5"`
+	MaxAttempts         int    `env:"EMBEDDING_MAX_ATTEMPTS"          env-default:"3"`
+	Normalize           bool   `env:"EMBEDDING_NORMALIZE"             env-default:"false"`
+	GoogleCloudProject  string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
+}
+
+// ObservabilityConfig holds OpenTelemetry settings.
+type ObservabilityConfig struct {
+	MetricsExporter string `env:"OTEL_METRICS_EXPORTER"`
+	TracesExporter  string `env:"OTEL_TRACES_EXPORTER"`
+}
+
+// DurationSec parses integer seconds from env and stores as time.Duration.
+// It implements cleanenv.Setter for use in config structs.
+type DurationSec time.Duration
+
+// SetValue implements cleanenv.Setter. s is the raw env value (e.g. "30" for seconds).
+func (d *DurationSec) SetValue(s string) error {
+	if s == "" {
+		return nil
 	}
 
-	value, err := strconv.Atoi(valueStr)
+	sec, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil {
-		return defaultValue
+		return fmt.Errorf("parse duration seconds: %w", err)
 	}
 
-	return value
+	*d = DurationSec(time.Duration(sec) * time.Second)
+
+	return nil
 }
 
-// GetEnvAsBool retrieves an environment variable as a boolean. "true", "1", "yes" (case-insensitive) => true; else false.
-// Exported so other cmd packages (e.g. backfill-embeddings) can reuse it without duplicating logic.
-func GetEnvAsBool(key string, defaultValue bool) bool {
-	valueStr := os.Getenv(key)
-	if valueStr == "" {
-		return defaultValue
-	}
-
-	switch strings.ToLower(strings.TrimSpace(valueStr)) {
-	case "true", "1", "yes":
-		return true
-	case "false", "0", "no":
-		return false
-	default:
-		return defaultValue
-	}
+// Duration returns the value as time.Duration.
+func (d *DurationSec) Duration() time.Duration {
+	return time.Duration(*d)
 }
 
-// Load reads configuration from environment variables and returns a Config struct.
-// It automatically loads .env file if it exists.
-// Returns default values for any missing environment variables.
-// API_KEY is required and the function will return an error if it's not set.
-func Load() (*Config, error) {
-	// Load .env file if it exists. Skip logging when absent (e.g. env from secrets/parameter store).
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("Failed to load .env file", "error", err)
-	}
+// BlacklistSet is a set of normalized hostnames (e.g. for SSRF mitigation).
+// It implements cleanenv.Setter by parsing a comma-separated list.
+type BlacklistSet map[string]struct{}
 
-	webhookBlacklist := parseWebhookURLBlacklist(getEnv("WEBHOOK_BLACKLIST", "localhost,127.0.0.1,::1,169.254.169.254"))
+// SetValue implements cleanenv.Setter.
+func (b *BlacklistSet) SetValue(s string) error {
+	*b = parseBlacklist(s)
 
-	const (
-		defaultWebhookDeliveryMaxConcurrent     = 100
-		defaultWebhookDeliveryMaxAttempts       = 3
-		defaultWebhookMaxFanOutPerEvent         = 500
-		defaultMessagePublisherQueueMaxSize     = 16384
-		defaultMessagePublisherPerEventTimeout  = 10
-		defaultShutdownTimeoutSeconds           = 30
-		defaultWebhookMaxCount                  = 500
-		defaultWebhookHTTPTimeoutSeconds        = 15
-		defaultWebhookEnqueueMaxRetries         = 3
-		defaultWebhookEnqueueInitialBackoffMs   = 100
-		defaultWebhookEnqueueMaxBackoffMs       = 2000
-		defaultEmbeddingMaxConcurrent           = 5
-		defaultEmbeddingMaxAttempts             = 3
-		defaultDatabaseMaxConns                 = 25
-		defaultDatabaseMinConns                 = 0
-		defaultDatabaseMaxConnLifetimeSeconds   = 3600 // 1 hour
-		defaultDatabaseMaxConnIdleTimeSeconds   = 1800 // 30 minutes
-		defaultDatabaseHealthCheckPeriodSeconds = 60   // 1 minute
-		defaultDatabaseConnectTimeoutSeconds    = 10
-	)
-
-	apiKey := os.Getenv("API_KEY")
-	if apiKey == "" {
-		return nil, ErrAPIKeyRequired
-	}
-
-	webhookDeliveryMaxConcurrent := getEnvAsInt("WEBHOOK_DELIVERY_MAX_CONCURRENT", defaultWebhookDeliveryMaxConcurrent)
-	if webhookDeliveryMaxConcurrent <= 0 {
-		return nil, ErrWebhookDeliveryMaxConcurrent
-	}
-
-	webhookDeliveryMaxAttempts := getEnvAsInt("WEBHOOK_DELIVERY_MAX_ATTEMPTS", defaultWebhookDeliveryMaxAttempts)
-	if webhookDeliveryMaxAttempts <= 0 {
-		return nil, ErrWebhookDeliveryMaxAttempts
-	}
-
-	webhookMaxFanOutPerEvent := getEnvAsInt("WEBHOOK_MAX_FAN_OUT_PER_EVENT", defaultWebhookMaxFanOutPerEvent)
-	if webhookMaxFanOutPerEvent <= 0 {
-		return nil, ErrWebhookMaxFanOutPerEvent
-	}
-
-	messagePublisherBufferSize := getEnvAsInt("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE", defaultMessagePublisherQueueMaxSize)
-	if messagePublisherBufferSize <= 0 {
-		return nil, ErrMessagePublisherQueueMaxSize
-	}
-
-	perEventTimeoutSecs := getEnvAsInt("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS", defaultMessagePublisherPerEventTimeout)
-	if perEventTimeoutSecs <= 0 {
-		return nil, ErrMessagePublisherPerEventTimeout
-	}
-
-	shutdownTimeoutSecs := getEnvAsInt("SHUTDOWN_TIMEOUT_SECONDS", defaultShutdownTimeoutSeconds)
-	if shutdownTimeoutSecs <= 0 {
-		return nil, ErrShutdownTimeoutSeconds
-	}
-
-	webhookMaxCount := getEnvAsInt("WEBHOOK_MAX_COUNT", defaultWebhookMaxCount)
-	if webhookMaxCount <= 0 {
-		return nil, ErrWebhookMaxCount
-	}
-
-	webhookHTTPTimeoutSecs := getEnvAsInt("WEBHOOK_HTTP_TIMEOUT_SECONDS", defaultWebhookHTTPTimeoutSeconds)
-	if webhookHTTPTimeoutSecs <= 0 {
-		webhookHTTPTimeoutSecs = defaultWebhookHTTPTimeoutSeconds
-	}
-
-	webhookHTTPTimeout := time.Duration(webhookHTTPTimeoutSecs) * time.Second
-
-	webhookEnqueueMaxRetries := getEnvAsInt("WEBHOOK_ENQUEUE_MAX_RETRIES", defaultWebhookEnqueueMaxRetries)
-	if webhookEnqueueMaxRetries < 0 {
-		webhookEnqueueMaxRetries = defaultWebhookEnqueueMaxRetries
-	}
-
-	webhookEnqueueInitialBackoff := time.Duration(
-		getEnvAsInt("WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS", defaultWebhookEnqueueInitialBackoffMs),
-	) * time.Millisecond
-	if webhookEnqueueInitialBackoff <= 0 {
-		webhookEnqueueInitialBackoff = defaultWebhookEnqueueInitialBackoffMs * time.Millisecond
-	}
-
-	webhookEnqueueMaxBackoffMs := getEnvAsInt("WEBHOOK_ENQUEUE_MAX_BACKOFF_MS", defaultWebhookEnqueueMaxBackoffMs)
-	if webhookEnqueueMaxBackoffMs <= 0 {
-		webhookEnqueueMaxBackoffMs = defaultWebhookEnqueueMaxBackoffMs
-	}
-
-	webhookEnqueueMaxBackoff := max(time.Duration(webhookEnqueueMaxBackoffMs)*time.Millisecond, webhookEnqueueInitialBackoff)
-
-	databaseMaxConns := getEnvAsInt("DATABASE_MAX_CONNS", defaultDatabaseMaxConns)
-	if databaseMaxConns <= 0 {
-		databaseMaxConns = defaultDatabaseMaxConns
-	}
-
-	databaseMinConns := getEnvAsInt("DATABASE_MIN_CONNS", defaultDatabaseMinConns)
-	if databaseMinConns < 0 {
-		databaseMinConns = defaultDatabaseMinConns
-	}
-
-	if databaseMinConns > databaseMaxConns {
-		return nil, ErrDatabaseMinConnsExceedsMax
-	}
-
-	databaseMaxConnLifetimeSecs := getEnvAsInt("DATABASE_MAX_CONN_LIFETIME_SECONDS", defaultDatabaseMaxConnLifetimeSeconds)
-	if databaseMaxConnLifetimeSecs <= 0 {
-		databaseMaxConnLifetimeSecs = defaultDatabaseMaxConnLifetimeSeconds
-	}
-
-	databaseMaxConnLifetime := time.Duration(databaseMaxConnLifetimeSecs) * time.Second
-
-	databaseMaxConnIdleTimeSecs := getEnvAsInt("DATABASE_MAX_CONN_IDLE_TIME_SECONDS", defaultDatabaseMaxConnIdleTimeSeconds)
-	if databaseMaxConnIdleTimeSecs <= 0 {
-		databaseMaxConnIdleTimeSecs = defaultDatabaseMaxConnIdleTimeSeconds
-	}
-
-	databaseMaxConnIdleTime := time.Duration(databaseMaxConnIdleTimeSecs) * time.Second
-
-	databaseHealthCheckPeriodSecs := getEnvAsInt("DATABASE_HEALTH_CHECK_PERIOD_SECONDS", defaultDatabaseHealthCheckPeriodSeconds)
-	if databaseHealthCheckPeriodSecs <= 0 {
-		databaseHealthCheckPeriodSecs = defaultDatabaseHealthCheckPeriodSeconds
-	}
-
-	databaseHealthCheckPeriod := time.Duration(databaseHealthCheckPeriodSecs) * time.Second
-
-	databaseConnectTimeoutSecs := getEnvAsInt("DATABASE_CONNECT_TIMEOUT_SECONDS", defaultDatabaseConnectTimeoutSeconds)
-	if databaseConnectTimeoutSecs <= 0 {
-		databaseConnectTimeoutSecs = defaultDatabaseConnectTimeoutSeconds
-	}
-
-	databaseConnectTimeout := time.Duration(databaseConnectTimeoutSecs) * time.Second
-
-	embeddingMaxConcurrent := getEnvAsInt("EMBEDDING_MAX_CONCURRENT", defaultEmbeddingMaxConcurrent)
-	if embeddingMaxConcurrent <= 0 {
-		embeddingMaxConcurrent = defaultEmbeddingMaxConcurrent
-	}
-
-	embeddingMaxAttempts := getEnvAsInt("EMBEDDING_MAX_ATTEMPTS", defaultEmbeddingMaxAttempts)
-	if embeddingMaxAttempts <= 0 {
-		embeddingMaxAttempts = defaultEmbeddingMaxAttempts
-	}
-
-	cfg := &Config{
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"),
-		Port:        getEnv("PORT", "8080"),
-		APIKey:      apiKey,
-		LogLevel:    getEnv("LOG_LEVEL", "info"),
-
-		WebhookDeliveryMaxConcurrent:    webhookDeliveryMaxConcurrent,
-		WebhookDeliveryMaxAttempts:      webhookDeliveryMaxAttempts,
-		WebhookMaxFanOutPerEvent:        webhookMaxFanOutPerEvent,
-		MessagePublisherBufferSize:      messagePublisherBufferSize,
-		MessagePublisherPerEventTimeout: time.Duration(perEventTimeoutSecs) * time.Second,
-		ShutdownTimeout:                 time.Duration(shutdownTimeoutSecs) * time.Second,
-		WebhookMaxCount:                 webhookMaxCount,
-		WebhookHTTPTimeout:              webhookHTTPTimeout,
-
-		WebhookEnqueueMaxRetries:     webhookEnqueueMaxRetries,
-		WebhookEnqueueInitialBackoff: webhookEnqueueInitialBackoff,
-		WebhookEnqueueMaxBackoff:     webhookEnqueueMaxBackoff,
-
-		DatabaseMaxConns:          databaseMaxConns,
-		DatabaseMinConns:          databaseMinConns,
-		DatabaseMaxConnLifetime:   databaseMaxConnLifetime,
-		DatabaseMaxConnIdleTime:   databaseMaxConnIdleTime,
-		DatabaseHealthCheckPeriod: databaseHealthCheckPeriod,
-		DatabaseConnectTimeout:    databaseConnectTimeout,
-
-		WebhookURLBlacklist: webhookBlacklist,
-
-		EmbeddingProviderAPIKey: getEnv("EMBEDDING_PROVIDER_API_KEY", ""),
-		EmbeddingProvider:       getEnv("EMBEDDING_PROVIDER", ""),
-		EmbeddingModel:          getEnv("EMBEDDING_MODEL", ""),
-		EmbeddingMaxConcurrent:  embeddingMaxConcurrent,
-		EmbeddingMaxAttempts:    embeddingMaxAttempts,
-		EmbeddingNormalize:      GetEnvAsBool("EMBEDDING_NORMALIZE", false),
-
-		OtelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER", ""),
-		OtelTracesExporter:  getEnv("OTEL_TRACES_EXPORTER", ""),
-	}
-
-	return cfg, nil
+	return nil
 }
 
-// parseWebhookURLBlacklist parses a comma-separated list of hosts into a map for O(1) lookups.
-// Each host is normalized (trimmed, lowercased). Empty entries are ignored.
-func parseWebhookURLBlacklist(s string) map[string]struct{} {
+func parseBlacklist(s string) map[string]struct{} {
 	out := make(map[string]struct{})
 
 	parts := strings.SplitSeq(s, ",")
-	for p := range parts {
-		h := strings.TrimSpace(strings.ToLower(p))
+	for part := range parts {
+		h := strings.TrimSpace(strings.ToLower(part))
 
-		h = strings.TrimRight(h, ".")
+		h = strings.TrimSuffix(h, ".")
 		if h != "" {
 			out[h] = struct{}{}
 		}
 	}
 
 	return out
+}
+
+// Load reads configuration from .env (if present) and environment variables.
+// cleanenv supports .env in ReadConfig (see https://github.com/ilyakaznacheev/cleanenv).
+// If .env is missing, ReadEnv is used so config comes from the process environment only.
+// API_KEY is not required by Load (worker can run without it); validate in API main if needed.
+func Load() (*Config, error) {
+	cfg := &Config{}
+
+	err := cleanenv.ReadConfig(".env", cfg)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || isNotExist(err) {
+			if readErr := cleanenv.ReadEnv(cfg); readErr != nil {
+				return nil, fmt.Errorf("read env: %w", readErr)
+			}
+		} else {
+			return nil, fmt.Errorf("read config: %w", err)
+		}
+	}
+
+	applyDefaults(cfg)
+
+	if err := validate(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// applyDefaults fills in default values for empty fields (cleanenv may leave nested struct defaults unset).
+func applyDefaults(cfg *Config) {
+	if cfg.Server.Port == "" {
+		cfg.Server.Port = "8080"
+	}
+
+	if cfg.Server.LogLevel == "" {
+		cfg.Server.LogLevel = "info"
+	}
+
+	const defaultShutdownSec = 30
+	if cfg.Server.ShutdownTimeout.Duration() == 0 {
+		cfg.Server.ShutdownTimeout = DurationSec(time.Duration(defaultShutdownSec) * time.Second)
+	}
+
+	if cfg.Database.URL == "" {
+		cfg.Database.URL = DefaultDatabaseURL
+	}
+
+	if cfg.Database.MaxConns <= 0 {
+		cfg.Database.MaxConns = 25
+	}
+
+	if len(cfg.Webhook.URLBlacklist) == 0 {
+		cfg.Webhook.URLBlacklist = BlacklistSet(parseBlacklist("localhost,127.0.0.1,::1,169.254.169.254"))
+	}
+
+	const defaultWebhookHTTPTimeoutSec = 15
+	if cfg.Webhook.HTTPTimeout.Duration() <= 0 {
+		cfg.Webhook.HTTPTimeout = DurationSec(time.Duration(defaultWebhookHTTPTimeoutSec) * time.Second)
+	}
+
+	if cfg.Webhook.EnqueueMaxRetries < 0 {
+		cfg.Webhook.EnqueueMaxRetries = 3
+	}
+
+	if cfg.Webhook.EnqueueInitialBackoffMs <= 0 {
+		cfg.Webhook.EnqueueInitialBackoffMs = 100
+	}
+
+	if cfg.Webhook.EnqueueMaxBackoffMs <= 0 {
+		cfg.Webhook.EnqueueMaxBackoffMs = 2000
+	}
+
+	// Google Vertex AI fallbacks: EMBEDDING_* can fall back to GOOGLE_CLOUD_*
+	if cfg.Embedding.GoogleCloudProject == "" {
+		cfg.Embedding.GoogleCloudProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	}
+
+	if cfg.Embedding.GoogleCloudLocation == "" {
+		cfg.Embedding.GoogleCloudLocation = os.Getenv("GOOGLE_CLOUD_LOCATION")
+	}
+
+	if cfg.Embedding.MaxConcurrent <= 0 {
+		cfg.Embedding.MaxConcurrent = 5
+	}
+
+	if cfg.Embedding.MaxAttempts <= 0 {
+		cfg.Embedding.MaxAttempts = 3
+	}
+}
+
+func isNotExist(err error) bool {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return errors.Is(pathErr.Err, os.ErrNotExist)
+	}
+
+	return false
+}
+
+func validate(cfg *Config) error {
+	if cfg.Webhook.DeliveryMaxConcurrent <= 0 {
+		return ErrWebhookDeliveryMaxConcurrent
+	}
+
+	if cfg.Webhook.DeliveryMaxAttempts <= 0 {
+		return ErrWebhookDeliveryMaxAttempts
+	}
+
+	if cfg.Webhook.MaxFanOutPerEvent <= 0 {
+		return ErrWebhookMaxFanOutPerEvent
+	}
+
+	if cfg.MessagePublisher.BufferSize <= 0 {
+		return ErrMessagePublisherQueueMaxSize
+	}
+
+	if cfg.MessagePublisher.PerEventTimeoutSec <= 0 {
+		return ErrMessagePublisherPerEventTimeout
+	}
+
+	if cfg.Server.ShutdownTimeout.Duration() <= 0 {
+		return ErrShutdownTimeoutSeconds
+	}
+
+	if cfg.Webhook.MaxCount <= 0 {
+		return ErrWebhookMaxCount
+	}
+
+	if cfg.Database.MinConns > cfg.Database.MaxConns {
+		return ErrDatabaseMinConnsExceedsMax
+	}
+
+	return nil
 }

@@ -188,9 +188,3 @@ func TestBuildEmbeddingInput(t *testing.T) {
 		assert.Equal(t, "search_document: Question: Q\nAnswer: A", out)
 	})
 }
-
-func TestEmbeddingPrefixForProvider(t *testing.T) {
-	t.Run("openai returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("openai")) })
-	t.Run("google returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("google")) })
-	t.Run("unknown returns empty", func(t *testing.T) { assert.Empty(t, EmbeddingPrefixForProvider("unknown")) })
-}

@@ -1,4 +1,3 @@
-//nolint:gosec // G101/G704: test DB URLs and HTTP client by design
 package tests
 
 import (
@@ -12,9 +11,9 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -33,16 +32,9 @@ import (
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
 
 // setupTestServer creates a test HTTP server with all routes configured.
-// Database URL comes from .env (DATABASE_URL) when set; otherwise config.Load() uses its default.
+// Database URL comes from env (DATABASE_URL) when set; otherwise config.Load() uses its default.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
-
-	// Load .env so DATABASE_URL (e.g. port 5433) is used when set; otherwise use default (5432).
-	// Try current dir and parent (e.g. when test cwd is tests/).
-	_ = godotenv.Load()
-	if os.Getenv("DATABASE_URL") == "" {
-		_ = godotenv.Load("../.env")
-	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
@@ -52,27 +44,23 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	t.Setenv("API_KEY", testAPIKey)
 	t.Setenv("DATABASE_URL", databaseURL)
 
-	// Load configuration
+	// Load configuration (cleanenv reads .env if present and env vars)
 	cfg, err := config.Load()
 	require.NoError(t, err, "Failed to load configuration")
 
 	// Initialize database connection
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL,
-		database.WithMaxConns(cfg.DatabaseMaxConns),
-		database.WithMinConns(cfg.DatabaseMinConns),
-		database.WithMaxConnLifetime(cfg.DatabaseMaxConnLifetime),
-		database.WithMaxConnIdleTime(cfg.DatabaseMaxConnIdleTime),
-		database.WithHealthCheckPeriod(cfg.DatabaseHealthCheckPeriod),
-		database.WithConnectTimeout(cfg.DatabaseConnectTimeout),
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(cfg.Database.PoolConfig()),
 	)
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Initialize message publisher manager for tests (no providers required)
-	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, nil)
+	perEventTimeout := time.Duration(cfg.MessagePublisher.PerEventTimeoutSec) * time.Second
+	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisher.BufferSize, perEventTimeout, nil)
 
 	// Webhooks
 	webhooksRepo := repository.NewDBWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount, cfg.WebhookURLBlacklist)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
@@ -112,7 +100,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	var protectedHandler http.Handler = protectedMux
 
-	protectedHandler = middleware.Auth(cfg.APIKey)(protectedHandler)
+	protectedHandler = middleware.Auth(cfg.Server.HubAPIKey)(protectedHandler)
 
 	// Combine both handlers
 	mainMux := http.NewServeMux()
@@ -979,8 +967,6 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	ctx := context.Background()
 
-	_ = godotenv.Load()
-
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		databaseURL = defaultTestDatabaseURL
@@ -991,7 +977,9 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(cfg.Database.PoolConfig()),
+	)
 	require.NoError(t, err)
 
 	defer db.Close()
@@ -1135,11 +1123,12 @@ func TestWebhooksCRUD(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, invalidCursorResp.StatusCode)
 	require.NoError(t, invalidCursorResp.Body.Close())
 
-	// Test list cursor pagination: create 3 webhooks, list with limit=2, fetch page 2
+	// Test list cursor pagination: create 3 webhooks, list with limit=2, fetch page 2.
+	// Use example.com (resolves) with unique paths so SSRF validation passes.
 	t.Run("List cursor pagination", func(t *testing.T) {
 		for i := range 3 {
 			createBody := map[string]any{
-				"url":         fmt.Sprintf("https://cursor-test-%d.example.com/webhook", i),
+				"url":         fmt.Sprintf("https://example.com/webhook/cursor-pagination-%d", i),
 				"event_types": []string{"feedback_record.created"},
 			}
 			b, err := json.Marshal(createBody)

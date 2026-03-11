@@ -42,7 +42,7 @@ func setupWebhooksRepo(t *testing.T) (ctx context.Context, repo *repository.DBWe
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	db, err := database.NewPostgresPool(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
 	require.NoError(t, err)
 
 	repo = repository.NewDBWebhooksRepository(db)

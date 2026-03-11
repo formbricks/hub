@@ -56,12 +56,12 @@ func (m *mockFeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Conte
 func TestFeedbackRecordsHandler_List(t *testing.T) {
 	t.Run("missing tenant_id returns 400", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{}
-		h := NewFeedbackRecordsHandler(mock)
+		handler := NewFeedbackRecordsHandler(mock)
 
-		req := httptest.NewRequest(http.MethodGet, "http://test/v1/feedback-records", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://test/v1/feedback-records", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		h.List(rec, req)
+		handler.List(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
@@ -76,12 +76,13 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 				return 3, nil
 			},
 		}
-		h := NewFeedbackRecordsHandler(mock)
+		handler := NewFeedbackRecordsHandler(mock)
 
-		req := httptest.NewRequest(http.MethodDelete, "http://test/v1/feedback-records?user_identifier=user-123", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodDelete, "http://test/v1/feedback-records?user_identifier=user-123", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		h.BulkDelete(rec, req)
+		handler.BulkDelete(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 
@@ -105,12 +106,13 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 				return 1, nil
 			},
 		}
-		h := NewFeedbackRecordsHandler(mock)
+		handler := NewFeedbackRecordsHandler(mock)
 
-		req := httptest.NewRequest(http.MethodDelete, "http://test/v1/feedback-records?user_identifier=user-456&tenant_id=tenant-a", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodDelete, "http://test/v1/feedback-records?user_identifier=user-456&tenant_id=tenant-a", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		h.BulkDelete(rec, req)
+		handler.BulkDelete(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		require.NotNil(t, capturedTenantID)
@@ -119,24 +121,25 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 
 	t.Run("missing user_identifier returns bad request", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{}
-		h := NewFeedbackRecordsHandler(mock)
+		handler := NewFeedbackRecordsHandler(mock)
 
-		req := httptest.NewRequest(http.MethodDelete, "http://test/v1/feedback-records", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "http://test/v1/feedback-records", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		h.BulkDelete(rec, req)
+		handler.BulkDelete(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
 	t.Run("empty user_identifier returns bad request", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{}
-		h := NewFeedbackRecordsHandler(mock)
+		handler := NewFeedbackRecordsHandler(mock)
 
-		req := httptest.NewRequest(http.MethodDelete, "http://test/v1/feedback-records?user_identifier=", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodDelete, "http://test/v1/feedback-records?user_identifier=", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		h.BulkDelete(rec, req)
+		handler.BulkDelete(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
@@ -147,12 +150,13 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 				return 0, assert.AnError
 			},
 		}
-		h := NewFeedbackRecordsHandler(mock)
+		handler := NewFeedbackRecordsHandler(mock)
 
-		req := httptest.NewRequest(http.MethodDelete, "http://test/v1/feedback-records?user_identifier=user-789", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodDelete, "http://test/v1/feedback-records?user_identifier=user-789", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		h.BulkDelete(rec, req)
+		handler.BulkDelete(rec, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
@@ -163,12 +167,13 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 				return 0, nil
 			},
 		}
-		h := NewFeedbackRecordsHandler(mock)
+		handler := NewFeedbackRecordsHandler(mock)
 
-		req := httptest.NewRequest(http.MethodDelete, "http://test/v1/feedback-records?user_identifier=nonexistent", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodDelete, "http://test/v1/feedback-records?user_identifier=nonexistent", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		h.BulkDelete(rec, req)
+		handler.BulkDelete(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 

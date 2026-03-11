@@ -4,6 +4,8 @@ metadata:
   name: {{ include "hub.fullname" . }}
   labels:
     {{- include "hub.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: {{ .Values.replicaCount }}
   revisionHistoryLimit: 10

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -67,7 +68,7 @@ func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateW
 		return nil, huberrors.NewLimitExceededError(fmt.Sprintf("webhook limit reached (max %d)", s.maxWebhooks))
 	}
 
-	if err := validateWebhookURLHost(req.URL, s.urlHostBlacklist); err != nil {
+	if err := validateWebhookURLHost(ctx, req.URL, s.urlHostBlacklist); err != nil {
 		return nil, err
 	}
 
@@ -118,35 +119,149 @@ func canonicalizeHost(host string) string {
 	return h
 }
 
-// validateWebhookURLHost checks that the URL's host is not in the blacklist (SSRF mitigation).
-func validateWebhookURLHost(urlStr string, blacklist map[string]struct{}) error {
-	if len(blacklist) == 0 {
+// isPrivateOrReserved returns true if the IP is loopback, private, link-local, or unspecified.
+func isPrivateOrReserved(addr netip.Addr) bool {
+	addr = addr.Unmap()
+
+	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() || addr.IsUnspecified()
+}
+
+// validateWebhookHost checks that the host (IP or hostname) is allowed for webhook URLs (SSRF mitigation).
+// For literal IPs: rejects private/reserved ranges. For hostnames: resolves and rejects if any returned IP is disallowed.
+// Always runs address checks; blacklist is applied when non-nil.
+func validateWebhookHost(ctx context.Context, host string, blacklist map[string]struct{}) error {
+	host = canonicalizeHost(host)
+	if host == "" {
+		return huberrors.NewValidationError("url", "webhook URL host is empty")
+	}
+
+	if blacklist != nil {
+		if _, blocked := blacklist[host]; blocked {
+			return huberrors.NewValidationError("url", "webhook URL host is not allowed (blacklisted)")
+		}
+	}
+
+	if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
+		if isPrivateOrReserved(addr) {
+			return huberrors.NewValidationError("url", "webhook URL host is not allowed (private/internal)")
+		}
+
+		if blacklist != nil {
+			if _, blocked := blacklist[addr.String()]; blocked {
+				return huberrors.NewValidationError("url", "webhook URL host is not allowed (blacklisted)")
+			}
+		}
+
 		return nil
 	}
 
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return huberrors.NewValidationError("url", "cannot resolve webhook URL host: "+err.Error())
+	}
+
+	if len(ips) == 0 {
+		return huberrors.NewValidationError("url", "webhook URL host resolves to no addresses")
+	}
+
+	for _, ipa := range ips {
+		addr, ok := netip.AddrFromSlice(ipa.IP)
+		if !ok {
+			continue
+		}
+
+		addr = addr.Unmap()
+		if isPrivateOrReserved(addr) {
+			return huberrors.NewValidationError("url", "webhook URL host is not allowed (private/internal)")
+		}
+
+		if blacklist != nil {
+			if _, blocked := blacklist[addr.String()]; blocked {
+				return huberrors.NewValidationError("url", "webhook URL host is not allowed (blacklisted)")
+			}
+		}
+	}
+
+	return nil
+}
+
+// resolveWebhookHost resolves the host to allowed IPs for connection (DNS rebinding protection).
+// Returns the list of IPs that pass validation, or an error if any resolved IP is disallowed.
+func resolveWebhookHost(ctx context.Context, host string, blacklist map[string]struct{}) ([]netip.Addr, error) {
+	host = canonicalizeHost(host)
+	if host == "" {
+		return nil, huberrors.NewValidationError("url", "webhook URL host is empty")
+	}
+
+	if blacklist != nil {
+		if _, blocked := blacklist[host]; blocked {
+			return nil, huberrors.NewValidationError("url", "webhook URL host is not allowed (blacklisted)")
+		}
+	}
+
+	if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
+		if isPrivateOrReserved(addr) {
+			return nil, huberrors.NewValidationError("url", "webhook URL host is not allowed (private/internal)")
+		}
+
+		if blacklist != nil {
+			if _, blocked := blacklist[addr.String()]; blocked {
+				return nil, huberrors.NewValidationError("url", "webhook URL host is not allowed (blacklisted)")
+			}
+		}
+
+		return []netip.Addr{addr}, nil
+	}
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, huberrors.NewValidationError("url", "cannot resolve webhook URL host: "+err.Error())
+	}
+
+	if len(ips) == 0 {
+		return nil, huberrors.NewValidationError("url", "webhook URL host resolves to no addresses")
+	}
+
+	var allowed []netip.Addr
+
+	for _, ipa := range ips {
+		addr, ok := netip.AddrFromSlice(ipa.IP)
+		if !ok {
+			continue
+		}
+
+		addr = addr.Unmap()
+		if isPrivateOrReserved(addr) {
+			return nil, huberrors.NewValidationError("url", "webhook URL host is not allowed (private/internal)")
+		}
+
+		if blacklist != nil {
+			if _, blocked := blacklist[addr.String()]; blocked {
+				return nil, huberrors.NewValidationError("url", "webhook URL host is not allowed (blacklisted)")
+			}
+		}
+
+		allowed = append(allowed, addr)
+	}
+
+	if len(allowed) == 0 {
+		return nil, huberrors.NewValidationError("url", "webhook URL host resolves to no allowed addresses")
+	}
+
+	return allowed, nil
+}
+
+// validateWebhookURLHost checks that the URL's host is allowed for webhooks (SSRF mitigation).
+func validateWebhookURLHost(ctx context.Context, urlStr string, blacklist map[string]struct{}) error {
 	u, err := url.Parse(urlStr)
 	if err != nil {
 		return huberrors.NewValidationError("url", "invalid URL: "+err.Error())
 	}
 
-	host := canonicalizeHost(u.Hostname())
-	if host == "" {
-		return huberrors.NewValidationError("url", "URL host is empty")
-	}
+	host := u.Hostname()
 
-	if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
-		addr = addr.Unmap()
-		if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
-			addr.IsLinkLocalMulticast() || addr.IsUnspecified() {
-			return huberrors.NewValidationError("url", "webhook URL host is not allowed (private/internal)")
-		}
-	}
-
-	if _, blocked := blacklist[host]; blocked {
-		return huberrors.NewValidationError("url", "webhook URL host is not allowed (blacklisted)")
-	}
-
-	return nil
+	return validateWebhookHost(ctx, host, blacklist)
 }
 
 // generateSigningKey generates a cryptographically secure signing key
@@ -233,7 +348,7 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 // UpdateWebhook updates an existing webhook.
 func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	if req.URL != nil {
-		if err := validateWebhookURLHost(*req.URL, s.urlHostBlacklist); err != nil {
+		if err := validateWebhookURLHost(ctx, *req.URL, s.urlHostBlacklist); err != nil {
 			return nil, err
 		}
 	}
