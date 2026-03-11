@@ -256,6 +256,14 @@ func applyDefaults(cfg *Config) {
 	if cfg.Embedding.GoogleCloudLocation == "" {
 		cfg.Embedding.GoogleCloudLocation = os.Getenv("GOOGLE_CLOUD_LOCATION")
 	}
+
+	if cfg.Embedding.MaxConcurrent <= 0 {
+		cfg.Embedding.MaxConcurrent = 5
+	}
+
+	if cfg.Embedding.MaxAttempts <= 0 {
+		cfg.Embedding.MaxAttempts = 3
+	}
 }
 
 func isNotExist(err error) bool {
@@ -298,18 +306,6 @@ func validate(cfg *Config) error {
 
 	if cfg.Database.MinConns > cfg.Database.MaxConns {
 		return ErrDatabaseMinConnsExceedsMax
-	}
-
-	if cfg.Database.MaxConns <= 0 {
-		cfg.Database.MaxConns = 25
-	}
-
-	if cfg.Embedding.MaxConcurrent <= 0 {
-		cfg.Embedding.MaxConcurrent = 5
-	}
-
-	if cfg.Embedding.MaxAttempts <= 0 {
-		cfg.Embedding.MaxAttempts = 3
 	}
 
 	return nil

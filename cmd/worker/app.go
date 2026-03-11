@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,27 +14,10 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/formbricks/hub/internal/config"
-	"github.com/formbricks/hub/internal/googleai"
 	"github.com/formbricks/hub/internal/observability"
-	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
-)
-
-const (
-	embeddingProviderOpenAI = "openai"
-	embeddingProviderGoogle = "google"
-)
-
-var supportedEmbeddingProviders = map[string]struct{}{
-	embeddingProviderOpenAI: {},
-	embeddingProviderGoogle: {},
-}
-
-var (
-	errEmbeddingAPIKeyRequired      = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
-	errUnsupportedEmbeddingProvider = errors.New("unsupported embedding provider")
 )
 
 // WorkerApp runs River workers (webhook delivery, embeddings). It does not start an HTTP server.
@@ -108,37 +89,25 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	providerName, embeddingModel := embeddingProviderAndModel(cfg)
 	if providerName != "" {
-		if (providerName == embeddingProviderOpenAI || providerName == embeddingProviderGoogle) &&
-			cfg.Embedding.ProviderAPIKey == "" {
+		embeddingCfg := service.EmbeddingClientConfig{
+			Provider:            providerName,
+			ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
+			Model:               embeddingModel,
+			Normalize:           cfg.Embedding.Normalize,
+			GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+		}
+		if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 			shutdownObservability(context.Background(), meterProvider, tracerProvider)
 
-			return nil, fmt.Errorf("%w: %s", errEmbeddingAPIKeyRequired, providerName)
+			return nil, fmt.Errorf("embedding config: %w", err)
 		}
 
-		var embeddingClient service.EmbeddingClient
-
-		switch providerName {
-		case embeddingProviderOpenAI:
-			embeddingClient = openai.NewClient(cfg.Embedding.ProviderAPIKey,
-				openai.WithModel(embeddingModel),
-				openai.WithNormalize(cfg.Embedding.Normalize),
-			)
-		case embeddingProviderGoogle:
-			googleClient, err := googleai.NewClient(context.Background(), cfg.Embedding.ProviderAPIKey,
-				googleai.WithModel(embeddingModel),
-				googleai.WithNormalize(cfg.Embedding.Normalize),
-			)
-			if err != nil {
-				shutdownObservability(context.Background(), meterProvider, tracerProvider)
-
-				return nil, fmt.Errorf("create google embedding client: %w", err)
-			}
-
-			embeddingClient = googleClient
-		default:
+		embeddingClient, err := service.NewEmbeddingClient(context.Background(), embeddingCfg)
+		if err != nil {
 			shutdownObservability(context.Background(), meterProvider, tracerProvider)
 
-			return nil, fmt.Errorf("%w: %s", errUnsupportedEmbeddingProvider, providerName)
+			return nil, fmt.Errorf("create embedding client: %w", err)
 		}
 
 		feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
@@ -200,13 +169,15 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	}, nil
 }
 
+// embeddingProviderAndModel returns (canonical provider, model) when embeddings are enabled
+// (provider and model set and supported). Otherwise ("", "").
 func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
 		return "", ""
 	}
 
-	providerCanonical := strings.ToLower(strings.TrimSpace(cfg.Embedding.Provider))
-	if _, ok := supportedEmbeddingProviders[providerCanonical]; !ok {
+	providerCanonical := service.NormalizeEmbeddingProvider(cfg.Embedding.Provider)
+	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
 		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
 			"provider", cfg.Embedding.Provider, "model", cfg.Embedding.Model)
 
@@ -252,6 +223,8 @@ func shutdownObservability(ctx context.Context, meter *sdkmetric.MeterProvider, 
 }
 
 // Shutdown stops River and observability.
+// River's Stop is idempotent: on normal shutdown, Run's goroutine already calls Stop when ctx is cancelled,
+// so Shutdown may call Stop again; that is intentional and safe—do not "fix" by removing this call.
 func (a *WorkerApp) Shutdown(ctx context.Context) (err error) {
 	if stopErr := a.river.Stop(ctx); stopErr != nil {
 		err = fmt.Errorf("river stop: %w", stopErr)
