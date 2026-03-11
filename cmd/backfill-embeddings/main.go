@@ -84,7 +84,7 @@ func run() int {
 
 	embeddingCfg := service.EmbeddingClientConfig{
 		Provider:            providerCanonical,
-		APIKey:              cfg.Embedding.ProviderAPIKey,
+		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
 		Model:               embeddingModel,
 		Normalize:           cfg.Embedding.Normalize,
 		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,

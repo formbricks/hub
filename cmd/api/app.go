@@ -85,7 +85,7 @@ func setupEmbeddingSearchHandler(
 ) (*handlers.SearchHandler, error) {
 	embeddingCfg := service.EmbeddingClientConfig{
 		Provider:            embeddingProviderName,
-		APIKey:              cfg.Embedding.ProviderAPIKey,
+		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
 		Model:               embeddingModel,
 		Normalize:           cfg.Embedding.Normalize,
 		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,

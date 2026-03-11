@@ -20,19 +20,19 @@ func TestNewEmbeddingClient(t *testing.T) {
 		{
 			name: "openai with api key succeeds",
 			cfg: EmbeddingClientConfig{
-				Provider:  EmbeddingProviderOpenAI,
-				APIKey:    "sk-test",
-				Model:     "text-embedding-3-small",
-				Normalize: false,
+				Provider:       EmbeddingProviderOpenAI,
+				ProviderAPIKey: "sk-test",
+				Model:          "text-embedding-3-small",
+				Normalize:      false,
 			},
 			wantErr: false,
 		},
 		{
 			name: "openai without api key returns error",
 			cfg: EmbeddingClientConfig{
-				Provider: EmbeddingProviderOpenAI,
-				APIKey:   "",
-				Model:    "text-embedding-3-small",
+				Provider:       EmbeddingProviderOpenAI,
+				ProviderAPIKey: "",
+				Model:          "text-embedding-3-small",
 			},
 			wantErr: true,
 			errIs:   ErrEmbeddingProviderAPIKey,
@@ -40,19 +40,19 @@ func TestNewEmbeddingClient(t *testing.T) {
 		{
 			name: "google with api key succeeds",
 			cfg: EmbeddingClientConfig{
-				Provider:  EmbeddingProviderGoogle,
-				APIKey:    "test-api-key",
-				Model:     "text-embedding-004",
-				Normalize: true,
+				Provider:       EmbeddingProviderGoogle,
+				ProviderAPIKey: "test-api-key",
+				Model:          "text-embedding-004",
+				Normalize:      true,
 			},
 			wantErr: false,
 		},
 		{
 			name: "google without api key returns error",
 			cfg: EmbeddingClientConfig{
-				Provider: EmbeddingProviderGoogle,
-				APIKey:   "",
-				Model:    "text-embedding-004",
+				Provider:       EmbeddingProviderGoogle,
+				ProviderAPIKey: "",
+				Model:          "text-embedding-004",
 			},
 			wantErr: true,
 			errIs:   ErrEmbeddingProviderAPIKey,
@@ -93,9 +93,9 @@ func TestNewEmbeddingClient(t *testing.T) {
 		{
 			name: "unsupported provider returns error",
 			cfg: EmbeddingClientConfig{
-				Provider: "unsupported",
-				APIKey:   "key",
-				Model:    "model",
+				Provider:       "unsupported",
+				ProviderAPIKey: "key",
+				Model:          "model",
 			},
 			wantErr: true,
 			errIs:   ErrEmbeddingConfigInvalid,
@@ -179,16 +179,16 @@ func TestValidateEmbeddingConfig(t *testing.T) {
 		wantErr bool
 		errIs   error
 	}{
-		{"openai with key valid", EmbeddingClientConfig{Provider: EmbeddingProviderOpenAI, APIKey: "k", Model: "m"}, false, nil},
+		{"openai with key valid", EmbeddingClientConfig{Provider: EmbeddingProviderOpenAI, ProviderAPIKey: "k", Model: "m"}, false, nil},
 		{
 			"openai without key invalid",
-			EmbeddingClientConfig{Provider: EmbeddingProviderOpenAI, APIKey: "", Model: "m"},
+			EmbeddingClientConfig{Provider: EmbeddingProviderOpenAI, ProviderAPIKey: "", Model: "m"},
 			true, ErrEmbeddingProviderAPIKey,
 		},
-		{"google with key valid", EmbeddingClientConfig{Provider: EmbeddingProviderGoogle, APIKey: "k", Model: "m"}, false, nil},
+		{"google with key valid", EmbeddingClientConfig{Provider: EmbeddingProviderGoogle, ProviderAPIKey: "k", Model: "m"}, false, nil},
 		{
 			"google without key invalid",
-			EmbeddingClientConfig{Provider: EmbeddingProviderGoogle, APIKey: "", Model: "m"},
+			EmbeddingClientConfig{Provider: EmbeddingProviderGoogle, ProviderAPIKey: "", Model: "m"},
 			true, ErrEmbeddingProviderAPIKey,
 		},
 		{
@@ -209,7 +209,11 @@ func TestValidateEmbeddingConfig(t *testing.T) {
 			EmbeddingClientConfig{Provider: EmbeddingProviderGoogleVertex, Model: "m", GoogleCloudProject: "p"},
 			true, ErrEmbeddingVertexConfig,
 		},
-		{"unsupported provider invalid", EmbeddingClientConfig{Provider: "unknown", APIKey: "k", Model: "m"}, true, ErrEmbeddingConfigInvalid},
+		{
+			"unsupported provider invalid",
+			EmbeddingClientConfig{Provider: "unknown", ProviderAPIKey: "k", Model: "m"},
+			true, ErrEmbeddingConfigInvalid,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

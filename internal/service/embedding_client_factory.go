@@ -54,14 +54,14 @@ var embeddingProviderRegistry = map[string]providerEntry{
 }
 
 func openAIEmbeddingFactory(_ context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
-	return openai.NewClient(cfg.APIKey,
+	return openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
 		openai.WithNormalize(cfg.Normalize),
 	), nil
 }
 
 func googleEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
-	client, err := googleai.NewClient(ctx, cfg.APIKey,
+	client, err := googleai.NewClient(ctx, cfg.ProviderAPIKey,
 		googleai.WithModel(cfg.Model),
 		googleai.WithNormalize(cfg.Normalize),
 	)
@@ -92,7 +92,7 @@ func NormalizeEmbeddingProvider(provider string) string {
 // EmbeddingClientConfig holds configuration for creating an embedding client.
 type EmbeddingClientConfig struct {
 	Provider            string
-	APIKey              string
+	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
 	Model               string
 	Normalize           bool
 	GoogleCloudProject  string
@@ -109,7 +109,7 @@ func ValidateEmbeddingConfig(cfg EmbeddingClientConfig) error {
 		return fmt.Errorf("%w: unsupported provider %q", ErrEmbeddingConfigInvalid, provider)
 	}
 
-	if entry.RequiresAPIKey && cfg.APIKey == "" {
+	if entry.RequiresAPIKey && cfg.ProviderAPIKey == "" {
 		return fmt.Errorf("%w: %s", ErrEmbeddingProviderAPIKey, provider)
 	}
 
