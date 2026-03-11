@@ -115,9 +115,8 @@ run:
 	@echo "Starting hub-api..."
 	go run ./cmd/api
 
-# Run the worker (hub-worker). Requires DATABASE_URL; API_KEY not required.
+# Run the worker (hub-worker). Config: .env if present, else env vars (same as run). Requires DATABASE_URL; API_KEY not required.
 run-worker:
-	@if [ ! -f .env ]; then echo "Error: .env file required. Copy .env.example to .env and set DATABASE_URL."; exit 1; fi
 	@echo "Starting hub-worker..."
 	go run ./cmd/worker
 
