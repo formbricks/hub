@@ -109,12 +109,14 @@ type MessagePublisherConfig struct {
 
 // EmbeddingConfig holds embedding provider and queue settings.
 type EmbeddingConfig struct {
-	ProviderAPIKey string `env:"EMBEDDING_PROVIDER_API_KEY"`
-	Provider       string `env:"EMBEDDING_PROVIDER"`
-	Model          string `env:"EMBEDDING_MODEL"`
-	MaxConcurrent  int    `env:"EMBEDDING_MAX_CONCURRENT"   env-default:"5"`
-	MaxAttempts    int    `env:"EMBEDDING_MAX_ATTEMPTS"     env-default:"3"`
-	Normalize      bool   `env:"EMBEDDING_NORMALIZE"        env-default:"false"`
+	ProviderAPIKey      string `env:"EMBEDDING_PROVIDER_API_KEY"`
+	Provider            string `env:"EMBEDDING_PROVIDER"`
+	Model               string `env:"EMBEDDING_MODEL"`
+	MaxConcurrent       int    `env:"EMBEDDING_MAX_CONCURRENT"        env-default:"5"`
+	MaxAttempts         int    `env:"EMBEDDING_MAX_ATTEMPTS"          env-default:"3"`
+	Normalize           bool   `env:"EMBEDDING_NORMALIZE"             env-default:"false"`
+	GoogleCloudProject  string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
 }
 
 // ObservabilityConfig holds OpenTelemetry settings.
@@ -244,6 +246,15 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Webhook.EnqueueMaxBackoffMs <= 0 {
 		cfg.Webhook.EnqueueMaxBackoffMs = 2000
+	}
+
+	// Google Vertex AI fallbacks: EMBEDDING_* can fall back to GOOGLE_CLOUD_*
+	if cfg.Embedding.GoogleCloudProject == "" {
+		cfg.Embedding.GoogleCloudProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	}
+
+	if cfg.Embedding.GoogleCloudLocation == "" {
+		cfg.Embedding.GoogleCloudLocation = os.Getenv("GOOGLE_CLOUD_LOCATION")
 	}
 }
 

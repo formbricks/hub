@@ -135,3 +135,90 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 		}
 	})
 }
+
+func TestLoad_EmbeddingGoogleCloudProject(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("EMBEDDING_GOOGLE_CLOUD_PROJECT", "my-vertex-project")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.GoogleCloudProject != "my-vertex-project" {
+		t.Errorf("Embedding.GoogleCloudProject = %q, want my-vertex-project", cfg.Embedding.GoogleCloudProject)
+	}
+}
+
+func TestLoad_EmbeddingGoogleCloudProject_fallback(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "fallback-project")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.GoogleCloudProject != "fallback-project" {
+		t.Errorf("Embedding.GoogleCloudProject = %q, want fallback-project", cfg.Embedding.GoogleCloudProject)
+	}
+}
+
+func TestLoad_EmbeddingGoogleCloudLocation(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("EMBEDDING_GOOGLE_CLOUD_LOCATION", "europe-west3")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.GoogleCloudLocation != "europe-west3" {
+		t.Errorf("Embedding.GoogleCloudLocation = %q, want europe-west3", cfg.Embedding.GoogleCloudLocation)
+	}
+}
+
+func TestLoad_EmbeddingGoogleCloudLocation_fallback(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("GOOGLE_CLOUD_LOCATION", "europe-west1")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.GoogleCloudLocation != "europe-west1" {
+		t.Errorf("Embedding.GoogleCloudLocation = %q, want europe-west1", cfg.Embedding.GoogleCloudLocation)
+	}
+}
+
+func TestLoad_EmbeddingGoogleCloudProject_precedence(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("EMBEDDING_GOOGLE_CLOUD_PROJECT", "explicit-project")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "fallback-project")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.GoogleCloudProject != "explicit-project" {
+		t.Errorf("Embedding.GoogleCloudProject = %q, want explicit-project", cfg.Embedding.GoogleCloudProject)
+	}
+}
+
+func TestLoad_EmbeddingGoogleCloudLocation_precedence(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("EMBEDDING_GOOGLE_CLOUD_LOCATION", "explicit-location")
+	t.Setenv("GOOGLE_CLOUD_LOCATION", "fallback-location")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.GoogleCloudLocation != "explicit-location" {
+		t.Errorf("Embedding.GoogleCloudLocation = %q, want explicit-location (EMBEDDING_* overrides GOOGLE_*)",
+			cfg.Embedding.GoogleCloudLocation)
+	}
+}

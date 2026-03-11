@@ -40,6 +40,7 @@ type WebhookSenderImpl struct {
 // NewWebhookSenderImpl creates a sender that uses the given repo.
 // urlHostBlacklist is the SSRF blacklist (hosts/IPs); may be nil (address checks still run).
 // httpTimeout is the HTTP client timeout; job timeout should be httpTimeout + buffer (e.g. 5s).
+// Client does not follow redirects and validates resolved IPs at dial time (DNS rebinding protection).
 // metrics may be nil when metrics are disabled.
 // If httpClient is non-nil, it is used as-is (e.g. for tests that hit loopback); otherwise a secured client is built.
 func NewWebhookSenderImpl(

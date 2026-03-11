@@ -9,30 +9,21 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/formbricks/hub/internal/config"
-	"github.com/formbricks/hub/internal/googleai"
-	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
 	"github.com/formbricks/hub/pkg/database"
 )
 
-const (
-	embeddingProviderOpenAI = "openai"
-	embeddingProviderGoogle = "google"
-)
-
 var (
 	errEmbeddingProviderRequired = errors.New("EMBEDDING_PROVIDER is required")
 	errEmbeddingModelRequired    = errors.New("EMBEDDING_MODEL is required")
-	errUnsupportedProvider       = errors.New("unsupported embedding provider")
 )
 
 const (
@@ -84,9 +75,23 @@ func run() int {
 		return exitFailure
 	}
 
-	apiKey := cfg.Embedding.ProviderAPIKey
-	if providerRequiresAPIKey(provider) && apiKey == "" {
-		slog.Error("EMBEDDING_PROVIDER_API_KEY is required for this provider", "provider", provider)
+	providerCanonical := service.NormalizeEmbeddingProvider(provider)
+	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
+		slog.Error("unsupported embedding provider", "provider", provider)
+
+		return exitFailure
+	}
+
+	embeddingCfg := service.EmbeddingClientConfig{
+		Provider:            providerCanonical,
+		APIKey:              cfg.Embedding.ProviderAPIKey,
+		Model:               embeddingModel,
+		Normalize:           cfg.Embedding.Normalize,
+		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
+		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+	}
+	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
+		slog.Error(err.Error())
 
 		return exitFailure
 	}
@@ -106,14 +111,14 @@ func run() int {
 		maxAttempts,
 	)
 
-	embeddingClient, err := newEmbeddingClient(ctx, provider, apiKey, embeddingModel, cfg.Embedding.Normalize)
+	embeddingClient, err := service.NewEmbeddingClient(ctx, embeddingCfg)
 	if err != nil {
 		slog.Error("Failed to create embedding client", "error", err)
 
 		return exitFailure
 	}
 
-	docPrefix := service.EmbeddingPrefixForProvider(provider)
+	docPrefix := service.EmbeddingPrefixForProvider(providerCanonical)
 	embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, docPrefix, nil)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, embeddingWorker)
@@ -148,22 +153,6 @@ func run() int {
 	return exitSuccess
 }
 
-func newEmbeddingClient(ctx context.Context, provider, apiKey, model string, normalize bool) (service.EmbeddingClient, error) {
-	switch strings.ToLower(provider) {
-	case embeddingProviderOpenAI:
-		return openai.NewClient(apiKey, openai.WithModel(model), openai.WithNormalize(normalize)), nil
-	case embeddingProviderGoogle:
-		client, err := googleai.NewClient(ctx, apiKey, googleai.WithModel(model), googleai.WithNormalize(normalize))
-		if err != nil {
-			return nil, fmt.Errorf("create google embedding client: %w", err)
-		}
-
-		return client, nil
-	default:
-		return nil, fmt.Errorf("%w: %s", errUnsupportedProvider, provider)
-	}
-}
-
 func getEmbeddingProviderAndModel(cfg *config.Config) (provider, model string, err error) {
 	provider = cfg.Embedding.Provider
 	if provider == "" {
@@ -176,14 +165,4 @@ func getEmbeddingProviderAndModel(cfg *config.Config) (provider, model string, e
 	}
 
 	return provider, model, nil
-}
-
-// providerRequiresAPIKey returns true for providers that require EMBEDDING_PROVIDER_API_KEY (openai, google).
-func providerRequiresAPIKey(provider string) bool {
-	switch strings.ToLower(provider) {
-	case embeddingProviderOpenAI, embeddingProviderGoogle:
-		return true
-	default:
-		return false
-	}
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -23,9 +22,7 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
-	"github.com/formbricks/hub/internal/googleai"
 	"github.com/formbricks/hub/internal/observability"
-	"github.com/formbricks/hub/internal/openai"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
@@ -44,34 +41,24 @@ type App struct {
 }
 
 var (
-	errUnsupportedEmbeddingProvider    = errors.New("unsupported embedding provider")
 	errEmbeddingProviderAPIKeyRequired = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
+	errEmbeddingVertexConfigRequired   = errors.New(
+		"google-vertex requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
 )
-
-const (
-	embeddingProviderOpenAI = "openai"
-	embeddingProviderGoogle = "google"
-)
-
-var supportedEmbeddingProviders = map[string]struct{}{
-	embeddingProviderOpenAI: {},
-	embeddingProviderGoogle: {},
-}
 
 const riverQueueDepthInterval = 15 * time.Second
 
 // embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
 // and EMBEDDING_MODEL must be set and the provider must be supported. Otherwise returns ("", "") so no
 // embedding provider or jobs run. No default for model; embeddings are disabled if either is unset.
-// Provider name is normalized to lowercase so that "OpenAI", "openai", and "OPENAI" behave the same
-// (consistent with backfill-embeddings and EmbeddingPrefixForProvider).
+// Provider name is normalized via the embedding registry (consistent with backfill-embeddings).
 func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
 		return "", ""
 	}
 
-	providerCanonical := strings.ToLower(strings.TrimSpace(cfg.Embedding.Provider))
-	if _, ok := supportedEmbeddingProviders[providerCanonical]; !ok {
+	providerCanonical := service.NormalizeEmbeddingProvider(cfg.Embedding.Provider)
+	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
 		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
 			"provider", cfg.Embedding.Provider, "model", cfg.Embedding.Model)
 
@@ -79,6 +66,64 @@ func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 	}
 
 	return providerCanonical, cfg.Embedding.Model
+}
+
+const searchQueryCacheSize = 1000
+
+// setupEmbeddingSearchHandler creates embedding client, worker, and search handler when embeddings are enabled.
+// Returns (handler, nil) or (nil, err). Caller should use errors.Is for service.ErrEmbeddingProviderAPIKey and
+// service.ErrEmbeddingVertexConfig to return app-level sentinel errors.
+func setupEmbeddingSearchHandler(
+	ctx context.Context,
+	cfg *config.Config,
+	embeddingProviderName, embeddingModel, embeddingDocPrefix string,
+	feedbackRecordsService *service.FeedbackRecordsService,
+	embeddingsRepo *repository.EmbeddingsRepository,
+	embeddingMetrics observability.EmbeddingMetrics,
+	metrics *observability.Metrics,
+	riverWorkers *river.Workers,
+) (*handlers.SearchHandler, error) {
+	embeddingCfg := service.EmbeddingClientConfig{
+		Provider:            embeddingProviderName,
+		APIKey:              cfg.Embedding.ProviderAPIKey,
+		Model:               embeddingModel,
+		Normalize:           cfg.Embedding.Normalize,
+		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
+		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+	}
+	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
+		return nil, fmt.Errorf("embedding config: %w", err)
+	}
+
+	embeddingClient, err := service.NewEmbeddingClient(ctx, embeddingCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create embedding client: %w", err)
+	}
+
+	embeddingWorker := workers.NewFeedbackEmbeddingWorker(
+		feedbackRecordsService, embeddingClient, embeddingDocPrefix, embeddingMetrics)
+	river.AddWorker(riverWorkers, embeddingWorker)
+
+	queryCache, err := lru.New[string, []float32](searchQueryCacheSize)
+	if err != nil {
+		return nil, fmt.Errorf("create search query cache: %w", err)
+	}
+
+	var cacheMetrics observability.CacheMetrics
+	if metrics != nil {
+		cacheMetrics = metrics.Cache
+	}
+
+	searchService := service.NewSearchService(service.SearchServiceParams{
+		EmbeddingClient: embeddingClient,
+		EmbeddingsRepo:  embeddingsRepo,
+		Model:           embeddingModel,
+		QueryCache:      queryCache,
+		CacheMetrics:    cacheMetrics,
+		Logger:          slog.Default(),
+	})
+
+	return handlers.NewSearchHandler(searchService), nil
 }
 
 // setupMetrics creates meter provider and hub metrics when metrics are enabled.
@@ -193,69 +238,37 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.Embedding.MaxAttempts,
 	)
 
+	// Shared worker/queue registration first (webhook + optional embedding added below).
+	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 1)
+
 	var searchHandler *handlers.SearchHandler
 
 	if embeddingProviderName != "" {
-		if (embeddingProviderName == embeddingProviderOpenAI || embeddingProviderName == embeddingProviderGoogle) &&
-			cfg.Embedding.ProviderAPIKey == "" {
-			return nil, fmt.Errorf("%w: %s", errEmbeddingProviderAPIKeyRequired, embeddingProviderName)
-		}
+		embeddingDocPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
 
-		var embeddingClient service.EmbeddingClient
+		var err error
 
-		switch embeddingProviderName {
-		case embeddingProviderOpenAI:
-			embeddingClient = openai.NewClient(cfg.Embedding.ProviderAPIKey,
-				openai.WithModel(embeddingModel),
-				openai.WithNormalize(cfg.Embedding.Normalize),
-			)
-		case embeddingProviderGoogle:
-			googleClient, err := googleai.NewClient(context.Background(), cfg.Embedding.ProviderAPIKey,
-				googleai.WithModel(embeddingModel),
-				googleai.WithNormalize(cfg.Embedding.Normalize),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("create google embedding client: %w", err)
+		searchHandler, err = setupEmbeddingSearchHandler(
+			context.Background(), cfg,
+			embeddingProviderName, embeddingModel, embeddingDocPrefix,
+			feedbackRecordsService, embeddingsRepo, embeddingMetrics,
+			metrics, riverWorkers)
+		if err != nil {
+			if errors.Is(err, service.ErrEmbeddingProviderAPIKey) {
+				return nil, fmt.Errorf("%w: %s", errEmbeddingProviderAPIKeyRequired, embeddingProviderName)
 			}
 
-			embeddingClient = googleClient
-		default:
-			return nil, fmt.Errorf("%w: %s", errUnsupportedEmbeddingProvider, embeddingProviderName)
+			if errors.Is(err, service.ErrEmbeddingVertexConfig) {
+				return nil, errEmbeddingVertexConfigRequired
+			}
+
+			return nil, fmt.Errorf("embedding config: %w", err)
 		}
 
-		embeddingDocPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
-		deps.EmbeddingService = feedbackRecordsService
-		deps.EmbeddingClient = embeddingClient
-		deps.EmbeddingDocPrefix = embeddingDocPrefix
-		deps.EmbeddingMetrics = embeddingMetrics
-
-		const searchQueryCacheSize = 1000
-
-		queryCache, err := lru.New[string, []float32](searchQueryCacheSize)
-		if err != nil {
-			return nil, fmt.Errorf("create search query cache: %w", err)
-		}
-
-		var cacheMetrics observability.CacheMetrics
-		if metrics != nil {
-			cacheMetrics = metrics.Cache
-		}
-
-		searchService := service.NewSearchService(service.SearchServiceParams{
-			EmbeddingClient: embeddingClient,
-			EmbeddingsRepo:  embeddingsRepo,
-			Model:           embeddingModel,
-			QueryCache:      queryCache,
-			CacheMetrics:    cacheMetrics,
-			Logger:          slog.Default(),
-		})
-		searchHandler = handlers.NewSearchHandler(searchService)
+		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	} else {
 		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
-
-	// Shared worker/queue registration; placeholder MaxWorkers 1 (API is insert-only, never calls Start).
-	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 1)
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues:  queues,
