@@ -92,7 +92,7 @@ func NormalizeEmbeddingProvider(provider string) string {
 // EmbeddingClientConfig holds configuration for creating an embedding client.
 type EmbeddingClientConfig struct {
 	Provider            string
-	APIKey              string //nolint:gosec // API key for openai/google providers; not logged or serialized
+	APIKey              string
 	Model               string
 	Normalize           bool
 	GoogleCloudProject  string

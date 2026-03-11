@@ -126,6 +126,46 @@ func TestGetEnvAsInt(t *testing.T) {
 	}
 }
 
+func TestGetEnvAsBool(t *testing.T) {
+	tests := []struct {
+		name         string
+		key          string
+		defaultValue bool
+		envValue     string
+		shouldSet    bool
+		want         bool
+	}{
+		{"unset returns default true", "TEST_BOOL", true, "", false, true},
+		{"unset returns default false", "TEST_BOOL", false, "", false, false},
+		{"empty string returns default", "TEST_BOOL", true, "", true, true},
+		{"true (lowercase) returns true", "TEST_BOOL", false, "true", true, true},
+		{"TRUE returns true", "TEST_BOOL", false, "TRUE", true, true},
+		{"1 returns true", "TEST_BOOL", false, "1", true, true},
+		{"yes returns true", "TEST_BOOL", false, "yes", true, true},
+		{"YES returns true", "TEST_BOOL", false, "YES", true, true},
+		{"false (lowercase) returns false", "TEST_BOOL", true, "false", true, false},
+		{"FALSE returns false", "TEST_BOOL", true, "FALSE", true, false},
+		{"0 returns false", "TEST_BOOL", true, "0", true, false},
+		{"no returns false", "TEST_BOOL", true, "no", true, false},
+		{"NO returns false", "TEST_BOOL", true, "NO", true, false},
+		{"unknown value returns default true", "TEST_BOOL", true, "other", true, true},
+		{"unknown value returns default false", "TEST_BOOL", false, "other", true, false},
+		{"whitespace trimmed", "TEST_BOOL", false, "  true  ", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.shouldSet {
+				t.Setenv(tt.key, tt.envValue)
+			}
+
+			got := GetEnvAsBool(tt.key, tt.defaultValue)
+			if got != tt.want {
+				t.Errorf("GetEnvAsBool(%q, %v) = %v, want %v", tt.key, tt.defaultValue, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -179,12 +219,17 @@ func TestLoad(t *testing.T) {
 			// API_KEY is required for Load() to succeed
 			t.Setenv("API_KEY", "test-api-key")
 
+			// Explicitly set or clear so parent env (e.g. .env) does not affect expectations
 			if tt.setDatabaseURL {
 				t.Setenv("DATABASE_URL", tt.databaseURL)
+			} else {
+				t.Setenv("DATABASE_URL", "")
 			}
 
 			if tt.setPort {
 				t.Setenv("PORT", tt.port)
+			} else {
+				t.Setenv("PORT", "")
 			}
 
 			cfg, err := Load()

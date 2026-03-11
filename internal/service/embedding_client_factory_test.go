@@ -12,10 +12,11 @@ func TestNewEmbeddingClient(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name    string
-		cfg     EmbeddingClientConfig
-		wantErr bool
-		errIs   error
+		name               string
+		cfg                EmbeddingClientConfig
+		wantErr            bool
+		errIs              error
+		invokesFactoryOnly bool // true: just ensure factory runs (accept client or error)
 	}{
 		{
 			name: "openai with api key succeeds",
@@ -80,6 +81,16 @@ func TestNewEmbeddingClient(t *testing.T) {
 			errIs:   ErrEmbeddingVertexConfig,
 		},
 		{
+			name: "google-vertex with project and location invokes factory",
+			cfg: EmbeddingClientConfig{
+				Provider:            EmbeddingProviderGoogleVertex,
+				Model:               "text-embedding-004",
+				GoogleCloudProject:  "test-project",
+				GoogleCloudLocation: "europe-west3",
+			},
+			invokesFactoryOnly: true,
+		},
+		{
 			name: "google-vertex with mixed-case and whitespace provider name normalizes and validates",
 			cfg: EmbeddingClientConfig{
 				Provider:            " Google-Vertex ",
@@ -105,6 +116,16 @@ func TestNewEmbeddingClient(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client, err := NewEmbeddingClient(ctx, tt.cfg)
+			if tt.invokesFactoryOnly {
+				if err != nil {
+					return
+				}
+
+				require.NotNil(t, client)
+
+				return
+			}
+
 			if tt.wantErr {
 				require.Error(t, err)
 

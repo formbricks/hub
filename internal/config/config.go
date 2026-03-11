@@ -29,7 +29,7 @@ var (
 type Config struct {
 	DatabaseURL string
 	Port        string
-	APIKey      string //nolint:gosec // G117: required config field
+	APIKey      string
 	LogLevel    string
 
 	// Webhook delivery concurrency cap (max concurrent outbound HTTP calls)

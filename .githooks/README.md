@@ -26,6 +26,8 @@ The pre-commit hook automatically:
 2. Runs `golangci-lint run --fix` (format + fixable issues; gofumpt/gci from config)
 3. Stages any auto-fixed files
 4. Runs the linter to verify no remaining issues (includes gosec for secrets/hardcoded credentials in Go code)
+5. Runs unit tests
+6. Runs coverage check for **staged packages** (each package under `internal/`, `pkg/`, or `tests/` that has staged Go files must have at least `PRE_COMMIT_COVERAGE_THRESHOLD`% coverage; default 25%)
 
 If any step fails, the commit is blocked.
 

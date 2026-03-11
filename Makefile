@@ -1,4 +1,4 @@
-.PHONY: all test help tests tests-coverage check-coverage build build-backfill-embeddings run run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: all test help tests tests-coverage check-coverage check-coverage-pre-commit check-coverage-staged build build-backfill-embeddings run run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Aliases for checkmake/lint expectations
 all: build
@@ -18,6 +18,8 @@ help:
 	@echo "  make test-all         - Run all tests (unit + integration)"
 	@echo "  make tests-coverage   - Run tests with coverage report"
 	@echo "  make check-coverage   - Run tests and fail if coverage below COVERAGE_THRESHOLD (excludes cmd/api)"
+	@echo "  make check-coverage-pre-commit - Same as check-coverage with PRE_COMMIT_COVERAGE_THRESHOLD"
+	@echo "  make check-coverage-staged     - Require STAGED_PACKAGES to have PRE_COMMIT_COVERAGE_THRESHOLD%% (used by pre-commit hook)"
 	@echo "  make init-db          - Initialize database schema (run migrations with goose)"
 	@echo "  make migrate-status   - Show migration status"
 	@echo "  make migrate-validate - Validate migration files (no DB)"
@@ -65,6 +67,9 @@ tests-coverage:
 # Minimum coverage threshold (percent). Fails if coverage falls below this.
 COVERAGE_THRESHOLD ?= 15
 
+# Pre-commit coverage threshold (percent). New staged code must meet this in pre-commit hook.
+PRE_COMMIT_COVERAGE_THRESHOLD ?= 25
+
 # Check coverage threshold (fail if below COVERAGE_THRESHOLD).
 # Excludes cmd/api (app.go, main.go) from coverage. Includes internal/, tests/, and pkg/.
 check-coverage:
@@ -78,6 +83,35 @@ check-coverage:
 		exit 1; \
 	fi && \
 	echo "✅ Coverage $$COV% meets threshold $(COVERAGE_THRESHOLD)%"
+
+# Run check-coverage with pre-commit threshold (for use in .githooks/pre-commit).
+check-coverage-pre-commit:
+	@$(MAKE) check-coverage COVERAGE_THRESHOLD=$(PRE_COMMIT_COVERAGE_THRESHOLD)
+
+# Check that each staged package has at least PRE_COMMIT_COVERAGE_THRESHOLD% coverage.
+# Call with: STAGED_PACKAGES="pkg1 pkg2" make check-coverage-staged
+# Used by .githooks/pre-commit to enforce coverage on changed packages only.
+check-coverage-staged:
+	@echo "Running tests with coverage (staged packages must have $(PRE_COMMIT_COVERAGE_THRESHOLD)% coverage)..."
+	@(set -a && [ -f .env ] && . ./.env && set +a; GOTOOLCHAIN=$$(go version | awk '{print $$3}') go test ./internal/... ./pkg/... ./tests/... -coverprofile=coverage.out)
+	@if [ -z "$$STAGED_PACKAGES" ]; then echo "No staged packages to check (internal/pkg/tests)."; exit 0; fi; \
+	awk -v thresh=$(PRE_COMMIT_COVERAGE_THRESHOLD) -v staged_pkgs="$$STAGED_PACKAGES" '\
+	FNR==1 && /^mode:/ { next } \
+	{ sub(/:[0-9]+\.[0-9]+,[0-9]+\.[0-9]+$$/, "", $$1); np = split($$1, a, "/"); pkg = a[1]; for (i = 2; i < np; i++) pkg = pkg "/" a[i]; total[pkg] += $$2; covered[pkg] += $$2 * $$3 } \
+	END { \
+	  n = split(staged_pkgs, arr, " "); \
+	  failed = 0; \
+	  for (i = 1; i <= n; i++) { \
+	    p = arr[i]; gsub(/^[ \t]+|[ \t]+$$/, "", p); if (p == "") continue; \
+	    if (p in total && total[p] > 0) { \
+	      c = 100 * covered[p] / total[p]; \
+	      if (c < thresh) { printf "❌ %s: %.1f%% coverage (minimum %d%%)\n", p, c, thresh; failed = 1 } \
+	      else { printf "✅ %s: %.1f%%\n", p, c } \
+	    } \
+	  } \
+	  if (failed) exit 1; \
+	  print "✅ All staged packages meet " thresh "% coverage"; exit 0 \
+	}' coverage.out
 
 # Build the API server
 build:

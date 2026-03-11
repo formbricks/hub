@@ -64,12 +64,38 @@ if ! make lint; then
     exit 1
 fi
 
-# Fast unit tests (no DB); coverage is enforced in CI only
+# Fast unit tests (no DB)
 echo "Running unit tests..."
 if ! make test-unit; then
     echo ""
     echo "❌ Unit tests failed. Fix the errors above before committing."
     exit 1
+fi
+
+# Coverage check only for packages with staged production code (not just *_test.go) — each must have at least PRE_COMMIT_COVERAGE_THRESHOLD%
+if [ -n "$STAGED_GO_FILES" ]; then
+    MODULE=$(go list -m)
+    STAGED_PACKAGES=""
+    for f in $STAGED_GO_FILES; do
+        case "$f" in
+            internal/*|pkg/*|tests/*)
+                [[ "$f" == *_test.go ]] && continue
+                dir=$(dirname "$f")
+                pkg="${MODULE}/${dir}"
+                if [[ " $STAGED_PACKAGES " != *" $pkg "* ]]; then
+                    STAGED_PACKAGES="${STAGED_PACKAGES} ${pkg}"
+                fi
+                ;;
+        esac
+    done
+    if [ -n "$STAGED_PACKAGES" ]; then
+        echo "Running coverage check for staged packages..."
+        if ! STAGED_PACKAGES="$STAGED_PACKAGES" make check-coverage-staged; then
+            echo ""
+            echo "❌ Staged packages have insufficient coverage. Add tests or adjust PRE_COMMIT_COVERAGE_THRESHOLD."
+            exit 1
+        fi
+    fi
 fi
 
 echo "✅ Pre-commit checks passed!"
