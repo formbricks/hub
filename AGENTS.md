@@ -11,7 +11,7 @@
 ## Build, Test, and Development Commands
 - `make dev-setup`: start Postgres via Docker, install Go deps/tools, and initialize database schema.
 - `make run`: run hub-api (config from `.env` if present and environment variables; copy `.env.example` to `.env` or set env vars).
-- `make run-worker`: run hub-worker (requires `.env` with DATABASE_URL).
+- `make run-worker`: run hub-worker (requires DATABASE_URL from `.env` or environment variables).
 - `make build`: build both `bin/hub-api` and `bin/hub-worker`. Use `make build-api` or `make build-worker` for a single binary.
 - `make tests`: run integration tests in `tests/`.
 - `make tests-coverage`: generate `coverage.html`.
