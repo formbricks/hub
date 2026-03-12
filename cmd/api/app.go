@@ -53,19 +53,19 @@ const riverQueueDepthInterval = 15 * time.Second
 // embedding provider or jobs run. No default for model; embeddings are disabled if either is unset.
 // Provider name is normalized via the embedding registry (consistent with backfill-embeddings).
 func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
-	if cfg.EmbeddingProvider == "" || cfg.EmbeddingModel == "" {
+	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
 		return "", ""
 	}
 
-	providerCanonical := service.NormalizeEmbeddingProvider(cfg.EmbeddingProvider)
+	providerCanonical := service.NormalizeEmbeddingProvider(cfg.Embedding.Provider)
 	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
 		slog.Info("embeddings disabled: unsupported EMBEDDING_PROVIDER",
-			"provider", cfg.EmbeddingProvider, "model", cfg.EmbeddingModel)
+			"provider", cfg.Embedding.Provider, "model", cfg.Embedding.Model)
 
 		return "", ""
 	}
 
-	return providerCanonical, cfg.EmbeddingModel
+	return providerCanonical, cfg.Embedding.Model
 }
 
 const searchQueryCacheSize = 1000
@@ -85,11 +85,11 @@ func setupEmbeddingSearchHandler(
 ) (*handlers.SearchHandler, error) {
 	embeddingCfg := service.EmbeddingClientConfig{
 		Provider:            embeddingProviderName,
-		APIKey:              cfg.EmbeddingProviderAPIKey,
+		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
 		Model:               embeddingModel,
-		Normalize:           cfg.EmbeddingNormalize,
-		GoogleCloudProject:  cfg.EmbeddingGoogleCloudProject,
-		GoogleCloudLocation: cfg.EmbeddingGoogleCloudLocation,
+		Normalize:           cfg.Embedding.Normalize,
+		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
+		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
 	}
 	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 		return nil, fmt.Errorf("embedding config: %w", err)
@@ -160,7 +160,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		metrics       *observability.Metrics
 	)
 
-	if cfg.OtelMetricsExporter == "" {
+	if cfg.Observability.MetricsExporter == "" {
 		slog.Warn("metrics not enabled (OTEL_METRICS_EXPORTER empty or unset)")
 	} else {
 		meterProvider, metrics, err = setupMetrics(cfg)
@@ -182,7 +182,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	var tracerProvider *sdktrace.TracerProvider
 
-	if cfg.OtelTracesExporter == "" {
+	if cfg.Observability.TracesExporter == "" {
 		slog.Warn("tracing not enabled (OTEL_TRACES_EXPORTER empty or unset)")
 	} else {
 		tracerProvider, err = observability.NewTracerProvider(cfg)
@@ -209,31 +209,24 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		otel.SetMeterProvider(meterProvider)
 	}
 
-	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisherBufferSize, cfg.MessagePublisherPerEventTimeout, eventMetrics)
+	perEventTimeout := time.Duration(cfg.MessagePublisher.PerEventTimeoutSec) * time.Second
+	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisher.BufferSize, perEventTimeout, eventMetrics)
 
 	webhooksRepo := repository.NewWebhooksRepository(db)
 	webhookSender := service.NewWebhookSenderImpl(
-		webhooksRepo, webhookMetrics, cfg.WebhookURLBlacklist, cfg.WebhookHTTPTimeout, nil)
-	webhookWorker := workers.NewWebhookDispatchWorker(
-		webhooksRepo, webhookSender, cfg.WebhookHTTPTimeout, webhookMetrics)
-	riverWorkers := river.NewWorkers()
-	river.AddWorker(riverWorkers, webhookWorker)
+		webhooksRepo, webhookMetrics, cfg.Webhook.URLBlacklist, cfg.Webhook.HTTPTimeout.Duration(), nil)
 
-	queues := map[string]river.QueueConfig{
-		river.QueueDefault: {MaxWorkers: cfg.WebhookDeliveryMaxConcurrent},
+	deps := workers.RiverDeps{
+		WebhooksRepo:       webhooksRepo,
+		WebhookSender:      webhookSender,
+		WebhookHTTPTimeout: cfg.Webhook.HTTPTimeout.Duration(),
+		WebhookMetrics:     webhookMetrics,
 	}
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
-	// Model for DB/jobs: required for embeddings.model column; only set when embeddings are enabled (both provider and model set).
 	embeddingModelForDB := embeddingModel
-
-	var embeddingDocPrefix string
-	if embeddingProviderName != "" {
-		embeddingDocPrefix = service.EmbeddingPrefixForProvider(embeddingProviderName)
-		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: cfg.EmbeddingMaxConcurrent}
-	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
@@ -242,12 +235,17 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		messageManager,
 		nil, // riverClient set below after creation
 		service.EmbeddingsQueueName,
-		cfg.EmbeddingMaxAttempts,
+		cfg.Embedding.MaxAttempts,
 	)
+
+	// Shared worker/queue registration first (webhook + optional embedding added below).
+	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 1)
 
 	var searchHandler *handlers.SearchHandler
 
 	if embeddingProviderName != "" {
+		embeddingDocPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
+
 		var err error
 
 		searchHandler, err = setupEmbeddingSearchHandler(
@@ -266,6 +264,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 			return nil, fmt.Errorf("embedding config: %w", err)
 		}
+
+		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	} else {
 		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
@@ -295,28 +295,33 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	// Enable backfill on the same service instance the embedding worker uses (avoids nil inserter if worker ever calls BackfillEmbeddings).
 	feedbackRecordsService.SetEmbeddingInserter(riverClient)
 
+	webhookEnqueueInitialBackoff := time.Duration(cfg.Webhook.EnqueueInitialBackoffMs) * time.Millisecond
+
+	webhookEnqueueMaxBackoff := max(time.Duration(cfg.Webhook.EnqueueMaxBackoffMs)*time.Millisecond, webhookEnqueueInitialBackoff)
+
 	webhookProvider := service.NewWebhookProvider(
 		riverClient, webhooksRepo,
-		cfg.WebhookDeliveryMaxAttempts, cfg.WebhookMaxFanOutPerEvent,
-		cfg.WebhookEnqueueMaxRetries, cfg.WebhookEnqueueInitialBackoff, cfg.WebhookEnqueueMaxBackoff,
+		cfg.Webhook.DeliveryMaxAttempts, cfg.Webhook.MaxFanOutPerEvent,
+		cfg.Webhook.EnqueueMaxRetries, webhookEnqueueInitialBackoff, webhookEnqueueMaxBackoff,
 		webhookMetrics,
 	)
 	messageManager.RegisterProvider(webhookProvider)
 
 	if embeddingProviderName != "" {
+		docPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
 		embeddingProv := service.NewEmbeddingProvider(
 			riverClient,
-			cfg.EmbeddingProviderAPIKey,
+			cfg.Embedding.ProviderAPIKey,
 			embeddingModelForDB,
 			service.EmbeddingsQueueName,
-			cfg.EmbeddingMaxAttempts,
-			embeddingDocPrefix,
+			cfg.Embedding.MaxAttempts,
+			docPrefix,
 			embeddingMetrics,
 		)
 		messageManager.RegisterProvider(embeddingProv)
 	}
 
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.WebhookMaxCount, cfg.WebhookURLBlacklist)
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
@@ -371,7 +376,7 @@ func newHTTPServer(
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
 	protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
 
-	protectedWithAuth := middleware.Auth(cfg.APIKey)(protected)
+	protectedWithAuth := middleware.Auth(cfg.Server.HubAPIKey)(protected)
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", protectedWithAuth)
 	mux.Handle("/", public)
@@ -402,7 +407,7 @@ func newHTTPServer(
 	)
 
 	return &http.Server{
-		Addr:         ":" + cfg.Port,
+		Addr:         ":" + cfg.Server.Port,
 		Handler:      handler,
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
@@ -410,30 +415,17 @@ func newHTTPServer(
 	}
 }
 
-// Run starts the HTTP server and River, then blocks until ctx is cancelled (e.g. signal)
-// or a component fails. When ctx is cancelled or a component fails, it cancels the internal
-// River context so River and the queue depth poller stop before Run returns. Caller should then call Shutdown.
+// Run starts the HTTP server (and optional queue depth poller for metrics), then blocks until ctx is cancelled.
+// API is insert-only: no River workers run in this process; hub-worker runs them.
 func (a *App) Run(ctx context.Context) error {
 	runErr := make(chan error, 1)
 
-	riverCtx, cancelRiver := context.WithCancel(ctx)
-	defer cancelRiver()
-
 	if a.metrics != nil && a.metrics.Events != nil {
-		go runRiverQueueDepthPoller(riverCtx, a.db, a.metrics.Events)
+		go runRiverQueueDepthPoller(ctx, a.db, a.metrics.Events)
 	}
 
 	go func() {
-		if err := a.river.Start(riverCtx); err != nil && !errors.Is(err, context.Canceled) {
-			select {
-			case runErr <- fmt.Errorf("river: %w", err):
-			default:
-			}
-		}
-	}()
-
-	go func() {
-		slog.Info("Starting server", "port", a.cfg.Port)
+		slog.Info("Starting server", "port", a.cfg.Server.Port)
 
 		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			select {
@@ -445,12 +437,8 @@ func (a *App) Run(ctx context.Context) error {
 
 	select {
 	case err := <-runErr:
-		cancelRiver()
-
 		return err
 	case <-ctx.Done():
-		cancelRiver()
-
 		return nil
 	}
 }

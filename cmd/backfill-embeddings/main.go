@@ -9,9 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 
-	"github.com/joho/godotenv"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -39,26 +37,30 @@ func main() {
 }
 
 func run() int {
-	// Load .env for consistency with the main API server (godotenv.Load() there).
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("failed to load .env file", "error", err)
-	}
-
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		slog.Error("DATABASE_URL is required")
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("Failed to load configuration", "error", err)
 
 		return exitFailure
 	}
 
-	maxAttempts := getEnvAsInt("EMBEDDING_MAX_ATTEMPTS", defaultEmbeddingMaxAttempts)
+	if cfg.Database.URL == "" || cfg.Database.URL == config.DefaultDatabaseURL {
+		slog.Error("DATABASE_URL must be set explicitly for this binary (do not use the default test URL)")
+
+		return exitFailure
+	}
+
+	maxAttempts := cfg.Embedding.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = defaultEmbeddingMaxAttempts
 	}
 
 	ctx := context.Background()
 
-	db, err := database.NewPostgresPool(ctx, databaseURL, database.WithAfterConnect(pgxvec.RegisterTypes))
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(cfg.Database.PoolConfig()),
+		database.WithAfterConnect(pgxvec.RegisterTypes),
+	)
 	if err != nil {
 		slog.Error("Failed to connect to database", "error", err)
 
@@ -66,7 +68,7 @@ func run() int {
 	}
 	defer db.Close()
 
-	provider, embeddingModel, err := getEmbeddingProviderAndModel()
+	provider, embeddingModel, err := getEmbeddingProviderAndModel(cfg)
 	if err != nil {
 		slog.Error(err.Error())
 
@@ -82,11 +84,11 @@ func run() int {
 
 	embeddingCfg := service.EmbeddingClientConfig{
 		Provider:            providerCanonical,
-		APIKey:              os.Getenv("EMBEDDING_PROVIDER_API_KEY"),
+		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
 		Model:               embeddingModel,
-		Normalize:           config.GetEnvAsBool("EMBEDDING_NORMALIZE", false),
-		GoogleCloudProject:  getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT"),
-		GoogleCloudLocation: getEnvWithFallback("EMBEDDING_GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_LOCATION"),
+		Normalize:           cfg.Embedding.Normalize,
+		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
+		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
 	}
 	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 		slog.Error(err.Error())
@@ -121,7 +123,7 @@ func run() int {
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, embeddingWorker)
 
-	// Producer-only: we only enqueue jobs; workers run in the API. River requires the job kind
+	// Producer-only: we only enqueue jobs; workers run in hub-worker. River requires the job kind
 	// to be registered (worker added above) and MaxWorkers > 0 when a queue is declared.
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -151,38 +153,16 @@ func run() int {
 	return exitSuccess
 }
 
-func getEnvAsInt(key string, defaultValue int) int {
-	s := os.Getenv(key)
-	if s == "" {
-		return defaultValue
-	}
-
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return defaultValue
-	}
-
-	return n
-}
-
-func getEmbeddingProviderAndModel() (provider, model string, err error) {
-	provider = os.Getenv("EMBEDDING_PROVIDER")
+func getEmbeddingProviderAndModel(cfg *config.Config) (provider, model string, err error) {
+	provider = cfg.Embedding.Provider
 	if provider == "" {
 		return "", "", errEmbeddingProviderRequired
 	}
 
-	model = os.Getenv("EMBEDDING_MODEL")
+	model = cfg.Embedding.Model
 	if model == "" {
 		return "", "", errEmbeddingModelRequired
 	}
 
 	return provider, model, nil
-}
-
-func getEnvWithFallback(primary, fallback string) string {
-	if v := os.Getenv(primary); v != "" {
-		return v
-	}
-
-	return os.Getenv(fallback)
 }

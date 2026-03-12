@@ -4,128 +4,6 @@ import (
 	"testing"
 )
 
-func TestGetEnv(t *testing.T) {
-	tests := []struct {
-		name         string
-		key          string
-		defaultValue string
-		envValue     string
-		shouldSet    bool
-		want         string
-	}{
-		{
-			name:         "returns environment variable when set",
-			key:          "TEST_VAR",
-			defaultValue: "default",
-			envValue:     "custom",
-			shouldSet:    true,
-			want:         "custom",
-		},
-		{
-			name:         "returns default when environment variable not set",
-			key:          "TEST_VAR_MISSING",
-			defaultValue: "default",
-			envValue:     "",
-			shouldSet:    false,
-			want:         "default",
-		},
-		{
-			name:         "returns default when environment variable is empty string",
-			key:          "TEST_VAR_EMPTY",
-			defaultValue: "default",
-			envValue:     "",
-			shouldSet:    true,
-			want:         "default",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.shouldSet {
-				t.Setenv(tt.key, tt.envValue)
-			}
-
-			got := getEnv(tt.key, tt.defaultValue)
-			if got != tt.want {
-				t.Errorf("getEnv() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGetEnvAsInt(t *testing.T) {
-	tests := []struct {
-		name         string
-		key          string
-		defaultValue int
-		envValue     string
-		shouldSet    bool
-		want         int
-	}{
-		{
-			name:         "returns environment variable as int when set with valid integer",
-			key:          "TEST_INT_VAR",
-			defaultValue: 100,
-			envValue:     "200",
-			shouldSet:    true,
-			want:         200,
-		},
-		{
-			name:         "returns default when environment variable not set",
-			key:          "TEST_INT_VAR_MISSING",
-			defaultValue: 100,
-			envValue:     "",
-			shouldSet:    false,
-			want:         100,
-		},
-		{
-			name:         "returns default when environment variable is empty string",
-			key:          "TEST_INT_VAR_EMPTY",
-			defaultValue: 100,
-			envValue:     "",
-			shouldSet:    true,
-			want:         100,
-		},
-		{
-			name:         "returns default when environment variable is not a valid integer",
-			key:          "TEST_INT_VAR_INVALID",
-			defaultValue: 100,
-			envValue:     "not_a_number",
-			shouldSet:    true,
-			want:         100,
-		},
-		{
-			name:         "handles negative integers",
-			key:          "TEST_INT_VAR_NEGATIVE",
-			defaultValue: 100,
-			envValue:     "-50",
-			shouldSet:    true,
-			want:         -50,
-		},
-		{
-			name:         "handles zero",
-			key:          "TEST_INT_VAR_ZERO",
-			defaultValue: 100,
-			envValue:     "0",
-			shouldSet:    true,
-			want:         0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.shouldSet {
-				t.Setenv(tt.key, tt.envValue)
-			}
-
-			got := getEnvAsInt(tt.key, tt.defaultValue)
-			if got != tt.want {
-				t.Errorf("getEnvAsInt() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -176,9 +54,6 @@ func TestLoad(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// API_KEY is required for Load() to succeed
-			t.Setenv("API_KEY", "test-api-key")
-
 			if tt.setDatabaseURL {
 				t.Setenv("DATABASE_URL", tt.databaseURL)
 			}
@@ -194,12 +69,12 @@ func TestLoad(t *testing.T) {
 				return
 			}
 
-			if cfg.DatabaseURL != tt.wantDatabaseURL {
-				t.Errorf("Load() DatabaseURL = %v, want %v", cfg.DatabaseURL, tt.wantDatabaseURL)
+			if cfg.Database.URL != tt.wantDatabaseURL {
+				t.Errorf("Load() Database.URL = %v, want %v", cfg.Database.URL, tt.wantDatabaseURL)
 			}
 
-			if cfg.Port != tt.wantPort {
-				t.Errorf("Load() Port = %v, want %v", cfg.Port, tt.wantPort)
+			if cfg.Server.Port != tt.wantPort {
+				t.Errorf("Load() Server.Port = %v, want %v", cfg.Server.Port, tt.wantPort)
 			}
 		})
 	}
@@ -207,8 +82,6 @@ func TestLoad(t *testing.T) {
 
 // TestLoadAlwaysReturnsNilError cannot use t.Parallel() because it uses t.Setenv (Go restriction).
 func TestLoadAlwaysReturnsNilError(t *testing.T) {
-	t.Setenv("API_KEY", "test-api-key")
-
 	cfg, err := Load()
 	if err != nil {
 		t.Errorf("Load() error = %v, want nil", err)
@@ -220,16 +93,14 @@ func TestLoadAlwaysReturnsNilError(t *testing.T) {
 }
 
 func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
-	t.Setenv("API_KEY", "test-api-key")
-
 	t.Run("default is 3 when unset", func(t *testing.T) {
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
 
-		if cfg.WebhookDeliveryMaxAttempts != 3 {
-			t.Errorf("WebhookDeliveryMaxAttempts = %d, want 3", cfg.WebhookDeliveryMaxAttempts)
+		if cfg.Webhook.DeliveryMaxAttempts != 3 {
+			t.Errorf("Webhook.DeliveryMaxAttempts = %d, want 3", cfg.Webhook.DeliveryMaxAttempts)
 		}
 	})
 
@@ -241,8 +112,8 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 			t.Fatalf("Load() error = %v", err)
 		}
 
-		if cfg.WebhookDeliveryMaxAttempts != 5 {
-			t.Errorf("WebhookDeliveryMaxAttempts = %d, want 5", cfg.WebhookDeliveryMaxAttempts)
+		if cfg.Webhook.DeliveryMaxAttempts != 5 {
+			t.Errorf("Webhook.DeliveryMaxAttempts = %d, want 5", cfg.Webhook.DeliveryMaxAttempts)
 		}
 	})
 
@@ -255,16 +126,12 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 		}
 	})
 
-	t.Run("non-numeric falls back to default", func(t *testing.T) {
+	t.Run("non-numeric returns error", func(t *testing.T) {
 		t.Setenv("WEBHOOK_DELIVERY_MAX_ATTEMPTS", "x")
 
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-
-		if cfg.WebhookDeliveryMaxAttempts != 3 {
-			t.Errorf("WebhookDeliveryMaxAttempts = %d, want default 3", cfg.WebhookDeliveryMaxAttempts)
+		_, err := Load()
+		if err == nil {
+			t.Error("Load() error = nil, want error for invalid WEBHOOK_DELIVERY_MAX_ATTEMPTS")
 		}
 	})
 }
@@ -278,8 +145,8 @@ func TestLoad_EmbeddingGoogleCloudProject(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.EmbeddingGoogleCloudProject != "my-vertex-project" {
-		t.Errorf("EmbeddingGoogleCloudProject = %q, want my-vertex-project", cfg.EmbeddingGoogleCloudProject)
+	if cfg.Embedding.GoogleCloudProject != "my-vertex-project" {
+		t.Errorf("Embedding.GoogleCloudProject = %q, want my-vertex-project", cfg.Embedding.GoogleCloudProject)
 	}
 }
 
@@ -292,8 +159,8 @@ func TestLoad_EmbeddingGoogleCloudProject_fallback(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.EmbeddingGoogleCloudProject != "fallback-project" {
-		t.Errorf("EmbeddingGoogleCloudProject = %q, want fallback-project", cfg.EmbeddingGoogleCloudProject)
+	if cfg.Embedding.GoogleCloudProject != "fallback-project" {
+		t.Errorf("Embedding.GoogleCloudProject = %q, want fallback-project", cfg.Embedding.GoogleCloudProject)
 	}
 }
 
@@ -306,8 +173,8 @@ func TestLoad_EmbeddingGoogleCloudLocation(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.EmbeddingGoogleCloudLocation != "europe-west3" {
-		t.Errorf("EmbeddingGoogleCloudLocation = %q, want europe-west3", cfg.EmbeddingGoogleCloudLocation)
+	if cfg.Embedding.GoogleCloudLocation != "europe-west3" {
+		t.Errorf("Embedding.GoogleCloudLocation = %q, want europe-west3", cfg.Embedding.GoogleCloudLocation)
 	}
 }
 
@@ -320,8 +187,8 @@ func TestLoad_EmbeddingGoogleCloudLocation_fallback(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.EmbeddingGoogleCloudLocation != "europe-west1" {
-		t.Errorf("EmbeddingGoogleCloudLocation = %q, want europe-west1", cfg.EmbeddingGoogleCloudLocation)
+	if cfg.Embedding.GoogleCloudLocation != "europe-west1" {
+		t.Errorf("Embedding.GoogleCloudLocation = %q, want europe-west1", cfg.Embedding.GoogleCloudLocation)
 	}
 }
 
@@ -335,8 +202,8 @@ func TestLoad_EmbeddingGoogleCloudProject_precedence(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.EmbeddingGoogleCloudProject != "explicit-project" {
-		t.Errorf("EmbeddingGoogleCloudProject = %q, want explicit-project (EMBEDDING_* must override GOOGLE_*)", cfg.EmbeddingGoogleCloudProject)
+	if cfg.Embedding.GoogleCloudProject != "explicit-project" {
+		t.Errorf("Embedding.GoogleCloudProject = %q, want explicit-project", cfg.Embedding.GoogleCloudProject)
 	}
 }
 
@@ -350,8 +217,8 @@ func TestLoad_EmbeddingGoogleCloudLocation_precedence(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.EmbeddingGoogleCloudLocation != "explicit-location" {
-		t.Errorf("EmbeddingGoogleCloudLocation = %q, want explicit-location (EMBEDDING_* overrides GOOGLE_*)",
-			cfg.EmbeddingGoogleCloudLocation)
+	if cfg.Embedding.GoogleCloudLocation != "explicit-location" {
+		t.Errorf("Embedding.GoogleCloudLocation = %q, want explicit-location (EMBEDDING_* overrides GOOGLE_*)",
+			cfg.Embedding.GoogleCloudLocation)
 	}
 }

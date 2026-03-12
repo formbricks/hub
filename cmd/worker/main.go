@@ -1,4 +1,5 @@
-// Package main is the Formbricks Hub API server entrypoint.
+// Package main is the Formbricks Hub worker entrypoint (hub-worker).
+// It runs River job workers (webhook delivery, embeddings) and does not expose HTTP.
 package main
 
 import (
@@ -6,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
@@ -27,20 +27,16 @@ func main() {
 func run() int {
 	cfg, err := config.Load()
 	if err != nil {
-		setupLogging("info")
 		slog.Error("Failed to load configuration", "error", err)
 
 		return exitFailure
 	}
 
-	if cfg.Server.HubAPIKey == "" {
-		setupLogging(cfg.Server.LogLevel)
-		slog.Error("API_KEY is required for hub-api")
+	if cfg.Database.URL == "" || cfg.Database.URL == config.DefaultDatabaseURL {
+		slog.Error("DATABASE_URL must be set explicitly for hub-worker (do not use the default test URL)")
 
 		return exitFailure
 	}
-
-	setupLogging(cfg.Server.LogLevel)
 
 	ctx := context.Background()
 
@@ -55,9 +51,9 @@ func run() int {
 	}
 	defer db.Close()
 
-	app, err := NewApp(cfg, db)
+	app, err := NewWorkerApp(cfg, db)
 	if err != nil {
-		slog.Error("Failed to create application", "error", err)
+		slog.Error("Failed to create worker app", "error", err)
 
 		return exitFailure
 	}
@@ -66,7 +62,7 @@ func run() int {
 	defer stop()
 
 	if err := app.Run(sigCtx); err != nil {
-		slog.Error("Component failed, exiting", "error", err)
+		slog.Error("Worker failed", "error", err)
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout.Duration())
 		defer cancel()
@@ -87,28 +83,7 @@ func run() int {
 		return exitFailure
 	}
 
-	slog.Info("Server stopped")
+	slog.Info("Worker stopped")
 
 	return exitSuccess
-}
-
-func setupLogging(level string) {
-	var logLevel slog.Level
-
-	switch strings.ToLower(level) {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "info":
-		logLevel = slog.LevelInfo
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
-
-	opts := &slog.HandlerOptions{Level: logLevel}
-	handler := slog.NewTextHandler(os.Stdout, opts)
-	slog.SetDefault(slog.New(handler))
 }

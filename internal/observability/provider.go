@@ -31,9 +31,9 @@ func newResource() (*resource.Resource, error) {
 }
 
 // NewMeterProvider creates a MeterProvider when metrics are enabled via OTLP push.
-// When cfg.OtelMetricsExporter is not "otlp" (or empty), returns (nil, nil).
+// When cfg is nil or cfg.Observability.MetricsExporter is not "otlp" (or empty), returns (nil, nil).
 func NewMeterProvider(cfg *config.Config) (*sdkmetric.MeterProvider, error) {
-	if cfg == nil || cfg.OtelMetricsExporter != "otlp" {
+	if cfg == nil || cfg.Observability.MetricsExporter != "otlp" {
 		//nolint:nilnil // intentional: metrics disabled or unsupported exporter, caller checks for nil
 		return nil, nil
 	}
@@ -86,9 +86,9 @@ func ShutdownMeterProvider(ctx context.Context, provider *sdkmetric.MeterProvide
 }
 
 // NewTracerProvider creates a TracerProvider when tracing is enabled.
-// When cfg.OtelTracesExporter is empty, returns (nil, nil).
+// When cfg is nil or cfg.Observability.TracesExporter is empty, returns (nil, nil).
 func NewTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
-	if cfg == nil || cfg.OtelTracesExporter == "" {
+	if cfg == nil || cfg.Observability.TracesExporter == "" {
 		//nolint:nilnil // intentional: tracing disabled, caller checks for nil
 		return nil, nil
 	}
@@ -102,7 +102,7 @@ func NewTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
 
 	opts = append(opts, sdktrace.WithResource(res), sdktrace.WithSampler(newSampler()))
 
-	switch cfg.OtelTracesExporter {
+	switch cfg.Observability.TracesExporter {
 	case "otlp":
 		exp, err := newOTLPTraceExporter(context.Background())
 		if err != nil {

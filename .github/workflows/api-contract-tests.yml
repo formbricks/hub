@@ -87,7 +87,7 @@ jobs:
 
       - name: Start API server
         run: |
-          ./bin/api &
+          ./bin/hub-api &
           API_PID=$!
           echo "API_PID=$API_PID" >> $GITHUB_ENV
 
@@ -147,4 +147,4 @@ jobs:
           if [ ! -z "$API_PID" ]; then
             kill $API_PID || true
           fi
-          pkill -f "./bin/api" || true
+          pkill -f "./bin/hub-api" || true
