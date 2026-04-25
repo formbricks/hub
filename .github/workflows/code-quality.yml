@@ -69,13 +69,13 @@ jobs:
           path: |
             ~/go/bin/golangci-lint
             ~/go/bin/govulncheck
-          key: ${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-lint2.10.1-vuln1.1.4
+          key: ${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-lint2.11.4-vuln1.3.0
 
       - name: Install development tools
         if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
 
       - name: Format check (make fmt)
         run: |

@@ -11,8 +11,8 @@ RUN apk add --no-cache git ca-certificates
 WORKDIR /build
 
 # Install goose and river CLI for migrations (for target platform)
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/pressly/goose/v3/cmd/goose@v3.27.0 && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/riverqueue/river/cmd/river@v0.31.0
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/pressly/goose/v3/cmd/goose@v3.27.1 && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/riverqueue/river/cmd/river@v0.35.0
 
 # Cache dependencies
 COPY go.mod go.sum ./

@@ -203,10 +203,10 @@ deps:
 
 # Install development tools
 # Tool versions - update these periodically
-GOLANGCI_LINT_VERSION := v2.11.3
-GOVULNCHECK_VERSION := v1.1.4
-GOOSE_VERSION := v3.27.0
-RIVER_VERSION := v0.31.0
+GOLANGCI_LINT_VERSION := v2.11.4
+GOVULNCHECK_VERSION := v1.3.0
+GOOSE_VERSION := v3.27.1
+RIVER_VERSION := v0.35.0
 # Use pinned path so lint uses the version from make install-tools, not PATH
 GOLANGCI_LINT ?= $(HOME)/go/bin/golangci-lint
 
