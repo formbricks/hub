@@ -9,7 +9,7 @@ run:
   timeout: 5m
   concurrency: 4
   modules-download-mode: readonly
-  go: "1.26.1"
+  go: "1.26.2"
   # Allow linting test files but suppress specific strict rules via exclusion below
   tests: true
 
