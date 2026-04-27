@@ -14,7 +14,9 @@ import (
 const (
 	EmbeddingProviderOpenAI       = "openai"
 	EmbeddingProviderGoogle       = "google"
-	EmbeddingProviderGoogleVertex = "google-vertex"
+	EmbeddingProviderGoogleGemini = "google-gemini"
+
+	embeddingProviderGoogleVertexLegacy = "google-vertex"
 )
 
 var (
@@ -22,16 +24,17 @@ var (
 	ErrEmbeddingConfigInvalid = errors.New("embedding config invalid")
 	// ErrEmbeddingProviderAPIKey is returned when an API-key-based provider is configured without a key.
 	ErrEmbeddingProviderAPIKey = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
-	// ErrEmbeddingVertexConfig is returned when google-vertex is configured without project or location.
-	ErrEmbeddingVertexConfig = errors.New("google-vertex requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
+	// ErrEmbeddingGoogleGeminiConfig is returned when google-gemini is configured without project or location.
+	ErrEmbeddingGoogleGeminiConfig = errors.New(
+		"google-gemini requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
 )
 
 // providerEntry describes capabilities and construction for one embedding provider (single source of truth).
 type providerEntry struct {
-	RequiresAPIKey       bool
-	RequiresVertexConfig bool
-	DocPrefix            string
-	Factory              func(context.Context, EmbeddingClientConfig) (EmbeddingClient, error)
+	RequiresAPIKey             bool
+	RequiresGoogleGeminiConfig bool
+	DocPrefix                  string
+	Factory                    func(context.Context, EmbeddingClientConfig) (EmbeddingClient, error)
 }
 
 // embeddingProviderRegistry is the single source of truth for provider capabilities and client creation.
@@ -46,10 +49,10 @@ var embeddingProviderRegistry = map[string]providerEntry{
 		DocPrefix:      "",
 		Factory:        googleEmbeddingFactory,
 	},
-	EmbeddingProviderGoogleVertex: {
-		RequiresVertexConfig: true,
-		DocPrefix:            "",
-		Factory:              googleVertexEmbeddingFactory,
+	EmbeddingProviderGoogleGemini: {
+		RequiresGoogleGeminiConfig: true,
+		DocPrefix:                  "",
+		Factory:                    googleGeminiEmbeddingFactory,
 	},
 }
 
@@ -72,13 +75,13 @@ func googleEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig) (Emb
 	return client, nil
 }
 
-func googleVertexEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
-	client, err := googleai.NewVertexClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
+func googleGeminiEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
+	client, err := googleai.NewGoogleGeminiClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
 		googleai.WithModel(cfg.Model),
 		googleai.WithNormalize(cfg.Normalize),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create google-vertex embedding client: %w", err)
+		return nil, fmt.Errorf("create google-gemini embedding client: %w", err)
 	}
 
 	return client, nil
@@ -86,7 +89,12 @@ func googleVertexEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig
 
 // NormalizeEmbeddingProvider returns the canonical provider name (lowercase, trimmed).
 func NormalizeEmbeddingProvider(provider string) string {
-	return strings.ToLower(strings.TrimSpace(provider))
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == embeddingProviderGoogleVertexLegacy {
+		return EmbeddingProviderGoogleGemini
+	}
+
+	return provider
 }
 
 // EmbeddingClientConfig holds configuration for creating an embedding client.
@@ -99,7 +107,7 @@ type EmbeddingClientConfig struct {
 	GoogleCloudLocation string
 }
 
-// ValidateEmbeddingConfig checks provider support and provider-specific requirements (API key, vertex project/location).
+// ValidateEmbeddingConfig checks provider support and provider-specific requirements (API key, Google Cloud project/location).
 // Use before creating a client or at startup to fail fast with a clear error.
 func ValidateEmbeddingConfig(cfg EmbeddingClientConfig) error {
 	provider := NormalizeEmbeddingProvider(cfg.Provider)
@@ -113,8 +121,8 @@ func ValidateEmbeddingConfig(cfg EmbeddingClientConfig) error {
 		return fmt.Errorf("%w: %s", ErrEmbeddingProviderAPIKey, provider)
 	}
 
-	if entry.RequiresVertexConfig && (cfg.GoogleCloudProject == "" || cfg.GoogleCloudLocation == "") {
-		return ErrEmbeddingVertexConfig
+	if entry.RequiresGoogleGeminiConfig && (cfg.GoogleCloudProject == "" || cfg.GoogleCloudLocation == "") {
+		return ErrEmbeddingGoogleGeminiConfig
 	}
 
 	return nil
@@ -144,11 +152,11 @@ func ProviderRequiresAPIKey(provider string) bool {
 	return ok && entry.RequiresAPIKey
 }
 
-// ProviderRequiresVertexConfig returns true for providers that require project and location (from registry).
-func ProviderRequiresVertexConfig(provider string) bool {
+// ProviderRequiresGoogleGeminiConfig returns true for providers that require Google Cloud project and location.
+func ProviderRequiresGoogleGeminiConfig(provider string) bool {
 	entry, ok := embeddingProviderRegistry[NormalizeEmbeddingProvider(provider)]
 
-	return ok && entry.RequiresVertexConfig
+	return ok && entry.RequiresGoogleGeminiConfig
 }
 
 // SupportedEmbeddingProviders returns the set of supported provider names (from registry).

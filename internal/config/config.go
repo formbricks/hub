@@ -248,7 +248,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Webhook.EnqueueMaxBackoffMs = 2000
 	}
 
-	// Google Vertex AI fallbacks: EMBEDDING_* can fall back to GOOGLE_CLOUD_*
+	// Google Cloud fallbacks: EMBEDDING_* can fall back to GOOGLE_CLOUD_*
 	if cfg.Embedding.GoogleCloudProject == "" {
 		cfg.Embedding.GoogleCloudProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	}

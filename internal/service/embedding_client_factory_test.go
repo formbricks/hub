@@ -58,29 +58,29 @@ func TestNewEmbeddingClient(t *testing.T) {
 			errIs:   ErrEmbeddingProviderAPIKey,
 		},
 		{
-			name: "google-vertex without project returns error",
+			name: "google-gemini without project returns error",
 			cfg: EmbeddingClientConfig{
-				Provider:            EmbeddingProviderGoogleVertex,
+				Provider:            EmbeddingProviderGoogleGemini,
 				Model:               "text-embedding-004",
 				GoogleCloudProject:  "",
 				GoogleCloudLocation: "europe-west3",
 			},
 			wantErr: true,
-			errIs:   ErrEmbeddingVertexConfig,
+			errIs:   ErrEmbeddingGoogleGeminiConfig,
 		},
 		{
-			name: "google-vertex without location returns error",
+			name: "google-gemini without location returns error",
 			cfg: EmbeddingClientConfig{
-				Provider:            EmbeddingProviderGoogleVertex,
+				Provider:            EmbeddingProviderGoogleGemini,
 				Model:               "text-embedding-004",
 				GoogleCloudProject:  "my-project",
 				GoogleCloudLocation: "",
 			},
 			wantErr: true,
-			errIs:   ErrEmbeddingVertexConfig,
+			errIs:   ErrEmbeddingGoogleGeminiConfig,
 		},
 		{
-			name: "google-vertex with mixed-case and whitespace provider name normalizes and validates",
+			name: "legacy google-vertex alias normalizes and validates",
 			cfg: EmbeddingClientConfig{
 				Provider:            " Google-Vertex ",
 				Model:               "text-embedding-004",
@@ -88,7 +88,7 @@ func TestNewEmbeddingClient(t *testing.T) {
 				GoogleCloudLocation: "",
 			},
 			wantErr: true,
-			errIs:   ErrEmbeddingVertexConfig,
+			errIs:   ErrEmbeddingGoogleGeminiConfig,
 		},
 		{
 			name: "unsupported provider returns error",
@@ -129,7 +129,7 @@ func TestProviderRequiresAPIKey(t *testing.T) {
 	}{
 		{EmbeddingProviderOpenAI, true},
 		{EmbeddingProviderGoogle, true},
-		{EmbeddingProviderGoogleVertex, false},
+		{EmbeddingProviderGoogleGemini, false},
 		{"unknown", false},
 		{"OPENAI", true},
 		{"Google", true},
@@ -143,21 +143,22 @@ func TestProviderRequiresAPIKey(t *testing.T) {
 	}
 }
 
-func TestProviderRequiresVertexConfig(t *testing.T) {
+func TestProviderRequiresGoogleGeminiConfig(t *testing.T) {
 	tests := []struct {
 		provider string
 		want     bool
 	}{
-		{EmbeddingProviderGoogleVertex, true},
+		{EmbeddingProviderGoogleGemini, true},
 		{EmbeddingProviderOpenAI, false},
 		{EmbeddingProviderGoogle, false},
 		{"unknown", false},
 		{"google-vertex", true},
+		{" Google-Gemini ", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {
-			got := ProviderRequiresVertexConfig(tt.provider)
+			got := ProviderRequiresGoogleGeminiConfig(tt.provider)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -168,7 +169,7 @@ func TestSupportedEmbeddingProviders(t *testing.T) {
 
 	assert.Contains(t, providers, EmbeddingProviderOpenAI)
 	assert.Contains(t, providers, EmbeddingProviderGoogle)
-	assert.Contains(t, providers, EmbeddingProviderGoogleVertex)
+	assert.Contains(t, providers, EmbeddingProviderGoogleGemini)
 	assert.Len(t, providers, 3)
 }
 
@@ -192,22 +193,22 @@ func TestValidateEmbeddingConfig(t *testing.T) {
 			true, ErrEmbeddingProviderAPIKey,
 		},
 		{
-			"vertex with project and location valid",
+			"google-gemini with project and location valid",
 			EmbeddingClientConfig{
-				Provider: EmbeddingProviderGoogleVertex, Model: "m",
+				Provider: EmbeddingProviderGoogleGemini, Model: "m",
 				GoogleCloudProject: "p", GoogleCloudLocation: "l",
 			},
 			false, nil,
 		},
 		{
-			"vertex without project invalid",
-			EmbeddingClientConfig{Provider: EmbeddingProviderGoogleVertex, Model: "m", GoogleCloudLocation: "l"},
-			true, ErrEmbeddingVertexConfig,
+			"google-gemini without project invalid",
+			EmbeddingClientConfig{Provider: EmbeddingProviderGoogleGemini, Model: "m", GoogleCloudLocation: "l"},
+			true, ErrEmbeddingGoogleGeminiConfig,
 		},
 		{
-			"vertex without location invalid",
-			EmbeddingClientConfig{Provider: EmbeddingProviderGoogleVertex, Model: "m", GoogleCloudProject: "p"},
-			true, ErrEmbeddingVertexConfig,
+			"google-gemini without location invalid",
+			EmbeddingClientConfig{Provider: EmbeddingProviderGoogleGemini, Model: "m", GoogleCloudProject: "p"},
+			true, ErrEmbeddingGoogleGeminiConfig,
 		},
 		{
 			"unsupported provider invalid",
@@ -236,12 +237,13 @@ func TestValidateEmbeddingConfig(t *testing.T) {
 func TestNormalizeEmbeddingProvider(t *testing.T) {
 	assert.Equal(t, "openai", NormalizeEmbeddingProvider("OpenAI"))
 	assert.Equal(t, "openai", NormalizeEmbeddingProvider("  openai  "))
-	assert.Equal(t, "google-vertex", NormalizeEmbeddingProvider(" Google-Vertex "))
+	assert.Equal(t, "google-gemini", NormalizeEmbeddingProvider(" Google-Gemini "))
+	assert.Equal(t, "google-gemini", NormalizeEmbeddingProvider(" Google-Vertex "))
 }
 
 func TestEmbeddingPrefixForProvider(t *testing.T) {
 	assert.Empty(t, EmbeddingPrefixForProvider(EmbeddingProviderOpenAI))
 	assert.Empty(t, EmbeddingPrefixForProvider(EmbeddingProviderGoogle))
-	assert.Empty(t, EmbeddingPrefixForProvider(EmbeddingProviderGoogleVertex))
+	assert.Empty(t, EmbeddingPrefixForProvider(EmbeddingProviderGoogleGemini))
 	assert.Empty(t, EmbeddingPrefixForProvider("unknown"))
 }

@@ -133,7 +133,7 @@ secrets:
     DATABASE_URL: ""
     # REQUIRED
     API_KEY: ""
-    # Optional: required only when EMBEDDING_PROVIDER is openai or google
+    # Optional: required only when EMBEDDING_PROVIDER is openai or google (AI Studio)
     EMBEDDING_PROVIDER_API_KEY: ""
   externalSecrets:
     enabled: false

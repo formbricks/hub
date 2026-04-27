@@ -41,9 +41,9 @@ type App struct {
 }
 
 var (
-	errEmbeddingProviderAPIKeyRequired = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
-	errEmbeddingVertexConfigRequired   = errors.New(
-		"google-vertex requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
+	errEmbeddingProviderAPIKeyRequired     = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
+	errEmbeddingGoogleGeminiConfigRequired = errors.New(
+		"google-gemini requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
 )
 
 const riverQueueDepthInterval = 15 * time.Second
@@ -72,7 +72,7 @@ const searchQueryCacheSize = 1000
 
 // setupEmbeddingSearchHandler creates embedding client, worker, and search handler when embeddings are enabled.
 // Returns (handler, nil) or (nil, err). Caller should use errors.Is for service.ErrEmbeddingProviderAPIKey and
-// service.ErrEmbeddingVertexConfig to return app-level sentinel errors.
+// service.ErrEmbeddingGoogleGeminiConfig to return app-level sentinel errors.
 func setupEmbeddingSearchHandler(
 	ctx context.Context,
 	cfg *config.Config,
@@ -258,8 +258,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 				return nil, fmt.Errorf("%w: %s", errEmbeddingProviderAPIKeyRequired, embeddingProviderName)
 			}
 
-			if errors.Is(err, service.ErrEmbeddingVertexConfig) {
-				return nil, errEmbeddingVertexConfigRequired
+			if errors.Is(err, service.ErrEmbeddingGoogleGeminiConfig) {
+				return nil, errEmbeddingGoogleGeminiConfigRequired
 			}
 
 			return nil, fmt.Errorf("embedding config: %w", err)
