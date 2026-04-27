@@ -24,7 +24,7 @@ type FeedbackRecordsService interface {
 	ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error)
 	UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error
-	BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int, error)
+	BulkDeleteFeedbackRecords(ctx context.Context, userID string, tenantID *string) (int, error)
 }
 
 // FeedbackRecordsHandler handles HTTP requests for feedback records.
@@ -219,7 +219,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// BulkDelete handles DELETE /v1/feedback-records?user_identifier=<id>.
+// BulkDelete handles DELETE /v1/feedback-records?user_id=<id>.
 func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	filters := &models.BulkDeleteFilters{}
 
@@ -230,7 +230,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters.UserIdentifier, filters.TenantID)
+	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters.UserID, filters.TenantID)
 	if err != nil {
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 

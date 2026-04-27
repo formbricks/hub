@@ -39,14 +39,14 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 			collected_at, source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id
 	`
 
 	var record models.FeedbackRecord
@@ -55,13 +55,13 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
 		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
-		req.Metadata, req.Language, req.UserIdentifier, req.TenantID, req.SubmissionID,
+		req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID,
 	).Scan(
 		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
+		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -82,7 +82,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id
 		FROM feedback_records
 		WHERE id = $1
 	`
@@ -94,7 +94,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
+		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -156,9 +156,9 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 		argCount++
 	}
 
-	if filters.UserIdentifier != nil {
-		conditions = append(conditions, fmt.Sprintf("user_identifier = $%d", argCount))
-		args = append(args, *filters.UserIdentifier)
+	if filters.UserID != nil {
+		conditions = append(conditions, fmt.Sprintf("user_id = $%d", argCount))
+		args = append(args, *filters.UserID)
 		argCount++
 	}
 
@@ -185,7 +185,7 @@ const feedbackRecordsListSelect = `
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id
 		FROM feedback_records
 	`
 
@@ -318,9 +318,9 @@ func buildUpdateQuery(
 		argCount++
 	}
 
-	if req.UserIdentifier != nil {
-		updates = append(updates, fmt.Sprintf("user_identifier = $%d", argCount))
-		args = append(args, *req.UserIdentifier)
+	if req.UserID != nil {
+		updates = append(updates, fmt.Sprintf("user_id = $%d", argCount))
+		args = append(args, *req.UserID)
 		argCount++
 	}
 
@@ -342,14 +342,14 @@ func buildUpdateQuery(
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_identifier, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id
 	`, strings.Join(updates, ", "), argCount)
 
 	return query, args, true
 }
 
 // Update updates an existing feedback record
-// Only value fields, metadata, language, and user_identifier can be updated.
+// Only value fields, metadata, language, and user_id can be updated.
 func (r *FeedbackRecordsRepository) Update(
 	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, error) {
@@ -365,7 +365,7 @@ func (r *FeedbackRecordsRepository) Update(
 		&record.SourceType, &record.SourceID, &record.SourceName,
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
+		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -394,13 +394,13 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// BulkDelete deletes all feedback records matching user_identifier and optional tenant_id.
+// BulkDelete deletes all feedback records matching user_id and optional tenant_id.
 // It returns the deleted IDs (via RETURNING id) so callers can e.g. publish events.
-func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error) {
+func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userID string, tenantID *string) ([]uuid.UUID, error) {
 	query := `
 		DELETE FROM feedback_records
-		WHERE user_identifier = $1`
-	args := []any{userIdentifier}
+		WHERE user_id = $1`
+	args := []any{userID}
 	argCount := 2
 
 	if tenantID != nil {
@@ -456,7 +456,7 @@ func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
 			&record.SourceType, &record.SourceID, &record.SourceName,
 			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserIdentifier, &record.TenantID, &record.SubmissionID,
+			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
