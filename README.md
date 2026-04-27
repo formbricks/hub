@@ -80,6 +80,38 @@ If you want to evaluate Hub quickly, start with the docs:
 - [Connect Hub to Microsoft Power BI](https://hub.formbricks.com/guides/hub-powerbi/)
 - [Connect Hub to Apache Superset](https://hub.formbricks.com/guides/hub-superset/)
 
+### Local development in this repository
+
+This repository contains the standalone Hub API and worker. The local
+`compose.yml` starts dependency services only: PostgreSQL and River UI. It does
+not start `hub-api` or `hub-worker`; run those from this repository after the
+database is ready.
+
+For a local Hub setup:
+
+```bash
+cp .env.example .env
+make dev-setup
+make river-migrate
+make run
+```
+
+Run `make run-worker` in a separate terminal when you need webhook delivery or
+embedding workers. `make dev-setup` runs the Hub schema migrations through
+`make init-db`; `make river-migrate` applies River queue migrations needed by
+worker-backed jobs.
+
+For the full Formbricks XM Suite UI, use the
+[`formbricks/formbricks`](https://github.com/formbricks/formbricks) repository
+and its setup instructions instead.
+
+### Tenant isolation
+
+Feedback records are tenant-scoped. API operations that read or write feedback
+records require `tenant_id` where shown in the API reference so records remain
+isolated by tenant/organization. Do not omit `tenant_id` from list/search calls
+unless an endpoint explicitly documents an admin or global-list mode.
+
 ## Who Hub Is For
 
 Formbricks Hub is a good fit for:
