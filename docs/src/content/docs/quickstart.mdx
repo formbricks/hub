@@ -37,7 +37,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-formbricks_dev}
       POSTGRES_DB: hub
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -61,10 +61,10 @@ services:
     environment:
       DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_dev}@postgres:5432/hub?sslmode=disable
       API_KEY: ${API_KEY:-}
-      PORT: ${PORT:-8080}
+      PORT: 8080
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "8080:8080"
+      - "${HUB_PORT:-8080}:8080"
     healthcheck:
       test:
         [
@@ -118,8 +118,9 @@ POSTGRES_PASSWORD=your_secure_postgres_password_here
 # Required: API authentication key
 API_KEY=your_secure_api_key_here
 
-# Optional: Server configuration
-PORT=8080
+# Optional: Host port configuration
+HUB_PORT=8080
+POSTGRES_PORT=5432
 LOG_LEVEL=info
 ```
 
@@ -194,8 +195,8 @@ curl http://localhost:8080/health
 
 Expected response:
 
-```json
-{ "status": "ok" }
+```text
+OK
 ```
 
 ### Option 2: Docker Run (Minimal)
@@ -256,6 +257,7 @@ Expected response:
   "submission_id": "subm-my-first-survey-001",
   "collected_at": "2025-10-20T12:34:56Z",
   "created_at": "2025-10-20T12:34:56Z",
+  "updated_at": "2025-10-20T12:34:56Z",
   "source_type": "survey",
   "source_id": "my-first-survey",
   "field_id": "q1",
@@ -297,10 +299,22 @@ Response:
 
 ```json
 {
-  "data": [...],
-  "total": 2,
-  "limit": 10,
-  "offset": 0
+  "data": [
+    {
+      "id": "01932c8a-8b9e-7000-8000-000000000001",
+      "tenant_id": "org-123",
+      "submission_id": "subm-my-first-survey-001",
+      "collected_at": "2025-10-20T12:34:56Z",
+      "created_at": "2025-10-20T12:34:56Z",
+      "updated_at": "2025-10-20T12:34:56Z",
+      "source_type": "survey",
+      "source_id": "my-first-survey",
+      "field_id": "q1",
+      "field_type": "rating",
+      "value_number": 5
+    }
+  ],
+  "limit": 10
 }
 ```
 
@@ -314,6 +328,9 @@ Response:
 | `API_KEY`      | Yes      | -                                                                     | API authentication key                       |
 | `PORT`         | No       | `8080`                                                                | HTTP server port                             |
 | `LOG_LEVEL`    | No       | `info`                                                                | Log level (`debug`, `info`, `warn`, `error`) |
+
+In the Docker Compose example above, use `HUB_PORT` and `POSTGRES_PORT` to change
+host ports without changing the ports used inside the containers.
 
 [See full environment variable reference ->](/reference/environment-variables)
 
@@ -397,14 +414,15 @@ If port 8080 or 5432 is occupied:
 
 ```bash
 # Change ports in .env
-PORT=8081
+HUB_PORT=8081
+POSTGRES_PORT=5433
 ```
 
 Or modify the port mapping in `compose.yml`:
 
 ```yaml
 ports:
-  - "8081:8080" # Host:Container
+  - "${HUB_PORT:-8080}:8080" # Host:Container
 ```
 
 ### Container Fails to Start

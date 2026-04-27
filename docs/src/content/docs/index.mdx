@@ -13,7 +13,7 @@ Hub is an open-source, self-hostable microservice for **collecting and serving**
 
 - **High performance**: Go-powered microservice handles high write volume
 - **Analytics-ready**: Plug-and-play integrations for Apache Superset, Power BI, Tableau, Looker, Snowflake, and more
-- **Self-hostable**: Run in a single Docker container with PostgreSQL
+- **Self-hostable**: Run the API and worker with PostgreSQL
 - **Developer-friendly**: OpenAPI spec and clean REST API
 - **Multi-tenant**: Built-in support for tenant isolation
 - **Fully open-source**: The full Hub is and will be available open-source
@@ -60,15 +60,11 @@ This is where the Hub comes in: it is free, it is simple, and, most importantly,
   </Accordion>
 </Accordion.Group>
 
-## Coming Soon
+## Built In
 
 <Callout variant="note">
-  <p>We're actively working on new features:</p>
+  <p>Hub already includes API-first capabilities for feedback operations:</p>
   <ul>
-    <li>
-      <strong>AI enrichment</strong>: Automatic sentiment analysis, emotion
-      detection, and topic extraction
-    </li>
     <li>
       <strong>Semantic search</strong>: Find similar feedback using natural
       language queries
@@ -77,8 +73,8 @@ This is where the Hub comes in: it is free, it is simple, and, most importantly,
       <strong>Webhooks</strong>: Real-time notifications for feedback events
     </li>
     <li>
-      <strong>Connectors</strong>: Import and export data from external
-      platforms
+      <strong>OpenAPI contract</strong>: Explore generated reference docs and
+      build clients from the same API schema used for tests
     </li>
   </ul>
 </Callout>

@@ -11,7 +11,7 @@ Hub stores all data in a single PostgreSQL database. You can report on it with *
 
 | Step | Action                                                                                                                                                  |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Run Hub + Postgres ([Quick Start](/quickstart))                                                                                                         |
+| 1    | Run Hub, worker, and Postgres ([Quick Start](/quickstart))                                                                                              |
 | 2    | Install [Power BI Desktop](https://powerbi.microsoft.com/desktop/) (free); optionally sign in to Power BI Service for sharing                           |
 | 3    | In Power BI Desktop: **Get Data -> PostgreSQL database** -> enter Hub's server, database, and credentials (see [Step 1](#step-1-get-hub-running) table) |
 | 4    | In the Navigator: select **feedback_records** -> **Load** (or **Transform data** to shape in Power Query)                                               |
@@ -26,7 +26,7 @@ Hub stores all data in a single PostgreSQL database. You can report on it with *
 ### Quick test
 
 1. [Download Power BI Desktop](https://powerbi.microsoft.com/desktop/) (free) and install it.
-2. Run Hub and Postgres locally ([Quick Start](/quickstart)).
+2. Run Hub, worker, and Postgres locally ([Quick Start](/quickstart)).
 3. In Power BI Desktop: **Get Data -> PostgreSQL database** -> use the same host, database, and credentials as Hub (for example, Server `localhost`, Database `hub`, and your Postgres user/password).
 4. Select the **feedback_records** table -> **Load**, then build a chart (for example, bar chart with **Axis** `source_type`, **Values** Count of `id`).
 
@@ -132,7 +132,7 @@ For the complete list of columns and field types, see the [Data Model](/core-con
 
 **Hub**
 
-- [Quick Start](/quickstart) - Run Hub and Postgres
+- [Quick Start](/quickstart) - Run Hub, worker, and Postgres
 - [Data Model](/core-concepts/data-model) - Table schema, columns, and field types for `feedback_records`
 - [Connecting Hub to Superset](/guides/hub-superset) - Same data, with Apache Superset
 

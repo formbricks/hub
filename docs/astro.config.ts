@@ -61,6 +61,15 @@ export default defineConfig({
               label: "Guides",
               autogenerate: { directory: "guides" },
             },
+            {
+              label: "Reference",
+              items: [
+                {
+                  label: "Environment Variables",
+                  slug: "reference/environment-variables",
+                },
+              ],
+            },
           ],
         },
         {

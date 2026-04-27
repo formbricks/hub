@@ -45,7 +45,7 @@ curl -H "Authorization: Bearer your-secret-key-here" \
 
 ## Protected Endpoints
 
-These endpoints require authentication:
+All `/v1/*` endpoints require authentication, including:
 
 - `POST /v1/feedback-records` - Create feedback record
 - `GET /v1/feedback-records?tenant_id=<id>` - List feedback records for a tenant
@@ -53,6 +53,13 @@ These endpoints require authentication:
 - `PATCH /v1/feedback-records/{id}` - Update feedback record
 - `DELETE /v1/feedback-records/{id}` - Delete feedback record
 - `DELETE /v1/feedback-records?user_id=<id>` - Bulk delete feedback records by user
+- `POST /v1/feedback-records/search/semantic` - Search feedback records semantically
+- `GET /v1/feedback-records/{id}/similar?tenant_id=<id>` - Find similar feedback records
+- `GET /v1/webhooks` - List webhooks
+- `POST /v1/webhooks` - Create webhook
+- `GET /v1/webhooks/{id}` - Get webhook
+- `PATCH /v1/webhooks/{id}` - Update webhook
+- `DELETE /v1/webhooks/{id}` - Delete webhook
 
 Always public (no auth required):
 
@@ -110,8 +117,8 @@ Response:
 
 ```json
 {
-  "data": [...],
-  "total": 10
+  "data": [],
+  "limit": 100
 }
 ```
 

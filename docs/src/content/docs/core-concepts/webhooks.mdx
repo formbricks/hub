@@ -59,6 +59,8 @@ Run database migrations and River migrations (required for webhook delivery jobs
 make init-db
 make river-migrate
 make run
+# In another terminal:
+make run-worker
 ```
 
 ### 2. Create a Receiver Endpoint
@@ -170,7 +172,6 @@ Hub sends JSON payloads in this shape:
 
 ```json
 {
-  "id": "01952dc6-c331-7a31-97c5-d0f489f9100a",
   "type": "feedback_record.updated",
   "timestamp": "2026-02-17T10:12:33Z",
   "data": {
