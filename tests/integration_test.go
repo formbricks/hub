@@ -36,6 +36,7 @@ const (
 	testWebhookURLV2 = "https://192.0.2.1/webhook-v2"
 )
 
+// requireUUIDv7 asserts that an ID uses UUID version 7 with the RFC4122 variant.
 func requireUUIDv7(t *testing.T, id uuid.UUID) {
 	t.Helper()
 
