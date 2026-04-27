@@ -16,6 +16,7 @@ import (
 
 // mockFeedbackRecordsService mocks FeedbackRecordsService for handler tests.
 type mockFeedbackRecordsService struct {
+	listFunc       func(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error)
 	bulkDeleteFunc func(ctx context.Context, userID string, tenantID *string) (int, error)
 }
 
@@ -30,9 +31,13 @@ func (m *mockFeedbackRecordsService) GetFeedbackRecord(context.Context, uuid.UUI
 }
 
 func (m *mockFeedbackRecordsService) ListFeedbackRecords(
-	context.Context, *models.ListFeedbackRecordsFilters,
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 ) (*models.ListFeedbackRecordsResponse, error) {
-	return nil, nil
+	if m.listFunc != nil {
+		return m.listFunc(ctx, filters)
+	}
+
+	return &models.ListFeedbackRecordsResponse{}, nil
 }
 
 func (m *mockFeedbackRecordsService) UpdateFeedbackRecord(
@@ -54,11 +59,39 @@ func (m *mockFeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Conte
 }
 
 func TestFeedbackRecordsHandler_List(t *testing.T) {
-	t.Run("missing tenant_id returns 400", func(t *testing.T) {
-		mock := &mockFeedbackRecordsService{}
+	t.Run("missing tenant_id lists without tenant filter", func(t *testing.T) {
+		var capturedFilters *models.ListFeedbackRecordsFilters
+
+		mock := &mockFeedbackRecordsService{
+			listFunc: func(_ context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
+				capturedFilters = filters
+
+				return &models.ListFeedbackRecordsResponse{}, nil
+			},
+		}
 		handler := NewFeedbackRecordsHandler(mock)
 
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://test/v1/feedback-records", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.List(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.NotNil(t, capturedFilters)
+		assert.Nil(t, capturedFilters.TenantID)
+	})
+
+	t.Run("blank tenant_id returns 400", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{
+			listFunc: func(context.Context, *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error) {
+				t.Fatal("service should not be called for invalid tenant_id")
+
+				return nil, nil
+			},
+		}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://test/v1/feedback-records?tenant_id=", http.NoBody)
 		rec := httptest.NewRecorder()
 
 		handler.List(rec, req)

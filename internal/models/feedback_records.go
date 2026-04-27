@@ -175,7 +175,7 @@ func (r *UpdateFeedbackRecordRequest) ChangedFields() []string {
 
 // ListFeedbackRecordsFilters represents filters for listing feedback records.
 type ListFeedbackRecordsFilters struct {
-	TenantID     *string    `form:"tenant_id"      validate:"required,no_null_bytes,min=1"`
+	TenantID     *string    `form:"tenant_id"      validate:"omitempty,no_null_bytes,min=1,max=255"`
 	SubmissionID *string    `form:"submission_id"  validate:"omitempty,no_null_bytes"`
 	SourceType   *string    `form:"source_type"    validate:"omitempty,no_null_bytes"`
 	SourceID     *string    `form:"source_id"      validate:"omitempty,no_null_bytes"`

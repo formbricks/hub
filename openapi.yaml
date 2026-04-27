@@ -54,12 +54,13 @@ paths:
             parameters:
                 - name: tenant_id
                   in: query
-                  required: true
-                  description: Tenant ID (required for isolation). NULL bytes not allowed.
+                  required: false
+                  description: Optional tenant filter. Omit to list all feedback records visible to the API key. NULL bytes not allowed.
                   schema:
                     type: string
-                    description: Tenant ID (required for isolation). NULL bytes not allowed.
+                    description: Optional tenant filter. Omit to list all feedback records visible to the API key. NULL bytes not allowed.
                     minLength: 1
+                    maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
                 - name: submission_id

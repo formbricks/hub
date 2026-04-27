@@ -345,9 +345,31 @@ func TestListFeedbackRecords(t *testing.T) {
 	// decodeData not needed for this create; we only need a record to list
 	require.NoError(t, createResp.Body.Close())
 
-	// Test missing tenant_id returns 400
-	t.Run("Missing tenant_id returns 400", func(t *testing.T) {
+	// Test missing tenant_id lists all records visible to the API key
+	t.Run("Missing tenant_id lists records", func(t *testing.T) {
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	})
+
+	t.Run("Missing tenant_id with limit lists records", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records?limit=10", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	})
+
+	t.Run("Blank tenant_id returns 400", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/v1/feedback-records?tenant_id=", http.NoBody)
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 

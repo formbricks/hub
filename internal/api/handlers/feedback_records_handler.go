@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -117,6 +118,12 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Decode and validate query parameters
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
+		slog.WarnContext(r.Context(), "list feedback records request rejected",
+			"method", r.Method,
+			"endpoint", "/v1/feedback-records",
+			"status", http.StatusBadRequest,
+			"error", err,
+		)
 		validation.RespondValidationError(w, err)
 
 		return
@@ -125,11 +132,23 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
 	if err != nil {
 		if errors.Is(err, cursor.ErrInvalidCursor) {
+			slog.WarnContext(r.Context(), "list feedback records request rejected",
+				"method", r.Method,
+				"endpoint", "/v1/feedback-records",
+				"status", http.StatusBadRequest,
+				"error", err,
+			)
 			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
 
 			return
 		}
 
+		slog.ErrorContext(r.Context(), "list feedback records failed",
+			"method", r.Method,
+			"endpoint", "/v1/feedback-records",
+			"status", http.StatusInternalServerError,
+			"error", err,
+		)
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return
