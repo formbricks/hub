@@ -107,7 +107,7 @@ type EmbeddingClientConfig struct {
 	GoogleCloudLocation string
 }
 
-// ValidateEmbeddingConfig checks provider support and provider-specific requirements (API key, Google Gemini project/location).
+// ValidateEmbeddingConfig checks provider support and provider-specific requirements (API key, Google Cloud project/location).
 // Use before creating a client or at startup to fail fast with a clear error.
 func ValidateEmbeddingConfig(cfg EmbeddingClientConfig) error {
 	provider := NormalizeEmbeddingProvider(cfg.Provider)

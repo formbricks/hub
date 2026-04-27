@@ -1,4 +1,4 @@
-// Package googleai provides a thin wrapper around the Google Gen AI SDK for embeddings (Gemini API).
+// Package googleai provides a thin wrapper around the Google Gen AI SDK for embeddings.
 package googleai
 
 import (
