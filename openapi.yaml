@@ -49,7 +49,7 @@ paths:
             tags:
                 - Feedback Records
             summary: List feedback records with filters
-            description: Lists feedback records with optional filters and pagination
+            description: Lists feedback records for a required tenant_id with optional additional filters and pagination
             operationId: list-feedback-records
             parameters:
                 - name: tenant_id
@@ -60,6 +60,7 @@ paths:
                     type: string
                     description: Tenant ID (required for isolation). NULL bytes not allowed.
                     minLength: 1
+                    maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
                 - name: submission_id
