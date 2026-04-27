@@ -31,6 +31,20 @@ import (
 // Used when DATABASE_URL is not set (e.g. CI uses job env; local can rely on .env).
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
 
+const (
+	testWebhookURL   = "https://192.0.2.1/webhook"
+	testWebhookURLV2 = "https://192.0.2.1/webhook-v2"
+)
+
+// requireUUIDv7 asserts that an ID uses UUID version 7 with the RFC4122 variant.
+func requireUUIDv7(t *testing.T, id uuid.UUID) {
+	t.Helper()
+
+	require.NotEqual(t, uuid.Nil, id)
+	require.Equal(t, uuid.Version(7), id.Version())
+	require.Equal(t, uuid.RFC4122, id.Variant())
+}
+
 // setupTestServer creates a test HTTP server with all routes configured.
 // Database URL comes from env (DATABASE_URL) when set; otherwise config.Load() uses its default.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
@@ -275,7 +289,7 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 
-		assert.NotEmpty(t, result.ID)
+		requireUUIDv7(t, result.ID)
 		assert.Equal(t, "formbricks", result.SourceType)
 		assert.Equal(t, "feedback", result.FieldID)
 		assert.Equal(t, models.FieldTypeText, result.FieldType)
@@ -1096,7 +1110,7 @@ func TestWebhooksCRUD(t *testing.T) {
 
 	// Create webhook (no signing key = auto-generated)
 	createBody := map[string]any{
-		"url":         "https://example.com/webhook",
+		"url":         testWebhookURL,
 		"event_types": []string{"feedback_record.created", "feedback_record.updated"},
 	}
 	body, err := json.Marshal(createBody)
@@ -1115,8 +1129,8 @@ func TestWebhooksCRUD(t *testing.T) {
 	err = decodeData(createResp, &created)
 	require.NoError(t, err)
 	require.NoError(t, createResp.Body.Close())
-	assert.NotEmpty(t, created.ID.String())
-	assert.Equal(t, "https://example.com/webhook", created.URL)
+	requireUUIDv7(t, created.ID)
+	assert.Equal(t, testWebhookURL, created.URL)
 	assert.NotEmpty(t, created.SigningKey)
 	assert.True(t, created.Enabled)
 	assert.Len(t, created.EventTypes, 2)
@@ -1186,7 +1200,7 @@ func TestWebhooksCRUD(t *testing.T) {
 
 	// Update webhook (including tenant_id)
 	updateBody := map[string]any{
-		"url":       "https://example.com/webhook-v2",
+		"url":       testWebhookURLV2,
 		"enabled":   false,
 		"tenant_id": "org-123",
 	}
@@ -1207,7 +1221,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	err = decodeData(updateResp, &updated)
 	require.NoError(t, err)
 	require.NoError(t, updateResp.Body.Close())
-	assert.Equal(t, "https://example.com/webhook-v2", updated.URL)
+	assert.Equal(t, testWebhookURLV2, updated.URL)
 	assert.False(t, updated.Enabled)
 	require.NotNil(t, updated.TenantID)
 	assert.Equal(t, "org-123", *updated.TenantID)
@@ -1263,7 +1277,7 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 
 	// Create with invalid signing_key
 	createBody := map[string]any{
-		"url":         "https://example.com/webhook",
+		"url":         testWebhookURL,
 		"signing_key": "not-valid",
 		"event_types": []string{"feedback_record.created"},
 	}
@@ -1291,7 +1305,7 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 
 	// Create a valid webhook first for update test
 	validBody := map[string]any{
-		"url":         "https://example.com/webhook",
+		"url":         testWebhookURL,
 		"event_types": []string{"feedback_record.created"},
 	}
 	validJSON, err := json.Marshal(validBody)

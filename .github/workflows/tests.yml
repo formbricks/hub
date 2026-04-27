@@ -50,13 +50,18 @@ jobs:
         run: make test-unit
 
   integration-tests:
-    name: Integration Tests
+    name: Integration Tests (${{ matrix.postgres_image }})
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres_image: [pg16, pg17, pg18]
+
     services:
       postgres:
-        image: pgvector/pgvector:pg18
+        image: pgvector/pgvector:${{ matrix.postgres_image }}
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
