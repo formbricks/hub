@@ -5,23 +5,20 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestNewVertexClient_emptyProject_returnsError(t *testing.T) {
+func TestNewGoogleGeminiClient_emptyProject_returnsError(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := NewVertexClient(ctx, "", "europe-west3")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vertex")
+	_, err := NewGoogleGeminiClient(ctx, "", "europe-west3")
+	assert.ErrorIs(t, err, ErrGoogleGeminiProjectRequired)
 }
 
-func TestNewVertexClient_emptyLocation_returnsError(t *testing.T) {
+func TestNewGoogleGeminiClient_emptyLocation_returnsError(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := NewVertexClient(ctx, "my-project", "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "vertex")
+	_, err := NewGoogleGeminiClient(ctx, "my-project", "")
+	assert.ErrorIs(t, err, ErrGoogleGeminiLocationRequired)
 }
 
 func TestClient_CreateEmbedding_emptyInput_returnsErrEmptyInput(t *testing.T) {

@@ -138,15 +138,15 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 
 func TestLoad_EmbeddingGoogleCloudProject(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
-	t.Setenv("EMBEDDING_GOOGLE_CLOUD_PROJECT", "my-vertex-project")
+	t.Setenv("EMBEDDING_GOOGLE_CLOUD_PROJECT", "my-google-cloud-project")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.Embedding.GoogleCloudProject != "my-vertex-project" {
-		t.Errorf("Embedding.GoogleCloudProject = %q, want my-vertex-project", cfg.Embedding.GoogleCloudProject)
+	if cfg.Embedding.GoogleCloudProject != "my-google-cloud-project" {
+		t.Errorf("Embedding.GoogleCloudProject = %q, want my-google-cloud-project", cfg.Embedding.GoogleCloudProject)
 	}
 }
 

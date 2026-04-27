@@ -23,10 +23,10 @@ var (
 	ErrNoEmbeddingInResponse = errors.New("googleai: no embedding in response")
 	// ErrDimensionMismatch is returned when the response embedding length does not match configured dimensions.
 	ErrDimensionMismatch = errors.New("googleai: embedding dimension mismatch")
-	// ErrVertexProjectRequired is returned when NewVertexClient is called with empty project.
-	ErrVertexProjectRequired = errors.New("googleai vertex client: project is required")
-	// ErrVertexLocationRequired is returned when NewVertexClient is called with empty location.
-	ErrVertexLocationRequired = errors.New("googleai vertex client: location is required")
+	// ErrGoogleGeminiProjectRequired is returned when NewGoogleGeminiClient is called with empty project.
+	ErrGoogleGeminiProjectRequired = errors.New("googleai google-gemini client: project is required")
+	// ErrGoogleGeminiLocationRequired is returned when NewGoogleGeminiClient is called with empty location.
+	ErrGoogleGeminiLocationRequired = errors.New("googleai google-gemini client: location is required")
 )
 
 // Client calls the Gemini embeddings API via the Google Gen AI SDK.
@@ -82,16 +82,16 @@ func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Clien
 	return client, nil
 }
 
-// NewVertexClient creates a Vertex AI embeddings client using Application Default Credentials (ADC).
-// When running outside GCP (e.g. EKS, Railway), set GOOGLE_APPLICATION_CREDENTIALS to the path of a service account key JSON file.
-// project is the GCP project ID; location is the region (e.g. europe-west3, global).
-func NewVertexClient(ctx context.Context, project, location string, opts ...ClientOption) (*Client, error) {
+// NewGoogleGeminiClient creates a Google Cloud-hosted Gemini embeddings client using Application Default Credentials (ADC).
+// When running outside Google Cloud (e.g. EKS, Railway), set GOOGLE_APPLICATION_CREDENTIALS to the path of a service account key JSON file.
+// project is the Google Cloud project ID; location is the region (e.g. europe-west3, global).
+func NewGoogleGeminiClient(ctx context.Context, project, location string, opts ...ClientOption) (*Client, error) {
 	if strings.TrimSpace(project) == "" {
-		return nil, ErrVertexProjectRequired
+		return nil, ErrGoogleGeminiProjectRequired
 	}
 
 	if strings.TrimSpace(location) == "" {
-		return nil, ErrVertexLocationRequired
+		return nil, ErrGoogleGeminiLocationRequired
 	}
 
 	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
@@ -100,7 +100,7 @@ func NewVertexClient(ctx context.Context, project, location string, opts ...Clie
 		Backend:  genai.BackendVertexAI,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("googleai vertex client: %w", err)
+		return nil, fmt.Errorf("googleai google-gemini client: %w", err)
 	}
 
 	client := &Client{
