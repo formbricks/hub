@@ -5,6 +5,28 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- PostgreSQL 18+ provides a native uuidv7() in pg_catalog.
+-- Older versions do not, so create a schema-local fallback for bootstrap compatibility.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION public.uuidv7() RETURNS uuid
+AS $$
+  SELECT encode(
+    set_bit(
+      set_bit(
+        overlay(
+          uuid_send(gen_random_uuid())
+          PLACING substring(int8send((extract(epoch from clock_timestamp()) * 1000)::bigint) FROM 3)
+          FROM 1 FOR 6
+        ),
+        52, 1
+      ),
+      53, 1
+    ),
+    'hex'
+  )::uuid;
+$$ LANGUAGE sql VOLATILE PARALLEL SAFE;
+-- +goose StatementEnd
+
 -- Create ENUM types
 CREATE TYPE field_type_enum AS ENUM (
     'text', 'categorical', 'nps', 'csat', 'ces', 'rating', 'number', 'boolean', 'date'
@@ -72,3 +94,4 @@ CREATE INDEX idx_feedback_records_tenant_field_type ON feedback_records(tenant_i
 -- explicitly drop extensions elsewhere.
 DROP TABLE IF EXISTS feedback_records;
 DROP TYPE IF EXISTS field_type_enum;
+DROP FUNCTION IF EXISTS public.uuidv7();

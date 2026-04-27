@@ -49,8 +49,76 @@ jobs:
       - name: Run unit tests
         run: make test-unit
 
+  compatibility-tests:
+    name: Compatibility Tests (${{ matrix.postgres_image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres_image: [pg16, pg17]
+
+    services:
+      postgres:
+        image: pgvector/pgvector:${{ matrix.postgres_image }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable
+      API_KEY: test-api-key-for-ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.26.2'
+
+      - name: Cache Go modules
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.27.0
+
+      - name: Validate migrations
+        run: make migrate-validate
+
+      - name: Initialize database schema
+        run: make init-db
+
+      - name: Run River migrations
+        run: |
+          go install github.com/riverqueue/river/cmd/river@v0.31.0
+          make river-migrate
+
+      - name: Run integration tests
+        run: make tests
+
   integration-tests:
-    name: Integration Tests
+    name: Integration Tests (pg18)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -174,7 +242,7 @@ jobs:
 
   tests:
     name: All Tests
-    needs: [unit-tests, integration-tests, coverage]
+    needs: [unit-tests, compatibility-tests, integration-tests, coverage]
     runs-on: ubuntu-24.04
     if: always()
     steps:
@@ -186,6 +254,10 @@ jobs:
           fi
           if [ "${{ needs.integration-tests.result }}" != "success" ]; then
             echo "Integration tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.compatibility-tests.result }}" != "success" ]; then
+            echo "Compatibility tests failed"
             exit 1
           fi
           if [ "${{ needs.coverage.result }}" != "success" ]; then

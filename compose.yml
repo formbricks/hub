@@ -1,7 +1,7 @@
 services:
   # PostgreSQL database with pgvector extension for Hub
   postgres:
-    image: pgvector/pgvector:pg18
+    image: pgvector/pgvector:${POSTGRES_IMAGE_TAG:-pg17}
     container_name: formbricks_postgres
     environment:
       POSTGRES_USER: postgres
