@@ -246,10 +246,12 @@ func TestCreateFeedbackRecord(t *testing.T) {
 
 	// Test with valid authentication (use unique submission_id to avoid 409 from leftover data)
 	t.Run("Success with valid API key", func(t *testing.T) {
+		userID := "create-test-user"
 		reqBody := map[string]any{
 			"source_type":   "formbricks",
 			"submission_id": uuid.New().String(),
 			"tenant_id":     "test-tenant",
+			"user_id":       userID,
 			"field_id":      "feedback",
 			"field_type":    "text",
 			"value_text":    "Great product!",
@@ -277,6 +279,8 @@ func TestCreateFeedbackRecord(t *testing.T) {
 		assert.Equal(t, "formbricks", result.SourceType)
 		assert.Equal(t, "feedback", result.FieldID)
 		assert.Equal(t, models.FieldTypeText, result.FieldType)
+		require.NotNil(t, result.UserID)
+		assert.Equal(t, userID, *result.UserID)
 		assert.NotNil(t, result.ValueText)
 		assert.Equal(t, "Great product!", *result.ValueText)
 	})
@@ -393,6 +397,59 @@ func TestListFeedbackRecords(t *testing.T) {
 		for _, exp := range result.Data {
 			assert.Equal(t, "formbricks", exp.SourceType)
 		}
+	})
+
+	t.Run("List with user_id filter", func(t *testing.T) {
+		tenantID := "tenant-user-id-filter-" + uuid.New().String()
+		userID := "list-filter-user"
+
+		for _, item := range []struct {
+			fieldID string
+			userID  string
+		}{
+			{"matching", userID},
+			{"other", "other-list-filter-user"},
+		} {
+			body, err := json.Marshal(map[string]any{
+				"source_type":   "formbricks",
+				"submission_id": uuid.New().String(),
+				"tenant_id":     tenantID,
+				"user_id":       item.userID,
+				"field_id":      item.fieldID,
+				"field_type":    "text",
+				"value_text":    item.fieldID,
+			})
+			require.NoError(t, err)
+			req, err := http.NewRequestWithContext(
+				context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body),
+			)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+			require.NoError(t, resp.Body.Close())
+		}
+
+		listURL := server.URL + "/v1/feedback-records?tenant_id=" + tenantID + "&user_id=" + userID
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, listURL, http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var result models.ListFeedbackRecordsResponse
+
+		err = decodeData(resp, &result)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		require.Len(t, result.Data, 1)
+		require.NotNil(t, result.Data[0].UserID)
+		assert.Equal(t, userID, *result.Data[0].UserID)
 	})
 
 	// Test cursor pagination
@@ -706,8 +763,10 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 
 	// Test updating the feedback record
 	t.Run("Update feedback record", func(t *testing.T) {
+		userID := "updated-user"
 		updateBody := map[string]any{
 			"value_text": "Updated comment",
+			"user_id":    userID,
 		}
 		body, err := json.Marshal(updateBody)
 		require.NoError(t, err)
@@ -729,6 +788,8 @@ func TestUpdateFeedbackRecord(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 
 		assert.Equal(t, created.ID, result.ID)
+		require.NotNil(t, result.UserID)
+		assert.Equal(t, userID, *result.UserID)
 		assert.NotNil(t, result.ValueText)
 		assert.Equal(t, "Updated comment", *result.ValueText)
 	})
@@ -813,17 +874,17 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	userID := "bulk-delete-test-user-123"
 	subID := uuid.New().String() // unique per run to avoid 409 from leftover data
 
-	// Create several feedback records with the same user_identifier
+	// Create several feedback records with the same user_id
 	tenantID := "test-tenant"
 	createPayload := func(fieldID string, valueNum float64) map[string]any {
 		return map[string]any{
-			"source_type":     "formbricks",
-			"submission_id":   subID,
-			"tenant_id":       tenantID,
-			"user_identifier": userID,
-			"field_id":        fieldID,
-			"field_type":      "number",
-			"value_number":    valueNum,
+			"source_type":   "formbricks",
+			"submission_id": subID,
+			"tenant_id":     tenantID,
+			"user_id":       userID,
+			"field_id":      fieldID,
+			"field_type":    "number",
+			"value_number":  valueNum,
 		}
 	}
 	createdIDs := make([]string, 0, 3)
@@ -853,8 +914,8 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	}
 
-	// Bulk delete by user_identifier
-	bulkDelURL := server.URL + "/v1/feedback-records?user_identifier=" + userID
+	// Bulk delete by user_id
+	bulkDelURL := server.URL + "/v1/feedback-records?user_id=" + userID
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL, http.NoBody)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -883,7 +944,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	}
 
 	// Bulk delete again (no matching records) returns 0
-	bulkDelURL2 := server.URL + "/v1/feedback-records?user_identifier=" + userID
+	bulkDelURL2 := server.URL + "/v1/feedback-records?user_id=" + userID
 	req2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL2, http.NoBody)
 	require.NoError(t, err)
 	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -913,13 +974,13 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 			{tenantB, "fb2"},
 		} {
 			body, err := json.Marshal(map[string]any{
-				"source_type":     "formbricks",
-				"submission_id":   userIDTenant + "-" + item.fieldID,
-				"user_identifier": userIDTenant,
-				"tenant_id":       item.tenantID,
-				"field_id":        item.fieldID,
-				"field_type":      "text",
-				"value_text":      "x",
+				"source_type":   "formbricks",
+				"submission_id": userIDTenant + "-" + item.fieldID,
+				"user_id":       userIDTenant,
+				"tenant_id":     item.tenantID,
+				"field_id":      item.fieldID,
+				"field_type":    "text",
+				"value_text":    "x",
 			})
 			require.NoError(t, err)
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
@@ -933,7 +994,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		}
 
 		// Delete only tenant_a
-		delURL := server.URL + "/v1/feedback-records?user_identifier=" + userIDTenant + "&tenant_id=" + tenantA
+		delURL := server.URL + "/v1/feedback-records?user_id=" + userIDTenant + "&tenant_id=" + tenantA
 		delReq, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL, http.NoBody)
 		require.NoError(t, err)
 		delReq.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -949,7 +1010,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		assert.Equal(t, int64(1), delResult.DeletedCount)
 
 		// Delete remaining (tenant_b) — should delete 2
-		delURL2 := server.URL + "/v1/feedback-records?user_identifier=" + userIDTenant + "&tenant_id=" + tenantB
+		delURL2 := server.URL + "/v1/feedback-records?user_id=" + userIDTenant + "&tenant_id=" + tenantB
 		delReq2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL2, http.NoBody)
 		require.NoError(t, err)
 		delReq2.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -988,30 +1049,30 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	userID := "repo-bulk-delete-user"
 	sourceType := "formbricks"
 
-	// Create two records with same user_identifier
+	// Create two records with same user_id
 	const bulkDeleteTenant = "bulk-delete-tenant"
 
 	req1 := &models.CreateFeedbackRecordRequest{
-		SourceType:     sourceType,
-		SubmissionID:   userID,
-		TenantID:       bulkDeleteTenant,
-		FieldID:        "f1",
-		FieldType:      models.FieldTypeNumber,
-		ValueNumber:    new(1.0),
-		UserIdentifier: new(userID),
+		SourceType:   sourceType,
+		SubmissionID: userID,
+		TenantID:     bulkDeleteTenant,
+		FieldID:      "f1",
+		FieldType:    models.FieldTypeNumber,
+		ValueNumber:  new(1.0),
+		UserID:       new(userID),
 	}
 	rec1, err := repo.Create(ctx, req1)
 	require.NoError(t, err)
 	require.NotEmpty(t, rec1.ID)
 
 	req2 := &models.CreateFeedbackRecordRequest{
-		SourceType:     sourceType,
-		SubmissionID:   userID,
-		TenantID:       bulkDeleteTenant,
-		FieldID:        "f2",
-		FieldType:      models.FieldTypeNumber,
-		ValueNumber:    new(2.0),
-		UserIdentifier: new(userID),
+		SourceType:   sourceType,
+		SubmissionID: userID,
+		TenantID:     bulkDeleteTenant,
+		FieldID:      "f2",
+		FieldType:    models.FieldTypeNumber,
+		ValueNumber:  new(2.0),
+		UserID:       new(userID),
 	}
 	rec2, err := repo.Create(ctx, req2)
 	require.NoError(t, err)

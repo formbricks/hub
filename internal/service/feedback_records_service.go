@@ -16,8 +16,8 @@ import (
 	"github.com/formbricks/hub/pkg/cursor"
 )
 
-// ErrUserIdentifierRequired is returned when bulk delete is called without user_identifier (err113).
-var ErrUserIdentifierRequired = errors.New("user_identifier is required")
+// ErrUserIDRequired is returned when bulk delete is called without user_id (err113).
+var ErrUserIDRequired = errors.New("user_id is required")
 
 // ErrEmbeddingBackfillNotConfigured is returned when BackfillEmbeddings is called without embedding inserter/queue.
 var ErrEmbeddingBackfillNotConfigured = errors.New("embedding backfill not configured")
@@ -35,7 +35,7 @@ type FeedbackRecordsRepository interface {
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	BulkDelete(ctx context.Context, userIdentifier string, tenantID *string) ([]uuid.UUID, error)
+	BulkDelete(ctx context.Context, userID string, tenantID *string) ([]uuid.UUID, error)
 }
 
 // EmbeddingsRepository defines the interface for embeddings table access.
@@ -195,14 +195,14 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 	return nil
 }
 
-// BulkDeleteFeedbackRecords deletes all feedback records matching user_identifier and optional tenant_id.
+// BulkDeleteFeedbackRecords deletes all feedback records matching user_id and optional tenant_id.
 // Publishes a single FeedbackRecordDeleted event with data = [id1, id2, ...] (array of deleted IDs).
-func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userIdentifier string, tenantID *string) (int, error) {
-	if userIdentifier == "" {
-		return 0, ErrUserIdentifierRequired
+func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userID string, tenantID *string) (int, error) {
+	if userID == "" {
+		return 0, ErrUserIDRequired
 	}
 
-	ids, err := s.repo.BulkDelete(ctx, userIdentifier, tenantID)
+	ids, err := s.repo.BulkDelete(ctx, userID, tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("bulk delete feedback records: %w", err)
 	}

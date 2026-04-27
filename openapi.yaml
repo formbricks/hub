@@ -118,12 +118,12 @@ paths:
                         - boolean
                         - date
                     pattern: '^[^\x00]*$'
-                - name: user_identifier
+                - name: user_id
                   in: query
-                  description: Filter by user identifier. NULL bytes not allowed.
+                  description: Filter by user ID. NULL bytes not allowed.
                   schema:
                     type: string
-                    description: Filter by user identifier. NULL bytes not allowed.
+                    description: Filter by user ID. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
                     example: "user-abc-123"
                 - name: since
@@ -183,7 +183,7 @@ paths:
                                               value_number: 9
                                               source_id: "survey-123"
                                               source_name: "Q1 NPS Survey"
-                                              user_identifier: "user-abc-123"
+                                              user_id: "user-abc-123"
                                               tenant_id: "org-123"
                                               submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                         limit: 100
@@ -234,7 +234,7 @@ paths:
                                     value_number: 9
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
-                                    user_identifier: "user-abc-123"
+                                    user_id: "user-abc-123"
                                     tenant_id: "org-123"
                                     submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     language: "en"
@@ -248,7 +248,7 @@ paths:
                                     value_text: "Great service! Keep it up."
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
-                                    user_identifier: "user-abc-123"
+                                    user_id: "user-abc-123"
                                     tenant_id: "org-123"
                                     submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     language: "en"
@@ -262,7 +262,7 @@ paths:
                                     value_number: 8
                                     source_id: "survey-123"
                                     source_name: "NPS Survey"
-                                    user_identifier: "user-abc-123"
+                                    user_id: "user-abc-123"
                                     tenant_id: "org-123"
                                     submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     language: "en"
@@ -276,7 +276,7 @@ paths:
                                     value_boolean: true
                                     source_id: "survey-123"
                                     source_name: "Q1 NPS Survey"
-                                    user_identifier: "user-abc-123"
+                                    user_id: "user-abc-123"
                                     tenant_id: "org-123"
                                     submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     language: "en"
@@ -292,7 +292,7 @@ paths:
                                     value_number: 1
                                     source_id: "survey-123"
                                     source_name: "Feature Priority Survey"
-                                    user_identifier: "user-abc-123"
+                                    user_id: "user-abc-123"
                                     tenant_id: "org-123"
                                     submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     metadata:
@@ -310,7 +310,7 @@ paths:
                                     value_number: 4
                                     source_id: "survey-123"
                                     source_name: "Feature Satisfaction Survey"
-                                    user_identifier: "user-abc-123"
+                                    user_id: "user-abc-123"
                                     tenant_id: "org-123"
                                     submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                     metadata:
@@ -338,7 +338,7 @@ paths:
                                         value_number: 9
                                         source_id: "survey-123"
                                         source_name: "Q1 NPS Survey"
-                                        user_identifier: "user-abc-123"
+                                        user_id: "user-abc-123"
                                         tenant_id: "org-123"
                                         submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                         language: "en"
@@ -379,17 +379,17 @@ paths:
         delete:
             tags:
                 - Feedback Records
-            summary: Bulk delete feedback records by user identifier
-            description: Permanently deletes all feedback record data points matching the specified user_identifier. This endpoint supports GDPR Article 17 (Right to Erasure) requests.
+            summary: Bulk delete feedback records by user ID
+            description: Permanently deletes all feedback record data points matching the specified user_id. This endpoint supports GDPR Article 17 (Right to Erasure) requests.
             operationId: bulk-delete-feedback-records
             parameters:
-                - name: user_identifier
+                - name: user_id
                   in: query
-                  description: Delete all records matching this user identifier (required). NULL bytes not allowed.
+                  description: Delete all records matching this user ID (required). NULL bytes not allowed.
                   required: true
                   schema:
                     type: string
-                    description: Delete all records matching this user identifier (required). NULL bytes not allowed.
+                    description: Delete all records matching this user ID (required). NULL bytes not allowed.
                     minLength: 1
                     pattern: '^[^\x00]*$'
                     example: "user-abc-123"
@@ -541,9 +541,9 @@ paths:
                                             - "follow-up"
                                         priority: "high"
                             update_user:
-                                summary: Update user identifier
+                                summary: Update user ID
                                 value:
-                                    user_identifier: "user-xyz-789"
+                                    user_id: "user-xyz-789"
                 required: true
             responses:
                 "200":
@@ -567,7 +567,7 @@ paths:
                                         value_number: 10
                                         source_id: "survey-123"
                                         source_name: "Q1 NPS Survey"
-                                        user_identifier: "user-abc-123"
+                                        user_id: "user-abc-123"
                                         tenant_id: "org-123"
                                         submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                         language: "en"
@@ -1205,9 +1205,9 @@ components:
                     minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
-                user_identifier:
+                user_id:
                     type: string
-                    description: Anonymous ID or email hash
+                    description: User ID (e.g., anonymous ID or email hash)
                     examples:
                         - user-abc-123
                 value_boolean:
@@ -1359,9 +1359,9 @@ components:
                     type: string
                     description: When this record was last updated
                     format: date-time
-                user_identifier:
+                user_id:
                     type: string
-                    description: User identifier
+                    description: User ID (e.g., anonymous ID or email hash)
                 value_boolean:
                     type: boolean
                     description: Boolean response
@@ -1668,9 +1668,9 @@ components:
                     type: object
                     description: Update metadata. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
                     additionalProperties: {}
-                user_identifier:
+                user_id:
                     type: string
-                    description: Update user identifier
+                    description: User ID (e.g., anonymous ID or email hash)
                 value_boolean:
                     type: boolean
                     description: Update boolean response

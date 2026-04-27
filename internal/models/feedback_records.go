@@ -100,7 +100,7 @@ type FeedbackRecord struct {
 	ValueDate       *time.Time      `json:"value_date,omitempty"`
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 	Language        *string         `json:"language,omitempty"`
-	UserIdentifier  *string         `json:"user_identifier,omitempty"`
+	UserID          *string         `json:"user_id,omitempty"`
 	TenantID        string          `json:"tenant_id"`
 	SubmissionID    string          `json:"submission_id"` // mandatory; never null
 }
@@ -122,21 +122,21 @@ type CreateFeedbackRecordRequest struct {
 	ValueDate       *time.Time      `json:"value_date,omitempty"`
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 	Language        *string         `json:"language,omitempty"          validate:"omitempty,no_null_bytes,max=10"`
-	UserIdentifier  *string         `json:"user_identifier,omitempty"`
+	UserID          *string         `json:"user_id,omitempty"`
 	TenantID        string          `json:"tenant_id"                   validate:"required,no_null_bytes,max=255"`
 	SubmissionID    string          `json:"submission_id"               validate:"required,no_null_bytes,min=1,max=255"`
 }
 
 // UpdateFeedbackRecordRequest represents the request to update a feedback record
-// Only value fields, metadata, language, and user_identifier can be updated.
+// Only value fields, metadata, language, and user_id can be updated.
 type UpdateFeedbackRecordRequest struct {
-	ValueText      *string         `json:"value_text,omitempty"      validate:"omitempty,no_null_bytes"`
-	ValueNumber    *float64        `json:"value_number,omitempty"`
-	ValueBoolean   *bool           `json:"value_boolean,omitempty"`
-	ValueDate      *time.Time      `json:"value_date,omitempty"`
-	Metadata       json.RawMessage `json:"metadata,omitempty"`
-	Language       *string         `json:"language,omitempty"        validate:"omitempty,no_null_bytes,max=10"`
-	UserIdentifier *string         `json:"user_identifier,omitempty"`
+	ValueText    *string         `json:"value_text,omitempty"    validate:"omitempty,no_null_bytes"`
+	ValueNumber  *float64        `json:"value_number,omitempty"`
+	ValueBoolean *bool           `json:"value_boolean,omitempty"`
+	ValueDate    *time.Time      `json:"value_date,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	Language     *string         `json:"language,omitempty"      validate:"omitempty,no_null_bytes,max=10"`
+	UserID       *string         `json:"user_id,omitempty"`
 }
 
 // ChangedFields returns the names of fields that are set (non-nil) in the update request.
@@ -166,8 +166,8 @@ func (r *UpdateFeedbackRecordRequest) ChangedFields() []string {
 		fields = append(fields, "language")
 	}
 
-	if r.UserIdentifier != nil {
-		fields = append(fields, "user_identifier")
+	if r.UserID != nil {
+		fields = append(fields, "user_id")
 	}
 
 	return fields
@@ -175,18 +175,18 @@ func (r *UpdateFeedbackRecordRequest) ChangedFields() []string {
 
 // ListFeedbackRecordsFilters represents filters for listing feedback records.
 type ListFeedbackRecordsFilters struct {
-	TenantID       *string    `form:"tenant_id"       validate:"required,no_null_bytes,min=1"`
-	SubmissionID   *string    `form:"submission_id"   validate:"omitempty,no_null_bytes"`
-	SourceType     *string    `form:"source_type"     validate:"omitempty,no_null_bytes"`
-	SourceID       *string    `form:"source_id"       validate:"omitempty,no_null_bytes"`
-	FieldID        *string    `form:"field_id"        validate:"omitempty,no_null_bytes"`
-	FieldGroupID   *string    `form:"field_group_id"  validate:"omitempty,no_null_bytes"`
-	FieldType      *FieldType `form:"field_type"      validate:"omitempty,field_type"`
-	UserIdentifier *string    `form:"user_identifier" validate:"omitempty,no_null_bytes"`
-	Since          *time.Time `form:"since"           validate:"omitempty"`
-	Until          *time.Time `form:"until"           validate:"omitempty"`
-	Limit          int        `form:"limit"           validate:"omitempty,min=1,max=1000"`
-	Cursor         string     `form:"cursor"          validate:"omitempty"` // keyset; omit for first page, use next_cursor for next
+	TenantID     *string    `form:"tenant_id"      validate:"required,no_null_bytes,min=1"`
+	SubmissionID *string    `form:"submission_id"  validate:"omitempty,no_null_bytes"`
+	SourceType   *string    `form:"source_type"    validate:"omitempty,no_null_bytes"`
+	SourceID     *string    `form:"source_id"      validate:"omitempty,no_null_bytes"`
+	FieldID      *string    `form:"field_id"       validate:"omitempty,no_null_bytes"`
+	FieldGroupID *string    `form:"field_group_id" validate:"omitempty,no_null_bytes"`
+	FieldType    *FieldType `form:"field_type"     validate:"omitempty,field_type"`
+	UserID       *string    `form:"user_id"        validate:"omitempty,no_null_bytes"`
+	Since        *time.Time `form:"since"          validate:"omitempty"`
+	Until        *time.Time `form:"until"          validate:"omitempty"`
+	Limit        int        `form:"limit"          validate:"omitempty,min=1,max=1000"`
+	Cursor       string     `form:"cursor"         validate:"omitempty"` // keyset; omit for first page, use next_cursor for next
 }
 
 // ListFeedbackRecordsResponse represents the response for listing feedback records.
@@ -198,8 +198,8 @@ type ListFeedbackRecordsResponse struct {
 
 // BulkDeleteFilters represents query parameters for bulk delete operation.
 type BulkDeleteFilters struct {
-	UserIdentifier string  `form:"user_identifier" validate:"required,no_null_bytes,min=1"`
-	TenantID       *string `form:"tenant_id"       validate:"omitempty,no_null_bytes"`
+	UserID   string  `form:"user_id"   validate:"required,no_null_bytes,min=1"`
+	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes"`
 }
 
 // BulkDeleteResponse represents the response for bulk delete operation.
