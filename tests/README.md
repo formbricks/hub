@@ -62,4 +62,4 @@ The test setup automatically sets this key in the `API_KEY` environment variable
 - Tests use the actual database configured in `.env`
 - Tests create real data in the database
 - Consider using a separate test database for isolation
-- The search endpoint tests will pass but return empty results until search is implemented
+- Semantic search is covered in handler and service tests; these integration tests focus on database-backed CRUD and webhook routes.

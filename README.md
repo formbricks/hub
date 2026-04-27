@@ -34,9 +34,9 @@ If you are looking for the complete Formbricks application (surveys, UI, broader
 
 ## Built for the AI Age
 
-Hub is being prepared as the core datastore for agentic experience workflows.
+Hub is the core datastore for agentic experience workflows.
 
-Formbrocks Hub enables the next generation of AI-powered analysis and semantic search workflows on top of experience data.
+Formbricks Hub enables the next generation of AI-powered analysis and semantic search workflows on top of experience data.
 
 This makes Hub a strong fit if you want to build:
 
