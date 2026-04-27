@@ -30,8 +30,11 @@ import (
 // defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
 // Used when DATABASE_URL is not set (e.g. CI uses job env; local can rely on .env).
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
-const testWebhookURL = "https://93.184.216.34/webhook"
-const testWebhookURLV2 = "https://93.184.216.34/webhook-v2"
+
+const (
+	testWebhookURL   = "https://192.0.2.1/webhook"
+	testWebhookURLV2 = "https://192.0.2.1/webhook-v2"
+)
 
 func requireUUIDv7(t *testing.T, id uuid.UUID) {
 	t.Helper()
