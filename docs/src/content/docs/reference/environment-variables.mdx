@@ -67,16 +67,16 @@ as host-port conveniences. They are compose variables, not Hub runtime settings.
 
 ## Embeddings
 
-| Variable                          | Default | Description                                     |
-| --------------------------------- | ------- | ----------------------------------------------- |
-| `EMBEDDING_PROVIDER`              | -       | Embedding provider identifier.                  |
-| `EMBEDDING_PROVIDER_API_KEY`      | -       | API key for the embedding provider.             |
-| `EMBEDDING_MODEL`                 | -       | Embedding model name.                           |
-| `EMBEDDING_MAX_CONCURRENT`        | `5`     | Max concurrent embedding jobs.                  |
-| `EMBEDDING_MAX_ATTEMPTS`          | `3`     | Max embedding attempts.                         |
-| `EMBEDDING_NORMALIZE`             | `false` | Whether to normalize embeddings before storage. |
-| `EMBEDDING_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project for supported providers.   |
-| `EMBEDDING_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location for supported providers.  |
+| Variable                          | Default | Description                                                        |
+| --------------------------------- | ------- | ------------------------------------------------------------------ |
+| `EMBEDDING_PROVIDER`              | -       | Embedding provider. One of `openai`, `google`, or `google-vertex`. |
+| `EMBEDDING_PROVIDER_API_KEY`      | -       | API key for the embedding provider.                                |
+| `EMBEDDING_MODEL`                 | -       | Embedding model name.                                              |
+| `EMBEDDING_MAX_CONCURRENT`        | `5`     | Max concurrent embedding jobs.                                     |
+| `EMBEDDING_MAX_ATTEMPTS`          | `3`     | Max embedding attempts.                                            |
+| `EMBEDDING_NORMALIZE`             | `false` | Whether to normalize embeddings before storage.                    |
+| `EMBEDDING_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project for supported providers.                      |
+| `EMBEDDING_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location for supported providers.                     |
 
 ## Observability
 
