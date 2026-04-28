@@ -26,6 +26,7 @@
 - Keep package names short and domain-focused (e.g., `repository`, `service`).
 
 ## Multi-Tenancy & Data Isolation
+
 - Treat `tenant_id` as a security boundary, not a convenience filter. Tenant-owned data must never be read, enqueued, dispatched, cached, searched, embedded, or deleted across tenants.
 - When making a model, migration, API request, or repository change involving tenant-owned data, audit every downstream path that carries or derives from that data: handlers, services, repositories, message publishers, River job args, workers, webhook payloads, search, embeddings, bulk operations, logs, and metrics.
 - Prefer tenant-aware repository/service methods for tenant-owned workflows. Avoid adding broad helpers that return all enabled/all matching resources when the caller is dispatching, processing, or exposing tenant data.
