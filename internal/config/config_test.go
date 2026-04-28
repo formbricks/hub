@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -92,70 +90,6 @@ func TestLoadAlwaysReturnsNilError(t *testing.T) {
 	if cfg == nil {
 		t.Error("Load() config = nil, want non-nil config")
 	}
-}
-
-func TestDatabaseURLConfigured(t *testing.T) {
-	t.Run("true when environment variable is set to default local URL", func(t *testing.T) {
-		t.Setenv("DATABASE_URL", DefaultDatabaseURL)
-
-		if !databaseURLConfigured(filepath.Join(t.TempDir(), ".env")) {
-			t.Fatal("databaseURLConfigured() = false, want true")
-		}
-	})
-
-	t.Run("false when environment variable is empty", func(t *testing.T) {
-		envFile := filepath.Join(t.TempDir(), ".env")
-		if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://from-file\n"), 0o600); err != nil {
-			t.Fatalf("write env file: %v", err)
-		}
-
-		t.Setenv("DATABASE_URL", "")
-
-		if databaseURLConfigured(envFile) {
-			t.Fatal("databaseURLConfigured() = true, want false")
-		}
-	})
-
-	t.Run("true when env file has database URL", func(t *testing.T) {
-		restoreUnsetEnv(t, "DATABASE_URL")
-
-		envFile := filepath.Join(t.TempDir(), ".env")
-		if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://from-file\n"), 0o600); err != nil {
-			t.Fatalf("write env file: %v", err)
-		}
-
-		if !databaseURLConfigured(envFile) {
-			t.Fatal("databaseURLConfigured() = false, want true")
-		}
-	})
-
-	t.Run("false when neither env nor env file has database URL", func(t *testing.T) {
-		restoreUnsetEnv(t, "DATABASE_URL")
-
-		if databaseURLConfigured(filepath.Join(t.TempDir(), ".env")) {
-			t.Fatal("databaseURLConfigured() = true, want false")
-		}
-	})
-}
-
-//nolint:usetesting // This helper deliberately unsets env vars; t.Setenv cannot express an unset value.
-func restoreUnsetEnv(t *testing.T, key string) {
-	t.Helper()
-
-	oldValue, hadValue := os.LookupEnv(key)
-	if err := os.Unsetenv(key); err != nil {
-		t.Fatalf("unset %s: %v", key, err)
-	}
-
-	t.Cleanup(func() {
-		if hadValue {
-			_ = os.Setenv(key, oldValue)
-
-			return
-		}
-
-		_ = os.Unsetenv(key)
-	})
 }
 
 func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {

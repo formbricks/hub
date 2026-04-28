@@ -401,6 +401,17 @@ const listEnabledForEventTypeSelect = `
 func (r *WebhooksRepository) ListEnabledForEventTypeAndTenant(
 	ctx context.Context, eventType string, tenantID *string,
 ) ([]models.Webhook, error) {
+	query, args := listEnabledForEventTypeAndTenantQuery(eventType, tenantID)
+
+	webhooks, err := r.fetchWebhooks(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list enabled webhooks for event type and tenant: %w", err)
+	}
+
+	return webhooks, nil
+}
+
+func listEnabledForEventTypeAndTenantQuery(eventType string, tenantID *string) (string, []any) {
 	query := listEnabledForEventTypeSelect
 	args := []any{eventType}
 
@@ -414,12 +425,7 @@ func (r *WebhooksRepository) ListEnabledForEventTypeAndTenant(
 
 	query += ` ORDER BY id`
 
-	webhooks, err := r.fetchWebhooks(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list enabled webhooks for event type and tenant: %w", err)
-	}
-
-	return webhooks, nil
+	return query, args
 }
 
 // fetchWebhooks executes the given query and scans rows into Webhook slices.
