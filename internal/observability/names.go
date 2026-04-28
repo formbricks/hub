@@ -63,6 +63,7 @@ var allowedDisabledReasons = map[string]bool{
 // allowedDispatchReasons for hub_webhook_dispatch_errors_total.
 var allowedDispatchReasons = map[string]bool{
 	"get_webhook_failed": true,
+	"tenant_mismatch":    true,
 }
 
 // allowedEmbeddingProviderReasons for hub_embedding_provider_errors_total.

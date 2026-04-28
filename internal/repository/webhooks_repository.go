@@ -388,50 +388,35 @@ func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook,
 	return webhooks, nil
 }
 
-// ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
-// Order is deterministic (ORDER BY id) so delivery behavior is consistent.
-func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
-	query := `
+const listEnabledForEventTypeSelect = `
 		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
 		FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
-		ORDER BY id
 	`
 
-	rows, err := r.db.Query(ctx, query, eventType)
+// ListEnabledForEventTypeAndTenant retrieves enabled webhooks for an event type and tenant boundary.
+// Global webhooks (tenant_id NULL) match every event. Tenant-scoped webhooks match only the same tenant.
+// When tenantID is nil, only global webhooks are returned because scoped webhooks cannot be proven safe.
+func (r *WebhooksRepository) ListEnabledForEventTypeAndTenant(
+	ctx context.Context, eventType string, tenantID *string,
+) ([]models.Webhook, error) {
+	query := listEnabledForEventTypeSelect
+	args := []any{eventType}
+
+	if tenantID == nil {
+		query += ` AND tenant_id IS NULL`
+	} else {
+		query += ` AND (tenant_id IS NULL OR tenant_id = $2)`
+
+		args = append(args, *tenantID)
+	}
+
+	query += ` ORDER BY id`
+
+	webhooks, err := r.fetchWebhooks(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list enabled webhooks for event type: %w", err)
-	}
-	defer rows.Close()
-
-	webhooks := []models.Webhook{}
-
-	for rows.Next() {
-		var (
-			webhook      models.Webhook
-			dbEventTypes []string
-		)
-
-		err := rows.Scan(
-			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
-			&webhook.DisabledReason, &webhook.DisabledAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan webhook: %w", err)
-		}
-
-		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
-		if err != nil {
-			return nil, err
-		}
-
-		webhooks = append(webhooks, webhook)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating webhooks: %w", err)
+		return nil, fmt.Errorf("list enabled webhooks for event type and tenant: %w", err)
 	}
 
 	return webhooks, nil
