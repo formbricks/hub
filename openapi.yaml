@@ -1550,7 +1550,6 @@ components:
                 - id
                 - url
                 - enabled
-                - tenant_id
                 - created_at
                 - updated_at
         WebhookData:
@@ -1598,7 +1597,6 @@ components:
                 - url
                 - signing_key
                 - enabled
-                - tenant_id
                 - created_at
                 - updated_at
         WebhookEventType:

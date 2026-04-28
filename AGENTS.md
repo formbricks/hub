@@ -28,6 +28,7 @@
 ## Multi-Tenancy & Data Isolation
 
 - Treat `tenant_id` as a security boundary, not a convenience filter. Tenant-owned data must never be read, enqueued, dispatched, cached, searched, embedded, or deleted across tenants.
+- Exception: GDPR/right-to-erasure flows may intentionally delete all records for a data subject across tenants when that is the documented API contract. Make that all-tenant behavior explicit in the API docs, service/repository names or comments, logs, and tests; do not reuse it for normal tenant-owned workflows.
 - When making a model, migration, API request, or repository change involving tenant-owned data, audit every downstream path that carries or derives from that data: handlers, services, repositories, message publishers, River job args, workers, webhook payloads, search, embeddings, bulk operations, logs, and metrics.
 - Tenant access rules must be consistent across every path that can observe, mutate, derive from, or act on the same resource. If one API endpoint, repository method, search path, webhook dispatch path, worker, backfill, bulk operation, or export path requires tenant scope, every alternate path for that resource must enforce the same tenant boundary.
 - Do not model `tenant_id` as an optional filter for tenant-owned resources. Prefer required tenant parameters in service/repository method signatures (`tenantID string`, not `*string`) unless the domain explicitly supports global resources and documents that behavior.
