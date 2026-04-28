@@ -29,10 +29,13 @@
 
 - Treat `tenant_id` as a security boundary, not a convenience filter. Tenant-owned data must never be read, enqueued, dispatched, cached, searched, embedded, or deleted across tenants.
 - When making a model, migration, API request, or repository change involving tenant-owned data, audit every downstream path that carries or derives from that data: handlers, services, repositories, message publishers, River job args, workers, webhook payloads, search, embeddings, bulk operations, logs, and metrics.
-- Prefer tenant-aware repository/service methods for tenant-owned workflows. Avoid adding broad helpers that return all enabled/all matching resources when the caller is dispatching, processing, or exposing tenant data.
+- Tenant access rules must be consistent across every path that can observe, mutate, derive from, or act on the same resource. If one API endpoint, repository method, search path, webhook dispatch path, worker, backfill, bulk operation, or export path requires tenant scope, every alternate path for that resource must enforce the same tenant boundary.
+- Do not model `tenant_id` as an optional filter for tenant-owned resources. Prefer required tenant parameters in service/repository method signatures (`tenantID string`, not `*string`) unless the domain explicitly supports global resources and documents that behavior.
+- Prefer tenant-aware repository/service methods for tenant-owned workflows. Avoid adding broad helpers that return all enabled/all matching resources when the caller is dispatching, processing, deriving, exporting, or exposing tenant data.
 - Async jobs must carry the tenant boundary when the source data has one, and workers must re-check tenant scope before doing side effects. Do not rely only on enqueue-time filtering.
-- Global resources may intentionally have `tenant_id = NULL`, but code must make that behavior explicit. A missing tenant on event data should not match tenant-scoped resources.
-- For any tenant-scoping change, include verification at the boundary where the leak could happen: database query behavior, service fan-out, worker execution, and API behavior when relevant. Tests are the evidence; the invariant belongs in the architecture.
+- Global resources may intentionally have `tenant_id = NULL` only when the domain explicitly documents them as non-tenant-owned. Webhooks are tenant-owned and must require a non-empty `tenant_id`; a missing tenant on event data must not match any webhook.
+- When changing access rules for a tenant-owned model, search for all alternate access paths by resource name and by derived side effects: list, get, update, delete, bulk delete, webhook fan-out, River jobs, workers, embeddings, search, exports, cache invalidation, logs, and metrics.
+- For any tenant-scoping change, include verification at the boundary where the leak could happen: database query behavior, service fan-out, worker execution, and API behavior when relevant. Include at least one alternate-path regression test proving that data allowed through the primary path cannot leak through async dispatch, bulk operations, derived indexes, exports, or background workers. Tests are the evidence; the invariant belongs in the architecture.
 
 ## Testing Guidelines
 - Tests live under `tests/` and are run with `go test ./tests/...`.

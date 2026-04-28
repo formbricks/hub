@@ -21,17 +21,17 @@ func TestListEnabledForEventTypeAndTenantQuery(t *testing.T) {
 		rejectTenantClause string
 	}{
 		{
-			name:               "scoped event matches global or same tenant webhooks",
+			name:               "scoped event matches same tenant webhooks only",
 			tenantID:           &tenantID,
 			wantArgs:           []any{datatypes.FeedbackRecordCreated.String(), tenantID},
-			wantTenantClause:   "AND (tenant_id IS NULL OR tenant_id = $2)",
-			rejectTenantClause: "AND tenant_id IS NULL ORDER BY id",
+			wantTenantClause:   "AND tenant_id = $2",
+			rejectTenantClause: "tenant_id IS NULL",
 		},
 		{
-			name:               "tenant-less event matches global webhooks only",
+			name:               "tenant-less event matches no webhooks",
 			tenantID:           nil,
 			wantArgs:           []any{datatypes.FeedbackRecordCreated.String()},
-			wantTenantClause:   "AND tenant_id IS NULL",
+			wantTenantClause:   "AND FALSE",
 			rejectTenantClause: "tenant_id = $2",
 		},
 	}

@@ -17,10 +17,9 @@ import (
 	"github.com/formbricks/hub/pkg/database"
 )
 
-const repositoryWebhookScopeURLPrefix = "https://tenant-scope.test/"
-
 func TestWebhooksRepository_ListEnabledForEventTypeAndTenant(t *testing.T) {
 	ctx := context.Background()
+	urlPrefix := "https://tenant-scope.test/" + uuid.NewString() + "/"
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
@@ -41,7 +40,7 @@ func TestWebhooksRepository_ListEnabledForEventTypeAndTenant(t *testing.T) {
 	defer db.Close()
 
 	cleanupRepositoryWebhookScopeTestRows := func() {
-		_, cleanupErr := db.Exec(ctx, "DELETE FROM webhooks WHERE url LIKE $1", repositoryWebhookScopeURLPrefix+"%")
+		_, cleanupErr := db.Exec(ctx, "DELETE FROM webhooks WHERE url LIKE $1", urlPrefix+"%")
 		require.NoError(t, cleanupErr)
 	}
 
@@ -55,40 +54,36 @@ func TestWebhooksRepository_ListEnabledForEventTypeAndTenant(t *testing.T) {
 	feedbackCreated := []datatypes.EventType{datatypes.FeedbackRecordCreated}
 	feedbackUpdated := []datatypes.EventType{datatypes.FeedbackRecordUpdated}
 
-	globalWebhook := createWebhookForRepositoryScopeTest(ctx, t, repo, "global", nil, nil)
-	tenantAWebhook := createWebhookForRepositoryScopeTest(ctx, t, repo, "tenant-a", &tenantA, feedbackCreated)
-	tenantBWebhook := createWebhookForRepositoryScopeTest(ctx, t, repo, "tenant-b", &tenantB, feedbackCreated)
-	disabledTenantAWebhook := createWebhookForRepositoryScopeTest(ctx, t, repo, "disabled-a", &tenantA, feedbackCreated)
+	tenantAWebhook := createWebhookForRepositoryScopeTest(ctx, t, repo, urlPrefix, "tenant-a", &tenantA, feedbackCreated)
+	tenantBWebhook := createWebhookForRepositoryScopeTest(ctx, t, repo, urlPrefix, "tenant-b", &tenantB, feedbackCreated)
+	disabledTenantAWebhook := createWebhookForRepositoryScopeTest(ctx, t, repo, urlPrefix, "disabled-a", &tenantA, feedbackCreated)
 	_, err = repo.Update(ctx, disabledTenantAWebhook.ID, &models.UpdateWebhookRequest{Enabled: &disabled})
 	require.NoError(t, err)
 
-	createWebhookForRepositoryScopeTest(ctx, t, repo, "updated-only-a", &tenantA, feedbackUpdated)
+	createWebhookForRepositoryScopeTest(ctx, t, repo, urlPrefix, "updated-only-a", &tenantA, feedbackUpdated)
 
 	tenantAWebhooks, err := repo.ListEnabledForEventTypeAndTenant(ctx, datatypes.FeedbackRecordCreated.String(), &tenantA)
 	require.NoError(t, err)
-	assertRepositoryScopeWebhookIDs(t, tenantAWebhooks, map[uuid.UUID]bool{
-		globalWebhook.ID:  true,
+	assertRepositoryScopeWebhookIDs(t, tenantAWebhooks, urlPrefix, map[uuid.UUID]bool{
 		tenantAWebhook.ID: true,
 	})
 
 	tenantBWebhooks, err := repo.ListEnabledForEventTypeAndTenant(ctx, datatypes.FeedbackRecordCreated.String(), &tenantB)
 	require.NoError(t, err)
-	assertRepositoryScopeWebhookIDs(t, tenantBWebhooks, map[uuid.UUID]bool{
-		globalWebhook.ID:  true,
+	assertRepositoryScopeWebhookIDs(t, tenantBWebhooks, urlPrefix, map[uuid.UUID]bool{
 		tenantBWebhook.ID: true,
 	})
 
-	globalOnlyWebhooks, err := repo.ListEnabledForEventTypeAndTenant(ctx, datatypes.FeedbackRecordCreated.String(), nil)
+	tenantlessWebhooks, err := repo.ListEnabledForEventTypeAndTenant(ctx, datatypes.FeedbackRecordCreated.String(), nil)
 	require.NoError(t, err)
-	assertRepositoryScopeWebhookIDs(t, globalOnlyWebhooks, map[uuid.UUID]bool{
-		globalWebhook.ID: true,
-	})
+	assertRepositoryScopeWebhookIDs(t, tenantlessWebhooks, urlPrefix, map[uuid.UUID]bool{})
 }
 
 func createWebhookForRepositoryScopeTest(
 	ctx context.Context,
 	t *testing.T,
 	repo *repository.WebhooksRepository,
+	urlPrefix string,
 	path string,
 	tenantID *string,
 	eventTypes []datatypes.EventType,
@@ -96,7 +91,7 @@ func createWebhookForRepositoryScopeTest(
 	t.Helper()
 
 	webhook, err := repo.Create(ctx, &models.CreateWebhookRequest{
-		URL:        repositoryWebhookScopeURLPrefix + path,
+		URL:        urlPrefix + path,
 		SigningKey: "whsec_abcdefghijklmnopqrstuvwxyz123456",
 		TenantID:   tenantID,
 		EventTypes: eventTypes,
@@ -106,12 +101,12 @@ func createWebhookForRepositoryScopeTest(
 	return webhook
 }
 
-func assertRepositoryScopeWebhookIDs(t *testing.T, webhooks []models.Webhook, wantIDs map[uuid.UUID]bool) {
+func assertRepositoryScopeWebhookIDs(t *testing.T, webhooks []models.Webhook, urlPrefix string, wantIDs map[uuid.UUID]bool) {
 	t.Helper()
 
 	gotIDs := make(map[uuid.UUID]bool, len(webhooks))
 	for _, webhook := range webhooks {
-		if !strings.HasPrefix(webhook.URL, repositoryWebhookScopeURLPrefix) {
+		if !strings.HasPrefix(webhook.URL, urlPrefix) {
 			continue
 		}
 

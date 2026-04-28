@@ -394,22 +394,14 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// BulkDelete deletes all feedback records matching user_id and optional tenant_id.
+// BulkDelete deletes all feedback records matching user_id and tenant_id.
 // It returns the deleted IDs (via RETURNING id) so callers can e.g. publish events.
-func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userID string, tenantID *string) ([]uuid.UUID, error) {
+func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userID, tenantID string) ([]uuid.UUID, error) {
 	query := `
 		DELETE FROM feedback_records
-		WHERE user_id = $1`
-	args := []any{userID}
-	argCount := 2
-
-	if tenantID != nil {
-		query += fmt.Sprintf(" AND tenant_id = $%d", argCount)
-
-		args = append(args, *tenantID)
-	}
-
-	query += ` RETURNING id`
+		WHERE user_id = $1 AND tenant_id = $2
+		RETURNING id`
+	args := []any{userID, tenantID}
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {

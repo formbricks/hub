@@ -84,9 +84,27 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		return nil
 	}
 
-	tenantID := args.TenantID
+	jobTenantID := args.TenantID
+	dataTenantID := service.TenantIDPointerFromEventData(args.Data)
+
+	if jobTenantID != nil && dataTenantID != nil && *jobTenantID != *dataTenantID {
+		if w.metrics != nil {
+			w.metrics.RecordDispatchError(ctx, "tenant_mismatch")
+		}
+
+		slog.Error("webhook dispatch: job tenant_id conflicts with payload tenant_id, skipping delivery",
+			"event_id", args.EventID,
+			"webhook_id", args.WebhookID,
+			"job_tenant_id", *jobTenantID,
+			"payload_tenant_id", *dataTenantID,
+		)
+
+		return nil
+	}
+
+	tenantID := jobTenantID
 	if tenantID == nil {
-		tenantID = service.TenantIDPointerFromEventData(args.Data)
+		tenantID = dataTenantID
 	}
 
 	if !service.WebhookMatchesTenant(webhook, tenantID) {
@@ -114,7 +132,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		return nil
 	}
 
-	payload := argsToPayload(args)
+	payload := service.NewWebhookPayload(args)
 
 	err = w.sender.Send(ctx, webhook, payload)
 	if err == nil {
@@ -175,15 +193,4 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	)
 
 	return fmt.Errorf("webhook send: %w", err)
-}
-
-// argsToPayload builds a WebhookPayload from job args.
-func argsToPayload(args service.WebhookDispatchArgs) *service.WebhookPayload {
-	return &service.WebhookPayload{
-		ID:            args.EventID,
-		Type:          args.EventType,
-		Timestamp:     args.Timestamp,
-		Data:          args.Data,
-		ChangedFields: args.ChangedFields,
-	}
 }

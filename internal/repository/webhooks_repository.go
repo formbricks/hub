@@ -262,16 +262,8 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 	}
 
 	if req.TenantID != nil {
-		// Empty string clears tenant_id (store as NULL)
-		var val any
-		if *req.TenantID == "" {
-			val = nil
-		} else {
-			val = *req.TenantID
-		}
-
 		updates = append(updates, fmt.Sprintf("tenant_id = $%d", argCount))
-		args = append(args, val)
+		args = append(args, *req.TenantID)
 		argCount++
 	}
 
@@ -376,28 +368,15 @@ func parseDBEventTypes(ss []string) ([]datatypes.EventType, error) {
 	return out, nil
 }
 
-// ListEnabled retrieves all enabled webhooks (unbounded; used for delivery fan-out).
-func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
-	query := webhooksListSelect + ` WHERE enabled = true ORDER BY created_at DESC, id ASC`
-
-	webhooks, err := r.fetchWebhooks(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("list enabled webhooks: %w", err)
-	}
-
-	return webhooks, nil
-}
-
 const listEnabledForEventTypeSelect = `
-		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
-		FROM webhooks
+			SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
+			FROM webhooks
 		WHERE enabled = true
 		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
 	`
 
 // ListEnabledForEventTypeAndTenant retrieves enabled webhooks for an event type and tenant boundary.
-// Global webhooks (tenant_id NULL) match every event. Tenant-scoped webhooks match only the same tenant.
-// When tenantID is nil, only global webhooks are returned because scoped webhooks cannot be proven safe.
+// Webhooks match only the same tenant. A missing tenantID matches nothing.
 func (r *WebhooksRepository) ListEnabledForEventTypeAndTenant(
 	ctx context.Context, eventType string, tenantID *string,
 ) ([]models.Webhook, error) {
@@ -416,9 +395,9 @@ func listEnabledForEventTypeAndTenantQuery(eventType string, tenantID *string) (
 	args := []any{eventType}
 
 	if tenantID == nil {
-		query += ` AND tenant_id IS NULL`
+		query += ` AND FALSE`
 	} else {
-		query += ` AND (tenant_id IS NULL OR tenant_id = $2)`
+		query += ` AND tenant_id = $2`
 
 		args = append(args, *tenantID)
 	}

@@ -1,0 +1,147 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/models"
+)
+
+type mockFeedbackRecordsRepo struct {
+	record    *models.FeedbackRecord
+	bulkIDs   []uuid.UUID
+	deletedID uuid.UUID
+}
+
+func (m *mockFeedbackRecordsRepo) Create(
+	_ context.Context, _ *models.CreateFeedbackRecordRequest,
+) (*models.FeedbackRecord, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockFeedbackRecordsRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.FeedbackRecord, error) {
+	return m.record, nil
+}
+
+func (m *mockFeedbackRecordsRepo) List(
+	_ context.Context, _ *models.ListFeedbackRecordsFilters,
+) ([]models.FeedbackRecord, bool, error) {
+	return nil, false, errors.New("not implemented")
+}
+
+func (m *mockFeedbackRecordsRepo) ListAfterCursor(
+	_ context.Context, _ *models.ListFeedbackRecordsFilters, _ time.Time, _ uuid.UUID,
+) ([]models.FeedbackRecord, bool, error) {
+	return nil, false, errors.New("not implemented")
+}
+
+func (m *mockFeedbackRecordsRepo) Update(
+	_ context.Context, _ uuid.UUID, _ *models.UpdateFeedbackRecordRequest,
+) (*models.FeedbackRecord, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockFeedbackRecordsRepo) Delete(_ context.Context, id uuid.UUID) error {
+	m.deletedID = id
+
+	return nil
+}
+
+func (m *mockFeedbackRecordsRepo) BulkDelete(_ context.Context, _, _ string) ([]uuid.UUID, error) {
+	return m.bulkIDs, nil
+}
+
+func TestFeedbackRecordsService_DeleteFeedbackRecord_PublishesTenantAwareDeletedEvent(t *testing.T) {
+	ctx := context.Background()
+	recordID := uuid.Must(uuid.NewV7())
+	tenantID := "org-123"
+	repo := &mockFeedbackRecordsRepo{record: &models.FeedbackRecord{ID: recordID, TenantID: tenantID}}
+	publisher := &capturePublisher{}
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+
+	err := svc.DeleteFeedbackRecord(ctx, recordID)
+	if err != nil {
+		t.Fatalf("DeleteFeedbackRecord() error = %v", err)
+	}
+
+	if repo.deletedID != recordID {
+		t.Fatalf("deletedID = %v, want %v", repo.deletedID, recordID)
+	}
+
+	assertDeletedEventData(t, publisher, datatypes.FeedbackRecordDeleted, tenantID, []uuid.UUID{recordID})
+}
+
+func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_PublishesTenantAwareDeletedEvent(t *testing.T) {
+	ctx := context.Background()
+	tenantID := "org-123"
+	ids := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
+	repo := &mockFeedbackRecordsRepo{bulkIDs: ids}
+	publisher := &capturePublisher{}
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+
+	count, err := svc.BulkDeleteFeedbackRecords(ctx, "user-123", &tenantID)
+	if err != nil {
+		t.Fatalf("BulkDeleteFeedbackRecords() error = %v", err)
+	}
+
+	if count != len(ids) {
+		t.Fatalf("count = %d, want %d", count, len(ids))
+	}
+
+	assertDeletedEventData(t, publisher, datatypes.FeedbackRecordDeleted, tenantID, ids)
+}
+
+func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_RequiresTenantID(t *testing.T) {
+	ctx := context.Background()
+	repo := &mockFeedbackRecordsRepo{bulkIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}}
+	publisher := &capturePublisher{}
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+
+	count, err := svc.BulkDeleteFeedbackRecords(ctx, "user-123", nil)
+	if !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("BulkDeleteFeedbackRecords() error = %v, want validation error", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+
+	if publisher.callCount != 0 {
+		t.Fatalf("published %d events, want 0", publisher.callCount)
+	}
+}
+
+func assertDeletedEventData(
+	t *testing.T, publisher *capturePublisher, eventType datatypes.EventType, tenantID string, ids []uuid.UUID,
+) {
+	t.Helper()
+
+	if publisher.callCount != 1 || publisher.eventType != eventType {
+		t.Fatalf("published event = (%d, %s), want one %s", publisher.callCount, publisher.eventType, eventType)
+	}
+
+	data, ok := publisher.data.(models.DeletedIDsEventData)
+	if !ok {
+		t.Fatalf("published data type = %T, want DeletedIDsEventData", publisher.data)
+	}
+
+	if data.TenantID != tenantID {
+		t.Errorf("TenantID = %q, want %q", data.TenantID, tenantID)
+	}
+
+	if len(data.IDs) != len(ids) {
+		t.Fatalf("IDs length = %d, want %d", len(data.IDs), len(ids))
+	}
+
+	for i := range ids {
+		if data.IDs[i] != ids[i] {
+			t.Errorf("IDs[%d] = %v, want %v", i, data.IDs[i], ids[i])
+		}
+	}
+}

@@ -35,6 +35,12 @@ func TestTenantIDFromEventData(t *testing.T) {
 			ok:   true,
 		},
 		{
+			name: "deleted IDs event data",
+			data: models.DeletedIDsEventData{TenantID: tenantID},
+			want: tenantID,
+			ok:   true,
+		},
+		{
 			name: "map any",
 			data: map[string]any{"tenant_id": tenantID},
 			want: tenantID,
@@ -96,8 +102,8 @@ func TestWebhookMatchesTenant(t *testing.T) {
 		tenantID *string
 		want     bool
 	}{
-		{name: "global webhook matches tenant event", webhook: &models.Webhook{}, tenantID: &tenantID, want: true},
-		{name: "global webhook matches tenant-less event", webhook: &models.Webhook{}, tenantID: nil, want: true},
+		{name: "webhook without tenant rejects tenant event", webhook: &models.Webhook{}, tenantID: &tenantID, want: false},
+		{name: "webhook without tenant rejects tenant-less event", webhook: &models.Webhook{}, tenantID: nil, want: false},
 		{name: "scoped webhook matches same tenant", webhook: &models.Webhook{TenantID: &tenantID}, tenantID: &tenantID, want: true},
 		{name: "scoped webhook rejects different tenant", webhook: &models.Webhook{TenantID: &tenantID}, tenantID: &otherTenantID, want: false},
 		{name: "scoped webhook rejects tenant-less event", webhook: &models.Webhook{TenantID: &tenantID}, tenantID: nil, want: false},

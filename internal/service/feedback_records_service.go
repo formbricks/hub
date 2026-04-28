@@ -35,7 +35,7 @@ type FeedbackRecordsRepository interface {
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	BulkDelete(ctx context.Context, userID string, tenantID *string) ([]uuid.UUID, error)
+	BulkDelete(ctx context.Context, userID, tenantID string) ([]uuid.UUID, error)
 }
 
 // EmbeddingsRepository defines the interface for embeddings table access.
@@ -182,33 +182,49 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 }
 
 // DeleteFeedbackRecord deletes a feedback record by ID.
-// Publishes FeedbackRecordDeleted with data = [id] (array of deleted IDs) for consistency with bulk delete.
+// Publishes FeedbackRecordDeleted with tenant-aware deleted IDs for webhook isolation.
 func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error {
+	record, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get feedback record before delete: %w", err)
+	}
+
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete feedback record: %w", err)
 	}
 
 	if s.publisher != nil {
-		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, []uuid.UUID{id})
+		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, models.DeletedIDsEventData{
+			TenantID: record.TenantID,
+			IDs:      []uuid.UUID{id},
+		})
 	}
 
 	return nil
 }
 
-// BulkDeleteFeedbackRecords deletes all feedback records matching user_id and optional tenant_id.
-// Publishes a single FeedbackRecordDeleted event with data = [id1, id2, ...] (array of deleted IDs).
+// BulkDeleteFeedbackRecords deletes all feedback records matching user_id and tenant_id.
+// Publishes a single tenant-aware FeedbackRecordDeleted event.
 func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userID string, tenantID *string) (int, error) {
 	if userID == "" {
 		return 0, ErrUserIDRequired
 	}
 
-	ids, err := s.repo.BulkDelete(ctx, userID, tenantID)
+	normalizedTenantID, err := normalizeRequiredTenantID(tenantID)
+	if err != nil {
+		return 0, err
+	}
+
+	ids, err := s.repo.BulkDelete(ctx, userID, normalizedTenantID)
 	if err != nil {
 		return 0, fmt.Errorf("bulk delete feedback records: %w", err)
 	}
 
 	if len(ids) > 0 && s.publisher != nil {
-		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, ids)
+		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, models.DeletedIDsEventData{
+			TenantID: normalizedTenantID,
+			IDs:      ids,
+		})
 	}
 
 	return len(ids), nil

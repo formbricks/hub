@@ -33,6 +33,14 @@ func TenantIDFromEventData(data any) (string, bool) {
 		return tenantIDFromPointer(payload.TenantID)
 	case models.WebhookPublic:
 		return tenantIDFromPointer(payload.TenantID)
+	case *models.DeletedIDsEventData:
+		if payload == nil {
+			return "", false
+		}
+
+		return tenantIDFromString(payload.TenantID)
+	case models.DeletedIDsEventData:
+		return tenantIDFromString(payload.TenantID)
 	case map[string]any:
 		return tenantIDFromMapValue(payload["tenant_id"])
 	case map[string]string:
@@ -60,11 +68,7 @@ func WebhookMatchesTenant(webhook *models.Webhook, tenantID *string) bool {
 		return false
 	}
 
-	if webhook.TenantID == nil {
-		return true
-	}
-
-	if tenantID == nil {
+	if webhook.TenantID == nil || tenantID == nil {
 		return false
 	}
 

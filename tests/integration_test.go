@@ -928,13 +928,24 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	}
 
-	// Bulk delete by user_id
+	// Bulk delete without tenant_id is rejected to avoid cross-tenant deletion.
 	bulkDelURL := server.URL + "/v1/feedback-records?user_id=" + userID
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL, http.NoBody)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 	resp, err := client.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	// Bulk delete by user_id and tenant_id.
+	bulkDelURL = server.URL + "/v1/feedback-records?user_id=" + userID + "&tenant_id=" + tenantID
+	req, err = http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL, http.NoBody)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+	resp, err = client.Do(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -958,7 +969,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	}
 
 	// Bulk delete again (no matching records) returns 0
-	bulkDelURL2 := server.URL + "/v1/feedback-records?user_id=" + userID
+	bulkDelURL2 := server.URL + "/v1/feedback-records?user_id=" + userID + "&tenant_id=" + tenantID
 	req2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL2, http.NoBody)
 	require.NoError(t, err)
 	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -1093,7 +1104,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	require.NotEmpty(t, rec2.ID)
 
 	// BulkDelete returns the deleted IDs
-	deletedIDs, err := repo.BulkDelete(ctx, userID, nil)
+	deletedIDs, err := repo.BulkDelete(ctx, userID, bulkDeleteTenant)
 	require.NoError(t, err)
 	require.Len(t, deletedIDs, 2)
 	ids := map[string]bool{deletedIDs[0].String(): true, deletedIDs[1].String(): true}
@@ -1109,8 +1120,10 @@ func TestWebhooksCRUD(t *testing.T) {
 	client := &http.Client{}
 
 	// Create webhook (no signing key = auto-generated)
+	webhookTenantID := "org-123"
 	createBody := map[string]any{
 		"url":         testWebhookURL,
+		"tenant_id":   webhookTenantID,
 		"event_types": []string{"feedback_record.created", "feedback_record.updated"},
 	}
 	body, err := json.Marshal(createBody)
@@ -1133,6 +1146,8 @@ func TestWebhooksCRUD(t *testing.T) {
 	assert.Equal(t, testWebhookURL, created.URL)
 	assert.NotEmpty(t, created.SigningKey)
 	assert.True(t, created.Enabled)
+	require.NotNil(t, created.TenantID)
+	assert.Equal(t, webhookTenantID, *created.TenantID)
 	assert.Len(t, created.EventTypes, 2)
 
 	// Get webhook
@@ -1202,7 +1217,7 @@ func TestWebhooksCRUD(t *testing.T) {
 	updateBody := map[string]any{
 		"url":       testWebhookURLV2,
 		"enabled":   false,
-		"tenant_id": "org-123",
+		"tenant_id": "org-456",
 	}
 	updateJSON, err := json.Marshal(updateBody)
 	require.NoError(t, err)
@@ -1224,9 +1239,9 @@ func TestWebhooksCRUD(t *testing.T) {
 	assert.Equal(t, testWebhookURLV2, updated.URL)
 	assert.False(t, updated.Enabled)
 	require.NotNil(t, updated.TenantID)
-	assert.Equal(t, "org-123", *updated.TenantID)
+	assert.Equal(t, "org-456", *updated.TenantID)
 
-	// PATCH tenant_id to empty string to clear it
+	// PATCH tenant_id to empty string is rejected; webhooks cannot be global.
 	clearTenantBody := map[string]any{"tenant_id": ""}
 	clearTenantJSON, err := json.Marshal(clearTenantBody)
 	require.NoError(t, err)
@@ -1238,14 +1253,8 @@ func TestWebhooksCRUD(t *testing.T) {
 	clearTenantReq.Header.Set("Content-Type", "application/json")
 	clearTenantResp, err := client.Do(clearTenantReq)
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, clearTenantResp.StatusCode)
-
-	var afterClear models.Webhook
-
-	err = decodeData(clearTenantResp, &afterClear)
-	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, clearTenantResp.StatusCode)
 	require.NoError(t, clearTenantResp.Body.Close())
-	assert.Nil(t, afterClear.TenantID)
 
 	// Delete webhook
 	deleteWebhookURL := fmt.Sprintf("%s/v1/webhooks/%s", server.URL, created.ID)
@@ -1268,6 +1277,34 @@ func TestWebhooksCRUD(t *testing.T) {
 	require.NoError(t, getAfterResp.Body.Close())
 }
 
+func TestWebhooksCreateRequiresTenantID(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	body, err := json.Marshal(map[string]any{
+		"url":         testWebhookURL,
+		"event_types": []string{"feedback_record.created"},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/webhooks", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	var problem response.ProblemDetails
+
+	err = json.NewDecoder(resp.Body).Decode(&problem)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "Validation Error", problem.Title)
+	assert.Contains(t, problem.Detail, "TenantID is required")
+}
+
 // TestWebhooksInvalidSigningKey asserts that create and update reject invalid signing_key with 400.
 func TestWebhooksInvalidSigningKey(t *testing.T) {
 	server, cleanup := setupTestServer(t)
@@ -1279,6 +1316,7 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	createBody := map[string]any{
 		"url":         testWebhookURL,
 		"signing_key": "not-valid",
+		"tenant_id":   "org-123",
 		"event_types": []string{"feedback_record.created"},
 	}
 	body, err := json.Marshal(createBody)
@@ -1306,6 +1344,7 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	// Create a valid webhook first for update test
 	validBody := map[string]any{
 		"url":         testWebhookURL,
+		"tenant_id":   "org-123",
 		"event_types": []string{"feedback_record.created"},
 	}
 	validJSON, err := json.Marshal(validBody)

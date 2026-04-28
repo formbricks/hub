@@ -199,7 +199,7 @@ type ListFeedbackRecordsResponse struct {
 // BulkDeleteFilters represents query parameters for bulk delete operation.
 type BulkDeleteFilters struct {
 	UserID   string  `form:"user_id"   validate:"required,no_null_bytes,min=1"`
-	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes"`
+	TenantID *string `form:"tenant_id" validate:"required,no_null_bytes,min=1"`
 }
 
 // BulkDeleteResponse represents the response for bulk delete operation.

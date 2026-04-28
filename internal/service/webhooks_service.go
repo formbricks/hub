@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"net/url"
@@ -32,8 +33,6 @@ type WebhooksRepository interface {
 	Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	ListEnabled(ctx context.Context) ([]models.Webhook, error)
-	ListEnabledForEventTypeAndTenant(ctx context.Context, eventType string, tenantID *string) ([]models.Webhook, error)
 }
 
 // WebhooksService handles business logic for webhooks.
@@ -59,6 +58,10 @@ func NewWebhooksService(
 
 // CreateWebhook creates a new webhook.
 func (s *WebhooksService) CreateWebhook(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+	if err := normalizeRequiredWebhookTenantID(req.TenantID); err != nil {
+		return nil, err
+	}
+
 	count, err := s.repo.Count(ctx, &models.ListWebhooksFilters{})
 	if err != nil {
 		return nil, fmt.Errorf("count webhooks: %w", err)
@@ -347,6 +350,10 @@ func (s *WebhooksService) ListWebhooks(ctx context.Context, filters *models.List
 
 // UpdateWebhook updates an existing webhook.
 func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
+	if err := normalizeOptionalWebhookTenantID(req.TenantID); err != nil {
+		return nil, err
+	}
+
 	if req.URL != nil {
 		if err := validateWebhookURLHost(ctx, *req.URL, s.urlHostBlacklist); err != nil {
 			return nil, err
@@ -369,14 +376,58 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 	return webhook, nil
 }
 
+func normalizeRequiredWebhookTenantID(tenantID *string) error {
+	normalized, err := normalizeRequiredTenantID(tenantID)
+	if err != nil {
+		return err
+	}
+
+	*tenantID = normalized
+
+	return nil
+}
+
+func normalizeOptionalWebhookTenantID(tenantID *string) error {
+	if tenantID == nil {
+		return nil
+	}
+
+	return normalizeWebhookTenantID(tenantID)
+}
+
+func normalizeWebhookTenantID(tenantID *string) error {
+	normalized, err := normalizeRequiredTenantID(tenantID)
+	if err != nil {
+		return err
+	}
+
+	*tenantID = normalized
+
+	return nil
+}
+
 // DeleteWebhook deletes a webhook by ID.
-// Publishes WebhookDeleted with data = [id] (array of deleted IDs) for consistency with feedback record deletes.
+// Publishes WebhookDeleted with tenant-aware deleted IDs.
 func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
+	webhook, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get webhook before delete: %w", err)
+	}
+
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
 
-	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, []uuid.UUID{id})
+	if webhook.TenantID == nil {
+		slog.Warn("webhook delete: tenant_id missing, skipping webhook event", "webhook_id", id)
+
+		return nil
+	}
+
+	s.publisher.PublishEvent(ctx, datatypes.WebhookDeleted, models.DeletedIDsEventData{
+		TenantID: *webhook.TenantID,
+		IDs:      []uuid.UUID{id},
+	})
 
 	return nil
 }

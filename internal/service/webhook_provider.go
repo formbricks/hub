@@ -19,9 +19,14 @@ type WebhookDispatchInserter interface {
 	InsertMany(ctx context.Context, params []river.InsertManyParams) ([]*rivertype.JobInsertResult, error)
 }
 
+// WebhookProviderRepository lists tenant-scoped webhooks eligible for event fan-out.
+type WebhookProviderRepository interface {
+	ListEnabledForEventTypeAndTenant(ctx context.Context, eventType string, tenantID *string) ([]models.Webhook, error)
+}
+
 // WebhookProvider implements eventPublisher by enqueueing one River job per (event, webhook).
 type WebhookProvider struct {
-	repo                  WebhooksRepository
+	repo                  WebhookProviderRepository
 	inserter              WebhookDispatchInserter
 	maxAttempts           int
 	maxFanOut             int
@@ -36,7 +41,7 @@ type WebhookProvider struct {
 // enqueueMaxRetries, enqueueInitialBackoff, enqueueMaxBackoff configure retries when InsertMany fails (transient River/DB errors).
 // metrics may be nil when metrics are disabled.
 func NewWebhookProvider(
-	inserter WebhookDispatchInserter, repo WebhooksRepository,
+	inserter WebhookDispatchInserter, repo WebhookProviderRepository,
 	maxAttempts, maxFanOut int,
 	enqueueMaxRetries int, enqueueInitialBackoff, enqueueMaxBackoff time.Duration,
 	metrics observability.WebhookMetrics,
@@ -54,15 +59,23 @@ func NewWebhookProvider(
 }
 
 // PublishEvent lists enabled webhooks for the event type and tenant, then enqueues one job per webhook.
-// Tenant-scoped webhooks are only eligible when the event payload has the same tenant_id.
+// Webhooks are only eligible when the event payload has the same tenant_id.
 func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 	tenantID := TenantIDPointerFromEventData(event.Data)
 	if tenantID == nil {
-		slog.Debug("webhook provider: event has no tenant_id; tenant-scoped webhooks are not eligible",
+		if p.metrics != nil {
+			p.metrics.RecordProviderError(ctx, "missing_tenant_id")
+		}
+
+		slog.Warn("webhook provider: event has no tenant_id; skipping webhook fan-out",
 			"event_id", event.ID,
 			"event_type", event.Type,
 		)
+
+		return
 	}
+
+	tenantIDValue := *tenantID
 
 	webhooks, err := p.repo.ListEnabledForEventTypeAndTenant(ctx, event.Type.String(), tenantID)
 	if err != nil {
@@ -73,6 +86,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 		slog.Error("failed to list enabled webhooks for event type",
 			"event_id", event.ID,
 			"event_type", event.Type,
+			"tenant_id", tenantIDValue,
 			"error", err,
 		)
 
@@ -84,6 +98,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 		slog.Warn("webhook provider: skipped tenant-mismatched webhooks returned by repository",
 			"event_id", event.ID,
 			"event_type", event.Type,
+			"tenant_id", tenantIDValue,
 			"skipped", skipped,
 		)
 	}
@@ -147,6 +162,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 			slog.Error("failed to enqueue webhook jobs after retries",
 				"event_id", event.ID,
 				"event_type", event.Type,
+				"tenant_id", tenantIDValue,
 				"error", insertErr,
 			)
 
