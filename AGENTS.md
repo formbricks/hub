@@ -25,6 +25,14 @@
 - Prefer Go naming conventions (CamelCase for exported, lowerCamel for unexported).
 - Keep package names short and domain-focused (e.g., `repository`, `service`).
 
+## Multi-Tenancy & Data Isolation
+- Treat `tenant_id` as a security boundary, not a convenience filter. Tenant-owned data must never be read, enqueued, dispatched, cached, searched, embedded, or deleted across tenants.
+- When making a model, migration, API request, or repository change involving tenant-owned data, audit every downstream path that carries or derives from that data: handlers, services, repositories, message publishers, River job args, workers, webhook payloads, search, embeddings, bulk operations, logs, and metrics.
+- Prefer tenant-aware repository/service methods for tenant-owned workflows. Avoid adding broad helpers that return all enabled/all matching resources when the caller is dispatching, processing, or exposing tenant data.
+- Async jobs must carry the tenant boundary when the source data has one, and workers must re-check tenant scope before doing side effects. Do not rely only on enqueue-time filtering.
+- Global resources may intentionally have `tenant_id = NULL`, but code must make that behavior explicit. A missing tenant on event data should not match tenant-scoped resources.
+- For any tenant-scoping change, include verification at the boundary where the leak could happen: database query behavior, service fan-out, worker execution, and API behavior when relevant. Tests are the evidence; the invariant belongs in the architecture.
+
 ## Testing Guidelines
 - Tests live under `tests/` and are run with `go test ./tests/...`.
 - Name test files `*_test.go` and test functions `TestXxx`.

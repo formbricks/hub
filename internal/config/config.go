@@ -204,6 +204,55 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// DatabaseURLConfigured reports whether DATABASE_URL was explicitly set in the
+// process environment or local .env file, rather than filled by Config defaults.
+func DatabaseURLConfigured() bool {
+	return databaseURLConfigured(".env")
+}
+
+func databaseURLConfigured(envFile string) bool {
+	if value, ok := os.LookupEnv("DATABASE_URL"); ok {
+		return strings.TrimSpace(value) != ""
+	}
+
+	value, ok := lookupEnvFileValue(envFile, "DATABASE_URL")
+	if !ok {
+		return false
+	}
+
+	return strings.TrimSpace(value) != ""
+}
+
+func lookupEnvFileValue(path, key string) (string, bool) {
+	data, err := os.ReadFile(path) // #nosec G304 -- runtime reads fixed ".env"; tests pass temp files.
+	if err != nil {
+		return "", false
+	}
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+
+		name, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(name) != key {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+		if unquoted, unquoteErr := strconv.Unquote(value); unquoteErr == nil {
+			value = unquoted
+		}
+
+		return value, true
+	}
+
+	return "", false
+}
+
 // applyDefaults fills in default values for empty fields (cleanenv may leave nested struct defaults unset).
 func applyDefaults(cfg *Config) {
 	if cfg.Server.Port == "" {

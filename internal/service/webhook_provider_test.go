@@ -37,13 +37,22 @@ func (m *mockWebhookInserter) InsertMany(_ context.Context, params []river.Inser
 	return results, nil
 }
 
-// mockProviderRepo implements only ListEnabledForEventType for provider tests.
+// mockProviderRepo implements webhook listing for provider tests.
 type mockProviderRepo struct {
-	webhooks []models.Webhook
-	err      error
+	webhooks      []models.Webhook
+	err           error
+	eventType     string
+	tenantID      *string
+	listCallCount int
 }
 
-func (m *mockProviderRepo) ListEnabledForEventType(_ context.Context, _ string) ([]models.Webhook, error) {
+func (m *mockProviderRepo) ListEnabledForEventTypeAndTenant(
+	_ context.Context, eventType string, tenantID *string,
+) ([]models.Webhook, error) {
+	m.eventType = eventType
+	m.tenantID = cloneStringPointer(tenantID)
+	m.listCallCount++
+
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -109,6 +118,14 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 
 		provider.PublishEvent(ctx, event)
 
+		if repo.eventType != eventType.String() {
+			t.Errorf("eventType = %q, want %q", repo.eventType, eventType.String())
+		}
+
+		if repo.tenantID != nil {
+			t.Errorf("tenantID = %q, want nil for tenant-less event", *repo.tenantID)
+		}
+
 		if n := len(inserter.insertManyCalls); n != 1 {
 			t.Fatalf("InsertMany called %d times, want 1", n)
 		}
@@ -135,6 +152,10 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 			wantID := repo.webhooks[i].ID
 			if args.WebhookID != wantID {
 				t.Errorf("param %d WebhookID = %v, want %v", i, args.WebhookID, wantID)
+			}
+
+			if args.TenantID != nil {
+				t.Errorf("param %d TenantID = %q, want nil", i, *args.TenantID)
 			}
 
 			if p.InsertOpts == nil || p.InsertOpts.MaxAttempts != 3 {
@@ -216,4 +237,109 @@ func TestWebhookProvider_PublishEvent(t *testing.T) {
 			t.Errorf("second batch params length = %d, want 1", len(inserter.insertManyCalls[1]))
 		}
 	})
+
+	t.Run("filters tenant-scoped webhooks before enqueue", func(t *testing.T) {
+		tenantA := "org-123"
+		tenantB := "org-other"
+		inserter := &mockWebhookInserter{}
+		repo := &mockProviderRepo{
+			webhooks: []models.Webhook{
+				{ID: wh1},
+				{ID: wh2, TenantID: &tenantA},
+				{ID: uuid.Must(uuid.NewV7()), TenantID: &tenantB},
+			},
+		}
+		provider := NewWebhookProvider(inserter, repo, 3, 500, 0, 0, 0, nil)
+		event := Event{
+			ID:        eventID,
+			Type:      eventType,
+			Timestamp: time.Now(),
+			Data:      &models.FeedbackRecord{TenantID: tenantA},
+		}
+
+		provider.PublishEvent(ctx, event)
+
+		if repo.tenantID == nil || *repo.tenantID != tenantA {
+			t.Fatalf("tenantID = %v, want %q", repo.tenantID, tenantA)
+		}
+
+		if len(inserter.insertManyCalls) != 1 {
+			t.Fatalf("InsertMany called %d times, want 1", len(inserter.insertManyCalls))
+		}
+
+		params := inserter.insertManyCalls[0]
+		if len(params) != 2 {
+			t.Fatalf("InsertMany params length = %d, want 2", len(params))
+		}
+
+		gotWebhookIDs := map[uuid.UUID]bool{}
+
+		for _, p := range params {
+			args, ok := p.Args.(WebhookDispatchArgs)
+			if !ok {
+				t.Fatalf("Args type = %T, want WebhookDispatchArgs", p.Args)
+			}
+
+			if args.TenantID == nil || *args.TenantID != tenantA {
+				t.Errorf("TenantID = %v, want %q", args.TenantID, tenantA)
+			}
+
+			gotWebhookIDs[args.WebhookID] = true
+		}
+
+		if !gotWebhookIDs[wh1] || !gotWebhookIDs[wh2] {
+			t.Errorf("enqueued webhook IDs = %v, want global and matching tenant webhooks", gotWebhookIDs)
+		}
+	})
+
+	t.Run("tenant-less events only enqueue global webhooks", func(t *testing.T) {
+		tenantA := "org-123"
+		inserter := &mockWebhookInserter{}
+		repo := &mockProviderRepo{
+			webhooks: []models.Webhook{
+				{ID: wh1},
+				{ID: wh2, TenantID: &tenantA},
+			},
+		}
+		provider := NewWebhookProvider(inserter, repo, 3, 500, 0, 0, 0, nil)
+		event := Event{ID: eventID, Type: eventType, Timestamp: time.Now(), Data: []uuid.UUID{uuid.Must(uuid.NewV7())}}
+
+		provider.PublishEvent(ctx, event)
+
+		if repo.tenantID != nil {
+			t.Fatalf("tenantID = %q, want nil", *repo.tenantID)
+		}
+
+		if len(inserter.insertManyCalls) != 1 {
+			t.Fatalf("InsertMany called %d times, want 1", len(inserter.insertManyCalls))
+		}
+
+		params := inserter.insertManyCalls[0]
+		if len(params) != 1 {
+			t.Fatalf("InsertMany params length = %d, want 1", len(params))
+		}
+
+		args, ok := params[0].Args.(WebhookDispatchArgs)
+		if !ok {
+			t.Fatalf("Args type = %T, want WebhookDispatchArgs", params[0].Args)
+		}
+
+		if args.WebhookID != wh1 {
+			t.Errorf("WebhookID = %v, want %v", args.WebhookID, wh1)
+		}
+
+		if args.TenantID != nil {
+			t.Errorf("TenantID = %q, want nil", *args.TenantID)
+		}
+	})
+}
+
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+
+	v := *value
+
+	return &v
 }

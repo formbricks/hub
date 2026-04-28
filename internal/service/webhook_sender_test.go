@@ -54,7 +54,9 @@ func (m *mockSenderRepo) ListEnabled(_ context.Context) ([]models.Webhook, error
 	return nil, nil
 }
 
-func (m *mockSenderRepo) ListEnabledForEventType(_ context.Context, _ string) ([]models.Webhook, error) {
+func (m *mockSenderRepo) ListEnabledForEventTypeAndTenant(
+	_ context.Context, _ string, _ *string,
+) ([]models.Webhook, error) {
 	return nil, nil
 }
 

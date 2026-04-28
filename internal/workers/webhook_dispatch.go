@@ -84,6 +84,36 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		return nil
 	}
 
+	tenantID := args.TenantID
+	if tenantID == nil {
+		tenantID = service.TenantIDPointerFromEventData(args.Data)
+	}
+
+	if !service.WebhookMatchesTenant(webhook, tenantID) {
+		if w.metrics != nil {
+			w.metrics.RecordDispatchError(ctx, "tenant_mismatch")
+		}
+
+		var webhookTenantID any
+		if webhook.TenantID != nil {
+			webhookTenantID = *webhook.TenantID
+		}
+
+		var eventTenantID any
+		if tenantID != nil {
+			eventTenantID = *tenantID
+		}
+
+		slog.Error("webhook dispatch: tenant scope mismatch, skipping delivery",
+			"event_id", args.EventID,
+			"webhook_id", args.WebhookID,
+			"webhook_tenant_id", webhookTenantID,
+			"event_tenant_id", eventTenantID,
+		)
+
+		return nil
+	}
+
 	payload := argsToPayload(args)
 
 	err = w.sender.Send(ctx, webhook, payload)

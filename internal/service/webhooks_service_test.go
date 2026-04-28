@@ -52,7 +52,9 @@ func (m *mockWebhooksRepo) ListEnabled(_ context.Context) ([]models.Webhook, err
 	return nil, nil
 }
 
-func (m *mockWebhooksRepo) ListEnabledForEventType(_ context.Context, _ string) ([]models.Webhook, error) {
+func (m *mockWebhooksRepo) ListEnabledForEventTypeAndTenant(
+	_ context.Context, _ string, _ *string,
+) ([]models.Webhook, error) {
 	return nil, nil
 }
 

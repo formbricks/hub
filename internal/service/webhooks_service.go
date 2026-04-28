@@ -33,7 +33,7 @@ type WebhooksRepository interface {
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListEnabled(ctx context.Context) ([]models.Webhook, error)
-	ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error)
+	ListEnabledForEventTypeAndTenant(ctx context.Context, eventType string, tenantID *string) ([]models.Webhook, error)
 }
 
 // WebhooksService handles business logic for webhooks.

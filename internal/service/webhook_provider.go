@@ -10,6 +10,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 )
 
@@ -52,10 +53,18 @@ func NewWebhookProvider(
 	}
 }
 
-// PublishEvent lists all enabled webhooks for the event type and enqueues one job per webhook,
-// in batches of maxFanOut to avoid oversized InsertMany calls.
+// PublishEvent lists enabled webhooks for the event type and tenant, then enqueues one job per webhook.
+// Tenant-scoped webhooks are only eligible when the event payload has the same tenant_id.
 func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
-	webhooks, err := p.repo.ListEnabledForEventType(ctx, event.Type.String())
+	tenantID := TenantIDPointerFromEventData(event.Data)
+	if tenantID == nil {
+		slog.Debug("webhook provider: event has no tenant_id; tenant-scoped webhooks are not eligible",
+			"event_id", event.ID,
+			"event_type", event.Type,
+		)
+	}
+
+	webhooks, err := p.repo.ListEnabledForEventTypeAndTenant(ctx, event.Type.String(), tenantID)
 	if err != nil {
 		if p.metrics != nil {
 			p.metrics.RecordProviderError(ctx, "list_failed")
@@ -68,6 +77,15 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 		)
 
 		return
+	}
+
+	webhooks, skipped := filterWebhooksByTenant(webhooks, tenantID)
+	if skipped > 0 {
+		slog.Warn("webhook provider: skipped tenant-mismatched webhooks returned by repository",
+			"event_id", event.ID,
+			"event_type", event.Type,
+			"skipped", skipped,
+		)
 	}
 
 	if len(webhooks) == 0 {
@@ -83,7 +101,7 @@ func (p *WebhookProvider) PublishEvent(ctx context.Context, event Event) {
 			ByPeriod: uniqueByPeriodHours * time.Hour,
 		},
 	}
-	baseArgs := p.eventToArgs(event)
+	baseArgs := p.eventToArgs(event, tenantID)
 
 	var enqueued int64
 
@@ -160,14 +178,27 @@ func (p *WebhookProvider) enqueueBackoffWithJitter(attempt int) time.Duration {
 	return exp + jitter
 }
 
+func filterWebhooksByTenant(webhooks []models.Webhook, tenantID *string) ([]models.Webhook, int) {
+	filtered := make([]models.Webhook, 0, len(webhooks))
+
+	for i := range webhooks {
+		if WebhookMatchesTenant(&webhooks[i], tenantID) {
+			filtered = append(filtered, webhooks[i])
+		}
+	}
+
+	return filtered, len(webhooks) - len(filtered)
+}
+
 // eventToArgs converts an Event to WebhookDispatchArgs (WebhookID must be set per webhook).
-func (p *WebhookProvider) eventToArgs(event Event) WebhookDispatchArgs {
+func (p *WebhookProvider) eventToArgs(event Event, tenantID *string) WebhookDispatchArgs {
 	return WebhookDispatchArgs{
 		EventID:       event.ID,
 		EventType:     event.Type.String(),
 		Timestamp:     event.Timestamp,
 		Data:          event.Data,
 		ChangedFields: event.ChangedFields,
+		TenantID:      tenantID,
 		WebhookID:     uuid.Nil, // set per webhook in PublishEvent
 	}
 }
