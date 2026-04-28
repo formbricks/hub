@@ -327,8 +327,13 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
+	openapiHandler, err := handlers.NewOpenAPIHandler(handlers.ResolveOpenAPISpecPath(), cfg.Server.PublicBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("create openapi handler: %w", err)
+	}
+
 	server := newHTTPServer(
-		cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, searchHandler,
+		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, searchHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -344,11 +349,12 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}, nil
 }
 
-// newHTTPServer builds the HTTP server and muxes (no auth on /health, API key on /v1/).
+// newHTTPServer builds the HTTP server and muxes (no auth on /health or /openapi.*, API key on /v1/).
 // Handler chain: RequestID -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
 func newHTTPServer(
 	cfg *config.Config,
 	health *handlers.HealthHandler,
+	openapi *handlers.OpenAPIHandler,
 	feedback *handlers.FeedbackRecordsHandler,
 	webhooks *handlers.WebhooksHandler,
 	search *handlers.SearchHandler,
@@ -357,6 +363,8 @@ func newHTTPServer(
 ) *http.Server {
 	public := http.NewServeMux()
 	public.HandleFunc("GET /health", health.Check)
+	public.HandleFunc("GET /openapi.yaml", openapi.YAML)
+	public.HandleFunc("GET /openapi.json", openapi.JSON)
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("POST /v1/feedback-records", feedback.Create)

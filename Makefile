@@ -1,4 +1,4 @@
-.PHONY: all test help tests tests-coverage check-coverage build build-api build-worker build-backfill-embeddings run run-worker run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: all test help tests mcp-smoke tests-coverage check-coverage check-coverage-staged build build-api build-worker build-backfill-embeddings run run-worker run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Aliases for checkmake/lint expectations
 all: build
@@ -18,9 +18,11 @@ help:
 	@echo "  make run-backfill-embeddings - Run the backfill-embeddings command (enqueues embedding jobs; loads .env)"
 	@echo "  make test-unit        - Run unit tests (fast, no database)"
 	@echo "  make tests            - Run integration tests"
+	@echo "  make mcp-smoke        - Run the live MCP package smoke test (requires Hub env vars)"
 	@echo "  make test-all         - Run all tests (unit + integration)"
 	@echo "  make tests-coverage   - Run tests with coverage report"
 	@echo "  make check-coverage   - Run tests and fail if coverage below COVERAGE_THRESHOLD (excludes cmd/api)"
+	@echo "  make check-coverage-staged - Run coverage for staged production Go files"
 	@echo "  make init-db          - Initialize database schema (run migrations with goose)"
 	@echo "  make migrate-status   - Show migration status"
 	@echo "  make migrate-validate - Validate migration files (no DB)"
@@ -48,6 +50,12 @@ tests:
 	@echo "Running integration tests..."
 	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./tests/... -v -timeout 120s)
 
+# Run the opt-in live MCP package smoke test.
+# Requires HUB_API_KEY and FORMBRICKS_HUB_BASE_URL (or HUB_BASE_URL).
+mcp-smoke:
+	@echo "Running MCP package smoke test..."
+	@(set -a && [ -f .env ] && . ./.env && set +a; RUN_MCP_SMOKE_TEST=1 go test ./tests -run TestMCPPackageSmoke -count=1 -v -timeout 120s)
+
 # Run unit tests (fast, no database required)
 test-unit:
 	@echo "Running unit tests..."
@@ -67,6 +75,7 @@ tests-coverage:
 
 # Minimum coverage threshold (percent). Fails if coverage falls below this.
 COVERAGE_THRESHOLD ?= 15
+PRE_COMMIT_COVERAGE_THRESHOLD ?= 50
 
 # Check coverage threshold (fail if below COVERAGE_THRESHOLD).
 # Excludes cmd/api (app.go, main.go) from coverage. Includes internal/, tests/, and pkg/.
@@ -81,6 +90,41 @@ check-coverage:
 		exit 1; \
 	fi && \
 	echo "✅ Coverage $$COV% meets threshold $(COVERAGE_THRESHOLD)%"
+
+# Check coverage for staged production Go files only. This keeps pre-commit focused on
+# files touched by the commit instead of unrelated low-coverage code in the same package.
+check-coverage-staged:
+	@if [ -z "$(strip $(STAGED_PACKAGES))" ]; then \
+		echo "No staged packages supplied; skipping staged coverage."; \
+		exit 0; \
+	fi; \
+	STAGED_GO_FILES=$$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$$' | grep -v '_test\.go$$' | grep -E '^(internal|pkg|tests)/' || true); \
+	if [ -z "$$STAGED_GO_FILES" ]; then \
+		echo "No staged production Go files; skipping staged coverage."; \
+		exit 0; \
+	fi; \
+	STAGED_GO_FILE_LIST=$$(printf "%s\n" "$$STAGED_GO_FILES" | tr '\n' ' '); \
+	echo "Running staged coverage (threshold: $(PRE_COMMIT_COVERAGE_THRESHOLD)%)..."; \
+	go test $(STAGED_PACKAGES) -coverprofile=coverage.staged.out; \
+	MODULE=$$(go list -m); \
+	COV=$$(awk -v module="$$MODULE" -v files="$$STAGED_GO_FILE_LIST" '\
+		BEGIN { split(files, fileList, " "); for (i in fileList) wanted[module "/" fileList[i]] = 1 } \
+		NR == 1 { next } \
+		{ split($$1, loc, ":"); if (wanted[loc[1]]) { stmts += $$2; if ($$3 > 0) covered += $$2 } } \
+		END { if (stmts > 0) printf "%.1f", (covered / stmts) * 100 }' coverage.staged.out); \
+	if [ -z "$$COV" ]; then \
+		echo "❌ Could not calculate staged coverage for:"; \
+		echo "$$STAGED_GO_FILES" | sed 's/^/    /'; \
+		exit 1; \
+	fi; \
+	if ! awk -v c="$$COV" -v t="$(PRE_COMMIT_COVERAGE_THRESHOLD)" 'BEGIN { exit (c+0 >= t) ? 0 : 1 }'; then \
+		echo ""; \
+		echo "❌ Staged coverage $$COV% is below threshold $(PRE_COMMIT_COVERAGE_THRESHOLD)%"; \
+		echo "Staged production Go files:"; \
+		echo "$$STAGED_GO_FILES" | sed 's/^/    /'; \
+		exit 1; \
+	fi; \
+	echo "✅ Staged coverage $$COV% meets threshold $(PRE_COMMIT_COVERAGE_THRESHOLD)%"
 
 # Build hub-api and hub-worker
 build: build-api build-worker
