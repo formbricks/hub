@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -35,7 +36,7 @@ type FeedbackRecordsRepository interface {
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	BulkDelete(ctx context.Context, userID, tenantID string) ([]uuid.UUID, error)
+	BulkDelete(ctx context.Context, userID string) ([]models.DeletedFeedbackRecordsByTenant, error)
 }
 
 // EmbeddingsRepository defines the interface for embeddings table access.
@@ -203,31 +204,38 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 	return nil
 }
 
-// BulkDeleteFeedbackRecords deletes all feedback records matching user_id and tenant_id.
-// Publishes a single tenant-aware FeedbackRecordDeleted event.
-func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userID string, tenantID *string) (int, error) {
+// BulkDeleteFeedbackRecords deletes all feedback records matching user_id.
+// It publishes one tenant-aware FeedbackRecordDeleted event per tenant represented in the deleted rows.
+func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userID string) (int, error) {
 	if userID == "" {
 		return 0, ErrUserIDRequired
 	}
 
-	normalizedTenantID, err := normalizeRequiredTenantID(tenantID)
-	if err != nil {
-		return 0, err
-	}
-
-	ids, err := s.repo.BulkDelete(ctx, userID, normalizedTenantID)
+	groups, err := s.repo.BulkDelete(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("bulk delete feedback records: %w", err)
 	}
 
-	if len(ids) > 0 && s.publisher != nil {
-		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, models.DeletedIDsEventData{
-			TenantID: normalizedTenantID,
-			IDs:      ids,
-		})
+	deletedCount := 0
+	for _, group := range groups {
+		deletedCount += len(group.IDs)
+
+		if len(group.IDs) == 0 || s.publisher == nil {
+			continue
+		}
+
+		if group.TenantID == "" {
+			slog.Error("bulk delete feedback records: deleted rows missing tenant_id; skipping webhook event",
+				"deleted_count", len(group.IDs),
+			)
+
+			continue
+		}
+
+		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordDeleted, models.DeletedIDsEventData(group))
 	}
 
-	return len(ids), nil
+	return deletedCount, nil
 }
 
 // SetEmbedding sets or clears the embedding for a feedback record and model (internal use by embeddings worker).

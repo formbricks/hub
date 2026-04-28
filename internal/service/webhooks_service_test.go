@@ -68,12 +68,20 @@ type capturePublisher struct {
 	data          any
 	changedFields []string
 	callCount     int
+	events        []capturedEvent
+}
+
+type capturedEvent struct {
+	eventType     datatypes.EventType
+	data          any
+	changedFields []string
 }
 
 func (p *capturePublisher) PublishEvent(_ context.Context, eventType datatypes.EventType, data any) {
 	p.eventType = eventType
 	p.data = data
 	p.callCount++
+	p.events = append(p.events, capturedEvent{eventType: eventType, data: data})
 }
 
 func (p *capturePublisher) PublishEventWithChangedFields(
@@ -83,6 +91,7 @@ func (p *capturePublisher) PublishEventWithChangedFields(
 	p.data = data
 	p.changedFields = changedFields
 	p.callCount++
+	p.events = append(p.events, capturedEvent{eventType: eventType, data: data, changedFields: changedFields})
 }
 
 func TestWebhooksService_CreateWebhook_InvalidSigningKey(t *testing.T) {

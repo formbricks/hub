@@ -198,12 +198,17 @@ type ListFeedbackRecordsResponse struct {
 
 // BulkDeleteFilters represents query parameters for bulk delete operation.
 type BulkDeleteFilters struct {
-	UserID   string  `form:"user_id"   validate:"required,no_null_bytes,min=1"`
-	TenantID *string `form:"tenant_id" validate:"required,no_null_bytes,min=1"`
+	UserID string `form:"user_id" validate:"required,no_null_bytes,min=1"`
 }
 
 // BulkDeleteResponse represents the response for bulk delete operation.
 type BulkDeleteResponse struct {
 	DeletedCount int64  `json:"deleted_count"`
 	Message      string `json:"message"`
+}
+
+// DeletedFeedbackRecordsByTenant groups deleted feedback record IDs by tenant.
+type DeletedFeedbackRecordsByTenant struct {
+	TenantID string
+	IDs      []uuid.UUID
 }

@@ -9,14 +9,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/datatypes"
-	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
 type mockFeedbackRecordsRepo struct {
-	record    *models.FeedbackRecord
-	bulkIDs   []uuid.UUID
-	deletedID uuid.UUID
+	record     *models.FeedbackRecord
+	bulkGroups []models.DeletedFeedbackRecordsByTenant
+	deletedID  uuid.UUID
 }
 
 func (m *mockFeedbackRecordsRepo) Create(
@@ -53,8 +52,8 @@ func (m *mockFeedbackRecordsRepo) Delete(_ context.Context, id uuid.UUID) error 
 	return nil
 }
 
-func (m *mockFeedbackRecordsRepo) BulkDelete(_ context.Context, _, _ string) ([]uuid.UUID, error) {
-	return m.bulkIDs, nil
+func (m *mockFeedbackRecordsRepo) BulkDelete(_ context.Context, _ string) ([]models.DeletedFeedbackRecordsByTenant, error) {
+	return m.bulkGroups, nil
 }
 
 func TestFeedbackRecordsService_DeleteFeedbackRecord_PublishesTenantAwareDeletedEvent(t *testing.T) {
@@ -77,35 +76,47 @@ func TestFeedbackRecordsService_DeleteFeedbackRecord_PublishesTenantAwareDeleted
 	assertDeletedEventData(t, publisher, datatypes.FeedbackRecordDeleted, tenantID, []uuid.UUID{recordID})
 }
 
-func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_PublishesTenantAwareDeletedEvent(t *testing.T) {
+func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_PublishesTenantAwareDeletedEventsByTenant(t *testing.T) {
 	ctx := context.Background()
-	tenantID := "org-123"
-	ids := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
-	repo := &mockFeedbackRecordsRepo{bulkIDs: ids}
+	tenantA := "org-123"
+	tenantB := "org-456"
+	tenantAIDs := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
+	tenantBIDs := []uuid.UUID{uuid.Must(uuid.NewV7())}
+	repo := &mockFeedbackRecordsRepo{
+		bulkGroups: []models.DeletedFeedbackRecordsByTenant{
+			{TenantID: tenantA, IDs: tenantAIDs},
+			{TenantID: tenantB, IDs: tenantBIDs},
+		},
+	}
 	publisher := &capturePublisher{}
 	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
 
-	count, err := svc.BulkDeleteFeedbackRecords(ctx, "user-123", &tenantID)
+	count, err := svc.BulkDeleteFeedbackRecords(ctx, "user-123")
 	if err != nil {
 		t.Fatalf("BulkDeleteFeedbackRecords() error = %v", err)
 	}
 
-	if count != len(ids) {
-		t.Fatalf("count = %d, want %d", count, len(ids))
+	if count != len(tenantAIDs)+len(tenantBIDs) {
+		t.Fatalf("count = %d, want %d", count, len(tenantAIDs)+len(tenantBIDs))
 	}
 
-	assertDeletedEventData(t, publisher, datatypes.FeedbackRecordDeleted, tenantID, ids)
+	assertDeletedEventDataAt(t, publisher, 0, datatypes.FeedbackRecordDeleted, tenantA, tenantAIDs)
+	assertDeletedEventDataAt(t, publisher, 1, datatypes.FeedbackRecordDeleted, tenantB, tenantBIDs)
 }
 
-func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_RequiresTenantID(t *testing.T) {
+func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_RequiresUserID(t *testing.T) {
 	ctx := context.Background()
-	repo := &mockFeedbackRecordsRepo{bulkIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}}
+	repo := &mockFeedbackRecordsRepo{
+		bulkGroups: []models.DeletedFeedbackRecordsByTenant{
+			{TenantID: "org-123", IDs: []uuid.UUID{uuid.Must(uuid.NewV7())}},
+		},
+	}
 	publisher := &capturePublisher{}
 	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
 
-	count, err := svc.BulkDeleteFeedbackRecords(ctx, "user-123", nil)
-	if !errors.Is(err, huberrors.ErrValidation) {
-		t.Fatalf("BulkDeleteFeedbackRecords() error = %v, want validation error", err)
+	count, err := svc.BulkDeleteFeedbackRecords(ctx, "")
+	if !errors.Is(err, ErrUserIDRequired) {
+		t.Fatalf("BulkDeleteFeedbackRecords() error = %v, want ErrUserIDRequired", err)
 	}
 
 	if count != 0 {
@@ -114,6 +125,45 @@ func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_RequiresTenantID(t *te
 
 	if publisher.callCount != 0 {
 		t.Fatalf("published %d events, want 0", publisher.callCount)
+	}
+}
+
+func assertDeletedEventDataAt(
+	t *testing.T,
+	publisher *capturePublisher,
+	index int,
+	eventType datatypes.EventType,
+	tenantID string,
+	ids []uuid.UUID,
+) {
+	t.Helper()
+
+	if publisher.callCount <= index {
+		t.Fatalf("published %d events, want event at index %d", publisher.callCount, index)
+	}
+
+	event := publisher.events[index]
+	if event.eventType != eventType {
+		t.Fatalf("published event type = %s, want %s", event.eventType, eventType)
+	}
+
+	data, ok := event.data.(models.DeletedIDsEventData)
+	if !ok {
+		t.Fatalf("published data type = %T, want DeletedIDsEventData", event.data)
+	}
+
+	if data.TenantID != tenantID {
+		t.Errorf("TenantID = %q, want %q", data.TenantID, tenantID)
+	}
+
+	if len(data.IDs) != len(ids) {
+		t.Fatalf("IDs length = %d, want %d", len(data.IDs), len(ids))
+	}
+
+	for i := range ids {
+		if data.IDs[i] != ids[i] {
+			t.Errorf("IDs[%d] = %v, want %v", i, data.IDs[i], ids[i])
+		}
 	}
 }
 

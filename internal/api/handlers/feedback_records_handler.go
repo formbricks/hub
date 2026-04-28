@@ -25,7 +25,7 @@ type FeedbackRecordsService interface {
 	ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error)
 	UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error
-	BulkDeleteFeedbackRecords(ctx context.Context, userID string, tenantID *string) (int, error)
+	BulkDeleteFeedbackRecords(ctx context.Context, userID string) (int, error)
 }
 
 // FeedbackRecordsHandler handles HTTP requests for feedback records.
@@ -220,7 +220,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// BulkDelete handles DELETE /v1/feedback-records?user_id=<id>&tenant_id=<tenant>.
+// BulkDelete handles DELETE /v1/feedback-records?user_id=<id>.
 func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	filters := &models.BulkDeleteFilters{}
 
@@ -231,24 +231,12 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters.UserID, filters.TenantID)
+	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters.UserID)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrValidation) {
-			validation.RespondValidationError(w, err)
-
-			return
-		}
-
-		var tenantID string
-		if filters.TenantID != nil {
-			tenantID = *filters.TenantID
-		}
-
 		slog.Error("Failed to bulk delete feedback records", // #nosec G706 -- slog key-values
 			"method", r.Method,
 			"path", r.URL.Path,
 			"user_id", filters.UserID,
-			"tenant_id", tenantID,
 			"error", err,
 		)
 

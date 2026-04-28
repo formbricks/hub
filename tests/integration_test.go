@@ -888,9 +888,10 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	userID := "bulk-delete-test-user-123"
 	subID := uuid.New().String() // unique per run to avoid 409 from leftover data
 
-	// Create several feedback records with the same user_id
-	tenantID := "test-tenant"
-	createPayload := func(fieldID string, valueNum float64) map[string]any {
+	// Create several feedback records with the same user_id across tenants.
+	tenantA := "test-tenant-a"
+	tenantB := "test-tenant-b"
+	createPayload := func(fieldID, tenantID string, valueNum float64) map[string]any {
 		return map[string]any{
 			"source_type":   "formbricks",
 			"submission_id": subID,
@@ -904,9 +905,9 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	createdIDs := make([]string, 0, 3)
 
 	for i, p := range []map[string]any{
-		createPayload("nps_1", 8),
-		createPayload("nps_2", 9),
-		createPayload("nps_3", 10),
+		createPayload("nps_1", tenantA, 8),
+		createPayload("nps_2", tenantB, 9),
+		createPayload("nps_3", tenantB, 10),
 	} {
 		body, err := json.Marshal(p)
 		require.NoError(t, err)
@@ -928,24 +929,13 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	}
 
-	// Bulk delete without tenant_id is rejected to avoid cross-tenant deletion.
+	// Bulk delete by user_id deletes every matching record for GDPR erasure, regardless of tenant.
 	bulkDelURL := server.URL + "/v1/feedback-records?user_id=" + userID
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL, http.NoBody)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
 	resp, err := client.Do(req)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	require.NoError(t, resp.Body.Close())
-
-	// Bulk delete by user_id and tenant_id.
-	bulkDelURL = server.URL + "/v1/feedback-records?user_id=" + userID + "&tenant_id=" + tenantID
-	req, err = http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL, http.NoBody)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+testAPIKey)
-
-	resp, err = client.Do(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -969,7 +959,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	}
 
 	// Bulk delete again (no matching records) returns 0
-	bulkDelURL2 := server.URL + "/v1/feedback-records?user_id=" + userID + "&tenant_id=" + tenantID
+	bulkDelURL2 := server.URL + "/v1/feedback-records?user_id=" + userID
 	req2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL2, http.NoBody)
 	require.NoError(t, err)
 	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -983,70 +973,6 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp2.Body.Close())
 	assert.Equal(t, int64(0), bulkResp2.DeletedCount)
-
-	// Bulk delete with tenant_id: only records for that tenant are deleted
-	t.Run("Bulk delete with tenant_id filter", func(t *testing.T) {
-		tenantA, tenantB := "tenant-bulk-a", "tenant-bulk-b"
-		userIDTenant := "bulk-delete-tenant-user"
-
-		// Create one record with tenant_a, two with tenant_b
-		for _, item := range []struct {
-			tenantID string
-			fieldID  string
-		}{
-			{tenantA, "fa"},
-			{tenantB, "fb1"},
-			{tenantB, "fb2"},
-		} {
-			body, err := json.Marshal(map[string]any{
-				"source_type":   "formbricks",
-				"submission_id": userIDTenant + "-" + item.fieldID,
-				"user_id":       userIDTenant,
-				"tenant_id":     item.tenantID,
-				"field_id":      item.fieldID,
-				"field_type":    "text",
-				"value_text":    "x",
-			})
-			require.NoError(t, err)
-			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
-			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer "+testAPIKey)
-			req.Header.Set("Content-Type", "application/json")
-			resp, err := client.Do(req)
-			require.NoError(t, err)
-			require.Equal(t, http.StatusCreated, resp.StatusCode)
-			require.NoError(t, resp.Body.Close())
-		}
-
-		// Delete only tenant_a
-		delURL := server.URL + "/v1/feedback-records?user_id=" + userIDTenant + "&tenant_id=" + tenantA
-		delReq, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL, http.NoBody)
-		require.NoError(t, err)
-		delReq.Header.Set("Authorization", "Bearer "+testAPIKey)
-		delResp, err := client.Do(delReq)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, delResp.StatusCode)
-
-		var delResult models.BulkDeleteResponse
-
-		err = decodeData(delResp, &delResult)
-		require.NoError(t, err)
-		require.NoError(t, delResp.Body.Close())
-		assert.Equal(t, int64(1), delResult.DeletedCount)
-
-		// Delete remaining (tenant_b) — should delete 2
-		delURL2 := server.URL + "/v1/feedback-records?user_id=" + userIDTenant + "&tenant_id=" + tenantB
-		delReq2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL2, http.NoBody)
-		require.NoError(t, err)
-		delReq2.Header.Set("Authorization", "Bearer "+testAPIKey)
-		delResp2, err := client.Do(delReq2)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, delResp2.StatusCode)
-		err = decodeData(delResp2, &delResult)
-		require.NoError(t, err)
-		require.NoError(t, delResp2.Body.Close())
-		assert.Equal(t, int64(2), delResult.DeletedCount)
-	})
 }
 
 // TestFeedbackRecordsRepository_BulkDelete tests the repository BulkDelete return value (deleted IDs).
@@ -1074,8 +1000,10 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	userID := "repo-bulk-delete-user"
 	sourceType := "formbricks"
 
-	// Create two records with same user_id
+	// Create records with same user_id across tenants.
 	const bulkDeleteTenant = "bulk-delete-tenant"
+
+	const otherBulkDeleteTenant = "bulk-delete-tenant-other"
 
 	req1 := &models.CreateFeedbackRecordRequest{
 		SourceType:   sourceType,
@@ -1084,7 +1012,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		FieldID:      "f1",
 		FieldType:    models.FieldTypeNumber,
 		ValueNumber:  new(1.0),
-		UserID:       new(userID),
+		UserID:       &userID,
 	}
 	rec1, err := repo.Create(ctx, req1)
 	require.NoError(t, err)
@@ -1097,19 +1025,42 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 		FieldID:      "f2",
 		FieldType:    models.FieldTypeNumber,
 		ValueNumber:  new(2.0),
-		UserID:       new(userID),
+		UserID:       &userID,
 	}
 	rec2, err := repo.Create(ctx, req2)
 	require.NoError(t, err)
 	require.NotEmpty(t, rec2.ID)
 
-	// BulkDelete returns the deleted IDs
-	deletedIDs, err := repo.BulkDelete(ctx, userID, bulkDeleteTenant)
+	valueText := "delete me too"
+	req3 := &models.CreateFeedbackRecordRequest{
+		SourceType:   sourceType,
+		SubmissionID: userID,
+		TenantID:     otherBulkDeleteTenant,
+		FieldID:      "f3",
+		FieldType:    models.FieldTypeText,
+		ValueText:    &valueText,
+		UserID:       &userID,
+	}
+	rec3, err := repo.Create(ctx, req3)
 	require.NoError(t, err)
-	require.Len(t, deletedIDs, 2)
-	ids := map[string]bool{deletedIDs[0].String(): true, deletedIDs[1].String(): true}
-	assert.True(t, ids[rec1.ID.String()])
-	assert.True(t, ids[rec2.ID.String()])
+	require.NotEmpty(t, rec3.ID)
+
+	// BulkDelete returns deleted IDs grouped by tenant for tenant-safe side effects.
+	deletedGroups, err := repo.BulkDelete(ctx, userID)
+	require.NoError(t, err)
+	require.Len(t, deletedGroups, 2)
+
+	idsByTenant := map[string]map[string]bool{}
+	for _, group := range deletedGroups {
+		idsByTenant[group.TenantID] = map[string]bool{}
+		for _, id := range group.IDs {
+			idsByTenant[group.TenantID][id.String()] = true
+		}
+	}
+
+	assert.True(t, idsByTenant[bulkDeleteTenant][rec1.ID.String()])
+	assert.True(t, idsByTenant[bulkDeleteTenant][rec2.ID.String()])
+	assert.True(t, idsByTenant[otherBulkDeleteTenant][rec3.ID.String()])
 }
 
 // TestWebhooksCRUD tests webhook create, get, list, update, delete.

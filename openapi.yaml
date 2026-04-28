@@ -381,7 +381,7 @@ paths:
             tags:
                 - Feedback Records
             summary: Bulk delete feedback records by user ID
-            description: Permanently deletes all feedback record data points matching the specified user_id within the required tenant_id. This endpoint supports GDPR Article 17 (Right to Erasure) requests.
+            description: Permanently deletes all feedback record data points matching the specified user_id across tenants. This endpoint supports GDPR Article 17 (Right to Erasure) requests.
             operationId: bulk-delete-feedback-records
             parameters:
                 - name: user_id
@@ -394,16 +394,6 @@ paths:
                     minLength: 1
                     pattern: '^[^\x00]*$'
                     example: "user-abc-123"
-                - name: tenant_id
-                  in: query
-                  description: Tenant ID to delete within (required for isolation). NULL bytes not allowed.
-                  required: true
-                  schema:
-                    type: string
-                    description: Tenant ID to delete within (required for isolation). NULL bytes not allowed.
-                    minLength: 1
-                    pattern: '^[^\x00]*$'
-                    example: "org-123"
             responses:
                 "200":
                     description: OK

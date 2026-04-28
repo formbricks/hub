@@ -394,37 +394,50 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// BulkDelete deletes all feedback records matching user_id and tenant_id.
-// It returns the deleted IDs (via RETURNING id) so callers can e.g. publish events.
-func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userID, tenantID string) ([]uuid.UUID, error) {
+// BulkDelete deletes all feedback records matching user_id.
+// It returns deleted IDs grouped by tenant so callers can publish tenant-scoped side effects.
+func (r *FeedbackRecordsRepository) BulkDelete(
+	ctx context.Context, userID string,
+) ([]models.DeletedFeedbackRecordsByTenant, error) {
 	query := `
 		DELETE FROM feedback_records
-		WHERE user_id = $1 AND tenant_id = $2
-		RETURNING id`
-	args := []any{userID, tenantID}
+		WHERE user_id = $1
+		RETURNING id, tenant_id`
 
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to bulk delete feedback records: %w", err)
 	}
 	defer rows.Close()
 
-	var ids []uuid.UUID
+	groups := make([]models.DeletedFeedbackRecordsByTenant, 0)
+	groupIndexByTenant := make(map[string]int)
 
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var (
+			id       uuid.UUID
+			tenantID string
+		)
+
+		if err := rows.Scan(&id, &tenantID); err != nil {
 			return nil, fmt.Errorf("failed to scan deleted feedback record id: %w", err)
 		}
 
-		ids = append(ids, id)
+		groupIndex, ok := groupIndexByTenant[tenantID]
+		if !ok {
+			groupIndex = len(groups)
+			groupIndexByTenant[tenantID] = groupIndex
+			groups = append(groups, models.DeletedFeedbackRecordsByTenant{TenantID: tenantID})
+		}
+
+		groups[groupIndex].IDs = append(groups[groupIndex].IDs, id)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating bulk delete result: %w", err)
 	}
 
-	return ids, nil
+	return groups, nil
 }
 
 // fetchFeedbackRecords executes the given query and scans rows into FeedbackRecord slices.
