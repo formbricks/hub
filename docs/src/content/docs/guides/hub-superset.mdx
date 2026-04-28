@@ -13,7 +13,7 @@ Hub stores all data in a single PostgreSQL database. You can report on it with *
 
 | Step | Action                                                                                                                                                                   |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1    | Run Hub + Postgres ([Quick Start](/quickstart))                                                                                                                          |
+| 1    | Run Hub, worker, and Postgres ([Quick Start](/quickstart))                                                                                                               |
 | 2    | Run Superset ([sample Docker Compose](#option-b-sample-docker-compose-recommended-for-local-setup) below or [Superset docs](https://superset.apache.org/docs/databases)) |
 | 3    | In Superset: add a PostgreSQL connection with Hub's DB credentials (see Step 1 table)                                                                                    |
 | 4    | In Superset: **Data -> Datasets -> + Dataset** -> select DB, schema `public`, table `feedback_records`                                                                   |
@@ -28,13 +28,13 @@ Hub stores all data in a single PostgreSQL database. You can report on it with *
 <Callout variant="note">
   When running Hub, Postgres, and Superset on the same machine, use different
   ports for the database and the Hub API to avoid port clashes with Superset
-  (for example, set `PORT` for Hub and, if needed, a different port for Postgres
-  in your `.env` or compose).
+  (for example, set `HUB_PORT` and `POSTGRES_PORT` in your `.env` when using the
+  Quick Start compose file).
 </Callout>
 
 ## Step 1: Get Hub running
 
-If Formbricks Hub is not running yet, follow the [Quick Start Guide](/quickstart) to start Hub and Postgres (for example, `docker compose up -d`).
+If Formbricks Hub is not running yet, follow the [Quick Start Guide](/quickstart) to start Postgres, run migrations, and start the Hub API and worker.
 
 Note the **database connection details** you use for Hub (host, port, database name, user, password). You will need them for Superset. If you use the [compose file](/quickstart#option-1-docker-compose-recommended) from the docs, that is typically:
 
@@ -221,13 +221,13 @@ ORDER BY MIN(value_number);
 
 For the complete list of columns and field types, see the [Data Model](/core-concepts/data-model).
 
-| Use case              | Dimension / filter                          | Metric                                                                           |
-| --------------------- | ------------------------------------------- | -------------------------------------------------------------------------------- |
-| NPS/CSAT over time    | `collected_at`; filter `field_type = nps`   | AVG(value_number) or custom NPS % (see [Superset examples](./superset-examples)) |
-| Count by source       | `source_type`                               | COUNT(\*)                                                                        |
-| Score by question     | `field_id` or `field_label`                 | AVG(value_number)                                                                |
-| Categorical breakdown | `value_text` (for example, device, segment) | COUNT(\*)                                                                        |
-| Multi-tenant          | Filter `tenant_id`                          | any                                                                              |
+| Use case              | Dimension / filter                          | Metric                            |
+| --------------------- | ------------------------------------------- | --------------------------------- |
+| NPS/CSAT over time    | `collected_at`; filter `field_type = nps`   | AVG(value_number) or custom NPS % |
+| Count by source       | `source_type`                               | COUNT(\*)                         |
+| Score by question     | `field_id` or `field_label`                 | AVG(value_number)                 |
+| Categorical breakdown | `value_text` (for example, device, segment) | COUNT(\*)                         |
+| Multi-tenant          | Filter `tenant_id`                          | any                               |
 
 That is it. Once Superset has access to Hub's database, your feedback data is immediately available for reporting with no extra integration work.
 
@@ -235,9 +235,8 @@ That is it. Once Superset has access to Hub's database, your feedback data is im
 
 **Hub**
 
-- [Quick Start](/quickstart) - Run Hub and Postgres
+- [Quick Start](/quickstart) - Run Hub, worker, and Postgres
 - [Data Model](/core-concepts/data-model) - Table schema, columns, and field types for `feedback_records`
-- [Superset examples](./superset-examples) - More SQL and chart ideas
 - [Connecting Hub to Power BI](./hub-powerbi) - Same data, with Microsoft Power BI
 
 **Superset**

@@ -40,19 +40,26 @@ All API requests except `GET /health` require the `Authorization` header:
 
 ```bash
 curl -H "Authorization: Bearer your-secret-key-here" \
-  http://localhost:8080/v1/feedback-records
+  "http://localhost:8080/v1/feedback-records?tenant_id=org-123"
 ```
 
 ## Protected Endpoints
 
-These endpoints require authentication:
+All `/v1/*` endpoints require authentication, including:
 
 - `POST /v1/feedback-records` - Create feedback record
-- `GET /v1/feedback-records` - List feedback records
+- `GET /v1/feedback-records?tenant_id=<id>` - List feedback records for a tenant
 - `GET /v1/feedback-records/{id}` - Get feedback record
 - `PATCH /v1/feedback-records/{id}` - Update feedback record
 - `DELETE /v1/feedback-records/{id}` - Delete feedback record
-- `DELETE /v1/feedback-records?user_identifier=<id>` - Bulk delete feedback records by user
+- `DELETE /v1/feedback-records?user_id=<id>` - Bulk delete feedback records by user
+- `POST /v1/feedback-records/search/semantic` - Search feedback records semantically
+- `GET /v1/feedback-records/{id}/similar?tenant_id=<id>` - Find similar feedback records
+- `GET /v1/webhooks` - List webhooks
+- `POST /v1/webhooks` - Create webhook
+- `GET /v1/webhooks/{id}` - Get webhook
+- `PATCH /v1/webhooks/{id}` - Update webhook
+- `DELETE /v1/webhooks/{id}` - Delete webhook
 
 Always public (no auth required):
 
@@ -86,7 +93,7 @@ Yes -> Process Request
 Without authentication:
 
 ```bash
-curl http://localhost:8080/v1/feedback-records
+curl "http://localhost:8080/v1/feedback-records?tenant_id=org-123"
 ```
 
 Response:
@@ -103,15 +110,15 @@ With authentication:
 
 ```bash
 curl -H "Authorization: Bearer your-secret-key-here" \
-  http://localhost:8080/v1/feedback-records
+  "http://localhost:8080/v1/feedback-records?tenant_id=org-123"
 ```
 
 Response:
 
 ```json
 {
-  "data": [...],
-  "total": 10
+  "data": [],
+  "limit": 100
 }
 ```
 
@@ -263,7 +270,7 @@ If you add a `/docs` or `/openapi.json` endpoint to serve the API spec, it shoul
 curl -H "Authorization: Bearer abc123" \
   -X POST http://localhost:8080/v1/feedback-records \
   -H "Content-Type: application/json" \
-  -d '{"source_type":"survey","field_id":"q1","field_type":"text","value_text":"Great!"}'
+  -d '{"tenant_id":"org-123","submission_id":"subm-001","source_type":"survey","field_id":"q1","field_type":"text","value_text":"Great!"}'
 ```
 
 ### JavaScript (Node.js)
@@ -276,6 +283,8 @@ const response = await fetch("http://localhost:8080/v1/feedback-records", {
   },
   method: "POST",
   body: JSON.stringify({
+    tenant_id: "org-123",
+    submission_id: "subm-001",
     source_type: "survey",
     field_id: "q1",
     field_type: "text",
@@ -295,7 +304,7 @@ headers = {
 }
 
 response = requests.get(
-    "http://localhost:8080/v1/feedback-records",
+    "http://localhost:8080/v1/feedback-records?tenant_id=org-123",
     headers=headers
 )
 ```
@@ -304,7 +313,7 @@ response = requests.get(
 
 ```go
 client := &http.Client{}
-req, _ := http.NewRequest("GET", "http://localhost:8080/v1/feedback-records", nil)
+req, _ := http.NewRequest("GET", "http://localhost:8080/v1/feedback-records?tenant_id=org-123", nil)
 req.Header.Set("Authorization", "Bearer abc123")
 resp, err := client.Do(req)
 ```

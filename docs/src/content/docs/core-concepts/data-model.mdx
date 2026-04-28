@@ -22,7 +22,9 @@ When a user completes a survey with an NPS score and a comment, Hub creates two 
 ```json
 // Record 1: NPS score
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6k3x8m9n2p4r7t5v",
+  "source_type": "survey",
   "source_id": "nps-2024",
   "field_id": "nps_score",
   "field_type": "nps",
@@ -31,7 +33,9 @@ When a user completes a survey with an NPS score and a comment, Hub creates two 
 
 // Record 2: Comment
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6k3x8m9n2p4r7t5v",
+  "source_type": "survey",
   "source_id": "nps-2024",
   "field_id": "feedback_comment",
   "field_type": "text",
@@ -49,19 +53,19 @@ The `FeedbackRecord` entity stores individual feedback data points.
 
 #### Core Identification
 
-| Field              | Type      | Required | Description                                                  |
-| ------------------ | --------- | -------- | ------------------------------------------------------------ |
-| **`id`**           | UUIDv7    | Auto     | Time-ordered primary key for efficient indexing              |
-| **`submission_id`** | String    | Yes      | Identifier shared by all rows from the same submission      |
-| **`collected_at`** | Timestamp | Yes      | When the feedback was originally collected (defaults to now) |
-| **`created_at`**   | Timestamp | Auto     | When the record was created in the Hub                       |
-| **`updated_at`**   | Timestamp | Auto     | When the record was last updated                             |
+| Field               | Type      | Required | Description                                                  |
+| ------------------- | --------- | -------- | ------------------------------------------------------------ |
+| **`id`**            | UUIDv7    | Auto     | Time-ordered primary key for efficient indexing              |
+| **`submission_id`** | String    | Yes      | Identifier shared by all rows from the same submission       |
+| **`collected_at`**  | Timestamp | Yes      | When the feedback was originally collected (defaults to now) |
+| **`created_at`**    | Timestamp | Auto     | When the record was created in the Hub                       |
+| **`updated_at`**    | Timestamp | Auto     | When the record was last updated                             |
 
 #### Multi-Tenancy
 
-| Field       | Type   | Required | Description                                                 |
-| ----------- | ------ | -------- | ----------------------------------------------------------- |
-| `tenant_id` | String | Optional | Tenant/organization identifier for multi-tenant deployments |
+| Field           | Type   | Required | Description                                                                                                  |
+| --------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------ |
+| **`tenant_id`** | String | Yes      | Tenant/organization identifier required for tenant isolation. Maximum 255 chars; NULL bytes are not allowed. |
 
 #### Source Tracking
 
@@ -103,11 +107,11 @@ This enables:
 
 #### Context & Metadata
 
-| Field             | Type   | Required | Description                                                  |
-| ----------------- | ------ | -------- | ------------------------------------------------------------ |
-| `metadata`        | JSONB  | Optional | Flexible context (device, location, campaign, custom fields) |
-| `language`        | String | Optional | ISO 639-1 language code (for example, "en", "de", "fr")      |
-| `user_identifier` | String | Optional | Anonymous user ID for tracking (hashed, never PII)           |
+| Field      | Type   | Required | Description                                                  |
+| ---------- | ------ | -------- | ------------------------------------------------------------ |
+| `metadata` | JSONB  | Optional | Flexible context (device, location, campaign, custom fields) |
+| `language` | String | Optional | ISO 639-1 language code (for example, "en", "de", "fr")      |
+| `user_id`  | String | Optional | Anonymous user ID for tracking (hashed, never PII)           |
 
 ### Field Types
 
@@ -164,6 +168,7 @@ The `source_type` field identifies where the feedback data originated:
 
 ```json
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6k3x8m9n2p4r7t5v",
   "source_type": "survey",
   "source_id": "q1-2025-nps",
@@ -177,7 +182,7 @@ The `source_type` field identifies where the feedback data originated:
     "customer_segment": "enterprise",
     "country": "US"
   },
-  "user_identifier": "user-abc-123",
+  "user_id": "user-abc-123",
   "collected_at": "2025-01-15T10:30:00Z"
 }
 ```
@@ -186,6 +191,7 @@ The `source_type` field identifies where the feedback data originated:
 
 ```json
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6k9f2a7b4c6d8e1",
   "source_type": "survey",
   "source_id": "onboarding-survey-v2",
@@ -198,7 +204,7 @@ The `source_type` field identifies where the feedback data originated:
     "device": "mobile",
     "app_version": "2.1.4"
   },
-  "user_identifier": "user-xyz-789",
+  "user_id": "user-xyz-789",
   "collected_at": "2025-01-15T10:32:15Z"
 }
 ```
@@ -210,6 +216,7 @@ A ranking question where users order features by importance creates multiple row
 ```json
 // Row 1: First ranked item
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6m0r4s8t1u3v5w7",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
@@ -220,12 +227,13 @@ A ranking question where users order features by importance creates multiple row
   "field_group_label": "Rank these features by importance",
   "value_number": 1,
   "metadata": { "question_type": "ranking", "total_items": 3 },
-  "user_identifier": "user-abc-123",
+  "user_id": "user-abc-123",
   "collected_at": "2025-01-12T14:22:00Z"
 }
 
 // Row 2: Second ranked item
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6m0r4s8t1u3v5w7",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
@@ -236,12 +244,13 @@ A ranking question where users order features by importance creates multiple row
   "field_group_label": "Rank these features by importance",
   "value_number": 2,
   "metadata": { "question_type": "ranking", "total_items": 3 },
-  "user_identifier": "user-abc-123",
+  "user_id": "user-abc-123",
   "collected_at": "2025-01-12T14:22:00Z"
 }
 
 // Row 3: Third ranked item
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6m0r4s8t1u3v5w7",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
@@ -252,7 +261,7 @@ A ranking question where users order features by importance creates multiple row
   "field_group_label": "Rank these features by importance",
   "value_number": 3,
   "metadata": { "question_type": "ranking", "total_items": 3 },
-  "user_identifier": "user-abc-123",
+  "user_id": "user-abc-123",
   "collected_at": "2025-01-12T14:22:00Z"
 }
 ```
@@ -284,6 +293,7 @@ A matrix question with multiple row items creates rows with shared `field_group_
 ```json
 // Row 1: First matrix item
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6m4x9y2z5a7b1c3",
   "source_type": "survey",
   "source_id": "satisfaction-survey",
@@ -294,12 +304,13 @@ A matrix question with multiple row items creates rows with shared `field_group_
   "field_group_label": "Rate your satisfaction with each feature",
   "value_number": 4,
   "metadata": { "question_type": "matrix" },
-  "user_identifier": "user-xyz-789",
+  "user_id": "user-xyz-789",
   "collected_at": "2025-01-12T14:25:00Z"
 }
 
 // Row 2: Second matrix item
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6m4x9y2z5a7b1c3",
   "source_type": "survey",
   "source_id": "satisfaction-survey",
@@ -310,7 +321,7 @@ A matrix question with multiple row items creates rows with shared `field_group_
   "field_group_label": "Rate your satisfaction with each feature",
   "value_number": 5,
   "metadata": { "question_type": "matrix" },
-  "user_identifier": "user-xyz-789",
+  "user_id": "user-xyz-789",
   "collected_at": "2025-01-12T14:25:00Z"
 }
 ```
@@ -324,6 +335,7 @@ When a user selects multiple options, each choice becomes a separate row:
 
 // Row 1
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6m8d3e5f7g9h1j2",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
@@ -331,12 +343,13 @@ When a user selects multiple options, each choice becomes a separate row:
   "field_label": "Which features do you use?",
   "field_type": "categorical",
   "value_text": "Dashboards",
-  "user_identifier": "user-qwe-456",
+  "user_id": "user-qwe-456",
   "collected_at": "2025-01-12T14:22:00Z"
 }
 
 // Row 2
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6m8d3e5f7g9h1j2",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
@@ -344,12 +357,13 @@ When a user selects multiple options, each choice becomes a separate row:
   "field_label": "Which features do you use?",
   "field_type": "categorical",
   "value_text": "Reports",
-  "user_identifier": "user-qwe-456",
+  "user_id": "user-qwe-456",
   "collected_at": "2025-01-12T14:22:00Z"
 }
 
 // Row 3
 {
+  "tenant_id": "org-123",
   "submission_id": "subm_01jq6m8d3e5f7g9h1j2",
   "source_type": "survey",
   "source_id": "product-feedback-2025",
@@ -357,7 +371,7 @@ When a user selects multiple options, each choice becomes a separate row:
   "field_label": "Which features do you use?",
   "field_type": "categorical",
   "value_text": "Alerts",
-  "user_identifier": "user-qwe-456",
+  "user_id": "user-qwe-456",
   "collected_at": "2025-01-12T14:22:00Z"
 }
 ```
@@ -386,7 +400,7 @@ Hub automatically creates indexes for optimal query performance:
 - **`field_id`** - Group related questions across responses
 - **`field_group_id`** - Filter grouped fields (ranking, matrix questions)
 - **`value_number`** - Numeric aggregations (averages, sums, counts)
-- **`user_identifier`** - User-level journey analysis
+- **`user_id`** - User-level journey analysis
 
 <Callout variant="note">
   All indexes are created automatically via database migrations. The combination
@@ -601,13 +615,14 @@ For questions where users can select multiple options, create one row per select
 
 ```json
 // Question: "Which features do you use?" (user selected 3 options)
-// Create 3 rows with the same submission_id, source_id, and field_id, but different value_text
-{"submission_id": "subm_01jq6m8d3e5f7g9h1j2", "field_type": "categorical", "value_text": "Dashboards"},
-{"submission_id": "subm_01jq6m8d3e5f7g9h1j2", "field_type": "categorical", "value_text": "Reports"},
-{"submission_id": "subm_01jq6m8d3e5f7g9h1j2", "field_type": "categorical", "value_text": "Alerts"}
+// Create 3 rows with the same tenant_id, submission_id, source_type, source_id,
+// and field_id, but different value_text
+{"tenant_id": "org-123", "submission_id": "subm_01jq6m8d3e5f7g9h1j2", "source_type": "survey", "source_id": "product-feedback-2025", "field_id": "features_used", "field_type": "categorical", "value_text": "Dashboards"},
+{"tenant_id": "org-123", "submission_id": "subm_01jq6m8d3e5f7g9h1j2", "source_type": "survey", "source_id": "product-feedback-2025", "field_id": "features_used", "field_type": "categorical", "value_text": "Reports"},
+{"tenant_id": "org-123", "submission_id": "subm_01jq6m8d3e5f7g9h1j2", "source_type": "survey", "source_id": "product-feedback-2025", "field_id": "features_used", "field_type": "categorical", "value_text": "Alerts"}
 ```
 
-### 6. Anonymous User Identifiers
+### 6. Anonymous User IDs
 
 For privacy, use anonymous hashed IDs instead of PII:
 
@@ -615,7 +630,7 @@ Good:
 
 ```json
 {
-  "user_identifier": "sha256:abc123def456"
+  "user_id": "sha256:abc123def456"
 }
 ```
 
@@ -623,7 +638,7 @@ Avoid:
 
 ```json
 {
-  "user_identifier": "john@example.com"
+  "user_id": "john@example.com"
 }
 ```
 

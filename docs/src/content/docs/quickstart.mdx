@@ -16,16 +16,15 @@ import { Callout } from "@stainless-api/docs/components";
 
 The easiest way to run Formbricks Hub with all dependencies.
 
-#### 1. Download the Configuration
+#### 1. Create the Docker Compose File
 
-Create a new directory and download the Docker Compose file:
+Create a new directory:
 
 ```bash
 mkdir formbricks-hub && cd formbricks-hub
-curl -o compose.yml https://raw.githubusercontent.com/formbricks/hub/main/compose.yml
 ```
 
-Or create it manually:
+Create `compose.yml`:
 
 ```yaml
 services:
@@ -38,7 +37,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-formbricks_dev}
       POSTGRES_DB: hub
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -62,10 +61,10 @@ services:
     environment:
       DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_dev}@postgres:5432/hub?sslmode=disable
       API_KEY: ${API_KEY:-}
-      PORT: ${PORT:-8080}
+      PORT: 8080
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "8080:8080"
+      - "${HUB_PORT:-8080}:8080"
     healthcheck:
       test:
         [
@@ -80,6 +79,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    networks:
+      - formbricks_hub
+
+  hub-worker:
+    image: ghcr.io/formbricks/hub:latest
+    container_name: formbricks_hub_worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_dev}@postgres:5432/hub?sslmode=disable
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    entrypoint: ["/app/hub-worker"]
+    healthcheck:
+      disable: true
     networks:
       - formbricks_hub
 
@@ -103,8 +118,9 @@ POSTGRES_PASSWORD=your_secure_postgres_password_here
 # Required: API authentication key
 API_KEY=your_secure_api_key_here
 
-# Optional: Server configuration
-PORT=8080
+# Optional: Host port configuration
+HUB_PORT=8080
+POSTGRES_PORT=5432
 LOG_LEVEL=info
 ```
 
@@ -118,34 +134,23 @@ openssl rand -base64 32
 openssl rand -base64 32
 ```
 
-#### 3. Start the Services
+#### 3. Start PostgreSQL
 
 ```bash
-docker compose up -d
+docker compose up -d postgres
 ```
 
 This will:
 
-- Pull the latest Formbricks Hub image from GitHub Container Registry
 - Start PostgreSQL with persistent storage
-- Start the Hub API on port 8080
 
 #### 4. Run Database Migrations
 
-Migrations are managed with [goose](https://github.com/pressly/goose). From the project directory with `DATABASE_URL` set to your Postgres connection string:
+Migrations are managed with [goose](https://github.com/pressly/goose) and [River](https://riverqueue.com/). The Hub image includes both migration CLIs and the migration files:
 
 ```bash
-# Install goose (if not already: make install-tools)
-go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
-
-# Apply migrations
-goose -dir migrations postgres "$DATABASE_URL" up
-```
-
-Or use the Makefile (loads `DATABASE_URL` from `.env`):
-
-```bash
-make init-db
+docker compose run --rm --entrypoint /bin/sh hub -c \
+  'goose -dir /app/migrations postgres "$DATABASE_URL" up && river migrate-up --database-url "$DATABASE_URL"'
 ```
 
 <Callout variant="note">
@@ -153,9 +158,21 @@ make init-db
   time.
 </Callout>
 
-#### 5. Verify Installation
+#### 5. Start Hub
 
-Check that both services are healthy:
+```bash
+docker compose up -d hub hub-worker
+```
+
+This will:
+
+- Pull the latest Formbricks Hub image from GitHub Container Registry
+- Start the Hub API on port 8080
+- Start the Hub worker for asynchronous jobs
+
+#### 6. Verify Installation
+
+Check that the services are running:
 
 ```bash
 docker compose ps
@@ -167,6 +184,7 @@ Expected output:
 NAME                        STATUS              PORTS
 formbricks_hub_api          Up (healthy)        0.0.0.0:8080->8080/tcp
 formbricks_hub_postgres     Up (healthy)        0.0.0.0:5432->5432/tcp
+formbricks_hub_worker       Up
 ```
 
 Test the health endpoint:
@@ -177,8 +195,8 @@ curl http://localhost:8080/health
 
 Expected response:
 
-```json
-{ "status": "ok" }
+```text
+OK
 ```
 
 ### Option 2: Docker Run (Minimal)
@@ -197,8 +215,8 @@ docker run -d \
 
 <Callout variant="note">
   <strong>Warning:</strong> Make sure to run migrations before starting the API.
-  From the Hub repo with `DATABASE_URL` set: `make init-db` or `goose -dir
-  migrations postgres "$DATABASE_URL" up`.
+  The Hub image includes `goose`, `river`, and `/app/migrations`; run the same
+  migration command from the Docker Compose setup against your database.
 </Callout>
 
 ## Making Your First API Call
@@ -210,6 +228,8 @@ curl -X POST http://localhost:8080/v1/feedback-records \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your_secure_api_key_here" \
   -d '{
+    "tenant_id": "org-123",
+    "submission_id": "subm-my-first-survey-001",
     "source_type": "survey",
     "source_id": "my-first-survey",
     "field_id": "q1",
@@ -233,8 +253,11 @@ Expected response:
 ```json
 {
   "id": "01932c8a-8b9e-7000-8000-000000000001",
+  "tenant_id": "org-123",
+  "submission_id": "subm-my-first-survey-001",
   "collected_at": "2025-10-20T12:34:56Z",
   "created_at": "2025-10-20T12:34:56Z",
+  "updated_at": "2025-10-20T12:34:56Z",
   "source_type": "survey",
   "source_id": "my-first-survey",
   "field_id": "q1",
@@ -254,6 +277,8 @@ curl -X POST http://localhost:8080/v1/feedback-records \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your_secure_api_key_here" \
   -d '{
+    "tenant_id": "org-123",
+    "submission_id": "subm-my-first-survey-001",
     "source_type": "survey",
     "source_id": "my-first-survey",
     "field_id": "q2",
@@ -266,7 +291,7 @@ curl -X POST http://localhost:8080/v1/feedback-records \
 ### 3. Query Feedback Records
 
 ```bash
-curl "http://localhost:8080/v1/feedback-records?limit=10" \
+curl "http://localhost:8080/v1/feedback-records?tenant_id=org-123&limit=10" \
   -H "Authorization: Bearer your_secure_api_key_here"
 ```
 
@@ -274,10 +299,22 @@ Response:
 
 ```json
 {
-  "data": [...],
-  "total": 2,
-  "limit": 10,
-  "offset": 0
+  "data": [
+    {
+      "id": "01932c8a-8b9e-7000-8000-000000000001",
+      "tenant_id": "org-123",
+      "submission_id": "subm-my-first-survey-001",
+      "collected_at": "2025-10-20T12:34:56Z",
+      "created_at": "2025-10-20T12:34:56Z",
+      "updated_at": "2025-10-20T12:34:56Z",
+      "source_type": "survey",
+      "source_id": "my-first-survey",
+      "field_id": "q1",
+      "field_type": "rating",
+      "value_number": 5
+    }
+  ],
+  "limit": 10
 }
 ```
 
@@ -291,6 +328,9 @@ Response:
 | `API_KEY`      | Yes      | -                                                                     | API authentication key                       |
 | `PORT`         | No       | `8080`                                                                | HTTP server port                             |
 | `LOG_LEVEL`    | No       | `info`                                                                | Log level (`debug`, `info`, `warn`, `error`) |
+
+In the Docker Compose example above, use `HUB_PORT` and `POSTGRES_PORT` to change
+host ports without changing the ports used inside the containers.
 
 [See full environment variable reference ->](/reference/environment-variables)
 
@@ -322,6 +362,9 @@ docker compose logs -f
 
 # Just the Hub API
 docker compose logs -f hub
+
+# Just the Hub worker
+docker compose logs -f hub-worker
 
 # Just PostgreSQL
 docker compose logs -f postgres
@@ -371,14 +414,15 @@ If port 8080 or 5432 is occupied:
 
 ```bash
 # Change ports in .env
-PORT=8081
+HUB_PORT=8081
+POSTGRES_PORT=5433
 ```
 
 Or modify the port mapping in `compose.yml`:
 
 ```yaml
 ports:
-  - "8081:8080" # Host:Container
+  - "${HUB_PORT:-8080}:8080" # Host:Container
 ```
 
 ### Container Fails to Start
