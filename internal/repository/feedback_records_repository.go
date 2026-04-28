@@ -395,16 +395,26 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 }
 
 // BulkDelete deletes all feedback records matching user_id.
+// When tenant_id is provided, deletion is restricted to that tenant; otherwise all user records are deleted.
 // It returns deleted IDs grouped by tenant so callers can publish tenant-scoped side effects.
 func (r *FeedbackRecordsRepository) BulkDelete(
-	ctx context.Context, userID string,
+	ctx context.Context, filters *models.BulkDeleteFilters,
 ) ([]models.DeletedFeedbackRecordsByTenant, error) {
 	query := `
 		DELETE FROM feedback_records
-		WHERE user_id = $1
+		WHERE user_id = $1`
+	args := []any{filters.UserID}
+
+	if filters.TenantID != nil {
+		query += ` AND tenant_id = $2`
+
+		args = append(args, *filters.TenantID)
+	}
+
+	query += `
 		RETURNING id, tenant_id`
 
-	rows, err := r.db.Query(ctx, query, userID)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to bulk delete feedback records: %w", err)
 	}

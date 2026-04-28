@@ -36,7 +36,7 @@ type FeedbackRecordsRepository interface {
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	BulkDelete(ctx context.Context, userID string) ([]models.DeletedFeedbackRecordsByTenant, error)
+	BulkDelete(ctx context.Context, filters *models.BulkDeleteFilters) ([]models.DeletedFeedbackRecordsByTenant, error)
 }
 
 // EmbeddingsRepository defines the interface for embeddings table access.
@@ -205,13 +205,26 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 }
 
 // BulkDeleteFeedbackRecords deletes all feedback records matching user_id.
+// When tenant_id is provided, deletion is restricted to that tenant; otherwise all user records are deleted.
 // It publishes one tenant-aware FeedbackRecordDeleted event per tenant represented in the deleted rows.
-func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, userID string) (int, error) {
-	if userID == "" {
+func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, filters *models.BulkDeleteFilters) (int, error) {
+	if filters == nil || filters.UserID == "" {
 		return 0, ErrUserIDRequired
 	}
 
-	groups, err := s.repo.BulkDelete(ctx, userID)
+	if filters.TenantID != nil {
+		normalizedTenantID, err := normalizeRequiredTenantID(filters.TenantID)
+		if err != nil {
+			return 0, err
+		}
+
+		filters = &models.BulkDeleteFilters{
+			UserID:   filters.UserID,
+			TenantID: &normalizedTenantID,
+		}
+	}
+
+	groups, err := s.repo.BulkDelete(ctx, filters)
 	if err != nil {
 		return 0, fmt.Errorf("bulk delete feedback records: %w", err)
 	}

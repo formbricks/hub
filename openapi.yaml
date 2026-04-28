@@ -381,19 +381,28 @@ paths:
             tags:
                 - Feedback Records
             summary: Bulk delete feedback records by user ID
-            description: Permanently deletes all feedback record data points matching the specified user_id across tenants. This endpoint supports GDPR Article 17 (Right to Erasure) requests.
+            description: Permanently deletes feedback record data points matching the specified user_id. Omit tenant_id to delete that user_id across all tenants for GDPR Article 17 (Right to Erasure) requests. Provide tenant_id to restrict deletion to that tenant only.
             operationId: bulk-delete-feedback-records
             parameters:
                 - name: user_id
                   in: query
-                  description: Delete all records matching this user ID (required). NULL bytes not allowed.
+                  description: Delete records matching this user ID (required). NULL bytes not allowed.
                   required: true
                   schema:
                     type: string
-                    description: Delete all records matching this user ID (required). NULL bytes not allowed.
+                    description: Delete records matching this user ID (required). NULL bytes not allowed.
                     minLength: 1
                     pattern: '^[^\x00]*$'
                     example: "user-abc-123"
+                - name: tenant_id
+                  in: query
+                  description: Optional tenant scope. Omit this parameter to delete all records matching user_id across tenants; provide it to delete only records for this tenant. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    description: Optional tenant scope. Omit this parameter to delete all records matching user_id across tenants; provide it to delete only records for this tenant. Empty strings and NULL bytes are not allowed.
+                    minLength: 1
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
             responses:
                 "200":
                     description: OK
