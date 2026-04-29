@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -48,6 +49,52 @@ func TestNewWebhookPayload_MapsDeletedIDsEventDataToPublicPayload(t *testing.T) 
 	}
 }
 
+func TestNewWebhookPayload_MapsJSONRoundTrippedDeletedIDsEventDataToPublicPayload(t *testing.T) {
+	tenantID := "org-123"
+	ids := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
+	args := WebhookDispatchArgs{
+		EventID:   uuid.Must(uuid.NewV7()),
+		EventType: "feedback_record.deleted",
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"tenant_id": tenantID,
+			"ids":       []any{ids[0].String(), ids[1].String()},
+		},
+		WebhookID: uuid.Must(uuid.NewV7()),
+	}
+
+	payload := NewWebhookPayload(args)
+
+	if payload.TenantID == nil || *payload.TenantID != tenantID {
+		t.Fatalf("TenantID = %v, want %q", payload.TenantID, tenantID)
+	}
+
+	assertWebhookPayloadIDs(t, payload.Data, ids)
+}
+
+func TestNewWebhookPayload_MapsRawJSONDeletedIDsEventDataToPublicPayload(t *testing.T) {
+	tenantID := "org-123"
+	ids := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
+	args := WebhookDispatchArgs{
+		EventID:   uuid.Must(uuid.NewV7()),
+		EventType: "webhook.deleted",
+		Timestamp: time.Now(),
+		Data: json.RawMessage(`{
+			"tenant_id": "` + tenantID + `",
+			"ids": ["` + ids[0].String() + `", "` + ids[1].String() + `"]
+		}`),
+		WebhookID: uuid.Must(uuid.NewV7()),
+	}
+
+	payload := NewWebhookPayload(args)
+
+	if payload.TenantID == nil || *payload.TenantID != tenantID {
+		t.Fatalf("TenantID = %v, want %q", payload.TenantID, tenantID)
+	}
+
+	assertWebhookPayloadIDs(t, payload.Data, ids)
+}
+
 func TestNewWebhookPayload_DerivesTenantFromLegacyArgsData(t *testing.T) {
 	tenantID := "org-123"
 	args := WebhookDispatchArgs{
@@ -62,5 +109,24 @@ func TestNewWebhookPayload_DerivesTenantFromLegacyArgsData(t *testing.T) {
 
 	if payload.TenantID == nil || *payload.TenantID != tenantID {
 		t.Fatalf("TenantID = %v, want %q", payload.TenantID, tenantID)
+	}
+}
+
+func assertWebhookPayloadIDs(t *testing.T, data any, want []uuid.UUID) {
+	t.Helper()
+
+	got, ok := data.([]uuid.UUID)
+	if !ok {
+		t.Fatalf("Data type = %T, want []uuid.UUID", data)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("Data length = %d, want %d", len(got), len(want))
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Data[%d] = %v, want %v", i, got[i], want[i])
+		}
 	}
 }

@@ -1,10 +1,12 @@
 package service
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -31,23 +33,55 @@ func NewWebhookPayload(args WebhookDispatchArgs) *WebhookPayload {
 		Type:          args.EventType,
 		Timestamp:     args.Timestamp,
 		TenantID:      tenantID,
-		Data:          publicWebhookData(args.Data),
+		Data:          publicWebhookData(args.EventType, args.Data),
 		ChangedFields: args.ChangedFields,
 	}
 }
 
-func publicWebhookData(data any) any {
+func publicWebhookData(eventType string, data any) any {
+	if !isDeletedIDsEvent(eventType) {
+		return data
+	}
+
+	ids, ok := deletedIDsFromEventData(data)
+	if !ok {
+		return data
+	}
+
+	return ids
+}
+
+func isDeletedIDsEvent(eventType string) bool {
+	return eventType == datatypes.FeedbackRecordDeleted.String() ||
+		eventType == datatypes.WebhookDeleted.String()
+}
+
+func deletedIDsFromEventData(data any) ([]uuid.UUID, bool) {
 	switch payload := data.(type) {
 	case models.DeletedIDsEventData:
-		return cloneUUIDs(payload.IDs)
+		return cloneUUIDs(payload.IDs), true
 	case *models.DeletedIDsEventData:
 		if payload == nil {
-			return nil
+			return nil, true
 		}
 
-		return cloneUUIDs(payload.IDs)
+		return cloneUUIDs(payload.IDs), true
+	case map[string]any:
+		return deletedIDsFromValue(payload["ids"])
+	case map[string][]uuid.UUID:
+		return cloneUUIDs(payload["ids"]), true
+	case map[string][]string:
+		return deletedIDsFromStrings(payload["ids"])
+	case []uuid.UUID:
+		return cloneUUIDs(payload), true
+	case []string:
+		return deletedIDsFromStrings(payload)
+	case []any:
+		return deletedIDsFromValues(payload)
+	case json.RawMessage:
+		return deletedIDsFromRawJSON(payload)
 	default:
-		return data
+		return deletedIDsFromJSON(data)
 	}
 }
 
@@ -65,4 +99,78 @@ func cloneUUIDs(ids []uuid.UUID) []uuid.UUID {
 	}
 
 	return append([]uuid.UUID(nil), ids...)
+}
+
+func deletedIDsFromValue(value any) ([]uuid.UUID, bool) {
+	switch ids := value.(type) {
+	case []uuid.UUID:
+		return cloneUUIDs(ids), true
+	case []string:
+		return deletedIDsFromStrings(ids)
+	case []any:
+		return deletedIDsFromValues(ids)
+	default:
+		return nil, false
+	}
+}
+
+func deletedIDsFromStrings(values []string) ([]uuid.UUID, bool) {
+	ids := make([]uuid.UUID, 0, len(values))
+	for _, value := range values {
+		id, err := uuid.Parse(value)
+		if err != nil {
+			return nil, false
+		}
+
+		ids = append(ids, id)
+	}
+
+	return ids, true
+}
+
+func deletedIDsFromValues(values []any) ([]uuid.UUID, bool) {
+	ids := make([]uuid.UUID, 0, len(values))
+	for _, value := range values {
+		switch id := value.(type) {
+		case uuid.UUID:
+			ids = append(ids, id)
+		case string:
+			parsed, err := uuid.Parse(id)
+			if err != nil {
+				return nil, false
+			}
+
+			ids = append(ids, parsed)
+		default:
+			return nil, false
+		}
+	}
+
+	return ids, true
+}
+
+func deletedIDsFromJSON(data any) ([]uuid.UUID, bool) {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return nil, false
+	}
+
+	return deletedIDsFromRawJSON(payload)
+}
+
+func deletedIDsFromRawJSON(payload []byte) ([]uuid.UUID, bool) {
+	var envelope struct {
+		IDs []uuid.UUID `json:"ids"`
+	}
+
+	if err := json.Unmarshal(payload, &envelope); err == nil && envelope.IDs != nil {
+		return cloneUUIDs(envelope.IDs), true
+	}
+
+	var ids []uuid.UUID
+	if err := json.Unmarshal(payload, &ids); err != nil {
+		return nil, false
+	}
+
+	return cloneUUIDs(ids), true
 }
