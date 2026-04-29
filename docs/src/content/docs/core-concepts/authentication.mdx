@@ -7,7 +7,7 @@ import { Callout } from "@stainless-api/docs/components";
 
 ## How It Works
 
-Hub requires Bearer token authentication. All API endpoints require the `Authorization` header with a Bearer token, except the health check endpoint, which is public.
+Hub requires Bearer token authentication. All `/v1/*` API endpoints require the `Authorization` header with a Bearer token. The health check and runtime OpenAPI spec endpoints are public.
 
 ## Configuring Authentication
 
@@ -36,7 +36,7 @@ make run
 
 ### 3. Include Token in Requests
 
-All API requests except `GET /health` require the `Authorization` header:
+All `/v1/*` API requests require the `Authorization` header:
 
 ```bash
 curl -H "Authorization: Bearer your-secret-key-here" \
@@ -64,15 +64,17 @@ All `/v1/*` endpoints require authentication, including:
 Always public (no auth required):
 
 - `GET /health` - Health check
+- `GET /openapi.yaml` - Runtime OpenAPI YAML spec
+- `GET /openapi.json` - Runtime OpenAPI JSON spec
 
-The OpenAPI spec is maintained in the repo as `openapi.yaml` and used for contract tests (Schemathesis). Serving it at runtime (for example, `GET /openapi.json` or `GET /docs`) is planned.
+The OpenAPI spec is maintained in the repo as `openapi.yaml`, used for contract tests, and served by the Hub API at runtime. In production, set `PUBLIC_BASE_URL` so the served spec advertises the URL clients should use.
 
 ## Authentication Workflow
 
 ### Request Flow
 
 ```text
-Client Request
+Protected /v1/* Request
     |
 Has Authorization header?
     |
@@ -254,7 +256,8 @@ cat .env | grep API_KEY
 
 ### Health Check Returns 401
 
-Health checks (`/health`) should never require auth.
+Health checks (`/health`) and runtime OpenAPI specs (`/openapi.yaml`,
+`/openapi.json`) should never require auth.
 
 If you see this, it's a bug. Please [report it](https://github.com/formbricks/hub/issues).
 

@@ -62,6 +62,7 @@ services:
       DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_dev}@postgres:5432/hub?sslmode=disable
       API_KEY: ${API_KEY:-}
       PORT: 8080
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${HUB_PORT:-8080}:8080"
@@ -122,6 +123,10 @@ API_KEY=your_secure_api_key_here
 HUB_PORT=8080
 POSTGRES_PORT=5432
 LOG_LEVEL=info
+
+# Optional: Public URL advertised in /openapi.yaml and /openapi.json
+# Set this for production behind ingress, TLS termination, or a path prefix.
+PUBLIC_BASE_URL=
 ```
 
 <Callout variant="note">Generate secure passwords and API keys:</Callout>
@@ -198,6 +203,14 @@ Expected response:
 ```text
 OK
 ```
+
+Check that the runtime OpenAPI spec is available without authentication:
+
+```bash
+curl http://localhost:8080/openapi.json
+```
+
+Expected response: an OpenAPI JSON document with Hub API metadata and paths.
 
 ### Option 2: Docker Run (Minimal)
 
@@ -322,12 +335,13 @@ Response:
 
 ### Environment Variables
 
-| Variable       | Required | Default                                                               | Description                                  |
-| -------------- | -------- | --------------------------------------------------------------------- | -------------------------------------------- |
-| `DATABASE_URL` | No       | `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable` | PostgreSQL connection string                 |
-| `API_KEY`      | Yes      | -                                                                     | API authentication key                       |
-| `PORT`         | No       | `8080`                                                                | HTTP server port                             |
-| `LOG_LEVEL`    | No       | `info`                                                                | Log level (`debug`, `info`, `warn`, `error`) |
+| Variable          | Required | Default                                                               | Description                                         |
+| ----------------- | -------- | --------------------------------------------------------------------- | --------------------------------------------------- |
+| `DATABASE_URL`    | No       | `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable` | PostgreSQL connection string                        |
+| `API_KEY`         | Yes      | -                                                                     | API authentication key                              |
+| `PORT`            | No       | `8080`                                                                | HTTP server port                                    |
+| `PUBLIC_BASE_URL` | No       | -                                                                     | Public API root advertised in runtime OpenAPI specs |
+| `LOG_LEVEL`       | No       | `info`                                                                | Log level (`debug`, `info`, `warn`, `error`)        |
 
 In the Docker Compose example above, use `HUB_PORT` and `POSTGRES_PORT` to change
 host ports without changing the ports used inside the containers.
@@ -403,6 +417,7 @@ docker compose up -d
 
 - [Data Model](/core-concepts/data-model) - Understand the feedback record structure
 - [Authentication](/core-concepts/authentication) - Learn about API security
+- [Connect Hub to AI Clients via MCP](/guides/hub-mcp) - Use Hub from MCP-capable AI clients
 - [API Reference](/api) - Explore all endpoints
 - [Environment Variables](/reference/environment-variables) - Configure your deployment
 

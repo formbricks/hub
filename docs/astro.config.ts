@@ -59,7 +59,20 @@ export default defineConfig({
             },
             {
               label: "Guides",
-              autogenerate: { directory: "guides" },
+              items: [
+                {
+                  label: "Connect Hub to AI Clients via MCP",
+                  slug: "guides/hub-mcp",
+                },
+                {
+                  label: "Connecting Hub to Power BI",
+                  slug: "guides/hub-powerbi",
+                },
+                {
+                  label: "Connecting Hub to Superset",
+                  slug: "guides/hub-superset",
+                },
+              ],
             },
             {
               label: "Reference",

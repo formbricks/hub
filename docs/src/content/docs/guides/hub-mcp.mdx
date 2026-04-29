@@ -1,0 +1,184 @@
+---
+title: Connect Hub to AI Clients via MCP
+description: Configure the Formbricks Hub MCP server for AI clients and self-hosted Hub deployments.
+---
+
+import { Callout } from "@stainless-api/docs/components";
+
+The `@formbricks/hub-mcp` package lets MCP-capable AI clients work with Formbricks Hub through the generated Hub TypeScript client. The MCP server runs locally over stdio, authenticates with your Hub API key, and points at either a local Hub instance or a self-hosted production deployment.
+
+## What You Need
+
+- A running Hub API, such as `http://localhost:8080` from the [Quick Start](/quickstart) or a deployed HTTPS URL.
+- The Hub API key configured as `API_KEY` on the Hub server.
+- Node.js and `npx` on the machine where your AI client starts MCP servers.
+- An AI client that supports local stdio MCP servers.
+
+<Callout variant="note">
+  Treat MCP access like direct API access. The MCP package receives an API key
+  with the same permissions as `Authorization: Bearer &lt;API_KEY&gt;`, so keep
+  it out of committed config files and use environment-specific keys.
+</Callout>
+
+## Configure the MCP Server
+
+Add a stdio MCP server entry to your AI client's MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "formbricks-hub": {
+      "command": "npx",
+      "args": ["-y", "@formbricks/hub-mcp@latest"],
+      "env": {
+        "HUB_API_KEY": "your_hub_api_key",
+        "FORMBRICKS_HUB_BASE_URL": "https://hub.example.com"
+      }
+    }
+  }
+}
+```
+
+For local Docker Compose from the [Quick Start](/quickstart), use:
+
+```json
+{
+  "mcpServers": {
+    "formbricks-hub-local": {
+      "command": "npx",
+      "args": ["-y", "@formbricks/hub-mcp@latest"],
+      "env": {
+        "HUB_API_KEY": "your_secure_api_key_here",
+        "FORMBRICKS_HUB_BASE_URL": "http://localhost:8080"
+      }
+    }
+  }
+}
+```
+
+`HUB_API_KEY` is the key the MCP package sends to Hub. It should match the `API_KEY` value used by the Hub API.
+
+`FORMBRICKS_HUB_BASE_URL` is the public base URL for the Hub API. Use the API root, not a `/v1` URL. Examples:
+
+| Deployment style          | Base URL                  |
+| ------------------------- | ------------------------- |
+| Local Docker Compose      | `http://localhost:8080`   |
+| Dedicated domain          | `https://hub.example.com` |
+| Reverse-proxy path prefix | `https://example.com/hub` |
+
+`HUB_BASE_URL` is accepted as a legacy alias, but new configurations should use `FORMBRICKS_HUB_BASE_URL`.
+
+## Use the MCP Tool
+
+The MCP package exposes an `execute` tool that runs JavaScript against the Hub client. In most AI clients, you can ask the assistant to create, list, update, delete, or search feedback records and let it call the MCP tool.
+
+A typical workflow looks like this:
+
+```js
+async function run(client) {
+  const created = await client.feedbackRecords.create({
+    tenant_id: "org-123",
+    submission_id: "mcp-demo-001",
+    source_type: "survey",
+    source_id: "mcp-demo",
+    source_name: "MCP Demo",
+    field_id: "q1",
+    field_label: "How satisfied are you?",
+    field_type: "rating",
+    value_number: 5,
+    language: "en",
+  });
+
+  const listed = await client.feedbackRecords.list({
+    tenant_id: "org-123",
+    submission_id: "mcp-demo-001",
+    limit: 10,
+  });
+
+  await client.feedbackRecords.delete(created.id);
+
+  return {
+    createdID: created.id,
+    listedCount: listed.data.length,
+    deleted: true,
+  };
+}
+```
+
+Useful prompts for an MCP-enabled AI client:
+
+- "List the latest 10 feedback records for tenant `org-123`."
+- "Create a test text feedback record for tenant `org-123`, then delete it."
+- "Find feedback records for submission `subm-001` and summarize the fields."
+
+## Self-Hosted Production Setup
+
+For production deployments, set `PUBLIC_BASE_URL` on the Hub API process when Hub is exposed through ingress, TLS termination, a reverse proxy, or a path prefix:
+
+```bash
+PUBLIC_BASE_URL=https://hub.example.com
+```
+
+or:
+
+```bash
+PUBLIC_BASE_URL=https://example.com/hub
+```
+
+Hub uses `PUBLIC_BASE_URL` when serving runtime OpenAPI specs at:
+
+- `GET /openapi.yaml`
+- `GET /openapi.json`
+
+Those endpoints are public by design, like `GET /health`. Keep `/v1/*` protected with `Authorization: Bearer <API_KEY>`.
+
+<Callout variant="note">
+  `PUBLIC_BASE_URL` belongs to the Hub API deployment. `FORMBRICKS_HUB_BASE_URL`
+  belongs to the MCP client process. In many deployments they have the same URL,
+  but they are read by different processes.
+</Callout>
+
+## Run the MCP Smoke Test
+
+In a checkout of the Hub source repository, you can run the live MCP package smoke test against a deployed Hub instance:
+
+```bash
+HUB_API_KEY=your_hub_api_key \
+FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
+make mcp-smoke
+```
+
+The smoke test starts the MCP package, checks for the `execute` tool, creates a feedback record, lists it, and deletes it again.
+
+By default the test uses `@formbricks/hub-mcp@latest`. To test a specific package version or preview build:
+
+```bash
+HUB_API_KEY=your_hub_api_key \
+FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
+HUB_MCP_PACKAGE=@formbricks/hub-mcp@1.2.3 \
+make mcp-smoke
+```
+
+## Troubleshooting
+
+### MCP Requests Return 401
+
+Check that `HUB_API_KEY` in the MCP configuration exactly matches the Hub server's `API_KEY`.
+
+### The Client Cannot Reach Hub
+
+Make sure `FORMBRICKS_HUB_BASE_URL` is reachable from the machine running the AI client. For local Docker Compose on the same machine, `http://localhost:8080` usually works. If the AI client runs inside another container, use the hostname that is reachable from that container.
+
+### Runtime OpenAPI URLs Show the Wrong Host
+
+Set `PUBLIC_BASE_URL` on the Hub API deployment and restart the API. Use an absolute `http` or `https` URL without query strings, fragments, or credentials.
+
+### `npx` Starts the Wrong Package Version
+
+Pin the package in your MCP config:
+
+```json
+"args": ["-y", "@formbricks/hub-mcp@1.2.3"]
+```
+
+For release validation, use the same package spec in `HUB_MCP_PACKAGE` when running `make mcp-smoke`.

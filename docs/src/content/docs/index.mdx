@@ -15,6 +15,7 @@ Hub is an open-source, self-hostable microservice for **collecting and serving**
 - **Analytics-ready**: Plug-and-play integrations for Apache Superset, Power BI, Tableau, Looker, Snowflake, and more
 - **Self-hostable**: Run the API and worker with PostgreSQL
 - **Developer-friendly**: OpenAPI spec and clean REST API
+- **AI-ready**: MCP package for connecting AI clients to your Hub instance
 - **Multi-tenant**: Built-in support for tenant isolation
 - **Fully open-source**: The full Hub is and will be available open-source
 
@@ -74,7 +75,12 @@ This is where the Hub comes in: it is free, it is simple, and, most importantly,
     </li>
     <li>
       <strong>OpenAPI contract</strong>: Explore generated reference docs and
-      build clients from the same API schema used for tests
+      build clients from the same API schema used for tests. Hub also serves
+      runtime specs at <code>/openapi.yaml</code> and <code>/openapi.json</code>
+    </li>
+    <li>
+      <strong>MCP server</strong>: Connect MCP-capable AI clients to local or
+      self-hosted Hub deployments with <code>@formbricks/hub-mcp</code>
     </li>
   </ul>
 </Callout>
@@ -83,6 +89,7 @@ This is where the Hub comes in: it is free, it is simple, and, most importantly,
 
 - [Get started](./quickstart): Set up Hub locally in minutes
 - [Learn the basics](./core-concepts/data-model): Understand Hub's data model and concepts
+- [Connect AI clients](./guides/hub-mcp): Configure the Hub MCP server
 - [Configuration](./reference/environment-variables): Environment variables and settings reference
 
 ## Community & Support
