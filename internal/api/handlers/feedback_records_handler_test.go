@@ -105,6 +105,7 @@ func TestFeedbackRecordsHandler_Create(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, rec.Code)
 
 		var got models.FeedbackRecord
+
 		err := json.Unmarshal(rec.Body.Bytes(), &got)
 		require.NoError(t, err)
 		assert.Equal(t, recordID, got.ID)
