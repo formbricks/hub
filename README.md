@@ -67,7 +67,6 @@ Formbricks Hub is an independent open-source project with a growing developer ec
 - Superset Guide: [Connect Hub to Apache Superset](https://hub.formbricks.com/guides/hub-superset/)
 - TypeScript SDK: [`@formbricks/hub`](https://www.npmjs.com/package/@formbricks/hub)
 - MCP Server: [`@formbricks/hub-mcp`](https://www.npmjs.com/package/@formbricks/hub-mcp)
-- MCP Guide: [Connect Hub to AI Clients via MCP](./docs/mcp.md)
 - Formbricks XM Suite (uses Hub): [`formbricks/formbricks`](https://github.com/formbricks/formbricks)
 
 ## Getting Started
@@ -78,7 +77,6 @@ If you want to evaluate Hub quickly, start with the docs:
 - [Quick Start Guide](https://hub.formbricks.com/quickstart/)
 - [Data Model](https://hub.formbricks.com/core-concepts/data-model/)
 - [API Reference](https://hub.formbricks.com/api)
-- [MCP Guide](./docs/mcp.md)
 - [Connect Hub to Microsoft Power BI](https://hub.formbricks.com/guides/hub-powerbi/)
 - [Connect Hub to Apache Superset](https://hub.formbricks.com/guides/hub-superset/)
 
