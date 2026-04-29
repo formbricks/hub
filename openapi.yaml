@@ -207,12 +207,11 @@ paths:
                                         type: "https://hub.formbricks.com/problems/validation-error"
                                         title: "Validation Error"
                                         status: 400
-                                        detail: "Validation failed"
+                                        detail: "validation failed: tenant_id is required"
                                         instance: "https://hub.formbricks.com/v1/feedback-records"
                                         errors:
-                                            - location: "body.field_id"
-                                              message: "Field is required"
-                                              value: null
+                                            - location: "tenant_id"
+                                              message: "tenant_id is required"
         post:
             tags:
                 - Feedback Records
@@ -621,12 +620,12 @@ paths:
                                         type: "https://hub.formbricks.com/problems/validation-error"
                                         title: "Validation Error"
                                         status: 400
-                                        detail: "Invalid update request"
+                                        detail: "validation failed: value_text must not contain NULL bytes"
                                         instance: "https://hub.formbricks.com/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
                                         errors:
-                                            - location: "body.value_text"
-                                              message: "Text value cannot be empty"
-                                              value: ""
+                                            - location: "value_text"
+                                              message: "value_text must not contain NULL bytes"
+                                              value: 'contains\u0000null'
     /v1/feedback-records/search/semantic:
         post:
             tags:

@@ -109,10 +109,37 @@ func formatValidationErrors(err error) error {
 			messages = append(messages, formatFieldError(fieldError))
 		}
 
-		return fmt.Errorf("%w: %s", ErrValidationFailed, strings.Join(messages, "; "))
+		return requestValidationError{
+			message:          fmt.Sprintf("%s: %s", ErrValidationFailed, strings.Join(messages, "; ")),
+			validationErrors: validationErrors,
+		}
 	}
 
 	return err
+}
+
+type requestValidationError struct {
+	message          string
+	validationErrors validator.ValidationErrors
+}
+
+func (e requestValidationError) Error() string {
+	return e.message
+}
+
+func (e requestValidationError) Is(target error) bool {
+	return target == ErrValidationFailed
+}
+
+func (e requestValidationError) As(target any) bool {
+	validationErrors, ok := target.(*validator.ValidationErrors)
+	if !ok {
+		return false
+	}
+
+	*validationErrors = e.validationErrors
+
+	return true
 }
 
 // formatFieldError formats a single field validation error.

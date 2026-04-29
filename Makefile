@@ -110,26 +110,71 @@ run-backfill-embeddings:
 	@if [ ! -f .env ]; then echo "Error: .env file required. Copy .env.example to .env and configure."; exit 1; fi && \
 	(set -a && . ./.env && set +a && go run ./cmd/backfill-embeddings)
 
-# Run the full local app: apply River migrations, then run hub-worker in the background and hub-api in the foreground.
+define RUN_LOCAL_APP
+set -Eeuo pipefail
+worker_pid=""
+api_pid=""
+started_pid=""
+state_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/hub-run.XXXXXX")"
+event_pipe="$$state_dir/process-events"
+mkfifo "$$event_pipe"
+stop_process() {
+	pid="$${1:-}"
+	name="$$2"
+	if [ -z "$$pid" ] || ! kill -0 "$$pid" 2>/dev/null; then return; fi
+	echo "Stopping $$name..."
+	pkill -TERM -P "$$pid" 2>/dev/null || true
+	kill -TERM "$$pid" 2>/dev/null || true
+	wait "$$pid" 2>/dev/null || true
+}
+cleanup() {
+	status=$$?
+	trap - INT TERM EXIT
+	stop_process "$$api_pid" "hub-api"
+	stop_process "$$worker_pid" "hub-worker"
+	rm -rf "$$state_dir"
+	exit "$$status"
+}
+run_and_report() {
+	name="$$1"
+	shift
+	(set +e; "$$@"; status=$$?; printf '%s %s\n' "$$name" "$$status" >"$$event_pipe" || true; exit "$$status") &
+	started_pid=$$!
+}
+trap cleanup EXIT
+trap 'echo "Stopping hub-api and hub-worker..."; exit 130' INT
+trap 'echo "Stopping hub-api and hub-worker..."; exit 143' TERM
+echo "Starting hub-worker..."
+run_and_report hub-worker go run ./cmd/worker
+worker_pid="$$started_pid"
+echo "Starting hub-api..."
+run_and_report hub-api go run ./cmd/api
+api_pid="$$started_pid"
+read -r exited_process exit_status <"$$event_pipe"
+case "$$exited_process" in
+	hub-worker)
+		echo "hub-worker exited unexpectedly with status $$exit_status; stopping hub-api."
+		stop_process "$$api_pid" "hub-api"
+		if [ "$$exit_status" -eq 0 ]; then exit 1; fi
+		exit "$$exit_status"
+		;;
+	hub-api)
+		echo "hub-api exited with status $$exit_status; stopping hub-worker."
+		stop_process "$$worker_pid" "hub-worker"
+		exit "$$exit_status"
+		;;
+	*)
+		echo "Unknown process event from local runner: $$exited_process" >&2
+		exit 1
+		;;
+esac
+endef
+export RUN_LOCAL_APP
+
+# Run the full local app: apply River migrations, then supervise hub-worker and hub-api together.
 # Config: .env if present, else environment variables; env vars override .env. Copy .env.example to .env or set env vars.
 run: river-migrate
-	@echo "Starting hub-worker and hub-api..."
-	@set -e; \
-	go run ./cmd/worker & \
-	worker_pid=$$!; \
-	cleanup() { \
-		status=$$?; \
-		trap - INT TERM EXIT; \
-		if kill -0 "$$worker_pid" 2>/dev/null; then \
-			echo "Stopping hub-worker..."; \
-			kill "$$worker_pid" 2>/dev/null || true; \
-			wait "$$worker_pid" 2>/dev/null || true; \
-		fi; \
-		exit $$status; \
-	}; \
-	trap cleanup INT TERM EXIT; \
-	echo "Starting hub-api..."; \
-	go run ./cmd/api
+	@bash -c "$$RUN_LOCAL_APP"
 
 # Run the API server only (hub-api).
 run-api:
