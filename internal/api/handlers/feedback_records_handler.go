@@ -45,7 +45,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
+		response.RespondInvalidRequestBody(w, err)
 
 		return
 	}
@@ -160,7 +160,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
+		response.RespondInvalidRequestBody(w, err)
 
 		return
 	}

@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/formbricks/hub/internal/models"
 )
 
 func TestJSONDecodeErrorDetail(t *testing.T) {
@@ -48,5 +50,25 @@ func TestJSONDecodeErrorDetail(t *testing.T) {
 		detail := JSONDecodeErrorDetail(err)
 		assert.Contains(t, detail, "unknown field")
 		assert.Contains(t, detail, "tenantId")
+	})
+
+	t.Run("invalid field type returns enum details", func(t *testing.T) {
+		var req struct {
+			FieldType models.FieldType `json:"field_type"`
+		}
+
+		err := json.Unmarshal([]byte(`{"field_type":"textt"}`), &req)
+		require.Error(t, err)
+
+		detail := JSONDecodeErrorDetail(err)
+		assert.Contains(t, detail, "field_type")
+		assert.Contains(t, detail, "text")
+		assert.Contains(t, detail, "date")
+
+		details := JSONDecodeErrorDetails(err)
+		require.Len(t, details, 1)
+		assert.Equal(t, "field_type", details[0].Location)
+		assert.Equal(t, "textt", details[0].Value)
+		assert.Contains(t, details[0].Message, "rating")
 	})
 }

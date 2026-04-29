@@ -92,14 +92,13 @@ For a local Hub setup:
 ```bash
 cp .env.example .env
 make dev-setup
-make river-migrate
 make run
 ```
 
-Run `make run-worker` in a separate terminal when you need webhook delivery or
-embedding workers. `make dev-setup` runs the Hub schema migrations through
-`make init-db`; `make river-migrate` applies River queue migrations needed by
-worker-backed jobs.
+`make run` applies River queue migrations and starts both `hub-api` and
+`hub-worker` for local webhook delivery and embedding jobs. Use `make run-api`
+or `make run-worker` only when you intentionally want to run one process on its
+own. `make dev-setup` runs the Hub schema migrations through `make init-db`.
 
 For the full Formbricks XM Suite UI, use the
 [`formbricks/formbricks`](https://github.com/formbricks/formbricks) repository

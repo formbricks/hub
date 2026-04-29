@@ -204,8 +204,8 @@ paths:
                                 validation_error:
                                     summary: Validation error
                                     value:
-                                        type: "about:blank"
-                                        title: "Bad Request"
+                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        title: "Validation Error"
                                         status: 400
                                         detail: "Validation failed"
                                         instance: "https://hub.formbricks.com/v1/feedback-records"
@@ -365,6 +365,18 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                invalid_field_type:
+                                    summary: Invalid field_type enum
+                                    value:
+                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        title: "Validation Error"
+                                        status: 400
+                                        detail: "field_type has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
+                                        errors:
+                                            - location: "field_type"
+                                              message: "field_type has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
+                                              value: "textt"
                 "409":
                     description: Conflict – a feedback record with the same tenant_id, submission_id, and field_id already exists (idempotent create).
                     content:
@@ -598,7 +610,7 @@ paths:
                                 not_found:
                                     summary: Record not found
                                     value:
-                                        type: "about:blank"
+                                        type: "https://hub.formbricks.com/problems/not-found"
                                         title: "Not Found"
                                         status: 404
                                         detail: "Feedback record with ID '018e1234-5678-9abc-def0-123456789abc' not found"
@@ -606,8 +618,8 @@ paths:
                                 validation_error:
                                     summary: Validation error
                                     value:
-                                        type: "about:blank"
-                                        title: "Bad Request"
+                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        title: "Validation Error"
                                         status: 400
                                         detail: "Invalid update request"
                                         instance: "https://hub.formbricks.com/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
@@ -1287,9 +1299,8 @@ components:
                     type: string
                     description: A URI reference to human-readable documentation for the error.
                     format: uri
-                    default: about:blank
                     examples:
-                        - https://example.com/errors/example
+                        - https://hub.formbricks.com/problems/bad-request
         FeedbackRecordData:
             type: object
             additionalProperties: false
