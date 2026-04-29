@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 
 	"github.com/formbricks/hub/internal/models"
@@ -29,9 +30,14 @@ type WebhookSender interface {
 	Send(ctx context.Context, webhook *models.Webhook, payload *WebhookPayload) error
 }
 
+// WebhookSenderRepository persists webhook state changes caused by delivery.
+type WebhookSenderRepository interface {
+	Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
+}
+
 // WebhookSenderImpl implements WebhookSender with Standard Webhooks conformance.
 type WebhookSenderImpl struct {
-	repo             WebhooksRepository
+	repo             WebhookSenderRepository
 	httpClient       *http.Client
 	metrics          observability.WebhookMetrics
 	urlHostBlacklist map[string]struct{}
@@ -44,7 +50,7 @@ type WebhookSenderImpl struct {
 // metrics may be nil when metrics are disabled.
 // If httpClient is non-nil, it is used as-is (e.g. for tests that hit loopback); otherwise a secured client is built.
 func NewWebhookSenderImpl(
-	repo WebhooksRepository, metrics observability.WebhookMetrics, urlHostBlacklist map[string]struct{},
+	repo WebhookSenderRepository, metrics observability.WebhookMetrics, urlHostBlacklist map[string]struct{},
 	httpTimeout time.Duration, httpClient *http.Client,
 ) *WebhookSenderImpl {
 	if httpClient == nil {
