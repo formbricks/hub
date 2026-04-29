@@ -32,7 +32,7 @@ type WebhooksRepository interface {
 	) ([]models.Webhook, bool, error)
 	Count(ctx context.Context, filters *models.ListWebhooksFilters) (int64, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error)
-	Delete(ctx context.Context, id uuid.UUID) error
+	Delete(ctx context.Context, id uuid.UUID) (*models.DeletedWebhook, error)
 }
 
 // WebhooksService handles business logic for webhooks.
@@ -409,12 +409,8 @@ func normalizeWebhookTenantID(tenantID *string) error {
 // DeleteWebhook deletes a webhook by ID.
 // Publishes WebhookDeleted with tenant-aware deleted IDs.
 func (s *WebhooksService) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
-	webhook, err := s.repo.GetByID(ctx, id)
+	webhook, err := s.repo.Delete(ctx, id)
 	if err != nil {
-		return fmt.Errorf("get webhook before delete: %w", err)
-	}
-
-	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
 

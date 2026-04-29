@@ -12,6 +12,7 @@ import (
 
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/pkg/database"
@@ -77,6 +78,53 @@ func TestWebhooksRepository_ListEnabledForEventTypeAndTenant(t *testing.T) {
 	tenantlessWebhooks, err := repo.ListEnabledForEventTypeAndTenant(ctx, datatypes.FeedbackRecordCreated.String(), nil)
 	require.NoError(t, err)
 	assertRepositoryScopeWebhookIDs(t, tenantlessWebhooks, urlPrefix, map[uuid.UUID]bool{})
+}
+
+func TestWebhooksRepository_DeleteReturnsDeletedWebhook(t *testing.T) {
+	ctx := context.Background()
+	urlPrefix := "https://tenant-delete.test/" + uuid.NewString() + "/"
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = defaultTestDatabaseURL
+	}
+
+	t.Setenv("API_KEY", testAPIKey)
+	t.Setenv("DATABASE_URL", databaseURL)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(cfg.Database.PoolConfig()),
+	)
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	cleanupRepositoryWebhookDeleteTestRows := func() {
+		_, cleanupErr := db.Exec(ctx, "DELETE FROM webhooks WHERE url LIKE $1", urlPrefix+"%")
+		require.NoError(t, cleanupErr)
+	}
+
+	cleanupRepositoryWebhookDeleteTestRows()
+	defer cleanupRepositoryWebhookDeleteTestRows()
+
+	repo := repository.NewWebhooksRepository(db)
+	tenantID := "repo-delete-tenant"
+	webhook := createWebhookForRepositoryScopeTest(
+		ctx, t, repo, urlPrefix, "delete-returning", &tenantID, []datatypes.EventType{datatypes.WebhookDeleted},
+	)
+
+	deleted, err := repo.Delete(ctx, webhook.ID)
+	require.NoError(t, err)
+	require.NotNil(t, deleted)
+	require.NotNil(t, deleted.TenantID)
+	assert.Equal(t, webhook.ID, deleted.ID)
+	assert.Equal(t, tenantID, *deleted.TenantID)
+
+	_, err = repo.GetByID(ctx, webhook.ID)
+	assert.ErrorIs(t, err, huberrors.ErrNotFound)
 }
 
 func createWebhookForRepositoryScopeTest(

@@ -162,6 +162,34 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 		}
 	})
 
+	t.Run("returns nil without send when job has no tenant boundary", func(t *testing.T) {
+		webhookTenant := "org-123"
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{
+				ID:         webhookID,
+				Enabled:    true,
+				URL:        "http://x",
+				SigningKey: "sk",
+				TenantID:   &webhookTenant,
+			},
+		}
+		sender := &mockSender{}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		scopedArgs := args
+		scopedArgs.Data = nil
+		scopedArgs.TenantID = nil
+		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: scopedArgs}
+
+		err := worker.Work(ctx, job)
+		if err != nil {
+			t.Errorf("Work() error = %v, want nil", err)
+		}
+
+		if sender.calls != 0 {
+			t.Errorf("Send called %d times, want 0", sender.calls)
+		}
+	})
+
 	t.Run("returns nil without send when job tenant conflicts with payload tenant", func(t *testing.T) {
 		payloadTenant := "org-other"
 		repo := &mockDispatchRepo{

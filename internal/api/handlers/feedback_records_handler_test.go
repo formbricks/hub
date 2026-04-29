@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -11,17 +12,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
 // mockFeedbackRecordsService mocks FeedbackRecordsService for handler tests.
 type mockFeedbackRecordsService struct {
+	createFunc     func(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	bulkDeleteFunc func(ctx context.Context, filters *models.BulkDeleteFilters) (int, error)
 }
 
 func (m *mockFeedbackRecordsService) CreateFeedbackRecord(
-	context.Context, *models.CreateFeedbackRecordRequest,
+	ctx context.Context, req *models.CreateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, error) {
+	if m.createFunc != nil {
+		return m.createFunc(ctx, req)
+	}
+
 	return nil, nil
 }
 
@@ -67,6 +74,94 @@ func TestFeedbackRecordsHandler_List(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
+}
+
+func TestFeedbackRecordsHandler_Create(t *testing.T) {
+	t.Run("success returns created record", func(t *testing.T) {
+		recordID := uuid.Must(uuid.NewV7())
+		mock := &mockFeedbackRecordsService{
+			createFunc: func(_ context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+				assert.Equal(t, "org-123", req.TenantID)
+
+				return &models.FeedbackRecord{
+					ID:           recordID,
+					SourceType:   req.SourceType,
+					FieldID:      req.FieldID,
+					FieldType:    req.FieldType,
+					TenantID:     req.TenantID,
+					SubmissionID: req.SubmissionID,
+				}, nil
+			},
+		}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(
+			context.Background(), http.MethodPost, "http://test/v1/feedback-records", feedbackRecordCreateBody(t, "org-123"),
+		)
+		rec := httptest.NewRecorder()
+
+		handler.Create(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+
+		var got models.FeedbackRecord
+		err := json.Unmarshal(rec.Body.Bytes(), &got)
+		require.NoError(t, err)
+		assert.Equal(t, recordID, got.ID)
+		assert.Equal(t, "org-123", got.TenantID)
+	})
+
+	t.Run("service validation error returns bad request", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{
+			createFunc: func(_ context.Context, _ *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+				return nil, huberrors.NewValidationError("tenant_id", "tenant_id is required and cannot be empty")
+			},
+		}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(
+			context.Background(), http.MethodPost, "http://test/v1/feedback-records", feedbackRecordCreateBody(t, "   "),
+		)
+		rec := httptest.NewRecorder()
+
+		handler.Create(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Header().Get("Content-Type"), "application/problem+json")
+	})
+
+	t.Run("service conflict returns conflict", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{
+			createFunc: func(_ context.Context, _ *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+				return nil, huberrors.NewConflictError("duplicate feedback record")
+			},
+		}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(
+			context.Background(), http.MethodPost, "http://test/v1/feedback-records", feedbackRecordCreateBody(t, "org-123"),
+		)
+		rec := httptest.NewRecorder()
+
+		handler.Create(rec, req)
+
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
+}
+
+func feedbackRecordCreateBody(t *testing.T, tenantID string) *bytes.Reader {
+	t.Helper()
+
+	body, err := json.Marshal(map[string]any{
+		"source_type":   "formbricks",
+		"submission_id": "submission-1",
+		"tenant_id":     tenantID,
+		"field_id":      "feedback",
+		"field_type":    "text",
+	})
+	require.NoError(t, err)
+
+	return bytes.NewReader(body)
 }
 
 func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {

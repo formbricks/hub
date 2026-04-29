@@ -11,7 +11,11 @@ func normalizeRequiredTenantID(tenantID *string) (string, error) {
 		return "", huberrors.NewValidationError("tenant_id", "tenant_id is required")
 	}
 
-	normalized := strings.TrimSpace(*tenantID)
+	return normalizeRequiredTenantIDValue(*tenantID)
+}
+
+func normalizeRequiredTenantIDValue(tenantID string) (string, error) {
+	normalized := strings.TrimSpace(tenantID)
 	if normalized == "" {
 		return "", huberrors.NewValidationError("tenant_id", "tenant_id is required and cannot be empty")
 	}

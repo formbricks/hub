@@ -14,15 +14,23 @@ import (
 
 type mockFeedbackRecordsRepo struct {
 	record            *models.FeedbackRecord
+	createReq         *models.CreateFeedbackRecordRequest
 	bulkGroups        []models.DeletedFeedbackRecordsByTenant
 	deletedID         uuid.UUID
 	bulkDeleteFilters *models.BulkDeleteFilters
 }
 
 func (m *mockFeedbackRecordsRepo) Create(
-	_ context.Context, _ *models.CreateFeedbackRecordRequest,
+	_ context.Context, req *models.CreateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, error) {
-	return nil, errors.New("not implemented")
+	reqCopy := *req
+	m.createReq = &reqCopy
+
+	if m.record != nil {
+		return m.record, nil
+	}
+
+	return &models.FeedbackRecord{TenantID: req.TenantID}, nil
 }
 
 func (m *mockFeedbackRecordsRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.FeedbackRecord, error) {
@@ -79,6 +87,41 @@ func TestFeedbackRecordsService_DeleteFeedbackRecord_PublishesTenantAwareDeleted
 	}
 
 	assertDeletedEventData(t, publisher, datatypes.FeedbackRecordDeleted, tenantID, []uuid.UUID{recordID})
+}
+
+func TestFeedbackRecordsService_CreateFeedbackRecord_NormalizesTenantID(t *testing.T) {
+	ctx := context.Background()
+	inputTenantID := " org-123 "
+	repo := &mockFeedbackRecordsRepo{}
+	publisher := &capturePublisher{}
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+
+	record, err := svc.CreateFeedbackRecord(ctx, &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		FieldID:      "field-1",
+		FieldType:    models.FieldTypeText,
+		TenantID:     inputTenantID,
+		SubmissionID: "submission-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateFeedbackRecord() error = %v", err)
+	}
+
+	if repo.createReq == nil {
+		t.Fatal("repo Create request = nil")
+	}
+
+	if repo.createReq.TenantID != "org-123" {
+		t.Fatalf("repo TenantID = %q, want org-123", repo.createReq.TenantID)
+	}
+
+	if record.TenantID != "org-123" {
+		t.Fatalf("record TenantID = %q, want org-123", record.TenantID)
+	}
+
+	if publisher.callCount != 1 || publisher.eventType != datatypes.FeedbackRecordCreated {
+		t.Fatalf("published event = (%d, %s), want one feedback_record.created", publisher.callCount, publisher.eventType)
+	}
 }
 
 func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_PublishesTenantAwareDeletedEventsByTenant(t *testing.T) {

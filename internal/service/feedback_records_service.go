@@ -92,7 +92,15 @@ func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter FeedbackEmbedding
 func (s *FeedbackRecordsService) CreateFeedbackRecord(
 	ctx context.Context, req *models.CreateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, error) {
-	record, err := s.repo.Create(ctx, req)
+	normalizedTenantID, err := normalizeRequiredTenantIDValue(req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedReq := *req
+	normalizedReq.TenantID = normalizedTenantID
+
+	record, err := s.repo.Create(ctx, &normalizedReq)
 	if err != nil {
 		return nil, fmt.Errorf("create feedback record: %w", err)
 	}

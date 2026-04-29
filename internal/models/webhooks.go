@@ -34,6 +34,12 @@ type Webhook struct {
 	DisabledAt     *time.Time            `json:"disabled_at,omitempty"`
 }
 
+// DeletedWebhook is the minimal data returned after deleting a webhook.
+type DeletedWebhook struct {
+	ID       uuid.UUID
+	TenantID *string
+}
+
 // MarshalJSON converts []datatypes.EventType to JSON string array.
 func (w *Webhook) MarshalJSON() ([]byte, error) {
 	type Alias Webhook

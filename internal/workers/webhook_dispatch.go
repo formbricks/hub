@@ -107,6 +107,19 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		tenantID = dataTenantID
 	}
 
+	if tenantID == nil {
+		if w.metrics != nil {
+			w.metrics.RecordDispatchError(ctx, "missing_tenant_id")
+		}
+
+		slog.Error("webhook dispatch: event tenant_id missing, skipping delivery",
+			"event_id", args.EventID,
+			"webhook_id", args.WebhookID,
+		)
+
+		return nil
+	}
+
 	if !service.WebhookMatchesTenant(webhook, tenantID) {
 		if w.metrics != nil {
 			w.metrics.RecordDispatchError(ctx, "tenant_mismatch")

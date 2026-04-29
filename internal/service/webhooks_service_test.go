@@ -15,9 +15,11 @@ import (
 )
 
 type mockWebhooksRepo struct {
-	count     int64
-	webhook   *models.Webhook
-	deletedID uuid.UUID
+	count        int64
+	webhook      *models.Webhook
+	deleted      *models.DeletedWebhook
+	deletedID    uuid.UUID
+	getByIDCalls int
 }
 
 func (m *mockWebhooksRepo) Create(_ context.Context, _ *models.CreateWebhookRequest) (*models.Webhook, error) {
@@ -25,6 +27,8 @@ func (m *mockWebhooksRepo) Create(_ context.Context, _ *models.CreateWebhookRequ
 }
 
 func (m *mockWebhooksRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
+	m.getByIDCalls++
+
 	if m.webhook != nil {
 		return m.webhook, nil
 	}
@@ -50,10 +54,10 @@ func (m *mockWebhooksRepo) Update(_ context.Context, _ uuid.UUID, _ *models.Upda
 	return nil, nil
 }
 
-func (m *mockWebhooksRepo) Delete(_ context.Context, id uuid.UUID) error {
+func (m *mockWebhooksRepo) Delete(_ context.Context, id uuid.UUID) (*models.DeletedWebhook, error) {
 	m.deletedID = id
 
-	return nil
+	return m.deleted, nil
 }
 
 type noopPublisher struct{}
@@ -210,7 +214,7 @@ func TestWebhooksService_DeleteWebhook_PublishesTenantAwareDeletedEvent(t *testi
 	ctx := context.Background()
 	webhookID := uuid.Must(uuid.NewV7())
 	tenantID := "org-123"
-	repo := &mockWebhooksRepo{webhook: &models.Webhook{ID: webhookID, TenantID: &tenantID}}
+	repo := &mockWebhooksRepo{deleted: &models.DeletedWebhook{ID: webhookID, TenantID: &tenantID}}
 	publisher := &capturePublisher{}
 	svc := NewWebhooksService(repo, publisher, 10, nil)
 
@@ -221,6 +225,10 @@ func TestWebhooksService_DeleteWebhook_PublishesTenantAwareDeletedEvent(t *testi
 
 	if repo.deletedID != webhookID {
 		t.Fatalf("deletedID = %v, want %v", repo.deletedID, webhookID)
+	}
+
+	if repo.getByIDCalls != 0 {
+		t.Fatalf("GetByID called %d times, want 0; delete should return the deleted row atomically", repo.getByIDCalls)
 	}
 
 	if publisher.callCount != 1 || publisher.eventType != datatypes.WebhookDeleted {

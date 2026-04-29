@@ -333,20 +333,26 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 	return &webhook, nil
 }
 
-// Delete removes a webhook.
-func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM webhooks WHERE id = $1`
+// Delete removes a webhook and returns the deleted tenant boundary for side effects.
+func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) (*models.DeletedWebhook, error) {
+	query := `
+		DELETE FROM webhooks
+		WHERE id = $1
+		RETURNING id, tenant_id
+	`
 
-	result, err := r.db.Exec(ctx, query, id)
+	var webhook models.DeletedWebhook
+
+	err := r.db.QueryRow(ctx, query, id).Scan(&webhook.ID, &webhook.TenantID)
 	if err != nil {
-		return fmt.Errorf("failed to delete webhook: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
+		}
+
+		return nil, fmt.Errorf("failed to delete webhook: %w", err)
 	}
 
-	if result.RowsAffected() == 0 {
-		return huberrors.NewNotFoundError("webhook", "webhook not found")
-	}
-
-	return nil
+	return &webhook, nil
 }
 
 // parseDBEventTypes converts a DB string slice to []datatypes.EventType. Returns (nil, nil) for nil input.

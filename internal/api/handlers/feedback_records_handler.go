@@ -60,6 +60,12 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 
 	record, err := h.service.CreateFeedbackRecord(r.Context(), &req)
 	if err != nil {
+		if errors.Is(err, huberrors.ErrValidation) {
+			validation.RespondValidationError(w, err)
+
+			return
+		}
+
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 
