@@ -1,4 +1,4 @@
-.PHONY: all test help tests tests-coverage check-coverage build build-api build-worker build-backfill-embeddings run run-worker run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: all test help tests tests-coverage check-coverage build build-api build-worker build-backfill-embeddings run run-api run-worker run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Aliases for checkmake/lint expectations
 all: build
@@ -13,8 +13,9 @@ help:
 	@echo "  make build-api                - Build hub-api only (bin/hub-api)"
 	@echo "  make build-worker             - Build hub-worker only (bin/hub-worker)"
 	@echo "  make build-backfill-embeddings - Build the backfill-embeddings command"
-	@echo "  make run              - Run the API server (hub-api)"
-	@echo "  make run-worker       - Run the worker (hub-worker)"
+	@echo "  make run              - Run River migrations, then hub-api and hub-worker"
+	@echo "  make run-api          - Run the API server only (hub-api)"
+	@echo "  make run-worker       - Run the worker only (hub-worker)"
 	@echo "  make run-backfill-embeddings - Run the backfill-embeddings command (enqueues embedding jobs; loads .env)"
 	@echo "  make test-unit        - Run unit tests (fast, no database)"
 	@echo "  make tests            - Run integration tests"
@@ -109,13 +110,78 @@ run-backfill-embeddings:
 	@if [ ! -f .env ]; then echo "Error: .env file required. Copy .env.example to .env and configure."; exit 1; fi && \
 	(set -a && . ./.env && set +a && go run ./cmd/backfill-embeddings)
 
-# Run the API server (hub-api).
+define RUN_LOCAL_APP
+set -Eeuo pipefail
+worker_pid=""
+api_pid=""
+started_pid=""
+state_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/hub-run.XXXXXX")"
+event_pipe="$$state_dir/process-events"
+mkfifo "$$event_pipe"
+stop_process() {
+	pid="$${1:-}"
+	name="$$2"
+	if [ -z "$$pid" ] || ! kill -0 "$$pid" 2>/dev/null; then return; fi
+	echo "Stopping $$name..."
+	pkill -TERM -P "$$pid" 2>/dev/null || true
+	kill -TERM "$$pid" 2>/dev/null || true
+	wait "$$pid" 2>/dev/null || true
+}
+cleanup() {
+	status=$$?
+	trap - INT TERM EXIT
+	stop_process "$$api_pid" "hub-api"
+	stop_process "$$worker_pid" "hub-worker"
+	rm -rf "$$state_dir"
+	exit "$$status"
+}
+run_and_report() {
+	name="$$1"
+	shift
+	(set +e; "$$@"; status=$$?; printf '%s %s\n' "$$name" "$$status" >"$$event_pipe" || true; exit "$$status") &
+	started_pid=$$!
+}
+trap cleanup EXIT
+trap 'echo "Stopping hub-api and hub-worker..."; exit 130' INT
+trap 'echo "Stopping hub-api and hub-worker..."; exit 143' TERM
+echo "Starting hub-worker..."
+run_and_report hub-worker go run ./cmd/worker
+worker_pid="$$started_pid"
+echo "Starting hub-api..."
+run_and_report hub-api go run ./cmd/api
+api_pid="$$started_pid"
+read -r exited_process exit_status <"$$event_pipe"
+case "$$exited_process" in
+	hub-worker)
+		echo "hub-worker exited unexpectedly with status $$exit_status; stopping hub-api."
+		stop_process "$$api_pid" "hub-api"
+		if [ "$$exit_status" -eq 0 ]; then exit 1; fi
+		exit "$$exit_status"
+		;;
+	hub-api)
+		echo "hub-api exited with status $$exit_status; stopping hub-worker."
+		stop_process "$$worker_pid" "hub-worker"
+		exit "$$exit_status"
+		;;
+	*)
+		echo "Unknown process event from local runner: $$exited_process" >&2
+		exit 1
+		;;
+esac
+endef
+export RUN_LOCAL_APP
+
+# Run the full local app: apply River migrations, then supervise hub-worker and hub-api together.
 # Config: .env if present, else environment variables; env vars override .env. Copy .env.example to .env or set env vars.
-run:
+run: river-migrate
+	@bash -c "$$RUN_LOCAL_APP"
+
+# Run the API server only (hub-api).
+run-api:
 	@echo "Starting hub-api..."
 	go run ./cmd/api
 
-# Run the worker (hub-worker). Config: .env if present, else env vars (same as run). Requires DATABASE_URL; API_KEY not required.
+# Run the worker only (hub-worker). Config: .env if present, else env vars (same as run). Requires DATABASE_URL; API_KEY not required.
 run-worker:
 	@echo "Starting hub-worker..."
 	go run ./cmd/worker
@@ -258,7 +324,7 @@ install-hooks:
 dev-setup: docker-up deps install-tools init-db install-hooks
 	@echo "Development environment ready!"
 	@echo "Set API_KEY environment variable for authentication"
-	@echo "Run 'make run' to start the API server"
+	@echo "Run 'make run' to apply River migrations and start hub-api with hub-worker"
 
 # Run Schemathesis API tests (all phases for thorough local testing)
 # Phases: examples (schema examples), coverage (boundary values), stateful (API sequences), fuzzing (random)

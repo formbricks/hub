@@ -29,12 +29,26 @@ var (
 	decoder  *form.Decoder
 )
 
+const tagSplitParts = 2
+
 // ErrValidationFailed is returned when struct validation fails (err113).
 var ErrValidationFailed = errors.New("validation failed")
 
 func init() {
 	validate = validator.New()
 	decoder = form.NewDecoder()
+
+	validate.RegisterTagNameFunc(func(field reflect.StructField) string {
+		if name := tagName(field, "json"); name != "" {
+			return name
+		}
+
+		if name := tagName(field, "form"); name != "" {
+			return name
+		}
+
+		return field.Name
+	})
 
 	// Register custom validators
 	if err := validate.RegisterValidation("field_type", validateFieldType); err != nil {
@@ -95,10 +109,37 @@ func formatValidationErrors(err error) error {
 			messages = append(messages, formatFieldError(fieldError))
 		}
 
-		return fmt.Errorf("%w: %s", ErrValidationFailed, strings.Join(messages, "; "))
+		return requestValidationError{
+			message:          fmt.Sprintf("%s: %s", ErrValidationFailed, strings.Join(messages, "; ")),
+			validationErrors: validationErrors,
+		}
 	}
 
 	return err
+}
+
+type requestValidationError struct {
+	message          string
+	validationErrors validator.ValidationErrors
+}
+
+func (e requestValidationError) Error() string {
+	return e.message
+}
+
+func (e requestValidationError) Is(target error) bool {
+	return target == ErrValidationFailed
+}
+
+func (e requestValidationError) As(target any) bool {
+	validationErrors, ok := target.(*validator.ValidationErrors)
+	if !ok {
+		return false
+	}
+
+	*validationErrors = e.validationErrors
+
+	return true
 }
 
 // formatFieldError formats a single field validation error.
@@ -120,7 +161,7 @@ func formatFieldError(fieldError validator.FieldError) string {
 	case "oneof":
 		return fmt.Sprintf("%s must be one of: %s", field, fieldError.Param())
 	case "field_type":
-		return field + " must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
+		return field + " must be one of: " + models.ValidFieldTypeValuesString()
 	case "uuid":
 		return field + " must be a valid UUID"
 	case "rfc3339":
@@ -176,7 +217,7 @@ func RespondValidationError(w http.ResponseWriter, err error) {
 	details := GetValidationErrorDetails(err)
 
 	problem := response.ProblemDetails{
-		Type:   "about:blank",
+		Type:   response.ProblemTypeValidationError,
 		Title:  "Validation Error",
 		Status: http.StatusBadRequest,
 		Detail: err.Error(),
@@ -253,4 +294,13 @@ func validateNoNullBytes(fl validator.FieldLevel) bool {
 	value := field.String()
 
 	return !strings.Contains(value, "\x00")
+}
+
+func tagName(field reflect.StructField, key string) string {
+	name := strings.SplitN(field.Tag.Get(key), ",", tagSplitParts)[0]
+	if name == "-" {
+		return ""
+	}
+
+	return name
 }
