@@ -24,40 +24,6 @@ func (m *mockSenderRepo) Update(_ context.Context, _ uuid.UUID, _ *models.Update
 	return nil, m.updateErr
 }
 
-func (m *mockSenderRepo) Create(_ context.Context, _ *models.CreateWebhookRequest) (*models.Webhook, error) {
-	return nil, nil
-}
-
-func (m *mockSenderRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
-	return nil, nil
-}
-
-func (m *mockSenderRepo) List(_ context.Context, _ *models.ListWebhooksFilters) ([]models.Webhook, bool, error) {
-	return nil, false, nil
-}
-
-func (m *mockSenderRepo) ListAfterCursor(
-	_ context.Context, _ *models.ListWebhooksFilters, _ time.Time, _ uuid.UUID,
-) ([]models.Webhook, bool, error) {
-	return nil, false, nil
-}
-
-func (m *mockSenderRepo) Count(_ context.Context, _ *models.ListWebhooksFilters) (int64, error) {
-	return 0, nil
-}
-
-func (m *mockSenderRepo) Delete(_ context.Context, _ uuid.UUID) error {
-	return nil
-}
-
-func (m *mockSenderRepo) ListEnabled(_ context.Context) ([]models.Webhook, error) {
-	return nil, nil
-}
-
-func (m *mockSenderRepo) ListEnabledForEventType(_ context.Context, _ string) ([]models.Webhook, error) {
-	return nil, nil
-}
-
 func TestWebhookSenderImpl_Send(t *testing.T) {
 	ctx := context.Background()
 	webhookID := uuid.Must(uuid.NewV7())

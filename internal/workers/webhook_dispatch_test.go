@@ -31,10 +31,15 @@ func (m *mockDispatchRepo) Update(_ context.Context, _ uuid.UUID, req *models.Up
 }
 
 type mockSender struct {
-	err error
+	err      error
+	calls    int
+	payloads []*service.WebhookPayload
 }
 
-func (m *mockSender) Send(_ context.Context, _ *models.Webhook, _ *service.WebhookPayload) error {
+func (m *mockSender) Send(_ context.Context, _ *models.Webhook, payload *service.WebhookPayload) error {
+	m.calls++
+	m.payloads = append(m.payloads, payload)
+
 	return m.err
 }
 
@@ -42,11 +47,13 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	ctx := context.Background()
 	eventID := uuid.Must(uuid.NewV7())
 	webhookID := uuid.Must(uuid.NewV7())
+	tenantID := "org-123"
 	args := service.WebhookDispatchArgs{
 		EventID:   eventID,
 		EventType: "feedback_record.created",
 		Timestamp: time.Now(),
 		Data:      nil,
+		TenantID:  &tenantID,
 		WebhookID: webhookID,
 	}
 
@@ -75,7 +82,9 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	})
 
 	t.Run("returns nil on send success", func(t *testing.T) {
-		repo := &mockDispatchRepo{webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk"}}
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+		}
 		sender := &mockSender{}
 		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
 		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: args}
@@ -88,10 +97,189 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 		if repo.update != nil {
 			t.Error("Update should not be called on success")
 		}
+
+		if sender.calls != 1 {
+			t.Errorf("Send called %d times, want 1", sender.calls)
+		}
+	})
+
+	t.Run("returns nil without send when scoped webhook tenant mismatches job tenant", func(t *testing.T) {
+		eventTenant := "org-other"
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{
+				ID:         webhookID,
+				Enabled:    true,
+				URL:        "http://x",
+				SigningKey: "sk",
+				TenantID:   &tenantID,
+			},
+		}
+		sender := &mockSender{}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		scopedArgs := args
+		scopedArgs.TenantID = &eventTenant
+		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: scopedArgs}
+
+		err := worker.Work(ctx, job)
+		if err != nil {
+			t.Errorf("Work() error = %v, want nil", err)
+		}
+
+		if sender.calls != 0 {
+			t.Errorf("Send called %d times, want 0", sender.calls)
+		}
+
+		if repo.update != nil {
+			t.Error("Update should not be called for tenant mismatch")
+		}
+	})
+
+	t.Run("returns nil without send when legacy job data tenant mismatches scoped webhook", func(t *testing.T) {
+		webhookTenant := "org-123"
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{
+				ID:         webhookID,
+				Enabled:    true,
+				URL:        "http://x",
+				SigningKey: "sk",
+				TenantID:   &webhookTenant,
+			},
+		}
+		sender := &mockSender{}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		scopedArgs := args
+		scopedArgs.Data = map[string]any{"tenant_id": "org-other"}
+		scopedArgs.TenantID = nil
+		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: scopedArgs}
+
+		err := worker.Work(ctx, job)
+		if err != nil {
+			t.Errorf("Work() error = %v, want nil", err)
+		}
+
+		if sender.calls != 0 {
+			t.Errorf("Send called %d times, want 0", sender.calls)
+		}
+	})
+
+	t.Run("returns nil without send when job has no tenant boundary", func(t *testing.T) {
+		webhookTenant := "org-123"
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{
+				ID:         webhookID,
+				Enabled:    true,
+				URL:        "http://x",
+				SigningKey: "sk",
+				TenantID:   &webhookTenant,
+			},
+		}
+		sender := &mockSender{}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		scopedArgs := args
+		scopedArgs.Data = nil
+		scopedArgs.TenantID = nil
+		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: scopedArgs}
+
+		err := worker.Work(ctx, job)
+		if err != nil {
+			t.Errorf("Work() error = %v, want nil", err)
+		}
+
+		if sender.calls != 0 {
+			t.Errorf("Send called %d times, want 0", sender.calls)
+		}
+	})
+
+	t.Run("returns nil without send when job tenant conflicts with payload tenant", func(t *testing.T) {
+		payloadTenant := "org-other"
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{
+				ID:         webhookID,
+				Enabled:    true,
+				URL:        "http://x",
+				SigningKey: "sk",
+				TenantID:   &tenantID,
+			},
+		}
+		sender := &mockSender{}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		scopedArgs := args
+		scopedArgs.TenantID = &tenantID
+		scopedArgs.Data = map[string]any{"tenant_id": payloadTenant}
+		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: scopedArgs}
+
+		err := worker.Work(ctx, job)
+		if err != nil {
+			t.Errorf("Work() error = %v, want nil", err)
+		}
+
+		if sender.calls != 0 {
+			t.Errorf("Send called %d times, want 0", sender.calls)
+		}
+	})
+
+	t.Run("sends when scoped webhook tenant matches job tenant", func(t *testing.T) {
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{
+				ID:         webhookID,
+				Enabled:    true,
+				URL:        "http://x",
+				SigningKey: "sk",
+				TenantID:   &tenantID,
+			},
+		}
+		sender := &mockSender{}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		scopedArgs := args
+		scopedArgs.TenantID = &tenantID
+		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: scopedArgs}
+
+		err := worker.Work(ctx, job)
+		if err != nil {
+			t.Errorf("Work() error = %v, want nil", err)
+		}
+
+		if sender.calls != 1 {
+			t.Errorf("Send called %d times, want 1", sender.calls)
+		}
+	})
+
+	t.Run("sends legacy job and includes derived tenant in payload", func(t *testing.T) {
+		webhookTenant := "org-123"
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{
+				ID:         webhookID,
+				Enabled:    true,
+				URL:        "http://x",
+				SigningKey: "sk",
+				TenantID:   &webhookTenant,
+			},
+		}
+		sender := &mockSender{}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		scopedArgs := args
+		scopedArgs.Data = map[string]any{"tenant_id": webhookTenant}
+		scopedArgs.TenantID = nil
+		job := &river.Job[service.WebhookDispatchArgs]{JobRow: &rivertype.JobRow{}, Args: scopedArgs}
+
+		err := worker.Work(ctx, job)
+		if err != nil {
+			t.Errorf("Work() error = %v, want nil", err)
+		}
+
+		if sender.calls != 1 {
+			t.Fatalf("Send called %d times, want 1", sender.calls)
+		}
+
+		if sender.payloads[0].TenantID == nil || *sender.payloads[0].TenantID != webhookTenant {
+			t.Errorf("payload tenant_id = %v, want %q", sender.payloads[0].TenantID, webhookTenant)
+		}
 	})
 
 	t.Run("returns error and does not update when send fails and attempt < max", func(t *testing.T) {
-		repo := &mockDispatchRepo{webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk"}}
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+		}
 		sender := &mockSender{err: errors.New("network error")}
 		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
 		job := &river.Job[service.WebhookDispatchArgs]{
@@ -110,7 +298,9 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 	})
 
 	t.Run("updates webhook and returns error when send fails on last attempt", func(t *testing.T) {
-		repo := &mockDispatchRepo{webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk"}}
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+		}
 		sender := &mockSender{err: errors.New("final failure")}
 		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
 		job := &river.Job[service.WebhookDispatchArgs]{

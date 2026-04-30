@@ -43,8 +43,9 @@ func AllowedEventTypes() []string {
 
 // allowedProviderReasons for hub_webhook_provider_errors_total (bounded cardinality).
 var allowedProviderReasons = map[string]bool{
-	"list_failed":    true,
-	"enqueue_failed": true,
+	"list_failed":       true,
+	"enqueue_failed":    true,
+	"missing_tenant_id": true,
 }
 
 // allowedDeliveryStatuses for hub_webhook_deliveries_total and hub_webhook_delivery_duration_seconds.
@@ -63,6 +64,8 @@ var allowedDisabledReasons = map[string]bool{
 // allowedDispatchReasons for hub_webhook_dispatch_errors_total.
 var allowedDispatchReasons = map[string]bool{
 	"get_webhook_failed": true,
+	"missing_tenant_id":  true,
+	"tenant_mismatch":    true,
 }
 
 // allowedEmbeddingProviderReasons for hub_embedding_provider_errors_total.

@@ -84,7 +84,68 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 		return nil
 	}
 
-	payload := argsToPayload(args)
+	jobTenantID := args.TenantID
+	dataTenantID := service.TenantIDPointerFromEventData(args.Data)
+
+	if jobTenantID != nil && dataTenantID != nil && *jobTenantID != *dataTenantID {
+		if w.metrics != nil {
+			w.metrics.RecordDispatchError(ctx, "tenant_mismatch")
+		}
+
+		slog.Error("webhook dispatch: job tenant_id conflicts with payload tenant_id, skipping delivery",
+			"event_id", args.EventID,
+			"webhook_id", args.WebhookID,
+			"job_tenant_id", *jobTenantID,
+			"payload_tenant_id", *dataTenantID,
+		)
+
+		return nil
+	}
+
+	tenantID := jobTenantID
+	if tenantID == nil {
+		tenantID = dataTenantID
+	}
+
+	if tenantID == nil {
+		if w.metrics != nil {
+			w.metrics.RecordDispatchError(ctx, "missing_tenant_id")
+		}
+
+		slog.Error("webhook dispatch: event tenant_id missing, skipping delivery",
+			"event_id", args.EventID,
+			"webhook_id", args.WebhookID,
+		)
+
+		return nil
+	}
+
+	if !service.WebhookMatchesTenant(webhook, tenantID) {
+		if w.metrics != nil {
+			w.metrics.RecordDispatchError(ctx, "tenant_mismatch")
+		}
+
+		var webhookTenantID any
+		if webhook.TenantID != nil {
+			webhookTenantID = *webhook.TenantID
+		}
+
+		var eventTenantID any
+		if tenantID != nil {
+			eventTenantID = *tenantID
+		}
+
+		slog.Error("webhook dispatch: tenant scope mismatch, skipping delivery",
+			"event_id", args.EventID,
+			"webhook_id", args.WebhookID,
+			"webhook_tenant_id", webhookTenantID,
+			"event_tenant_id", eventTenantID,
+		)
+
+		return nil
+	}
+
+	payload := service.NewWebhookPayload(args)
 
 	err = w.sender.Send(ctx, webhook, payload)
 	if err == nil {
@@ -145,15 +206,4 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	)
 
 	return fmt.Errorf("webhook send: %w", err)
-}
-
-// argsToPayload builds a WebhookPayload from job args.
-func argsToPayload(args service.WebhookDispatchArgs) *service.WebhookPayload {
-	return &service.WebhookPayload{
-		ID:            args.EventID,
-		Type:          args.EventType,
-		Timestamp:     args.Timestamp,
-		Data:          args.Data,
-		ChangedFields: args.ChangedFields,
-	}
 }

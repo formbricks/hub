@@ -394,22 +394,25 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// BulkDelete deletes all feedback records matching user_id and optional tenant_id.
-// It returns the deleted IDs (via RETURNING id) so callers can e.g. publish events.
-func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userID string, tenantID *string) ([]uuid.UUID, error) {
+// BulkDelete deletes all feedback records matching user_id.
+// When tenant_id is provided, deletion is restricted to that tenant; otherwise all user records are deleted.
+// It returns deleted IDs grouped by tenant so callers can publish tenant-scoped side effects.
+func (r *FeedbackRecordsRepository) BulkDelete(
+	ctx context.Context, filters *models.BulkDeleteFilters,
+) ([]models.DeletedFeedbackRecordsByTenant, error) {
 	query := `
 		DELETE FROM feedback_records
 		WHERE user_id = $1`
-	args := []any{userID}
-	argCount := 2
+	args := []any{filters.UserID}
 
-	if tenantID != nil {
-		query += fmt.Sprintf(" AND tenant_id = $%d", argCount)
+	if filters.TenantID != nil {
+		query += ` AND tenant_id = $2`
 
-		args = append(args, *tenantID)
+		args = append(args, *filters.TenantID)
 	}
 
-	query += ` RETURNING id`
+	query += `
+		RETURNING id, tenant_id`
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
@@ -417,22 +420,34 @@ func (r *FeedbackRecordsRepository) BulkDelete(ctx context.Context, userID strin
 	}
 	defer rows.Close()
 
-	var ids []uuid.UUID
+	groups := make([]models.DeletedFeedbackRecordsByTenant, 0)
+	groupIndexByTenant := make(map[string]int)
 
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var (
+			id       uuid.UUID
+			tenantID string
+		)
+
+		if err := rows.Scan(&id, &tenantID); err != nil {
 			return nil, fmt.Errorf("failed to scan deleted feedback record id: %w", err)
 		}
 
-		ids = append(ids, id)
+		groupIndex, ok := groupIndexByTenant[tenantID]
+		if !ok {
+			groupIndex = len(groups)
+			groupIndexByTenant[tenantID] = groupIndex
+			groups = append(groups, models.DeletedFeedbackRecordsByTenant{TenantID: tenantID})
+		}
+
+		groups[groupIndex].IDs = append(groups[groupIndex].IDs, id)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating bulk delete result: %w", err)
 	}
 
-	return ids, nil
+	return groups, nil
 }
 
 // fetchFeedbackRecords executes the given query and scans rows into FeedbackRecord slices.
