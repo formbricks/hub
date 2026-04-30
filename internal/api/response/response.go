@@ -19,6 +19,8 @@ const (
 	ProblemTypeBadRequest = "https://hub.formbricks.com/problems/bad-request"
 	// ProblemTypeValidationError identifies request validation problems.
 	ProblemTypeValidationError = "https://hub.formbricks.com/problems/validation-error"
+	// ProblemTypeClientError identifies unclassified client-side request problems.
+	ProblemTypeClientError = "https://hub.formbricks.com/problems/client-error"
 	// ProblemTypeUnauthorized identifies authentication problems.
 	ProblemTypeUnauthorized = "https://hub.formbricks.com/problems/unauthorized"
 	// ProblemTypeNotFound identifies missing resource problems.
@@ -27,6 +29,8 @@ const (
 	ProblemTypeConflict = "https://hub.formbricks.com/problems/conflict"
 	// ProblemTypeForbidden identifies authorization problems.
 	ProblemTypeForbidden = "https://hub.formbricks.com/problems/forbidden"
+	// ProblemTypeMethodNotAllowed identifies unsupported HTTP method problems.
+	ProblemTypeMethodNotAllowed = "https://hub.formbricks.com/problems/method-not-allowed"
 	// ProblemTypeServiceUnavailable identifies temporary dependency problems.
 	ProblemTypeServiceUnavailable = "https://hub.formbricks.com/problems/service-unavailable"
 	// ProblemTypeInternalServerError identifies unexpected server problems.
@@ -110,6 +114,8 @@ func problemTypeForStatus(statusCode int) string {
 		return ProblemTypeUnauthorized
 	case http.StatusForbidden:
 		return ProblemTypeForbidden
+	case http.StatusMethodNotAllowed:
+		return ProblemTypeMethodNotAllowed
 	case http.StatusNotFound:
 		return ProblemTypeNotFound
 	case http.StatusConflict:
@@ -119,6 +125,10 @@ func problemTypeForStatus(statusCode int) string {
 	case http.StatusInternalServerError:
 		return ProblemTypeInternalServerError
 	default:
+		if statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError {
+			return ProblemTypeClientError
+		}
+
 		return ProblemTypeInternalServerError
 	}
 }
