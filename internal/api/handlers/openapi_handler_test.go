@@ -72,7 +72,6 @@ func TestOpenAPIHandlerYAMLUsesConfiguredPublicBaseURL(t *testing.T) {
 
 	servers := mustServers(t, spec)
 	assert.Equal(t, "https://hub.example.com/root", servers[0]["url"])
-	assert.Equal(t, localDevelopmentBaseURL, servers[1]["url"])
 }
 
 func TestOpenAPIHandlerYAMLUsesRequestHostWithoutForwardedHeaders(t *testing.T) {
@@ -242,7 +241,7 @@ func mustServers(t *testing.T, spec map[string]any) []map[string]any {
 
 	rawServers, ok := spec["servers"].([]any)
 	require.True(t, ok)
-	require.Len(t, rawServers, 2)
+	require.Len(t, rawServers, 1)
 
 	servers := make([]map[string]any, 0, len(rawServers))
 	for _, raw := range rawServers {

@@ -144,10 +144,6 @@ func (h *OpenAPIHandler) specForBaseURL(baseURL string) map[string]any {
 			"url":         baseURL,
 			"description": "Current Hub instance",
 		},
-		{
-			"url":         localDevelopmentBaseURL,
-			"description": "Local development server",
-		},
 	}
 
 	return spec
