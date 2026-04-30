@@ -203,6 +203,30 @@ func TestNewHTTPServerServesOpenAPIWithoutAuth(t *testing.T) {
 	}
 }
 
+func TestNewHTTPServerServesOpenAPIYAMLWithoutAuthWhenPublicBaseURLUnset(t *testing.T) {
+	t.Setenv("PUBLIC_BASE_URL", "")
+
+	server := newTestHTTPServerWithPublicBaseURL(t, "")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/openapi.yaml", nil)
+	request.Host = "attacker.example.com"
+
+	server.Handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /openapi.yaml status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	if !strings.Contains(recorder.Body.String(), "http://localhost:8080") {
+		t.Fatalf("GET /openapi.yaml body = %s, want local development base URL", recorder.Body.String())
+	}
+
+	if strings.Contains(recorder.Body.String(), "attacker.example.com") {
+		t.Fatalf("GET /openapi.yaml reflected request host in body: %s", recorder.Body.String())
+	}
+}
+
 func TestNewHTTPServerKeepsV1RoutesProtected(t *testing.T) {
 	server := newTestHTTPServer(t)
 
@@ -219,6 +243,12 @@ func TestNewHTTPServerKeepsV1RoutesProtected(t *testing.T) {
 func newTestHTTPServer(t *testing.T) *http.Server {
 	t.Helper()
 
+	return newTestHTTPServerWithPublicBaseURL(t, "https://hub.example.com/base")
+}
+
+func newTestHTTPServerWithPublicBaseURL(t *testing.T, publicBaseURL string) *http.Server {
+	t.Helper()
+
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			Port:      "0",
@@ -229,7 +259,7 @@ func newTestHTTPServer(t *testing.T) *http.Server {
 	return newHTTPServer(
 		cfg,
 		handlers.NewHealthHandler(),
-		newTestOpenAPIHandler(t),
+		newTestOpenAPIHandler(t, publicBaseURL),
 		handlers.NewFeedbackRecordsHandler(nil),
 		handlers.NewWebhooksHandler(nil),
 		handlers.NewSearchHandler(nil),
@@ -238,7 +268,7 @@ func newTestHTTPServer(t *testing.T) *http.Server {
 	)
 }
 
-func newTestOpenAPIHandler(t *testing.T) *handlers.OpenAPIHandler {
+func newTestOpenAPIHandler(t *testing.T, publicBaseURL string) *handlers.OpenAPIHandler {
 	t.Helper()
 
 	specPath := filepath.Join(t.TempDir(), "openapi.yaml")
@@ -248,7 +278,7 @@ func newTestOpenAPIHandler(t *testing.T) *handlers.OpenAPIHandler {
 		t.Fatalf("write openapi spec: %v", err)
 	}
 
-	handler, err := handlers.NewOpenAPIHandler(specPath, "https://hub.example.com/base")
+	handler, err := handlers.NewOpenAPIHandler(specPath, publicBaseURL)
 	if err != nil {
 		t.Fatalf("NewOpenAPIHandler() error = %v", err)
 	}

@@ -209,16 +209,9 @@ func marshalYAML(spec map[string]any) (body []byte, err error) {
 	return body, nil
 }
 
-func requestBaseURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-
-	host := r.Host
-	if host == "" {
-		host = strings.TrimPrefix(localDevelopmentBaseURL, "http://")
-	}
-
-	return fmt.Sprintf("%s://%s", scheme, host)
+func requestBaseURL(_ *http.Request) string {
+	// PUBLIC_BASE_URL is handled by OpenAPIHandler before this fallback is used.
+	// Without an explicit configured URL, fail closed to a deterministic local
+	// development URL instead of reflecting an untrusted Host header.
+	return localDevelopmentBaseURL
 }

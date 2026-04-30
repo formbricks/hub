@@ -74,11 +74,11 @@ func TestOpenAPIHandlerYAMLUsesConfiguredPublicBaseURL(t *testing.T) {
 	assert.Equal(t, "https://hub.example.com/root", servers[0]["url"])
 }
 
-func TestOpenAPIHandlerYAMLUsesRequestHostWithoutForwardedHeaders(t *testing.T) {
+func TestOpenAPIHandlerYAMLFallsBackToLocalDevelopmentBaseURL(t *testing.T) {
 	handler := newTestOpenAPIHandler(t, "")
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://internal/openapi.yaml", nil)
-	req.Host = "hub.dynamic.test"
+	req.Host = "attacker.example.com"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "forwarded.example.com")
 
@@ -94,14 +94,14 @@ func TestOpenAPIHandlerYAMLUsesRequestHostWithoutForwardedHeaders(t *testing.T) 
 	require.NoError(t, err)
 
 	servers := mustServers(t, spec)
-	assert.Equal(t, "http://hub.dynamic.test", servers[0]["url"])
+	assert.Equal(t, localDevelopmentBaseURL, servers[0]["url"])
 }
 
-func TestOpenAPIHandlerJSONUsesRequestHostWithoutForwardedHeaders(t *testing.T) {
+func TestOpenAPIHandlerJSONFallsBackToLocalDevelopmentBaseURL(t *testing.T) {
 	handler := newTestOpenAPIHandler(t, "")
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://internal/openapi.json", nil)
-	req.Host = "hub.acme.test"
+	req.Host = "attacker.example.com"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "forwarded.example.com")
 
@@ -119,7 +119,7 @@ func TestOpenAPIHandlerJSONUsesRequestHostWithoutForwardedHeaders(t *testing.T) 
 	require.NoError(t, err)
 
 	servers := mustServers(t, spec)
-	assert.Equal(t, "http://hub.acme.test", servers[0]["url"])
+	assert.Equal(t, localDevelopmentBaseURL, servers[0]["url"])
 }
 
 func TestOpenAPIHandlerJSONUsesConfiguredPublicBaseURL(t *testing.T) {
@@ -165,7 +165,7 @@ func TestOpenAPIHandlerJSONReturns500WhenRenderFails(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
-func TestOpenAPIHandlerJSONUsesHTTPSWhenTLSPresent(t *testing.T) {
+func TestOpenAPIHandlerJSONDoesNotReflectTLSRequestHost(t *testing.T) {
 	handler := newTestOpenAPIHandler(t, "")
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://hub.secure.test/openapi.json", nil)
@@ -181,7 +181,7 @@ func TestOpenAPIHandlerJSONUsesHTTPSWhenTLSPresent(t *testing.T) {
 	require.NoError(t, err)
 
 	servers := mustServers(t, spec)
-	assert.Equal(t, "https://hub.secure.test", servers[0]["url"])
+	assert.Equal(t, localDevelopmentBaseURL, servers[0]["url"])
 }
 
 func TestOpenAPIHandlerCachesConfiguredOutput(t *testing.T) {

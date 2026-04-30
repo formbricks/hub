@@ -577,6 +577,17 @@ func TestAuthHeaderTransportAddsAuthorization(t *testing.T) {
 	}()
 }
 
+func TestRedactMCPLogLine(t *testing.T) {
+	t.Setenv("HUB_API_KEY", "hub-secret")
+	t.Setenv("API_KEY", "api-secret")
+	t.Setenv("STAINLESS_API_KEY", "stainless-secret")
+
+	got := redactMCPLogLine("hub-secret api-secret stainless-secret safe")
+	if got != "[REDACTED] [REDACTED] [REDACTED] safe" {
+		t.Fatalf("redactMCPLogLine() = %q, want all configured secrets redacted", got)
+	}
+}
+
 func TestMCPSmokeCodeBuildsExpectedWorkflow(t *testing.T) {
 	code := mcpSmokeCode()
 	wantSnippets := []string{
@@ -585,7 +596,9 @@ func TestMCPSmokeCodeBuildsExpectedWorkflow(t *testing.T) {
 		"feedbackRecords.delete",
 		"mcp-smoke-",
 		"mcp-smoke-submission-",
-		"deleted: true",
+		"finally",
+		"await client.feedbackRecords.delete(created.id)",
+		"cleanupError",
 	}
 
 	for _, want := range wantSnippets {
@@ -720,11 +733,29 @@ func failMCPTestf(t *testing.T, stderr *tailWriter, format string, args ...any) 
 		t.Log("recent MCP stderr:")
 
 		for _, line := range stderrLines {
-			t.Log(line)
+			t.Log(redactMCPLogLine(line))
 		}
 	}
 
 	t.Fatalf(format, args...)
+}
+
+func redactMCPLogLine(line string) string {
+	redacted := line
+
+	for _, secret := range []string{
+		strings.TrimSpace(os.Getenv("HUB_API_KEY")),
+		strings.TrimSpace(os.Getenv("API_KEY")),
+		strings.TrimSpace(os.Getenv("STAINLESS_API_KEY")),
+	} {
+		if secret == "" {
+			continue
+		}
+
+		redacted = strings.ReplaceAll(redacted, secret, "[REDACTED]")
+	}
+
+	return redacted
 }
 
 func mcpSmokeCode() string {
@@ -735,31 +766,48 @@ func mcpSmokeCode() string {
 	return fmt.Sprintf(`async function run(client) {
   const tenantID = %q;
   const submissionID = %q;
-  const created = await client.feedbackRecords.create({
-    source_type: "survey",
-    field_id: "mcp_smoke_test",
-    field_type: "text",
-    field_label: "MCP smoke test",
-    value_text: "Hub MCP smoke test",
-    source_id: "mcp-smoke",
-    source_name: "Hub MCP Smoke Test",
-    tenant_id: tenantID,
-    submission_id: submissionID,
-    user_identifier: submissionID,
-    language: "en"
-  });
-  const listed = await client.feedbackRecords.list({
-    tenant_id: tenantID,
-    submission_id: submissionID,
-    limit: 10
-  });
-  await client.feedbackRecords.delete(created.id);
+  let created = null;
+  let listedCount = 0;
+  let deleted = false;
+  let cleanupError = null;
+  try {
+    created = await client.feedbackRecords.create({
+      source_type: "survey",
+      field_id: "mcp_smoke_test",
+      field_type: "text",
+      field_label: "MCP smoke test",
+      value_text: "Hub MCP smoke test",
+      source_id: "mcp-smoke",
+      source_name: "Hub MCP Smoke Test",
+      tenant_id: tenantID,
+      submission_id: submissionID,
+      user_identifier: submissionID,
+      language: "en"
+    });
+    const listed = await client.feedbackRecords.list({
+      tenant_id: tenantID,
+      submission_id: submissionID,
+      limit: 10
+    });
+    listedCount = listed.data.length;
+  } finally {
+    if (created?.id) {
+      try {
+        await client.feedbackRecords.delete(created.id);
+        deleted = true;
+      } catch (error) {
+        cleanupError = error?.message ?? String(error);
+        console.log("failed to delete MCP smoke feedback record", cleanupError);
+      }
+    }
+  }
   return {
     tenantID,
     submissionID,
-    createdID: created.id,
-    listedCount: listed.data.length,
-    deleted: true
+    createdID: created?.id ?? "",
+    listedCount,
+    deleted,
+    ...(cleanupError && { cleanupError })
   };
 }`, tenantID, submissionID)
 }

@@ -84,17 +84,9 @@ func TestLoad(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.setDatabaseURL {
-				t.Setenv("DATABASE_URL", tt.databaseURL)
-			}
-
-			if tt.setPort {
-				t.Setenv("PORT", tt.port)
-			}
-
-			if tt.setPublicBaseURL {
-				t.Setenv("PUBLIC_BASE_URL", tt.publicBaseURL)
-			}
+			setOrUnsetEnv(t, "DATABASE_URL", tt.databaseURL, tt.setDatabaseURL)
+			setOrUnsetEnv(t, "PORT", tt.port, tt.setPort)
+			setOrUnsetEnv(t, "PUBLIC_BASE_URL", tt.publicBaseURL, tt.setPublicBaseURL)
 
 			cfg, err := Load()
 			if err != nil {
@@ -116,6 +108,34 @@ func TestLoad(t *testing.T) {
 			}
 		})
 	}
+}
+
+//nolint:usetesting // These table tests intentionally exercise truly unset env vars.
+func setOrUnsetEnv(t *testing.T, key, value string, set bool) {
+	t.Helper()
+
+	originalValue, hadOriginalValue := os.LookupEnv(key)
+	if set {
+		if err := os.Setenv(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	} else if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+
+	t.Cleanup(func() {
+		if hadOriginalValue {
+			if err := os.Setenv(key, originalValue); err != nil {
+				t.Fatalf("restore %s: %v", key, err)
+			}
+
+			return
+		}
+
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("restore unset %s: %v", key, err)
+		}
+	})
 }
 
 // TestLoadAlwaysReturnsNilError cannot use t.Parallel() because it uses t.Setenv (Go restriction).
