@@ -19,6 +19,7 @@ type WebhookDispatchArgs struct {
 	Timestamp     time.Time `json:"timestamp"`
 	Data          any       `json:"data"`
 	ChangedFields []string  `json:"changed_fields,omitempty"`
+	TenantID      *string   `json:"tenant_id,omitempty"`
 	WebhookID     uuid.UUID `json:"webhook_id"               river:"unique"`
 }
 

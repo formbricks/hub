@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -24,7 +25,7 @@ type FeedbackRecordsService interface {
 	ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error)
 	UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error
-	BulkDeleteFeedbackRecords(ctx context.Context, userID string, tenantID *string) (int, error)
+	BulkDeleteFeedbackRecords(ctx context.Context, filters *models.BulkDeleteFilters) (int, error)
 }
 
 // FeedbackRecordsHandler handles HTTP requests for feedback records.
@@ -45,7 +46,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
+		response.RespondInvalidRequestBody(w, err)
 
 		return
 	}
@@ -59,6 +60,12 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 
 	record, err := h.service.CreateFeedbackRecord(r.Context(), &req)
 	if err != nil {
+		if errors.Is(err, huberrors.ErrValidation) {
+			validation.RespondValidationError(w, err)
+
+			return
+		}
+
 		if errors.Is(err, huberrors.ErrNotFound) {
 			response.RespondNotFound(w, "Feedback record not found")
 
@@ -160,7 +167,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
+		response.RespondInvalidRequestBody(w, err)
 
 		return
 	}
@@ -219,7 +226,7 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// BulkDelete handles DELETE /v1/feedback-records?user_id=<id>.
+// BulkDelete handles DELETE /v1/feedback-records?user_id=<id>[&tenant_id=<id>].
 func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	filters := &models.BulkDeleteFilters{}
 
@@ -230,8 +237,27 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters.UserID, filters.TenantID)
+	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters)
 	if err != nil {
+		if errors.Is(err, huberrors.ErrValidation) {
+			validation.RespondValidationError(w, err)
+
+			return
+		}
+
+		var tenantID string
+		if filters.TenantID != nil {
+			tenantID = *filters.TenantID
+		}
+
+		slog.Error("Failed to bulk delete feedback records", // #nosec G706 -- slog key-values
+			"method", r.Method,
+			"path", r.URL.Path,
+			"user_id", filters.UserID,
+			"tenant_id", tenantID,
+			"error", err,
+		)
+
 		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return

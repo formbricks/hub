@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,17 +30,66 @@ const (
 	FieldTypeDate        FieldType = "date"
 )
 
+var validFieldTypeValues = []FieldType{
+	FieldTypeText,
+	FieldTypeCategorical,
+	FieldTypeNPS,
+	FieldTypeCSAT,
+	FieldTypeCES,
+	FieldTypeRating,
+	FieldTypeNumber,
+	FieldTypeBoolean,
+	FieldTypeDate,
+}
+
+var validFieldTypeValueNames = func() []string {
+	values := make([]string, 0, len(validFieldTypeValues))
+	for _, fieldType := range validFieldTypeValues {
+		values = append(values, string(fieldType))
+	}
+
+	return values
+}()
+
+var validFieldTypeValuesString = strings.Join(validFieldTypeValueNames, ", ")
+
 // ValidFieldTypes contains all valid field type values (set membership).
-var ValidFieldTypes = map[FieldType]struct{}{
-	FieldTypeText:        {},
-	FieldTypeCategorical: {},
-	FieldTypeNPS:         {},
-	FieldTypeCSAT:        {},
-	FieldTypeCES:         {},
-	FieldTypeRating:      {},
-	FieldTypeNumber:      {},
-	FieldTypeBoolean:     {},
-	FieldTypeDate:        {},
+var ValidFieldTypes = func() map[FieldType]struct{} {
+	values := make(map[FieldType]struct{}, len(validFieldTypeValues))
+	for _, fieldType := range validFieldTypeValues {
+		values[fieldType] = struct{}{}
+	}
+
+	return values
+}()
+
+// InvalidFieldTypeError describes a rejected field_type enum value.
+type InvalidFieldTypeError struct {
+	Value string
+}
+
+// Error implements the error interface.
+func (e *InvalidFieldTypeError) Error() string {
+	if e == nil {
+		return ErrInvalidFieldType.Error()
+	}
+
+	return fmt.Sprintf("%s: %s", ErrInvalidFieldType, e.Value)
+}
+
+// Unwrap allows errors.Is(err, ErrInvalidFieldType).
+func (e *InvalidFieldTypeError) Unwrap() error {
+	return ErrInvalidFieldType
+}
+
+// ValidFieldTypeValues returns valid field_type values in API documentation order.
+func ValidFieldTypeValues() []string {
+	return append([]string(nil), validFieldTypeValueNames...)
+}
+
+// ValidFieldTypeValuesString returns a comma-separated list of valid field_type values.
+func ValidFieldTypeValuesString() string {
+	return validFieldTypeValuesString
 }
 
 // IsValid returns true if the FieldType is valid.
@@ -57,7 +107,7 @@ func (ft *FieldType) IsValid() bool {
 func ParseFieldType(s string) (FieldType, error) {
 	ft := FieldType(s)
 	if _, valid := ValidFieldTypes[ft]; !valid {
-		return "", fmt.Errorf("%w: %s", ErrInvalidFieldType, s)
+		return "", &InvalidFieldTypeError{Value: s}
 	}
 
 	return ft, nil
@@ -199,11 +249,17 @@ type ListFeedbackRecordsResponse struct {
 // BulkDeleteFilters represents query parameters for bulk delete operation.
 type BulkDeleteFilters struct {
 	UserID   string  `form:"user_id"   validate:"required,no_null_bytes,min=1"`
-	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes"`
+	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes,min=1"`
 }
 
 // BulkDeleteResponse represents the response for bulk delete operation.
 type BulkDeleteResponse struct {
 	DeletedCount int64  `json:"deleted_count"`
 	Message      string `json:"message"`
+}
+
+// DeletedFeedbackRecordsByTenant groups deleted feedback record IDs by tenant.
+type DeletedFeedbackRecordsByTenant struct {
+	TenantID string
+	IDs      []uuid.UUID
 }

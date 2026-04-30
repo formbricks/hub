@@ -262,16 +262,8 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 	}
 
 	if req.TenantID != nil {
-		// Empty string clears tenant_id (store as NULL)
-		var val any
-		if *req.TenantID == "" {
-			val = nil
-		} else {
-			val = *req.TenantID
-		}
-
 		updates = append(updates, fmt.Sprintf("tenant_id = $%d", argCount))
-		args = append(args, val)
+		args = append(args, *req.TenantID)
 		argCount++
 	}
 
@@ -341,20 +333,26 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 	return &webhook, nil
 }
 
-// Delete removes a webhook.
-func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM webhooks WHERE id = $1`
+// Delete removes a webhook and returns the deleted tenant boundary for side effects.
+func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) (*models.DeletedWebhook, error) {
+	query := `
+		DELETE FROM webhooks
+		WHERE id = $1
+		RETURNING id, tenant_id
+	`
 
-	result, err := r.db.Exec(ctx, query, id)
+	var webhook models.DeletedWebhook
+
+	err := r.db.QueryRow(ctx, query, id).Scan(&webhook.ID, &webhook.TenantID)
 	if err != nil {
-		return fmt.Errorf("failed to delete webhook: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
+		}
+
+		return nil, fmt.Errorf("failed to delete webhook: %w", err)
 	}
 
-	if result.RowsAffected() == 0 {
-		return huberrors.NewNotFoundError("webhook", "webhook not found")
-	}
-
-	return nil
+	return &webhook, nil
 }
 
 // parseDBEventTypes converts a DB string slice to []datatypes.EventType. Returns (nil, nil) for nil input.
@@ -376,65 +374,43 @@ func parseDBEventTypes(ss []string) ([]datatypes.EventType, error) {
 	return out, nil
 }
 
-// ListEnabled retrieves all enabled webhooks (unbounded; used for delivery fan-out).
-func (r *WebhooksRepository) ListEnabled(ctx context.Context) ([]models.Webhook, error) {
-	query := webhooksListSelect + ` WHERE enabled = true ORDER BY created_at DESC, id ASC`
+const listEnabledForEventTypeSelect = `
+			SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
+			FROM webhooks
+		WHERE enabled = true
+		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
+	`
 
-	webhooks, err := r.fetchWebhooks(ctx, query)
+// ListEnabledForEventTypeAndTenant retrieves enabled webhooks for an event type and tenant boundary.
+// Webhooks match only the same tenant. A missing tenantID matches nothing.
+func (r *WebhooksRepository) ListEnabledForEventTypeAndTenant(
+	ctx context.Context, eventType string, tenantID *string,
+) ([]models.Webhook, error) {
+	query, args := listEnabledForEventTypeAndTenantQuery(eventType, tenantID)
+
+	webhooks, err := r.fetchWebhooks(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list enabled webhooks: %w", err)
+		return nil, fmt.Errorf("list enabled webhooks for event type and tenant: %w", err)
 	}
 
 	return webhooks, nil
 }
 
-// ListEnabledForEventType retrieves all enabled webhooks that should receive a specific event type.
-// Order is deterministic (ORDER BY id) so delivery behavior is consistent.
-func (r *WebhooksRepository) ListEnabledForEventType(ctx context.Context, eventType string) ([]models.Webhook, error) {
-	query := `
-		SELECT id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
-		FROM webhooks
-		WHERE enabled = true
-		AND (event_types IS NULL OR event_types = '{}' OR event_types @> ARRAY[$1]::VARCHAR(64)[])
-		ORDER BY id
-	`
+func listEnabledForEventTypeAndTenantQuery(eventType string, tenantID *string) (string, []any) {
+	query := listEnabledForEventTypeSelect
+	args := []any{eventType}
 
-	rows, err := r.db.Query(ctx, query, eventType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list enabled webhooks for event type: %w", err)
-	}
-	defer rows.Close()
+	if tenantID == nil {
+		query += ` AND FALSE`
+	} else {
+		query += ` AND tenant_id = $2`
 
-	webhooks := []models.Webhook{}
-
-	for rows.Next() {
-		var (
-			webhook      models.Webhook
-			dbEventTypes []string
-		)
-
-		err := rows.Scan(
-			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
-			&webhook.DisabledReason, &webhook.DisabledAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan webhook: %w", err)
-		}
-
-		webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
-		if err != nil {
-			return nil, err
-		}
-
-		webhooks = append(webhooks, webhook)
+		args = append(args, *tenantID)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating webhooks: %w", err)
-	}
+	query += ` ORDER BY id`
 
-	return webhooks, nil
+	return query, args
 }
 
 // fetchWebhooks executes the given query and scans rows into Webhook slices.

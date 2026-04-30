@@ -34,9 +34,9 @@ If you are looking for the complete Formbricks application (surveys, UI, broader
 
 ## Built for the AI Age
 
-Hub is being prepared as the core datastore for agentic experience workflows.
+Hub is the core datastore for agentic experience workflows.
 
-Formbrocks Hub enables the next generation of AI-powered analysis and semantic search workflows on top of experience data.
+Formbricks Hub enables the next generation of AI-powered analysis and semantic search workflows on top of experience data.
 
 This makes Hub a strong fit if you want to build:
 
@@ -79,6 +79,37 @@ If you want to evaluate Hub quickly, start with the docs:
 - [API Reference](https://hub.formbricks.com/api)
 - [Connect Hub to Microsoft Power BI](https://hub.formbricks.com/guides/hub-powerbi/)
 - [Connect Hub to Apache Superset](https://hub.formbricks.com/guides/hub-superset/)
+
+### Local development in this repository
+
+This repository contains the standalone Hub API and worker. The local
+`compose.yml` starts dependency services only: PostgreSQL and River UI. It does
+not start `hub-api` or `hub-worker`; run those from this repository after the
+database is ready.
+
+For a local Hub setup:
+
+```bash
+cp .env.example .env
+make dev-setup
+make run
+```
+
+`make run` applies River queue migrations and starts both `hub-api` and
+`hub-worker` for local webhook delivery and embedding jobs. Use `make run-api`
+or `make run-worker` only when you intentionally want to run one process on its
+own. `make dev-setup` runs the Hub schema migrations through `make init-db`.
+
+For the full Formbricks XM Suite UI, use the
+[`formbricks/formbricks`](https://github.com/formbricks/formbricks) repository
+and its setup instructions instead.
+
+### Tenant isolation
+
+Feedback records are tenant-scoped. API operations that read or write feedback
+records require `tenant_id` where shown in the API reference so records remain
+isolated by tenant/organization. Do not omit `tenant_id` from list/search calls
+unless an endpoint explicitly documents an admin or global-list mode.
 
 ## Who Hub Is For
 

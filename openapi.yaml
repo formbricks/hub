@@ -66,7 +66,7 @@ paths:
             tags:
                 - Feedback Records
             summary: List feedback records with filters
-            description: Lists feedback records with optional filters and pagination
+            description: Lists feedback records for a required tenant_id with optional additional filters and pagination
             operationId: list-feedback-records
             parameters:
                 - name: tenant_id
@@ -77,6 +77,7 @@ paths:
                     type: string
                     description: Tenant ID (required for isolation). NULL bytes not allowed.
                     minLength: 1
+                    maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
                 - name: submission_id
@@ -220,15 +221,14 @@ paths:
                                 validation_error:
                                     summary: Validation error
                                     value:
-                                        type: "about:blank"
-                                        title: "Bad Request"
+                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        title: "Validation Error"
                                         status: 400
-                                        detail: "Validation failed"
+                                        detail: "validation failed: tenant_id is required"
                                         instance: "https://hub.formbricks.com/v1/feedback-records"
                                         errors:
-                                            - location: "body.field_id"
-                                              message: "Field is required"
-                                              value: null
+                                            - location: "tenant_id"
+                                              message: "tenant_id is required"
         post:
             tags:
                 - Feedback Records
@@ -381,6 +381,18 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                invalid_field_type:
+                                    summary: Invalid field_type enum
+                                    value:
+                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        title: "Validation Error"
+                                        status: 400
+                                        detail: "field_type has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
+                                        errors:
+                                            - location: "field_type"
+                                              message: "field_type has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
+                                              value: "textt"
                 "409":
                     description: Conflict – a feedback record with the same tenant_id, submission_id, and field_id already exists (idempotent create).
                     content:
@@ -397,25 +409,26 @@ paths:
             tags:
                 - Feedback Records
             summary: Bulk delete feedback records by user ID
-            description: Permanently deletes all feedback record data points matching the specified user_id. This endpoint supports GDPR Article 17 (Right to Erasure) requests.
+            description: Permanently deletes feedback record data points matching the specified user_id. Omit tenant_id to delete that user_id across all tenants for GDPR Article 17 (Right to Erasure) requests. Provide tenant_id to restrict deletion to that tenant only.
             operationId: bulk-delete-feedback-records
             parameters:
                 - name: user_id
                   in: query
-                  description: Delete all records matching this user ID (required). NULL bytes not allowed.
+                  description: Delete records matching this user ID (required). NULL bytes not allowed.
                   required: true
                   schema:
                     type: string
-                    description: Delete all records matching this user ID (required). NULL bytes not allowed.
+                    description: Delete records matching this user ID (required). NULL bytes not allowed.
                     minLength: 1
                     pattern: '^[^\x00]*$'
                     example: "user-abc-123"
                 - name: tenant_id
                   in: query
-                  description: Filter by tenant ID (optional, for multi-tenant deployments). NULL bytes not allowed.
+                  description: Optional tenant scope. Omit this parameter to delete all records matching user_id across tenants; provide it to delete only records for this tenant. Empty strings and NULL bytes are not allowed.
                   schema:
                     type: string
-                    description: Filter by tenant ID (optional, for multi-tenant deployments). NULL bytes not allowed.
+                    description: Optional tenant scope. Omit this parameter to delete all records matching user_id across tenants; provide it to delete only records for this tenant. Empty strings and NULL bytes are not allowed.
+                    minLength: 1
                     pattern: '^[^\x00]*$'
                     example: "org-123"
             responses:
@@ -614,7 +627,7 @@ paths:
                                 not_found:
                                     summary: Record not found
                                     value:
-                                        type: "about:blank"
+                                        type: "https://hub.formbricks.com/problems/not-found"
                                         title: "Not Found"
                                         status: 404
                                         detail: "Feedback record with ID '018e1234-5678-9abc-def0-123456789abc' not found"
@@ -622,15 +635,15 @@ paths:
                                 validation_error:
                                     summary: Validation error
                                     value:
-                                        type: "about:blank"
-                                        title: "Bad Request"
+                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        title: "Validation Error"
                                         status: 400
-                                        detail: "Invalid update request"
+                                        detail: "validation failed: value_text must not contain NULL bytes"
                                         instance: "https://hub.formbricks.com/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
                                         errors:
-                                            - location: "body.value_text"
-                                              message: "Text value cannot be empty"
-                                              value: ""
+                                            - location: "value_text"
+                                              message: "value_text must not contain NULL bytes"
+                                              value: 'contains\u0000null'
     /v1/feedback-records/search/semantic:
         post:
             tags:
@@ -853,6 +866,7 @@ paths:
                 Creates a new webhook endpoint. When events occur (e.g. feedback_record.created),
                 the Hub POSTs a signed payload to the webhook URL. If signing_key is omitted,
                 a key is auto-generated (Standard Webhooks format, whsec_...).
+                tenant_id is required; webhooks only receive events from that exact tenant.
                 See WebhookDeliveryPayload for the payload structure sent to your URL.
             operationId: create-webhook
             requestBody:
@@ -865,6 +879,7 @@ paths:
                                 summary: Subscribe to feedback events
                                 value:
                                     url: "https://example.com/hub-events"
+                                    tenant_id: "org-123"
                                     event_types:
                                         - "feedback_record.created"
                                         - "feedback_record.updated"
@@ -1303,9 +1318,8 @@ components:
                     type: string
                     description: A URI reference to human-readable documentation for the error.
                     format: uri
-                    default: about:blank
                     examples:
-                        - https://example.com/errors/example
+                        - https://hub.formbricks.com/problems/bad-request
         FeedbackRecordData:
             type: object
             additionalProperties: false
@@ -1446,7 +1460,8 @@ components:
                     description: Whether the webhook is active (default true)
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier. NULL bytes not allowed.
+                    description: Tenant/organization identifier. Required for webhook isolation; NULL bytes not allowed.
+                    minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
@@ -1459,6 +1474,7 @@ components:
                         $ref: '#/components/schemas/WebhookEventType'
             required:
                 - url
+                - tenant_id
         ListWebhooksOutputBody:
             type: object
             additionalProperties: false
@@ -1508,8 +1524,9 @@ components:
                     type: boolean
                     description: Enable or disable the webhook
                 tenant_id:
-                    type: [string, "null"]
-                    description: Omit or send null to leave unchanged. Send empty string to clear (store as null).
+                    type: string
+                    description: Omit to leave unchanged. Empty strings are rejected; webhooks cannot be global.
+                    minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
@@ -1638,6 +1655,10 @@ components:
                 The webhook-id header is a stable identifier per event: the same value is sent for every delivery attempt (all endpoints and all retries) for that event. Use it as an idempotency key (e.g. store seen IDs for a short window and skip duplicate processing).
             additionalProperties: false
             properties:
+                id:
+                    type: string
+                    format: uuid
+                    description: Stable event ID. Matches the webhook-id header and can be used as an idempotency key.
                 type:
                     type: string
                     description: Event type that occurred
@@ -1652,13 +1673,16 @@ components:
                     type: string
                     format: date-time
                     description: When the event was published (ISO 8601)
+                tenant_id:
+                    type: string
+                    description: Tenant/organization identifier for the event.
                 data:
                     description: |
                         Event payload. Shape depends on event type:
                         - feedback_record.created / feedback_record.updated: FeedbackRecordData (object).
                         - feedback_record.deleted: DeletedIdsPayload (array of deleted feedback record IDs).
                         - webhook.created / webhook.updated: WebhookData (object).
-                        - webhook.deleted: DeletedIdsPayload (array of deleted webhook IDs; one element for single delete).
+                        - webhook.deleted: DeletedIdsPayload (array of deleted webhook IDs; one ID for single delete).
                     oneOf:
                         - $ref: '#/components/schemas/FeedbackRecordData'
                         - $ref: '#/components/schemas/WebhookData'
@@ -1669,8 +1693,10 @@ components:
                     items:
                         type: string
             required:
+                - id
                 - type
                 - timestamp
+                - tenant_id
                 - data
         UpdateFeedbackRecordInputBody:
             type: object

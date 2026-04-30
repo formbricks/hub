@@ -10,6 +10,31 @@ import (
 	"strings"
 
 	"github.com/iancoleman/strcase"
+
+	"github.com/formbricks/hub/internal/models"
+)
+
+const (
+	// ProblemTypeBadRequest identifies malformed request problems.
+	ProblemTypeBadRequest = "https://hub.formbricks.com/problems/bad-request"
+	// ProblemTypeValidationError identifies request validation problems.
+	ProblemTypeValidationError = "https://hub.formbricks.com/problems/validation-error"
+	// ProblemTypeClientError identifies unclassified client-side request problems.
+	ProblemTypeClientError = "https://hub.formbricks.com/problems/client-error"
+	// ProblemTypeUnauthorized identifies authentication problems.
+	ProblemTypeUnauthorized = "https://hub.formbricks.com/problems/unauthorized"
+	// ProblemTypeNotFound identifies missing resource problems.
+	ProblemTypeNotFound = "https://hub.formbricks.com/problems/not-found"
+	// ProblemTypeConflict identifies resource conflict problems.
+	ProblemTypeConflict = "https://hub.formbricks.com/problems/conflict"
+	// ProblemTypeForbidden identifies authorization problems.
+	ProblemTypeForbidden = "https://hub.formbricks.com/problems/forbidden"
+	// ProblemTypeMethodNotAllowed identifies unsupported HTTP method problems.
+	ProblemTypeMethodNotAllowed = "https://hub.formbricks.com/problems/method-not-allowed"
+	// ProblemTypeServiceUnavailable identifies temporary dependency problems.
+	ProblemTypeServiceUnavailable = "https://hub.formbricks.com/problems/service-unavailable"
+	// ProblemTypeInternalServerError identifies unexpected server problems.
+	ProblemTypeInternalServerError = "https://hub.formbricks.com/problems/internal-server-error"
 )
 
 // ErrorDetail represents a single error detail in RFC 7807 Problem Details.
@@ -32,17 +57,79 @@ type ProblemDetails struct {
 // RespondError writes an RFC 7807 Problem Details error response.
 func RespondError(w http.ResponseWriter, statusCode int, title, detail string) {
 	problem := ProblemDetails{
-		Type:   "about:blank",
+		Type:   problemTypeForStatus(statusCode),
 		Title:  title,
 		Status: statusCode,
 		Detail: detail,
 	}
 
+	respondProblem(w, statusCode, problem)
+}
+
+// RespondInvalidRequestBody writes a 400 response for JSON request body decoding failures.
+func RespondInvalidRequestBody(w http.ResponseWriter, err error) {
+	problemType := jsonDecodeProblemType(err)
+
+	problem := ProblemDetails{
+		Type:   problemType,
+		Title:  jsonDecodeProblemTitle(problemType),
+		Status: http.StatusBadRequest,
+		Detail: JSONDecodeErrorDetail(err),
+		Errors: JSONDecodeErrorDetails(err),
+	}
+
+	respondProblem(w, http.StatusBadRequest, problem)
+}
+
+func jsonDecodeProblemType(err error) string {
+	if _, ok := invalidFieldTypeErrorDetail(err); ok {
+		return ProblemTypeValidationError
+	}
+
+	return ProblemTypeBadRequest
+}
+
+func jsonDecodeProblemTitle(problemType string) string {
+	if problemType == ProblemTypeValidationError {
+		return "Validation Error"
+	}
+
+	return "Bad Request"
+}
+
+func respondProblem(w http.ResponseWriter, statusCode int, problem ProblemDetails) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(statusCode)
 
 	if err := json.NewEncoder(w).Encode(problem); err != nil {
 		slog.Error("Failed to encode error response", "error", err)
+	}
+}
+
+func problemTypeForStatus(statusCode int) string {
+	switch statusCode {
+	case http.StatusBadRequest:
+		return ProblemTypeBadRequest
+	case http.StatusUnauthorized:
+		return ProblemTypeUnauthorized
+	case http.StatusForbidden:
+		return ProblemTypeForbidden
+	case http.StatusMethodNotAllowed:
+		return ProblemTypeMethodNotAllowed
+	case http.StatusNotFound:
+		return ProblemTypeNotFound
+	case http.StatusConflict:
+		return ProblemTypeConflict
+	case http.StatusServiceUnavailable:
+		return ProblemTypeServiceUnavailable
+	case http.StatusInternalServerError:
+		return ProblemTypeInternalServerError
+	default:
+		if statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError {
+			return ProblemTypeClientError
+		}
+
+		return ProblemTypeInternalServerError
 	}
 }
 
@@ -57,6 +144,10 @@ func RespondBadRequest(w http.ResponseWriter, detail string) {
 func JSONDecodeErrorDetail(err error) string {
 	if err == nil {
 		return "Invalid request body"
+	}
+
+	if detail, ok := invalidFieldTypeErrorDetail(err); ok {
+		return detail.Message
 	}
 
 	var syntaxErr *json.SyntaxError
@@ -76,6 +167,32 @@ func JSONDecodeErrorDetail(err error) string {
 	}
 
 	return "Invalid request body"
+}
+
+// JSONDecodeErrorDetails returns field-level details for JSON request body decoding failures.
+func JSONDecodeErrorDetails(err error) []ErrorDetail {
+	if detail, ok := invalidFieldTypeErrorDetail(err); ok {
+		return []ErrorDetail{detail}
+	}
+
+	return nil
+}
+
+func invalidFieldTypeErrorDetail(err error) (ErrorDetail, bool) {
+	var invalidFieldType *models.InvalidFieldTypeError
+	if !errors.As(err, &invalidFieldType) {
+		return ErrorDetail{}, false
+	}
+
+	return ErrorDetail{
+		Location: "field_type",
+		Message: fmt.Sprintf(
+			"field_type has invalid value %q; must be one of: %s",
+			invalidFieldType.Value,
+			models.ValidFieldTypeValuesString(),
+		),
+		Value: invalidFieldType.Value,
+	}, true
 }
 
 // fieldNameForAPI converts a struct field path (e.g. "TenantID" or "X.Y") to API-style snake_case.
