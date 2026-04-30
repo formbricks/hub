@@ -1295,7 +1295,7 @@ func TestWebhooksCreateRequiresTenantID(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, "Validation Error", problem.Title)
-	assert.Contains(t, problem.Detail, "TenantID is required")
+	assert.Contains(t, problem.Detail, "tenant_id is required")
 }
 
 // TestWebhooksInvalidSigningKey asserts that create and update reject invalid signing_key with 400.
