@@ -24,7 +24,7 @@ services:
   # One-shot migration container for Docker-only setup. The Hub image supplies goose and river;
   # the bind mount keeps migrations aligned with this checkout.
   hub-migrate:
-    image: ghcr.io/formbricks/hub:${HUB_IMAGE_TAG:-latest}
+    image: ghcr.io/formbricks/hub:${HUB_IMAGE_TAG:-0.2.0}
     container_name: formbricks_hub_migrate
     restart: "no"
     entrypoint: ["sh", "-ec"]

@@ -87,9 +87,10 @@ This repository contains the standalone Hub API and worker. The local
 `hub-migrate` container, and River UI. The migration container uses the packaged
 Hub image for `goose` and `river`, and bind-mounts this checkout's
 `migrations/` directory so the database schema matches the branch you are
-working on. Docker setup does not require migration tools on the host. It does
-not start `hub-api` or `hub-worker`; run those from this repository after the
-database is ready.
+working on. The image tag defaults to the current Hub release and should stay
+pinned if you override `HUB_IMAGE_TAG`. Docker setup does not require migration
+tools on the host. It does not start `hub-api` or `hub-worker`; run those from
+this repository after the database is ready.
 
 For a local Hub setup:
 
