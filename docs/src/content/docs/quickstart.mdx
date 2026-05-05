@@ -215,7 +215,21 @@ Expected response: an OpenAPI JSON document with Hub API metadata and paths.
 
 ### Option 2: Docker Run (Minimal)
 
-If you have an existing PostgreSQL instance, run just the Hub API:
+If you have an existing PostgreSQL instance, run migrations first:
+
+```bash
+docker run --rm \
+  -e DATABASE_URL="postgresql://user:password@host:5432/hub?sslmode=disable" \
+  --entrypoint /bin/sh \
+  ghcr.io/formbricks/hub:latest \
+  -c 'goose -dir /app/migrations postgres "$DATABASE_URL" up && river migrate-up --database-url "$DATABASE_URL"'
+```
+
+The published Hub image includes `goose`, `river`, and `/app/migrations`, so
+this applies both Hub database migrations and River queue migrations without
+local Go, goose, river, or migration files.
+
+Then run the Hub API:
 
 ```bash
 docker run -d \
@@ -226,12 +240,6 @@ docker run -d \
   -e LOG_LEVEL="info" \
   ghcr.io/formbricks/hub:latest
 ```
-
-<Callout variant="note">
-  <strong>Warning:</strong> Make sure migrations are applied before starting the
-  API. The recommended Docker Compose setup does this automatically with
-  `hub-migrate`.
-</Callout>
 
 ## Making Your First API Call
 

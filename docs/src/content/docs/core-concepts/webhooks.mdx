@@ -215,7 +215,7 @@ MESSAGE_PUBLISHER_QUEUE_MAX_SIZE=16384
 
 ### No Webhooks Delivered
 
-1. Confirm `hub-migrate` completed successfully: `docker compose ps hub-migrate`
+1. Confirm `hub-migrate` completed successfully: `docker compose ps --all hub-migrate`
 2. Check webhook is enabled: `GET /v1/webhooks/{id}`
 3. Verify `event_types` includes the emitted event
 4. Ensure your endpoint is reachable from Hub and returns `2xx`
