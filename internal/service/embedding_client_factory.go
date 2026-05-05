@@ -24,6 +24,8 @@ var (
 	ErrEmbeddingConfigInvalid = errors.New("embedding config invalid")
 	// ErrEmbeddingProviderAPIKey is returned when an API-key-based provider is configured without a key.
 	ErrEmbeddingProviderAPIKey = errors.New("EMBEDDING_PROVIDER_API_KEY is required for this provider")
+	// ErrEmbeddingBaseURLUnsupported is returned when a custom base URL is configured for a non-openai provider.
+	ErrEmbeddingBaseURLUnsupported = errors.New("EMBEDDING_BASE_URL is only supported for openai")
 	// ErrEmbeddingGoogleGeminiConfig is returned when google-gemini is configured without project or location.
 	ErrEmbeddingGoogleGeminiConfig = errors.New(
 		"google-gemini requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
@@ -59,6 +61,7 @@ var embeddingProviderRegistry = map[string]providerEntry{
 func openAIEmbeddingFactory(_ context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
 	return openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
+		openai.WithBaseURL(cfg.BaseURL),
 		openai.WithNormalize(cfg.Normalize),
 	), nil
 }
@@ -102,6 +105,7 @@ type EmbeddingClientConfig struct {
 	Provider            string
 	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
 	Model               string
+	BaseURL             string
 	Normalize           bool
 	GoogleCloudProject  string
 	GoogleCloudLocation string
@@ -119,6 +123,10 @@ func ValidateEmbeddingConfig(cfg EmbeddingClientConfig) error {
 
 	if entry.RequiresAPIKey && cfg.ProviderAPIKey == "" {
 		return fmt.Errorf("%w: %s", ErrEmbeddingProviderAPIKey, provider)
+	}
+
+	if cfg.BaseURL != "" && provider != EmbeddingProviderOpenAI {
+		return fmt.Errorf("%w: %s", ErrEmbeddingBaseURLUnsupported, provider)
 	}
 
 	if entry.RequiresGoogleGeminiConfig && (cfg.GoogleCloudProject == "" || cfg.GoogleCloudLocation == "") {

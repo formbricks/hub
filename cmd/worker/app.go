@@ -93,6 +93,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			Provider:            providerName,
 			ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
 			Model:               embeddingModel,
+			BaseURL:             cfg.Embedding.BaseURL,
 			Normalize:           cfg.Embedding.Normalize,
 			GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
 			GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,

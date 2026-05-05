@@ -23,6 +23,7 @@ func TestNewEmbeddingClient(t *testing.T) {
 				Provider:       EmbeddingProviderOpenAI,
 				ProviderAPIKey: "sk-test",
 				Model:          "text-embedding-3-small",
+				BaseURL:        "https://embeddings.example.com/v1",
 				Normalize:      false,
 			},
 			wantErr: false,
@@ -99,6 +100,17 @@ func TestNewEmbeddingClient(t *testing.T) {
 			},
 			wantErr: true,
 			errIs:   ErrEmbeddingConfigInvalid,
+		},
+		{
+			name: "custom base url on non-openai provider returns error",
+			cfg: EmbeddingClientConfig{
+				Provider:       EmbeddingProviderGoogle,
+				ProviderAPIKey: "key",
+				Model:          "text-embedding-004",
+				BaseURL:        "https://embeddings.example.com/v1",
+			},
+			wantErr: true,
+			errIs:   ErrEmbeddingBaseURLUnsupported,
 		},
 	}
 
@@ -181,6 +193,9 @@ func TestValidateEmbeddingConfig(t *testing.T) {
 		errIs   error
 	}{
 		{"openai with key valid", EmbeddingClientConfig{Provider: EmbeddingProviderOpenAI, ProviderAPIKey: "k", Model: "m"}, false, nil},
+		{"openai with key and base url valid", EmbeddingClientConfig{
+			Provider: EmbeddingProviderOpenAI, ProviderAPIKey: "k", Model: "m", BaseURL: "https://embeddings.example.com/v1",
+		}, false, nil},
 		{
 			"openai without key invalid",
 			EmbeddingClientConfig{Provider: EmbeddingProviderOpenAI, ProviderAPIKey: "", Model: "m"},
@@ -214,6 +229,13 @@ func TestValidateEmbeddingConfig(t *testing.T) {
 			"unsupported provider invalid",
 			EmbeddingClientConfig{Provider: "unknown", ProviderAPIKey: "k", Model: "m"},
 			true, ErrEmbeddingConfigInvalid,
+		},
+		{
+			"base url on google invalid",
+			EmbeddingClientConfig{
+				Provider: EmbeddingProviderGoogle, ProviderAPIKey: "k", Model: "m", BaseURL: "https://embeddings.example.com/v1",
+			},
+			true, ErrEmbeddingBaseURLUnsupported,
 		},
 	}
 	for _, tt := range tests {

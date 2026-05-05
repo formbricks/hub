@@ -281,6 +281,48 @@ func TestLoad_EmbeddingGoogleCloudLocation_precedence(t *testing.T) {
 	}
 }
 
+func TestLoad_EmbeddingBaseURL(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("EMBEDDING_BASE_URL", "https://embeddings.example.com/v1/")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.BaseURL != "https://embeddings.example.com/v1" {
+		t.Errorf("Embedding.BaseURL = %q, want https://embeddings.example.com/v1", cfg.Embedding.BaseURL)
+	}
+}
+
+func TestLoad_EmbeddingBaseURLValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "rejects relative url", value: "/v1"},
+		{name: "rejects unsupported scheme", value: "ftp://embeddings.example.com/v1"},
+		{name: "rejects query", value: "https://embeddings.example.com/v1?x=1"},
+		{name: "rejects fragment", value: "https://embeddings.example.com/v1#frag"},
+		{name: "rejects user info", value: "https://user:pass@embeddings.example.com/v1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("EMBEDDING_BASE_URL", tt.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() error = nil, want error")
+			}
+
+			if !errors.Is(err, ErrInvalidEmbeddingBaseURL) {
+				t.Fatalf("Load() error = %v, want %v", err, ErrInvalidEmbeddingBaseURL)
+			}
+		})
+	}
+}
+
 func TestLoad_PublicBaseURLValidation(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -582,7 +624,7 @@ func TestNormalizePublicBaseURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := normalizePublicBaseURL(tt.value)
+			got, err := normalizeHTTPBaseURL(tt.value, ErrInvalidPublicBaseURL)
 			if err != nil {
 				t.Fatalf("normalizePublicBaseURL() error = %v, want nil", err)
 			}
@@ -597,7 +639,7 @@ func TestNormalizePublicBaseURL(t *testing.T) {
 func TestNormalizePublicBaseURLRejectsInvalidValues(t *testing.T) {
 	for _, value := range []string{" ", "http://[::1", "hub.example.com"} {
 		t.Run(value, func(t *testing.T) {
-			_, err := normalizePublicBaseURL(value)
+			_, err := normalizeHTTPBaseURL(value, ErrInvalidPublicBaseURL)
 			if !errors.Is(err, ErrInvalidPublicBaseURL) {
 				t.Fatalf("normalizePublicBaseURL() error = %v, want %v", err, ErrInvalidPublicBaseURL)
 			}
