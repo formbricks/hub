@@ -82,7 +82,12 @@ func runMCPSmokeWorkflow(ctx context.Context, t *testing.T, session *mcp.ClientS
 	}
 
 	if executeResponse.IsError {
-		failMCPTestf(t, output, "execute returned MCP tool error: %+v", executeResponse)
+		errorText, ok := firstTextContent(executeResponse)
+		if ok {
+			failMCPTestf(t, output, "execute returned MCP tool error: %s", errorText)
+		}
+
+		failMCPTestf(t, output, "execute returned MCP tool error without text content: %+v", executeResponse)
 	}
 
 	resultText, ok := firstTextContent(executeResponse)
