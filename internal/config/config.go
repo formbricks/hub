@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ var (
 	ErrShutdownTimeoutSeconds          = errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
 	ErrWebhookMaxCount                 = errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
 	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
+	ErrInvalidPublicBaseURL            = errors.New("PUBLIC_BASE_URL must be an absolute http(s) URL without query or fragment")
 )
 
 // DefaultDatabaseURL is the default connection URL when DATABASE_URL is unset (local/test only).
@@ -48,6 +50,7 @@ type Config struct {
 type ServerConfig struct {
 	Port            string      `env:"PORT"                     env-default:"8080"`
 	HubAPIKey       string      `env:"API_KEY"`
+	PublicBaseURL   string      `env:"PUBLIC_BASE_URL"`
 	LogLevel        string      `env:"LOG_LEVEL"                env-default:"info"`
 	ShutdownTimeout DurationSec `env:"SHUTDOWN_TIMEOUT_SECONDS" env-default:"30"`
 }
@@ -308,5 +311,52 @@ func validate(cfg *Config) error {
 		return ErrDatabaseMinConnsExceedsMax
 	}
 
+	if cfg.Server.PublicBaseURL != "" {
+		normalized, err := normalizePublicBaseURL(cfg.Server.PublicBaseURL)
+		if err != nil {
+			return err
+		}
+
+		cfg.Server.PublicBaseURL = normalized
+	}
+
 	return nil
+}
+
+func normalizePublicBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", ErrInvalidPublicBaseURL
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrInvalidPublicBaseURL, err)
+	}
+
+	if !parsed.IsAbs() || parsed.Host == "" {
+		return "", ErrInvalidPublicBaseURL
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", ErrInvalidPublicBaseURL
+	}
+
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", ErrInvalidPublicBaseURL
+	}
+
+	if parsed.User != nil {
+		return "", ErrInvalidPublicBaseURL
+	}
+
+	if parsed.Path == "/" {
+		parsed.Path = ""
+		parsed.RawPath = ""
+	} else {
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		parsed.RawPath = strings.TrimRight(parsed.RawPath, "/")
+	}
+
+	return parsed.String(), nil
 }

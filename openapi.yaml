@@ -5,6 +5,8 @@ info:
         Feedback record storage and webhook delivery for the Formbricks ecosystem.
         Store feedback records and subscribe to events via webhooks (Standard Webhooks).
         Webhook payloads are described by WebhookDeliveryPayload; use the signing_key to verify requests.
+        Self-hosted Hub servers advertise their deployed base URL from PUBLIC_BASE_URL so generated SDK and MCP clients
+        can point to the correct Hub instance.
         Full Documentation: https://hub.formbricks.com
         Quick Start: https://hub.formbricks.com/quickstart
     contact:
@@ -16,6 +18,21 @@ info:
         url: https://www.apache.org/licenses/LICENSE-2.0
     version: 1.0.0
 servers:
+    - url: "{scheme}://{host}{basePath}"
+      description: Deployed Formbricks Hub instance (self-hosted or Formbricks Cloud)
+      variables:
+        scheme:
+            default: http
+            enum:
+                - http
+                - https
+            description: URL scheme for the Hub instance
+        host:
+            default: localhost:8080
+            description: Public hostname and optional port for the Hub instance
+        basePath:
+            default: ""
+            description: Optional reverse-proxy path prefix, for example /hub
     - url: http://localhost:8080
       description: Local development server
 tags:

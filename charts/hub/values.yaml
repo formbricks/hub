@@ -104,6 +104,10 @@ config:
   existingConfigMap: ""
   data:
     PORT: "8080"
+    # Recommended for production when Hub is exposed through ingress, TLS termination,
+    # or a reverse-proxy path prefix. Example: https://hub.example.com or
+    # https://example.com/hub
+    PUBLIC_BASE_URL: ""
     LOG_LEVEL: "info"
     SHUTDOWN_TIMEOUT_SECONDS: "30"
     MESSAGE_PUBLISHER_QUEUE_MAX_SIZE: "16384"

@@ -46,7 +46,10 @@ var (
 		"google-gemini requires EMBEDDING_GOOGLE_CLOUD_PROJECT and EMBEDDING_GOOGLE_CLOUD_LOCATION")
 )
 
-const riverQueueDepthInterval = 15 * time.Second
+const (
+	riverQueueDepthInterval = 15 * time.Second
+	startupCleanupTimeout   = 5 * time.Second
+)
 
 // embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
 // and EMBEDDING_MODEL must be set and the provider must be supported. Otherwise returns ("", "") so no
@@ -254,6 +257,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			feedbackRecordsService, embeddingsRepo, embeddingMetrics,
 			metrics, riverWorkers)
 		if err != nil {
+			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
+
 			if errors.Is(err, service.ErrEmbeddingProviderAPIKey) {
 				return nil, fmt.Errorf("%w: %s", errEmbeddingProviderAPIKeyRequired, embeddingProviderName)
 			}
@@ -275,19 +280,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		Workers: riverWorkers,
 	})
 	if err != nil {
-		messageManager.Shutdown()
-
-		if tracerProvider != nil {
-			if err2 := observability.ShutdownTracerProvider(context.Background(), tracerProvider); err2 != nil {
-				slog.Error("shutdown tracer provider after River client error", "error", err2)
-			}
-		}
-
-		if meterProvider != nil {
-			if err2 := observability.ShutdownMeterProvider(context.Background(), meterProvider); err2 != nil {
-				slog.Error("shutdown meter provider after River client error", "error", err2)
-			}
-		}
+		cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
 
 		return nil, fmt.Errorf("create River client: %w", err)
 	}
@@ -327,8 +320,15 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
 
+	openapiHandler, err := handlers.NewOpenAPIHandler(handlers.ResolveOpenAPISpecPath(), cfg.Server.PublicBaseURL)
+	if err != nil {
+		cleanupNewAppStartupFailure(context.Background(), messageManager, riverClient, tracerProvider, meterProvider)
+
+		return nil, fmt.Errorf("create openapi handler: %w", err)
+	}
+
 	server := newHTTPServer(
-		cfg, healthHandler, feedbackRecordsHandler, webhooksHandler, searchHandler,
+		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, searchHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -344,11 +344,12 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}, nil
 }
 
-// newHTTPServer builds the HTTP server and muxes (no auth on /health, API key on /v1/).
+// newHTTPServer builds the HTTP server and muxes (no auth on /health or /openapi.*, API key on /v1/).
 // Handler chain: RequestID -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
 func newHTTPServer(
 	cfg *config.Config,
 	health *handlers.HealthHandler,
+	openapi *handlers.OpenAPIHandler,
 	feedback *handlers.FeedbackRecordsHandler,
 	webhooks *handlers.WebhooksHandler,
 	search *handlers.SearchHandler,
@@ -357,6 +358,8 @@ func newHTTPServer(
 ) *http.Server {
 	public := http.NewServeMux()
 	public.HandleFunc("GET /health", health.Check)
+	public.HandleFunc("GET /openapi.yaml", openapi.YAML)
+	public.HandleFunc("GET /openapi.json", openapi.JSON)
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("POST /v1/feedback-records", feedback.Create)
@@ -498,6 +501,31 @@ func shutdownObservability(ctx context.Context, tracer *sdktrace.TracerProvider,
 	}
 
 	return first
+}
+
+func cleanupNewAppStartupFailure(
+	ctx context.Context,
+	messageManager *service.MessagePublisherManager,
+	riverClient *river.Client[pgx.Tx],
+	tracerProvider *sdktrace.TracerProvider,
+	meterProvider *sdkmetric.MeterProvider,
+) {
+	cleanupCtx, cancel := context.WithTimeout(ctx, startupCleanupTimeout)
+	defer cancel()
+
+	if messageManager != nil {
+		messageManager.Shutdown()
+	}
+
+	if riverClient != nil {
+		if err := riverClient.Stop(cleanupCtx); err != nil {
+			slog.Error("river stop after startup error", "error", err)
+		}
+	}
+
+	if err := shutdownObservability(cleanupCtx, tracerProvider, meterProvider); err != nil {
+		slog.Error("shutdown observability after startup error", "error", err)
+	}
 }
 
 // Shutdown stops the server, message publisher, and River in order. Call after Run returns.

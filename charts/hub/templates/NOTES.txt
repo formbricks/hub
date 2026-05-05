@@ -7,6 +7,11 @@ Required configuration
 - DATABASE_URL (Secret): PostgreSQL connection string (requires pgvector extension)
 - API_KEY (Secret): protects all /v1/* endpoints
 
+Recommended production configuration
+------------------------------------
+- PUBLIC_BASE_URL (ConfigMap/env): set this when Hub is exposed through ingress, TLS termination,
+  or a reverse-proxy path prefix so /openapi.yaml and /openapi.json advertise the correct public URL.
+
 Secret management options (choose one):
 1) Chart-managed Secret:
   values.secrets.create=true and set:

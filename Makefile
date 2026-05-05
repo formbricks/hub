@@ -1,4 +1,4 @@
-.PHONY: all test help tests tests-coverage check-coverage build build-api build-worker build-backfill-embeddings run run-api run-worker run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: all test help tests mcp-smoke tests-coverage check-coverage build build-api build-worker build-backfill-embeddings run run-api run-worker run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Aliases for checkmake/lint expectations
 all: build
@@ -19,6 +19,7 @@ help:
 	@echo "  make run-backfill-embeddings - Run the backfill-embeddings command (enqueues embedding jobs; loads .env)"
 	@echo "  make test-unit        - Run unit tests (fast, no database)"
 	@echo "  make tests            - Run integration tests"
+	@echo "  make mcp-smoke        - Run the live MCP package smoke test (requires Hub env vars)"
 	@echo "  make test-all         - Run all tests (unit + integration)"
 	@echo "  make tests-coverage   - Run tests with coverage report"
 	@echo "  make check-coverage   - Run tests and fail if coverage below COVERAGE_THRESHOLD (excludes cmd/api)"
@@ -48,6 +49,13 @@ lint-openapi:
 tests:
 	@echo "Running integration tests..."
 	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./tests/... -v -timeout 120s)
+
+# Run the opt-in live MCP package smoke test.
+# Requires HUB_API_KEY, FORMBRICKS_HUB_BASE_URL (or HUB_BASE_URL), and either
+# HUB_MCP_PACKAGE or HUB_MCP_COMMAND/HUB_MCP_ARGS.
+mcp-smoke:
+	@echo "Running MCP package smoke test..."
+	@(set -a && [ -f .env ] && . ./.env && set +a; RUN_MCP_SMOKE_TEST=1 go test ./tests -run TestMCPPackageSmoke -count=1 -v -timeout 120s)
 
 # Run unit tests (fast, no database required)
 test-unit:

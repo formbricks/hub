@@ -43,6 +43,7 @@ COPY --from=builder /go/bin/river /usr/local/bin/river
 
 # Copy migration files
 COPY --from=builder /build/migrations /app/migrations
+COPY --from=builder /build/openapi.yaml /app/openapi.yaml
 
 # Switch to non-root user
 USER app
