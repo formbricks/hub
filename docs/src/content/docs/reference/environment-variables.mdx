@@ -22,8 +22,9 @@ default.
 | `LOG_LEVEL`                | `info`  | Log level, such as `debug`, `info`, `warn`, or `error`.                                                |
 | `SHUTDOWN_TIMEOUT_SECONDS` | `30`    | Graceful shutdown timeout in seconds.                                                                  |
 
-The Quick Start Docker Compose file also supports `HUB_PORT` and `POSTGRES_PORT`
-as host-port conveniences. They are compose variables, not Hub runtime settings.
+The Quick Start Docker Compose file also supports `HUB_PORT`, `POSTGRES_PORT`,
+and `HUB_IMAGE_TAG` as Compose conveniences. They are compose variables, not Hub
+runtime settings.
 
 `PUBLIC_BASE_URL` must be an absolute `http` or `https` URL. It may include a
 path prefix, such as `https://example.com/hub`, but must not include query
