@@ -5,7 +5,7 @@ description: Configure the Formbricks Hub MCP server for AI clients and self-hos
 
 import { Callout } from "@stainless-api/docs/components";
 
-The `@formbricks/hub-mcp` package lets MCP-capable AI clients work with Formbricks Hub through the generated Hub TypeScript client. The MCP server runs locally over stdio, authenticates with your Hub API key, and points at either a local Hub instance or a self-hosted production deployment.
+The `@formbricks/hub-mcp` package lets MCP-capable AI clients work with Formbricks Hub through the generated Hub TypeScript client. AI clients can launch it as a local stdio MCP server, while release smoke tests can start it over HTTP. In both cases it points at either a local Hub instance or a self-hosted production deployment.
 
 ## What You Need
 
@@ -76,32 +76,38 @@ A typical workflow looks like this:
 
 ```js
 async function run(client) {
-  const created = await client.feedbackRecords.create({
-    tenant_id: "org-123",
-    submission_id: "mcp-demo-001",
-    source_type: "survey",
-    source_id: "mcp-demo",
-    source_name: "MCP Demo",
-    field_id: "q1",
-    field_label: "How satisfied are you?",
-    field_type: "rating",
-    value_number: 5,
-    language: "en",
-  });
+  let created = null;
 
-  const listed = await client.feedbackRecords.list({
-    tenant_id: "org-123",
-    submission_id: "mcp-demo-001",
-    limit: 10,
-  });
+  try {
+    created = await client.feedbackRecords.create({
+      tenant_id: "org-123",
+      submission_id: "mcp-demo-001",
+      source_type: "survey",
+      source_id: "mcp-demo",
+      source_name: "MCP Demo",
+      field_id: "q1",
+      field_label: "How satisfied are you?",
+      field_type: "rating",
+      value_number: 5,
+      user_id: "mcp-demo-user",
+      language: "en",
+    });
 
-  await client.feedbackRecords.delete(created.id);
+    const listed = await client.feedbackRecords.list({
+      tenant_id: "org-123",
+      submission_id: "mcp-demo-001",
+      limit: 10,
+    });
 
-  return {
-    createdID: created.id,
-    listedCount: listed.data.length,
-    deleted: true,
-  };
+    return {
+      createdID: created.id,
+      listedCount: listed.data.length,
+    };
+  } finally {
+    if (created?.id) {
+      await client.feedbackRecords.delete(created.id);
+    }
+  }
 }
 ```
 
@@ -145,17 +151,28 @@ In a checkout of the Hub source repository, you can run the live MCP package smo
 ```bash
 HUB_API_KEY=your_hub_api_key \
 FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
+HUB_MCP_PACKAGE=@formbricks/hub-mcp@latest \
 make mcp-smoke
 ```
 
-The smoke test starts the MCP package, checks for the `execute` tool, creates a feedback record, lists it, and deletes it again.
+The smoke test starts the configured MCP server over local HTTP, checks for the `execute` tool, creates a feedback record, lists it, and deletes it again. `HUB_API_KEY` is sent to the local MCP HTTP server as an authorization header; the key should match the Hub server's `API_KEY`.
 
-By default the test uses `@formbricks/hub-mcp@latest`. To test a specific package version or preview build:
+To test a specific package version or preview build, change `HUB_MCP_PACKAGE`:
 
 ```bash
 HUB_API_KEY=your_hub_api_key \
 FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
 HUB_MCP_PACKAGE=@formbricks/hub-mcp@1.2.3 \
+make mcp-smoke
+```
+
+To test a local MCP build instead of a published package, use `HUB_MCP_COMMAND`. `HUB_MCP_COMMAND` takes precedence over `HUB_MCP_PACKAGE`; `HUB_MCP_ARGS` is split into command arguments.
+
+```bash
+HUB_API_KEY=your_hub_api_key \
+FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
+HUB_MCP_COMMAND=node \
+HUB_MCP_ARGS=/workspace/hub-typescript/packages/mcp-server/dist/index.js \
 make mcp-smoke
 ```
 
@@ -182,3 +199,7 @@ Pin the package in your MCP config:
 ```
 
 For release validation, use the same package spec in `HUB_MCP_PACKAGE` when running `make mcp-smoke`.
+
+### `make mcp-smoke` Requires a Package or Command
+
+Set either `HUB_MCP_PACKAGE` for a published package or `HUB_MCP_COMMAND` for a local MCP server build. The smoke test intentionally requires one of these so it validates the exact MCP build under review.

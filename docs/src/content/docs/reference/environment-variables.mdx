@@ -93,15 +93,17 @@ strings, fragments, or credentials. Hub serves runtime OpenAPI specs at
 
 ## MCP Client Package
 
-These variables are read by the `@formbricks/hub-mcp` package and the Hub source
+These variables are used by MCP client/package flows and the Hub source
 repository's `make mcp-smoke` target. They are not read by the Hub API or worker
 processes.
 
-| Variable                  | Default                      | Description                                                                      |
-| ------------------------- | ---------------------------- | -------------------------------------------------------------------------------- |
-| `HUB_API_KEY`             | -                            | API key the MCP package sends to Hub; usually the same value as Hub's `API_KEY`. |
-| `FORMBRICKS_HUB_BASE_URL` | -                            | Hub API root used by the MCP package, for example `https://hub.example.com`.     |
-| `HUB_BASE_URL`            | -                            | Legacy alias for `FORMBRICKS_HUB_BASE_URL`.                                      |
-| `HUB_MCP_PACKAGE`         | `@formbricks/hub-mcp@latest` | Optional package spec used by `make mcp-smoke`.                                  |
+| Variable                  | Default | Description                                                                                                                |
+| ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `HUB_API_KEY`             | -       | API key used by MCP clients or smoke tests; usually the same value as Hub's `API_KEY`.                                     |
+| `FORMBRICKS_HUB_BASE_URL` | -       | Hub API root used by the MCP package, for example `https://hub.example.com`.                                               |
+| `HUB_BASE_URL`            | -       | Legacy alias for `FORMBRICKS_HUB_BASE_URL`.                                                                                |
+| `HUB_MCP_PACKAGE`         | -       | Package spec used by `make mcp-smoke`, for example `@formbricks/hub-mcp@latest`; required unless `HUB_MCP_COMMAND` is set. |
+| `HUB_MCP_COMMAND`         | -       | Local command used by `make mcp-smoke`; takes precedence over `HUB_MCP_PACKAGE`.                                           |
+| `HUB_MCP_ARGS`            | -       | Whitespace-separated arguments passed to `HUB_MCP_COMMAND`.                                                                |
 
 See [Connect Hub to AI Clients via MCP](/guides/hub-mcp) for client setup.
