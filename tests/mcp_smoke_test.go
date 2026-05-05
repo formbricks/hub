@@ -596,6 +596,7 @@ func TestMCPSmokeCodeBuildsExpectedWorkflow(t *testing.T) {
 		"feedbackRecords.delete",
 		"mcp-smoke-",
 		"mcp-smoke-submission-",
+		"user_id: submissionID",
 		"finally",
 		"await client.feedbackRecords.delete(created.id)",
 		"cleanupError",
@@ -605,6 +606,10 @@ func TestMCPSmokeCodeBuildsExpectedWorkflow(t *testing.T) {
 		if !strings.Contains(code, want) {
 			t.Fatalf("mcpSmokeCode() missing %q in %s", want, code)
 		}
+	}
+
+	if strings.Contains(code, "user_identifier") {
+		t.Fatalf("mcpSmokeCode() contains deprecated user_identifier field: %s", code)
 	}
 }
 
@@ -781,7 +786,7 @@ func mcpSmokeCode() string {
       source_name: "Hub MCP Smoke Test",
       tenant_id: tenantID,
       submission_id: submissionID,
-      user_identifier: submissionID,
+      user_id: submissionID,
       language: "en"
     });
     const listed = await client.feedbackRecords.list({
