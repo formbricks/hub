@@ -127,6 +127,9 @@ config:
     DATABASE_MAX_CONN_IDLE_TIME_SECONDS: "1800"
     DATABASE_HEALTH_CHECK_PERIOD_SECONDS: "60"
     DATABASE_CONNECT_TIMEOUT_SECONDS: "10"
+    # Optional: use with EMBEDDING_PROVIDER=openai to target a self-hosted OpenAI-compatible embeddings endpoint.
+    # Example: http://text-embeddings-inference.default.svc.cluster.local/v1
+    EMBEDDING_BASE_URL: ""
 
 secrets:
   create: true

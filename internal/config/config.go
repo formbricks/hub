@@ -27,6 +27,7 @@ var (
 	ErrWebhookMaxCount                 = errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
 	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
 	ErrInvalidPublicBaseURL            = errors.New("PUBLIC_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidEmbeddingBaseURL         = errors.New("EMBEDDING_BASE_URL must be an absolute http(s) URL without query or fragment")
 )
 
 // DefaultDatabaseURL is the default connection URL when DATABASE_URL is unset (local/test only).
@@ -115,6 +116,7 @@ type EmbeddingConfig struct {
 	ProviderAPIKey      string `env:"EMBEDDING_PROVIDER_API_KEY"`
 	Provider            string `env:"EMBEDDING_PROVIDER"`
 	Model               string `env:"EMBEDDING_MODEL"`
+	BaseURL             string `env:"EMBEDDING_BASE_URL"`
 	MaxConcurrent       int    `env:"EMBEDDING_MAX_CONCURRENT"        env-default:"5"`
 	MaxAttempts         int    `env:"EMBEDDING_MAX_ATTEMPTS"          env-default:"3"`
 	Normalize           bool   `env:"EMBEDDING_NORMALIZE"             env-default:"false"`
@@ -312,7 +314,7 @@ func validate(cfg *Config) error {
 	}
 
 	if cfg.Server.PublicBaseURL != "" {
-		normalized, err := normalizePublicBaseURL(cfg.Server.PublicBaseURL)
+		normalized, err := normalizeHTTPBaseURL(cfg.Server.PublicBaseURL, ErrInvalidPublicBaseURL)
 		if err != nil {
 			return err
 		}
@@ -320,34 +322,43 @@ func validate(cfg *Config) error {
 		cfg.Server.PublicBaseURL = normalized
 	}
 
+	if cfg.Embedding.BaseURL != "" {
+		normalized, err := normalizeHTTPBaseURL(cfg.Embedding.BaseURL, ErrInvalidEmbeddingBaseURL)
+		if err != nil {
+			return err
+		}
+
+		cfg.Embedding.BaseURL = normalized
+	}
+
 	return nil
 }
 
-func normalizePublicBaseURL(raw string) (string, error) {
+func normalizeHTTPBaseURL(raw string, sentinel error) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", ErrInvalidPublicBaseURL
+		return "", sentinel
 	}
 
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrInvalidPublicBaseURL, err)
+		return "", fmt.Errorf("%w: %w", sentinel, err)
 	}
 
 	if !parsed.IsAbs() || parsed.Host == "" {
-		return "", ErrInvalidPublicBaseURL
+		return "", sentinel
 	}
 
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", ErrInvalidPublicBaseURL
+		return "", sentinel
 	}
 
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", ErrInvalidPublicBaseURL
+		return "", sentinel
 	}
 
 	if parsed.User != nil {
-		return "", ErrInvalidPublicBaseURL
+		return "", sentinel
 	}
 
 	if parsed.Path == "/" {

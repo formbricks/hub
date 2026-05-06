@@ -90,6 +90,7 @@ func setupEmbeddingSearchHandler(
 		Provider:            embeddingProviderName,
 		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
 		Model:               embeddingModel,
+		BaseURL:             cfg.Embedding.BaseURL,
 		Normalize:           cfg.Embedding.Normalize,
 		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
 		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,

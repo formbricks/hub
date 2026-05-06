@@ -29,6 +29,7 @@ var (
 // Client calls the OpenAI embeddings API via the official SDK.
 type Client struct {
 	sdk        openaisdk.Client
+	baseURL    string
 	dimensions int
 	model      string
 	normalize  bool
@@ -51,6 +52,13 @@ func WithModel(model string) ClientOption {
 	}
 }
 
+// WithBaseURL sets a custom OpenAI-compatible base URL (for example a self-hosted embeddings runtime).
+func WithBaseURL(baseURL string) ClientOption {
+	return func(c *Client) {
+		c.baseURL = baseURL
+	}
+}
+
 // WithNormalize enables L2 normalization of the embedding vector before returning (e.g. before storing or caching).
 func WithNormalize(normalize bool) ClientOption {
 	return func(c *Client) {
@@ -62,13 +70,21 @@ func WithNormalize(normalize bool) ClientOption {
 // Embedding dimension is fixed (models.EmbeddingVectorDimensions); WithDimensions is optional for overrides.
 func NewClient(apiKey string, opts ...ClientOption) *Client {
 	client := &Client{
-		sdk:        openaisdk.NewClient(option.WithAPIKey(apiKey)),
 		dimensions: models.EmbeddingVectorDimensions,
 	}
 
 	for _, opt := range opts {
 		opt(client)
 	}
+
+	sdkOpts := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+	}
+	if client.baseURL != "" {
+		sdkOpts = append(sdkOpts, option.WithBaseURL(client.baseURL))
+	}
+
+	client.sdk = openaisdk.NewClient(sdkOpts...)
 
 	return client
 }
