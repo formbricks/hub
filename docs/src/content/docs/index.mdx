@@ -3,14 +3,9 @@ title: Formbricks Hub
 description: Standalone, open-source Feedback Record Hub built for analytics and direct API access.
 ---
 
-import {
-  Accordion,
-  Badge,
-  Button,
-  Callout,
-} from "@stainless-api/docs/components";
+import { Accordion, Button, Callout } from "@stainless-api/docs/components";
 
-<div className="hub-home">
+<div className="hub-home not-content">
   <section className="hub-hero">
     <p>
       Formbricks Hub collects feedback from surveys, reviews, support tools, and
@@ -32,17 +27,17 @@ import {
 
   <div className="hub-signal-grid">
     <div className="hub-signal">
-      <Badge intent="accent">Open source</Badge>
+      <span className="hub-label">Open source</span>
       <strong>Run it yourself</strong>
       <span>Hub ships as a Go service with PostgreSQL and a worker.</span>
     </div>
     <div className="hub-signal">
-      <Badge intent="accent">SQL-first</Badge>
+      <span className="hub-label">SQL-first</span>
       <strong>Analyze without ETL</strong>
       <span>One row per feedback field keeps dashboards straightforward.</span>
     </div>
     <div className="hub-signal">
-      <Badge intent="accent">API-first</Badge>
+      <span className="hub-label">API-first</span>
       <strong>Build on a stable contract</strong>
       <span>Use the generated reference docs and OpenAPI-backed endpoints.</span>
     </div>
@@ -56,7 +51,7 @@ NPS scores, survey answers, app reviews, support ratings, and other feedback
 events into a single service, then serve that data to BI tools, internal
 workflows, or customer-facing experiences.
 
-<div className="hub-card-grid">
+<div className="hub-card-grid not-content">
   <div className="hub-card">
     <strong>Centralize feedback records</strong>
     <p>
@@ -82,7 +77,7 @@ workflows, or customer-facing experiences.
 
 ## How It Fits Together
 
-<div className="hub-workflow">
+<div className="hub-workflow not-content">
   <div className="hub-workflow__item">
     <span className="hub-workflow__index">1</span>
     <div>
