@@ -1,4 +1,12 @@
 {{- if .Values.pdb.enabled -}}
+{{- $hasMinAvailable := not (kindIs "invalid" .Values.pdb.minAvailable) -}}
+{{- $hasMaxUnavailable := not (kindIs "invalid" .Values.pdb.maxUnavailable) -}}
+{{- if and $hasMinAvailable $hasMaxUnavailable }}
+  {{- fail "pdb.minAvailable and pdb.maxUnavailable are mutually exclusive; set only one" }}
+{{- end }}
+{{- if not (or $hasMinAvailable $hasMaxUnavailable) }}
+  {{- fail "pdb.enabled is true but neither pdb.minAvailable nor pdb.maxUnavailable is set; set exactly one" }}
+{{- end }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -6,8 +14,69 @@ metadata:
   labels:
     {{- include "hub.labels" . | nindent 4 }}
 spec:
+  {{- if $hasMinAvailable }}
   minAvailable: {{ .Values.pdb.minAvailable }}
+  {{- end }}
+  {{- if $hasMaxUnavailable }}
+  maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "hub.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if and .Values.worker.enabled .Values.worker.pdb.enabled }}
+{{- $hasMinAvailable := not (kindIs "invalid" .Values.worker.pdb.minAvailable) -}}
+{{- $hasMaxUnavailable := not (kindIs "invalid" .Values.worker.pdb.maxUnavailable) -}}
+{{- if and $hasMinAvailable $hasMaxUnavailable }}
+  {{- fail "worker.pdb.minAvailable and worker.pdb.maxUnavailable are mutually exclusive; set only one" }}
+{{- end }}
+{{- if not (or $hasMinAvailable $hasMaxUnavailable) }}
+  {{- fail "worker.pdb.enabled is true but neither worker.pdb.minAvailable nor worker.pdb.maxUnavailable is set; set exactly one" }}
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "hub.workerName" . }}
+  labels:
+    {{- include "hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if $hasMinAvailable }}
+  minAvailable: {{ .Values.worker.pdb.minAvailable }}
+  {{- end }}
+  {{- if $hasMaxUnavailable }}
+  maxUnavailable: {{ .Values.worker.pdb.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "hub.workerSelectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if and .Values.embeddings.enabled .Values.embeddings.pdb.enabled }}
+{{- $hasMinAvailable := not (kindIs "invalid" .Values.embeddings.pdb.minAvailable) -}}
+{{- $hasMaxUnavailable := not (kindIs "invalid" .Values.embeddings.pdb.maxUnavailable) -}}
+{{- if and $hasMinAvailable $hasMaxUnavailable }}
+  {{- fail "embeddings.pdb.minAvailable and embeddings.pdb.maxUnavailable are mutually exclusive; set only one" }}
+{{- end }}
+{{- if not (or $hasMinAvailable $hasMaxUnavailable) }}
+  {{- fail "embeddings.pdb.enabled is true but neither embeddings.pdb.minAvailable nor embeddings.pdb.maxUnavailable is set; set exactly one" }}
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "hub.embeddingsName" . }}
+  labels:
+    {{- include "hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embeddings
+spec:
+  {{- if $hasMinAvailable }}
+  minAvailable: {{ .Values.embeddings.pdb.minAvailable }}
+  {{- end }}
+  {{- if $hasMaxUnavailable }}
+  maxUnavailable: {{ .Values.embeddings.pdb.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "hub.embeddingsSelectorLabels" . | nindent 6 }}
 {{- end }}
