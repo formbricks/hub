@@ -83,9 +83,14 @@ If you want to evaluate Hub quickly, start with the docs:
 ### Local development in this repository
 
 This repository contains the standalone Hub API and worker. The local
-`compose.yml` starts dependency services only: PostgreSQL and River UI. It does
-not start `hub-api` or `hub-worker`; run those from this repository after the
-database is ready.
+`compose.yml` starts dependency services only: PostgreSQL, a one-shot
+`hub-migrate` container, and River UI. The migration container uses the packaged
+Hub image for `goose` and `river`, and bind-mounts this checkout's
+`migrations/` directory so the database schema matches the branch you are
+working on. The image tag defaults to the current Hub release and should stay
+pinned if you override `HUB_IMAGE_TAG`. Docker setup does not require migration
+tools on the host. It does not start `hub-api` or `hub-worker`; run those from
+this repository after the database is ready.
 
 For a local Hub setup:
 
@@ -98,7 +103,15 @@ make run
 `make run` applies River queue migrations and starts both `hub-api` and
 `hub-worker` for local webhook delivery and embedding jobs. Use `make run-api`
 or `make run-worker` only when you intentionally want to run one process on its
-own. `make dev-setup` runs the Hub schema migrations through `make init-db`.
+own. `make dev-setup` also runs the local Hub schema migrations through
+`make init-db`, which is useful when you are changing migration files in this
+repository.
+
+The public Docker quickstart at [hub.formbricks.com/quickstart](https://hub.formbricks.com/quickstart/)
+is maintained outside this repository. Its Compose example should use the same
+one-shot migration service pattern, but rely on the published Hub image's bundled
+`/app/migrations` because quickstart users may not have this repository checked
+out.
 
 For the full Formbricks XM Suite UI, use the
 [`formbricks/formbricks`](https://github.com/formbricks/formbricks) repository

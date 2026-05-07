@@ -6,10 +6,9 @@ This directory contains integration tests for the Formbricks Hub API.
 
 Before running the tests, ensure:
 
-1. **PostgreSQL is running** (e.g. `make docker-up`). `make docker-up` starts dependency containers, currently PostgreSQL and River UI; it does not start the Hub API or worker. The tests use the connection string from `.env` (`DATABASE_URL`) when set; if empty, the default `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable` is used. If you set `POSTGRES_PORT` in `.env`, keep `DATABASE_URL` in sync. If you see `password authentication failed for user "postgres"`, start the stack with `make docker-up` and run `make init-db`.
-2. **Database schema** has been initialized (`make init-db`).
-3. **River queue migrations** have been applied (`make river-migrate`) when testing worker-backed webhook delivery flows.
-4. **API_KEY** is set automatically by the tests; you do not need to set it.
+1. **PostgreSQL is running** (e.g. `make docker-up`). `make docker-up` starts dependency containers: PostgreSQL, the one-shot `hub-migrate` container, and River UI; it does not start the Hub API or worker. The tests use the connection string from `.env` (`DATABASE_URL`) when set; if empty, the default `postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable` is used. If you set `POSTGRES_PORT` in `.env`, keep `DATABASE_URL` in sync.
+2. **Database schema and River queue migrations** have been initialized. The default `make docker-up` path runs them through the packaged `hub-migrate` container, using this checkout's `migrations/` directory. If you are editing local migration files after the stack is already running, run `make init-db` and `make river-migrate` against your test database.
+3. **API_KEY** is set automatically by the tests; you do not need to set it.
 
 ## Running Tests
 
