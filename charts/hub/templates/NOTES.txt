@@ -20,7 +20,7 @@ Recommended production configuration
 - hub-worker: keep values.worker.enabled=true unless another deployment processes the same River queues.
 {{- if .Values.embeddings.enabled }}
 - embeddings: provide values.embeddings.huggingFace.token or values.embeddings.huggingFace.existingSecret
-  for gated models such as google/embeddinggemma-300m.
+  only when using private or gated models.
 {{- end }}
 
 Secret management options (choose one):
