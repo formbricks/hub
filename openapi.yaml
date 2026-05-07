@@ -33,6 +33,8 @@ servers:
         basePath:
             default: ""
             description: Optional reverse-proxy path prefix, for example /hub
+    - url: https://hub-internal.formbricks.com
+      description: Formbricks staging Hub server
     - url: http://localhost:8080
       description: Local development server
 tags:
