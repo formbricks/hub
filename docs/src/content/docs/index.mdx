@@ -1,89 +1,155 @@
 ---
 title: Formbricks Hub
-description: Standalone, fully open-source Feedback Record Hub built for analytics.
+description: Standalone, open-source Feedback Record Hub built for analytics and direct API access.
 ---
 
-import { Callout, Accordion } from "@stainless-api/docs/components";
+import { Accordion, Button, Callout } from "@stainless-api/docs/components";
 
-## What is it?
-
-Hub is an open-source, self-hostable microservice for **collecting and serving** feedback records: survey responses, NPS scores, product reviews, support feedback, and more. Built entirely in Go for performance and simplicity.
-
-## Why should you use Hub?
-
-- **High performance**: Go-powered microservice handles high write volume
-- **Analytics-ready**: Plug-and-play integrations for Apache Superset, Power BI, Tableau, Looker, Snowflake, and more
-- **Self-hostable**: Run the API and worker with PostgreSQL
-- **Developer-friendly**: OpenAPI spec and clean REST API
-- **Multi-tenant**: Built-in support for tenant isolation
-- **Fully open-source**: The full Hub is and will be available open-source
-
-## Why are we building the Hub?
-
-We, like you, are passionate about living enjoyable lives. And we, like you, live in organized, highly structured societies where organizations shape the experiences we have day-to-day: taking public transport, going to the gym, seeing the doctor, purchasing something, etc. Behind each of these experiences sits an organization that tries to provide you with the best possible experience, and more often than not, simply fails to do so.
-
-We do not think they fail because they do not try hard enough or are incapable, quite the opposite: over the years, we have seen from the inside that many want to do better and try to make your life better, but they are stuck with closed, scattered systems and a lot of "we have always done it like that" and "we do not have money for that" from their bosses.
-
-The Hub is a cornerstone of our work at Formbricks to help alleviate that burden and, ultimately, make your life better.
-
-We are engineers, not consultants, and we bring open-source tooling to the table. We work closely with organizations and consultants to get them implemented and improve experiences. The past few years have been fun and challenging and we now understand one thing: 10 organizations do Experience Management in 10 different ways. It does not really work to force-feed them this new way of gathering data, that new tool to see their data in, another approach to convince your peers to now actually make decisions based on experience data. It is simply too costly to set up and too complicated to weave into existing processes and workflows.
-
-This is where the Hub comes in: it is free, it is simple, and, most importantly, it is built for the people who have to carry a lot of the burden around wrestling with feedback data: software engineers.
-
-## Use Cases
-
-<Accordion.Group>
-  <Accordion open>
-    <Accordion.Summary>Centralize Feedback Data</Accordion.Summary>
+<div className="hub-home not-content">
+  <section className="hub-hero">
     <p>
-      Collect feedback records from multiple sources into one unified data hub:
+      Formbricks Hub collects feedback from surveys, reviews, support tools, and
+      product workflows into one self-hostable service. It gives teams a clean
+      REST API, a BI-friendly PostgreSQL model, and real-time integrations
+      without forcing feedback data through a closed analytics stack.
     </p>
-    <ul>
-      <li>Survey responses from your app or website</li>
-      <li>App Store and Google Play reviews</li>
-      <li>Trustpilot and other review platforms</li>
-      <li>Support ticket feedback (Intercom, Zendesk)</li>
-      <li>Social media sentiment</li>
-    </ul>
-  </Accordion>
-  <Accordion>
-    <Accordion.Summary>Power Analytics Dashboards</Accordion.Summary>
+
+    <div className="hub-hero__actions">
+      <Button href="/quickstart" variant="accent" size="lg">
+        <Button.Label>Start quickstart</Button.Label>
+      </Button>
+      <Button href="/api" variant="outline" size="lg">
+        <Button.Label>Open API reference</Button.Label>
+      </Button>
+    </div>
+
+  </section>
+
+  <div className="hub-signal-grid">
+    <div className="hub-signal">
+      <span className="hub-label">Open source</span>
+      <strong>Run it yourself</strong>
+      <span>Hub ships as a Go service with PostgreSQL and a worker.</span>
+    </div>
+    <div className="hub-signal">
+      <span className="hub-label">SQL-first</span>
+      <strong>Analyze without ETL</strong>
+      <span>One row per feedback field keeps dashboards straightforward.</span>
+    </div>
+    <div className="hub-signal">
+      <span className="hub-label">API-first</span>
+      <strong>Build on a stable contract</strong>
+      <span>Use the generated reference docs and OpenAPI-backed endpoints.</span>
+    </div>
+  </div>
+</div>
+
+## What Hub Is For
+
+Hub is the place where operational feedback becomes queryable product data. Send
+NPS scores, survey answers, app reviews, support ratings, and other feedback
+events into a single service, then serve that data to BI tools, internal
+workflows, or customer-facing experiences.
+
+<div className="hub-card-grid not-content">
+  <div className="hub-card">
+    <strong>Centralize feedback records</strong>
     <p>
-      Hub's schema is optimized for direct SQL queries and BI tool integration:
+      Normalize survey responses, app-store reviews, support feedback, and
+      custom product signals into one table-shaped model.
     </p>
-    <ul>
-      <li>Connect Apache Superset for real-time dashboards</li>
-      <li>Build Power BI or Tableau reports without complex ETL</li>
-      <li>Export to Snowflake or Redshift for data warehousing</li>
-      <li>Perform time-series analysis on feedback trends</li>
-    </ul>
-  </Accordion>
-</Accordion.Group>
+  </div>
+  <div className="hub-card">
+    <strong>Power analytics dashboards</strong>
+    <p>
+      Connect Apache Superset, Power BI, Tableau, Looker, Snowflake, or direct
+      SQL clients without building a separate pipeline first.
+    </p>
+  </div>
+  <div className="hub-card">
+    <strong>Automate feedback workflows</strong>
+    <p>
+      Use webhooks and the API to route new feedback records into downstream
+      tools, alerts, and internal systems.
+    </p>
+  </div>
+</div>
+
+## How It Fits Together
+
+<div className="hub-workflow not-content">
+  <div className="hub-workflow__item">
+    <span className="hub-workflow__index">1</span>
+    <div>
+      <strong>Collect</strong>
+      <p>
+        Send feedback records from surveys, apps, support systems, imports, or
+        your own services through the Hub API.
+      </p>
+    </div>
+  </div>
+  <div className="hub-workflow__item">
+    <span className="hub-workflow__index">2</span>
+    <div>
+      <strong>Store</strong>
+      <p>
+        Hub writes each response field as a validated PostgreSQL record with
+        tenant, source, field, value, and metadata columns.
+      </p>
+    </div>
+  </div>
+  <div className="hub-workflow__item">
+    <span className="hub-workflow__index">3</span>
+    <div>
+      <strong>Use</strong>
+      <p>
+        Query feedback directly, build BI dashboards, trigger webhooks, or read
+        records back through the API.
+      </p>
+    </div>
+  </div>
+</div>
 
 ## Built In
 
 <Callout variant="note">
-  <p>Hub already includes API-first capabilities for feedback operations:</p>
-  <ul>
-    <li>
-      <strong>Semantic search</strong>: Find similar feedback using natural
-      language queries
-    </li>
-    <li>
-      <strong>Webhooks</strong>: Real-time notifications for feedback events
-    </li>
-    <li>
-      <strong>OpenAPI contract</strong>: Explore generated reference docs and
-      build clients from the same API schema used for tests
-    </li>
-  </ul>
+  Hub already includes API-first capabilities for feedback operations: semantic
+  search, webhooks, an OpenAPI contract, and a clean data model for analytics.
 </Callout>
 
-## Quick Links
+<Accordion.Group>
+  <Accordion open>
+    <Accordion.Summary>Feedback sources Hub can model</Accordion.Summary>
+    <ul>
+      <li>Survey responses from your app or website</li>
+      <li>NPS, CSAT, CES, ratings, and open text feedback</li>
+      <li>App Store, Google Play, Trustpilot, and other review platforms</li>
+      <li>Support ticket feedback from tools like Intercom or Zendesk</li>
+      <li>Custom product events and operational feedback signals</li>
+    </ul>
+  </Accordion>
+  <Accordion>
+    <Accordion.Summary>Places Hub data can go</Accordion.Summary>
+    <ul>
+      <li>Apache Superset dashboards</li>
+      <li>Power BI, Tableau, Looker, Snowflake, and direct SQL clients</li>
+      <li>Internal tools and customer-facing reporting surfaces</li>
+      <li>Webhook-driven automation and alerting workflows</li>
+    </ul>
+  </Accordion>
+</Accordion.Group>
 
-- [Get started](./quickstart): Set up Hub locally in minutes
-- [Learn the basics](./core-concepts/data-model): Understand Hub's data model and concepts
-- [Configuration](./reference/environment-variables): Environment variables and settings reference
+## Start Here
+
+- [Quickstart](./quickstart): Run Hub locally with Docker Compose.
+- [Data model](./core-concepts/data-model): Learn how records, fields, values,
+  and metadata fit together.
+- [Authentication](./core-concepts/authentication): Secure Hub API requests with
+  bearer tokens.
+- [Superset guide](./guides/hub-superset): Build your first dashboard on Hub
+  data.
+- [Environment variables](./reference/environment-variables): Configure Hub for
+  local or hosted deployments.
 
 ## Community & Support
 
