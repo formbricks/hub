@@ -4,6 +4,8 @@ env:
   OAS_PATH: ./openapi.yaml
   STAINLESS_ORG: formbricks
   STAINLESS_PROJECT: hub
+  # Stainless v1.13.2 still declares node20; force Node 24 now so CI catches incompatibilities early.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 on:
   pull_request:
@@ -27,12 +29,12 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 2
 
       - name: Run preview builds
-        uses: stainless-api/upload-openapi-spec-action/preview@574dfd13ae0a31b75c78570b19811e0f03c66c64 # v1
+        uses: stainless-api/upload-openapi-spec-action/preview@0908d431428c675af1d590f1c6e49146cd5c4c2e # v1.13.2
         with:
           org: ${{ env.STAINLESS_ORG }}
           project: ${{ env.STAINLESS_PROJECT }}
@@ -47,12 +49,12 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 2
 
       - name: Run merge build
-        uses: stainless-api/upload-openapi-spec-action/merge@574dfd13ae0a31b75c78570b19811e0f03c66c64 # v1
+        uses: stainless-api/upload-openapi-spec-action/merge@0908d431428c675af1d590f1c6e49146cd5c4c2e # v1.13.2
         with:
           org: ${{ env.STAINLESS_ORG }}
           project: ${{ env.STAINLESS_PROJECT }}
