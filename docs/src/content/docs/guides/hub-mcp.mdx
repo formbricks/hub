@@ -13,11 +13,33 @@ The `@formbricks/hub-mcp` package lets MCP-capable AI clients work with Formbric
 - The Hub API key configured as `API_KEY` on the Hub server.
 - Node.js and `npx` on the machine where your AI client starts MCP servers.
 - An AI client that supports local stdio MCP servers.
+- For local Code Mode, Deno installed on the same machine as the MCP server.
 
 <Callout variant="note">
   Treat MCP access like direct API access. The MCP package receives an API key
   with the same permissions as `Authorization: Bearer &lt;API_KEY&gt;`, so keep
   it out of committed config files and use environment-specific keys.
+</Callout>
+
+## Choose Code Execution Mode
+
+The generated MCP server exposes an `execute` tool. By default, generated MCP
+packages may run that tool through Stainless-hosted Code Mode. For self-hosted
+Hub deployments, prefer local Code Mode so the generated code runs on the same
+machine as the MCP server and calls your Hub API directly.
+
+Local Code Mode:
+
+- keeps execution local to the MCP server machine
+- avoids hosted sandbox network allowlist issues for self-hosted Hub domains
+- requires Deno on the machine that runs the MCP server
+- still treats the Hub API key like a direct Hub API credential
+
+<Callout variant="note">
+  The examples below require an MCP package release that supports
+  <code>FORMBRICKS_HUB_BASE_URL</code> and <code>--code-execution-mode</code>.
+  If you are validating changes before that package is published, use a local
+  MCP build as shown in the smoke test section.
 </Callout>
 
 ## Configure the MCP Server
@@ -29,7 +51,14 @@ Add a stdio MCP server entry to your AI client's MCP configuration:
   "mcpServers": {
     "formbricks-hub": {
       "command": "npx",
-      "args": ["-y", "@formbricks/hub-mcp@latest"],
+      "args": [
+        "-y",
+        "@formbricks/hub-mcp@latest",
+        "--code-execution-mode",
+        "local",
+        "--docs-search-mode",
+        "local"
+      ],
       "env": {
         "HUB_API_KEY": "your_hub_api_key",
         "FORMBRICKS_HUB_BASE_URL": "https://hub.example.com"
@@ -46,7 +75,14 @@ For local Docker Compose from the [Quick Start](/quickstart), use:
   "mcpServers": {
     "formbricks-hub-local": {
       "command": "npx",
-      "args": ["-y", "@formbricks/hub-mcp@latest"],
+      "args": [
+        "-y",
+        "@formbricks/hub-mcp@latest",
+        "--code-execution-mode",
+        "local",
+        "--docs-search-mode",
+        "local"
+      ],
       "env": {
         "HUB_API_KEY": "your_secure_api_key_here",
         "FORMBRICKS_HUB_BASE_URL": "http://localhost:8080"
@@ -66,7 +102,15 @@ For local Docker Compose from the [Quick Start](/quickstart), use:
 | Dedicated domain          | `https://hub.example.com` |
 | Reverse-proxy path prefix | `https://example.com/hub` |
 
-`HUB_BASE_URL` is accepted as a legacy alias, but new configurations should use `FORMBRICKS_HUB_BASE_URL`.
+The Hub source repository's smoke test accepts `HUB_BASE_URL` as a legacy input
+alias, but MCP client configurations should use `FORMBRICKS_HUB_BASE_URL`.
+
+<Callout variant="note">
+  Avoid running one shared remote MCP server with a single global Hub API key for
+  multiple users. For shared MCP infrastructure, prefer per-request
+  authorization headers and revocable, environment-specific Hub keys. Local
+  stdio MCP keeps each user's key on the machine where their AI client runs.
+</Callout>
 
 ## Use the MCP Tool
 
@@ -172,9 +216,14 @@ To test a local MCP build instead of a published package, use `HUB_MCP_COMMAND`.
 HUB_API_KEY=your_hub_api_key \
 FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
 HUB_MCP_COMMAND=node \
-HUB_MCP_ARGS=/workspace/hub-typescript/packages/mcp-server/dist/index.js \
+HUB_MCP_ARGS="/workspace/hub-typescript/packages/mcp-server/dist/index.js --code-execution-mode local --docs-search-mode local" \
 make mcp-smoke
 ```
+
+The `make mcp-smoke` target sources `.env` from the Hub repository before
+running the test. If `.env` contains a different `FORMBRICKS_HUB_BASE_URL`,
+`HUB_BASE_URL`, or `HUB_API_KEY`, update `.env` or run the underlying `go test`
+command with explicit environment values.
 
 ## Troubleshooting
 
@@ -185,6 +234,29 @@ Check that `HUB_API_KEY` in the MCP configuration exactly matches the Hub server
 ### The Client Cannot Reach Hub
 
 Make sure `FORMBRICKS_HUB_BASE_URL` is reachable from the machine running the AI client. For local Docker Compose on the same machine, `http://localhost:8080` usually works. If the AI client runs inside another container, use the hostname that is reachable from that container.
+
+If hosted Code Mode returns a message such as `Network access to <host>:443 is
+blocked`, switch to local Code Mode or regenerate/release the MCP package from
+an OpenAPI spec whose `servers` array explicitly includes that host.
+
+### MCP Local Code Mode Cannot Start
+
+Install Deno and make sure it is available on `PATH` for the process that starts
+the MCP server:
+
+```bash
+deno --version
+```
+
+Local Code Mode uses Deno to run the AI-generated SDK code with constrained
+network access to the configured Hub base URL.
+
+### Hub Rejects `user_id`
+
+If the smoke test or MCP demo returns `json: unknown field "user_id"`, the Hub
+deployment is older than the current API contract. Deploy a Hub version that
+includes the `user_identifier` to `user_id` migration and regenerated OpenAPI
+contract, then rerun the smoke test.
 
 ### Runtime OpenAPI URLs Show the Wrong Host
 
@@ -199,6 +271,13 @@ Pin the package in your MCP config:
 ```
 
 For release validation, use the same package spec in `HUB_MCP_PACKAGE` when running `make mcp-smoke`.
+
+Before publishing docs that use `@latest`, confirm the npm package has the
+expected release:
+
+```bash
+npm view @formbricks/hub-mcp version
+```
 
 ### `make mcp-smoke` Requires a Package or Command
 
