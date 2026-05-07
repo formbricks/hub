@@ -16,6 +16,11 @@ on:
         required: false
         default: false
         type: boolean
+      deploy_staging:
+        description: "Tag image for staging deployment"
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       image_tag:
@@ -98,11 +103,18 @@ jobs:
           ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
           MAKE_LATEST: ${{ inputs.MAKE_LATEST }}
           DEPLOY_PRODUCTION: ${{ inputs.deploy_production }}
+          DEPLOY_STAGING: ${{ inputs.deploy_staging }}
         run: |
           set -euo pipefail
 
           # Start with base version tag
           TAGS="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          # Manual staging deployment override (workflow_dispatch)
+          if [[ "${DEPLOY_STAGING}" == "true" ]]; then
+            TAGS="${TAGS}\n${ECR_REGISTRY}/${ECR_REPOSITORY}:staging"
+            echo "Adding staging tag (manual override)"
+          fi
 
           # Add production and latest tags for stable releases marked as latest
           if [[ "${MAKE_LATEST}" == "true" ]]; then
