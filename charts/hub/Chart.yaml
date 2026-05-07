@@ -2,7 +2,7 @@ apiVersion: v2
 name: hub
 description: Formbricks Hub - Experience Management API
 type: application
-version: 0.2.0
+version: 0.3.0
 appVersion: "0.2.0"
 keywords:
   - formbricks
@@ -14,5 +14,7 @@ maintainers:
   - name: Formbricks
 annotations:
   artifacthub.io/changes: |
-    - kind: changed
-      description: Upgrade to Hub 0.2.0
+    - kind: added
+      description: Add hub-worker deployment support
+    - kind: added
+      description: Add optional self-hosted embeddings runtime support

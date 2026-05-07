@@ -7,7 +7,9 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   revisionHistoryLimit: 10
   selector:
     matchLabels:
@@ -26,6 +28,9 @@ spec:
         {{- end }}
       annotations:
         {{- include "hub.checksumAnnotations" . | nindent 8 }}
+        {{- if .Values.embeddings.enabled }}
+        checksum/embeddings-secret: {{ include (print $.Template.BasePath "/embeddings-secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -60,9 +65,15 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
-          {{- if gt (len .Values.extraEnv) 0 }}
+          {{- if or .Values.embeddings.enabled (gt (len .Values.extraEnv) 0) }}
           env:
-            {{- toYaml .Values.extraEnv | nindent 12 }}
+            {{- include "hub.embeddingEnv" . | nindent 12 }}
+            {{- range .Values.extraEnv }}
+            {{- $name := .name | default "" }}
+            {{- if not (and $.Values.embeddings.enabled (include "hub.embeddingEnvManaged" (dict "key" $name))) }}
+            {{- toYaml (list .) | nindent 12 }}
+            {{- end }}
+            {{- end }}
           {{- end }}
           {{- if .Values.probes.startup.enabled }}
           startupProbe:

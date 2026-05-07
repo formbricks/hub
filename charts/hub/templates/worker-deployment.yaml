@@ -1,0 +1,131 @@
+{{- if .Values.worker.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hub.workerName" . }}
+  labels:
+    {{- include "hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  {{- if not .Values.worker.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      {{- include "hub.workerSelectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "hub.workerSelectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+        {{- with .Values.worker.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- include "hub.checksumAnnotations" . | nindent 8 }}
+        {{- if .Values.embeddings.enabled }}
+        checksum/embeddings-secret: {{ include (print $.Template.BasePath "/embeddings-secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "hub.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds | default .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml (.Values.worker.podSecurityContext | default .Values.podSecurityContext) | nindent 8 }}
+      {{- if .Values.worker.waitForApi.enabled }}
+      initContainers:
+        - name: wait-for-hub-api
+          image: {{ include "hub.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml (.Values.worker.securityContext | default .Values.securityContext) | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              attempts=0
+              max_attempts={{ .Values.worker.waitForApi.maxAttempts | default 120 }}
+              until wget --no-verbose --tries=1 --spider http://{{ include "hub.fullname" . }}:{{ .Values.service.port }}/health; do
+                attempts=$((attempts+1))
+                if [ "$attempts" -ge "$max_attempts" ]; then
+                  echo "Hub API health check timed out after $((max_attempts * 5)) seconds"
+                  exit 1
+                fi
+                echo "Waiting for Hub API health check..."
+                sleep 5
+              done
+      {{- end }}
+      containers:
+        - name: hub-worker
+          image: {{ include "hub.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /app/hub-worker
+          {{- if or (and .Values.config.create (not .Values.config.existingConfigMap)) .Values.config.existingConfigMap (and .Values.secrets.create (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecrets.enabled)) .Values.secrets.existingSecret .Values.secrets.externalSecrets.enabled .Values.extraEnvFrom .Values.worker.extraEnvFrom }}
+          envFrom:
+            {{- if or (and .Values.config.create (not .Values.config.existingConfigMap)) .Values.config.existingConfigMap }}
+            - configMapRef:
+                name: {{ include "hub.configMapName" . }}
+            {{- end }}
+            {{- if or (and .Values.secrets.create (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecrets.enabled)) .Values.secrets.existingSecret .Values.secrets.externalSecrets.enabled }}
+            - secretRef:
+                name: {{ include "hub.secretName" . }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.worker.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- if or .Values.embeddings.enabled (gt (len .Values.extraEnv) 0) (gt (len .Values.worker.extraEnv) 0) }}
+          env:
+            {{- include "hub.embeddingEnv" . | nindent 12 }}
+            {{- range .Values.extraEnv }}
+            {{- $name := .name | default "" }}
+            {{- if not (and $.Values.embeddings.enabled (include "hub.embeddingEnvManaged" (dict "key" $name))) }}
+            {{- toYaml (list .) | nindent 12 }}
+            {{- end }}
+            {{- end }}
+            {{- range .Values.worker.extraEnv }}
+            {{- $name := .name | default "" }}
+            {{- if not (and $.Values.embeddings.enabled (include "hub.embeddingEnvManaged" (dict "key" $name))) }}
+            {{- toYaml (list .) | nindent 12 }}
+            {{- end }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml (.Values.worker.securityContext | default .Values.securityContext) | nindent 12 }}
+      {{- with (.Values.worker.nodeSelector | default .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (.Values.worker.affinity | default .Values.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (.Values.worker.tolerations | default .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (.Values.worker.topologySpreadConstraints | default .Values.topologySpreadConstraints) }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
