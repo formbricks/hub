@@ -11,7 +11,7 @@ export default defineConfig({
         highlighting: {
           themes: {
             light: "github-light",
-            dark: "material-theme-ocean",
+            dark: "github-dark",
           },
         },
         propertySettings: {
@@ -21,7 +21,7 @@ export default defineConfig({
       },
       title: "Formbricks Hub",
       expressiveCode: {
-        themes: ["github-light", "material-theme-ocean"],
+        themes: ["github-light", "github-dark"],
       },
       favicon: "/favicon.svg",
       logo: {

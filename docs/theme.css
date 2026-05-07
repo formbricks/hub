@@ -58,6 +58,10 @@
   --stl-color-background: var(--fb-dark-page);
   --stl-color-ui-background: var(--fb-dark-panel);
   --stl-color-faint-background: var(--fb-dark-code);
+  --stldocs-syntax-color-blue: #38bdf8;
+  --stldocs-syntax-color-green: #5eead4;
+  --stldocs-syntax-color-orange: #fbbf24;
+  --stldocs-syntax-color-purple: #c084fc;
   --sl-color-bg: var(--fb-dark-page);
   --sl-color-bg-nav: var(--fb-dark-page);
   --sl-color-bg-sidebar: var(--fb-dark-page);
@@ -298,6 +302,18 @@ site-search button:hover {
   background-color: var(--fb-dark-panel) !important;
   border-color: #3a506b !important;
   color: #dbe7f5;
+}
+
+:root[data-theme="dark"] .expressive-code .shiki span,
+:root[data-theme="dark"] .sl-markdown-content .shiki span,
+:root[data-theme="dark"] .astro-code span,
+:root[data-theme="dark"] .stldocs-snippet .shiki span,
+.stl-theme-dark .expressive-code .shiki span,
+.stl-theme-dark .sl-markdown-content .shiki span,
+.stl-theme-dark .astro-code span,
+.stl-theme-dark .stldocs-snippet .shiki span {
+  filter: brightness(1.35) saturate(1.18);
+  opacity: 1;
 }
 
 .stl-ui-callout,
