@@ -6,6 +6,9 @@
   --fb-teal-strong: #008f87;
   --fb-teal-muted: #e6fbf9;
   --fb-teal-border: #9ee7e1;
+  --fb-dark-page: #07111f;
+  --fb-dark-panel: #0b1828;
+  --fb-dark-code: #111c2d;
   --fb-ink: #0f172a;
   --fb-muted: #64748b;
   --fb-border: #e2e8f0;
@@ -49,14 +52,22 @@
   --fb-ink: #f8fafc;
   --fb-muted: #94a3b8;
   --fb-border: #1e293b;
-  --fb-surface: #020617;
+  --fb-surface: var(--fb-dark-page);
   --fb-surface-soft: #0f172a;
 
+  --stl-color-background: var(--fb-dark-page);
+  --stl-color-ui-background: var(--fb-dark-panel);
+  --stl-color-faint-background: var(--fb-dark-code);
+  --sl-color-bg: var(--fb-dark-page);
+  --sl-color-bg-nav: var(--fb-dark-page);
+  --sl-color-bg-sidebar: var(--fb-dark-page);
+  --sl-color-bg-inline-code: #142235;
+  --sl-color-black: var(--fb-dark-page);
   --stl-ui-button-accent-color: #001f1d;
 }
 
 html {
-  background: light-dark(#ffffff, #020617);
+  background: light-dark(#ffffff, var(--fb-dark-page));
 }
 
 body {
@@ -69,10 +80,10 @@ body,
   background:
     linear-gradient(
       180deg,
-      light-dark(#f8fafc, #020617) 0,
-      light-dark(#ffffff, #020617) 18rem
+      light-dark(#f8fafc, var(--fb-dark-page)) 0,
+      light-dark(#ffffff, var(--fb-dark-page)) 18rem
     ),
-    light-dark(#ffffff, #020617);
+    light-dark(#ffffff, var(--fb-dark-page));
 }
 
 ::selection {
@@ -100,14 +111,20 @@ a:hover {
 
 @media (min-width: 50rem) {
   header.header {
-    border-bottom: 1px solid light-dark(#edf2f7, #122033);
-    background: color-mix(
-      in srgb,
-      light-dark(#ffffff, #020617) 88%,
-      transparent
+    border-bottom: 1px solid light-dark(#edf2f7, #1f3348);
+    background: light-dark(
+      color-mix(in srgb, #ffffff 88%, transparent),
+      var(--fb-dark-page)
     );
     backdrop-filter: blur(16px);
   }
+}
+
+:root[data-theme="dark"] header.header,
+:root[data-theme="dark"] .page > header,
+:root[data-theme="dark"] .page > header .header,
+:root[data-theme="dark"] .page > header .stl-secondary-nav-tabs {
+  background-color: var(--fb-dark-page);
 }
 
 .header .stl-ui-button {
@@ -152,7 +169,7 @@ a:hover {
 }
 
 .sidebar-pane {
-  background: light-dark(#ffffff, #020617);
+  background: light-dark(#ffffff, var(--fb-dark-page));
 }
 
 .sidebar-content a,
@@ -232,7 +249,7 @@ site-search button:hover {
 .sl-markdown-content code:not(pre code) {
   border: 1px solid light-dark(#dbe5ef, #1f3348);
   border-radius: 6px;
-  background: light-dark(#f1f5f9, #0f172a);
+  background: light-dark(#f1f5f9, #142235);
   color: light-dark(#0f766e, #7ff8ef);
 }
 
@@ -246,6 +263,41 @@ site-search button:hover {
   border-color: light-dark(#dbe5ef, #1e293b) !important;
   box-shadow: 0 16px 44px
     color-mix(in srgb, light-dark(#64748b, #000000) 12%, transparent);
+}
+
+:root[data-theme="dark"] .expressive-code .frame {
+  --code-background: var(--fb-dark-code);
+}
+
+:root[data-theme="dark"] .expressive-code figure,
+:root[data-theme="dark"] .expressive-code pre,
+:root[data-theme="dark"] .astro-code,
+:root[data-theme="dark"] .shiki,
+:root[data-theme="dark"] .sl-markdown-content pre,
+:root[data-theme="dark"] .stldocs-snippet,
+:root[data-theme="dark"] .stldocs-snippet-request,
+:root[data-theme="dark"] .stldocs-snippet-response-pane,
+.stl-theme-dark .expressive-code figure,
+.stl-theme-dark .expressive-code pre,
+.stl-theme-dark .astro-code,
+.stl-theme-dark .shiki,
+.stl-theme-dark .sl-markdown-content pre,
+.stl-theme-dark .stldocs-snippet,
+.stl-theme-dark .stldocs-snippet-request,
+.stl-theme-dark .stldocs-snippet-response-pane {
+  background-color: var(--fb-dark-code) !important;
+  border-color: #3a506b !important;
+}
+
+:root[data-theme="dark"] .expressive-code figcaption,
+:root[data-theme="dark"] .expressive-code .header,
+:root[data-theme="dark"] .stldocs-snippet-request-title,
+.stl-theme-dark .expressive-code figcaption,
+.stl-theme-dark .expressive-code .header,
+.stl-theme-dark .stldocs-snippet-request-title {
+  background-color: var(--fb-dark-panel) !important;
+  border-color: #3a506b !important;
+  color: #dbe7f5;
 }
 
 .stl-ui-callout,
@@ -293,7 +345,7 @@ site-search button:hover {
 .hub-card {
   border: 1px solid var(--hub-grid-border);
   border-radius: 8px;
-  background: light-dark(#ffffff, #07111f);
+  background: light-dark(#ffffff, var(--fb-dark-panel));
   box-shadow: 0 12px 36px
     color-mix(in srgb, light-dark(#64748b, #000000) 10%, transparent);
 }
@@ -361,7 +413,24 @@ site-search button:hover {
   padding: 1rem;
   border: 1px solid var(--hub-grid-border);
   border-radius: 8px;
-  background: light-dark(#ffffff, #07111f);
+  background: light-dark(#ffffff, var(--fb-dark-panel));
+}
+
+:root[data-theme="dark"] .pagination-links {
+  background-color: var(--fb-dark-page);
+  border-color: #1f3348;
+}
+
+:root[data-theme="dark"] .pagination-links__link--emphasized {
+  background-color: var(--fb-dark-panel);
+  border-color: #263c55;
+}
+
+:root[data-theme="dark"] .stldocs-root,
+:root[data-theme="dark"] .stl-overview,
+:root[data-theme="dark"] .stldocs-method,
+:root[data-theme="dark"] .stldocs-overview {
+  background-color: var(--fb-dark-page);
 }
 
 .hub-workflow__index {

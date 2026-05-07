@@ -8,12 +8,21 @@ export default defineConfig({
     stainlessDocs({
       apiReference: {
         stainlessProject: "hub",
+        highlighting: {
+          themes: {
+            light: "github-light",
+            dark: "material-theme-ocean",
+          },
+        },
         propertySettings: {
           collapseDescription: false,
           expandDepth: 2,
         },
       },
       title: "Formbricks Hub",
+      expressiveCode: {
+        themes: ["github-light", "material-theme-ocean"],
+      },
       favicon: "/favicon.svg",
       logo: {
         light: "./src/assets/formbricks-hub-logo-light.svg",
@@ -83,11 +92,6 @@ export default defineConfig({
               target: "_blank",
               rel: "noreferrer",
             },
-          },
-          {
-            label: "API Reference",
-            link: "/api",
-            variant: "accent",
           },
         ],
       },
