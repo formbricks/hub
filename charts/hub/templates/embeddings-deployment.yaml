@@ -1,0 +1,163 @@
+{{- if .Values.embeddings.enabled -}}
+{{- $embeddingsReplicas := int (.Values.embeddings.replicaCount | default 1) -}}
+{{- $embeddingsMaxReplicas := int (.Values.embeddings.autoscaling.maxReplicas | default 1) -}}
+{{- if and .Values.embeddings.persistence.enabled (not .Values.embeddings.persistence.existingClaim) (not (has "ReadWriteMany" .Values.embeddings.persistence.accessModes)) (or (gt $embeddingsReplicas 1) (and .Values.embeddings.autoscaling.enabled (gt $embeddingsMaxReplicas 1))) }}
+  {{- fail "embeddings persistence with multiple replicas requires persistence.accessModes to include ReadWriteMany, or set embeddings.persistence.enabled=false/use a ReadWriteMany existingClaim" }}
+{{- end }}
+{{- if and .Values.embeddings.auth.existingSecret .Values.embeddings.huggingFace.token (not .Values.embeddings.huggingFace.existingSecret) }}
+  {{- fail "embeddings.huggingFace.token cannot be stored when embeddings.auth.existingSecret is set; put HF_TOKEN in the existing auth secret or set embeddings.huggingFace.existingSecret" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hub.embeddingsName" . }}
+  labels:
+    {{- include "hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embeddings
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  {{- if not .Values.embeddings.autoscaling.enabled }}
+  replicas: {{ .Values.embeddings.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      {{- include "hub.embeddingsSelectorLabels" . | nindent 6 }}
+  {{- if and .Values.embeddings.persistence.enabled (not (has "ReadWriteMany" .Values.embeddings.persistence.accessModes)) }}
+  strategy:
+    type: Recreate
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "hub.embeddingsSelectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: embeddings
+        {{- with .Values.embeddings.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/embeddings-secret: {{ include (print $.Template.BasePath "/embeddings-secret.yaml") . | sha256sum }}
+        {{- with .Values.embeddings.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.embeddings.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: hub-embeddings
+          image: "{{ .Values.embeddings.image.repository }}:{{ .Values.embeddings.image.tag }}"
+          imagePullPolicy: {{ .Values.embeddings.image.pullPolicy }}
+          {{- with .Values.embeddings.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.embeddings.args }}
+          args:
+            {{- toYaml .Values.embeddings.args | nindent 12 }}
+          {{- else }}
+          args:
+            - --model-id
+            - {{ .Values.embeddings.model | quote }}
+            - --port
+            - {{ .Values.embeddings.port | quote }}
+            - --huggingface-hub-cache
+            - {{ .Values.embeddings.persistence.mountPath | quote }}
+            - --served-model-name
+            - {{ include "hub.embeddingsServedModelName" . | quote }}
+            {{- with .Values.embeddings.revision }}
+            - --revision
+            - {{ . | quote }}
+            {{- end }}
+            {{- with .Values.embeddings.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.embeddings.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.embeddings.prometheusPort }}
+              protocol: TCP
+          {{- if or .Values.embeddings.auth.enabled .Values.embeddings.huggingFace.existingSecret .Values.embeddings.huggingFace.token (gt (len .Values.embeddings.env) 0) }}
+          env:
+            {{- if .Values.embeddings.auth.enabled }}
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hub.embeddingsSecretName" . }}
+                  key: {{ .Values.embeddings.auth.secretKey | default "EMBEDDING_PROVIDER_API_KEY" | quote }}
+            {{- end }}
+            {{- if or .Values.embeddings.huggingFace.existingSecret .Values.embeddings.huggingFace.token }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hub.embeddingsHuggingFaceSecretName" . }}
+                  key: {{ .Values.embeddings.huggingFace.tokenKey | default "HF_TOKEN" | quote }}
+            {{- end }}
+            {{- range $key, $value := .Values.embeddings.env }}
+            {{- if not (or (and $.Values.embeddings.auth.enabled (eq $key "API_KEY")) (and (or $.Values.embeddings.huggingFace.existingSecret $.Values.embeddings.huggingFace.token) (eq $key "HF_TOKEN"))) }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.embeddings.probes.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.embeddings.probes.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.embeddings.probes.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.embeddings.resources | nindent 12 }}
+          {{- with .Values.embeddings.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.embeddings.persistence.enabled }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: {{ .Values.embeddings.persistence.mountPath }}
+          {{- end }}
+      {{- with .Values.embeddings.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.embeddings.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.embeddings.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.embeddings.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.embeddings.persistence.enabled }}
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: {{ default (include "hub.embeddingsName" .) .Values.embeddings.persistence.existingClaim }}
+      {{- end }}
+{{- end }}

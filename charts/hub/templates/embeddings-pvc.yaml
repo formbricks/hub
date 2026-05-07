@@ -1,0 +1,18 @@
+{{- if and .Values.embeddings.enabled .Values.embeddings.persistence.enabled (not .Values.embeddings.persistence.existingClaim) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "hub.embeddingsName" . }}
+  labels:
+    {{- include "hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embeddings
+spec:
+  accessModes:
+    {{- toYaml .Values.embeddings.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.embeddings.persistence.size }}
+  {{- with .Values.embeddings.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}
