@@ -95,13 +95,8 @@ func runMCPSmokeWorkflow(ctx context.Context, t *testing.T, session *mcp.ClientS
 		failMCPTestf(t, output, "execute did not return text content: %+v", executeResponse)
 	}
 
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(resultText), &payload); err != nil {
-		failMCPTestf(t, output, "decode execute text payload: %v", err)
-	}
-
-	var result map[string]json.RawMessage
-	if err := json.Unmarshal(payload["result"], &result); err != nil {
+	result, err := decodeMCPSmokeResult(resultText)
+	if err != nil {
 		failMCPTestf(t, output, "decode execute result payload: %v", err)
 	}
 
@@ -618,6 +613,65 @@ func TestMCPSmokeCodeBuildsExpectedWorkflow(t *testing.T) {
 	}
 }
 
+func TestDecodeMCPSmokeResult(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		resultText string
+	}{
+		{
+			name: "remote code mode wrapped result",
+			resultText: `{
+				"result": {
+					"tenantID": "tenant-1",
+					"submissionID": "submission-1",
+					"createdID": "record-1",
+					"listedCount": 1,
+					"deleted": true
+				}
+			}`,
+		},
+		{
+			name: "local code mode direct result",
+			resultText: `{
+				"tenantID": "tenant-1",
+				"submissionID": "submission-1",
+				"createdID": "record-1",
+				"listedCount": 1,
+				"deleted": true
+			}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := decodeMCPSmokeResult(tt.resultText)
+			if err != nil {
+				t.Fatalf("decodeMCPSmokeResult() error = %v", err)
+			}
+
+			if got := decodeJSONValue[string](t, result["tenantID"]); got != "tenant-1" {
+				t.Fatalf("tenantID = %q, want tenant-1", got)
+			}
+
+			if got := decodeJSONValue[string](t, result["createdID"]); got != "record-1" {
+				t.Fatalf("createdID = %q, want record-1", got)
+			}
+
+			if got := decodeJSONValue[int](t, result["listedCount"]); got != 1 {
+				t.Fatalf("listedCount = %d, want 1", got)
+			}
+
+			if got := decodeJSONValue[bool](t, result["deleted"]); !got {
+				t.Fatal("deleted = false, want true")
+			}
+		})
+	}
+}
+
 func mcpToolExists(ctx context.Context, session *mcp.ClientSession, toolName string) (bool, error) {
 	params := &mcp.ListToolsParams{}
 	for {
@@ -649,6 +703,24 @@ func firstTextContent(result *mcp.CallToolResult) (string, bool) {
 	}
 
 	return "", false
+}
+
+func decodeMCPSmokeResult(resultText string) (map[string]json.RawMessage, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(resultText), &payload); err != nil {
+		return nil, fmt.Errorf("decode execute text payload: %w", err)
+	}
+
+	if wrappedResult, ok := payload["result"]; ok {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(wrappedResult, &result); err != nil {
+			return nil, fmt.Errorf("decode wrapped execute result: %w", err)
+		}
+
+		return result, nil
+	}
+
+	return payload, nil
 }
 
 func connectTestMCPServer(ctx context.Context, t *testing.T, server *mcp.Server) *mcp.ClientSession {
