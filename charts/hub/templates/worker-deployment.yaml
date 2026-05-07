@@ -57,7 +57,14 @@ spec:
             - sh
             - -c
             - |
+              attempts=0
+              max_attempts={{ .Values.worker.waitForApi.maxAttempts | default 120 }}
               until wget --no-verbose --tries=1 --spider http://{{ include "hub.fullname" . }}:{{ .Values.service.port }}/health; do
+                attempts=$((attempts+1))
+                if [ "$attempts" -ge "$max_attempts" ]; then
+                  echo "Hub API health check timed out after $((max_attempts * 5)) seconds"
+                  exit 1
+                fi
                 echo "Waiting for Hub API health check..."
                 sleep 5
               done

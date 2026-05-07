@@ -1,7 +1,7 @@
 {{- if .Values.embeddings.enabled -}}
 {{- $embeddingsReplicas := int (.Values.embeddings.replicaCount | default 1) -}}
 {{- $embeddingsMaxReplicas := int (.Values.embeddings.autoscaling.maxReplicas | default 1) -}}
-{{- if and .Values.embeddings.persistence.enabled (not (has "ReadWriteMany" .Values.embeddings.persistence.accessModes)) (or (gt $embeddingsReplicas 1) (and .Values.embeddings.autoscaling.enabled (gt $embeddingsMaxReplicas 1))) }}
+{{- if and .Values.embeddings.persistence.enabled (not .Values.embeddings.persistence.existingClaim) (not (has "ReadWriteMany" .Values.embeddings.persistence.accessModes)) (or (gt $embeddingsReplicas 1) (and .Values.embeddings.autoscaling.enabled (gt $embeddingsMaxReplicas 1))) }}
   {{- fail "embeddings persistence with multiple replicas requires persistence.accessModes to include ReadWriteMany, or set embeddings.persistence.enabled=false/use a ReadWriteMany existingClaim" }}
 {{- end }}
 {{- if and .Values.embeddings.auth.existingSecret .Values.embeddings.huggingFace.token (not .Values.embeddings.huggingFace.existingSecret) }}
@@ -24,11 +24,16 @@ spec:
   selector:
     matchLabels:
       {{- include "hub.embeddingsSelectorLabels" . | nindent 6 }}
+  {{- if and .Values.embeddings.persistence.enabled (not (has "ReadWriteMany" .Values.embeddings.persistence.accessModes)) }}
+  strategy:
+    type: Recreate
+  {{- else }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 0
       maxSurge: 1
+  {{- end }}
   template:
     metadata:
       labels:
@@ -94,14 +99,14 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "hub.embeddingsSecretName" . }}
-                  key: {{ .Values.embeddings.auth.secretKey | default "EMBEDDING_PROVIDER_API_KEY" }}
+                  key: {{ .Values.embeddings.auth.secretKey | default "EMBEDDING_PROVIDER_API_KEY" | quote }}
             {{- end }}
             {{- if or .Values.embeddings.huggingFace.existingSecret .Values.embeddings.huggingFace.token }}
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "hub.embeddingsHuggingFaceSecretName" . }}
-                  key: {{ .Values.embeddings.huggingFace.tokenKey | default "HF_TOKEN" }}
+                  key: {{ .Values.embeddings.huggingFace.tokenKey | default "HF_TOKEN" | quote }}
             {{- end }}
             {{- range $key, $value := .Values.embeddings.env }}
             {{- if not (or (and $.Values.embeddings.auth.enabled (eq $key "API_KEY")) (and (or $.Values.embeddings.huggingFace.existingSecret $.Values.embeddings.huggingFace.token) (eq $key "HF_TOKEN"))) }}

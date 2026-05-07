@@ -80,6 +80,8 @@ worker:
   waitForApi:
     # Avoid starting workers before the API service is healthy during installs/upgrades.
     enabled: true
+    # 120 attempts * 5 seconds = 10 minutes.
+    maxAttempts: 120
 
   podAnnotations: {}
   podLabels: {}
