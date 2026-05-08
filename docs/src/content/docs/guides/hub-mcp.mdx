@@ -5,7 +5,7 @@ description: Configure the Formbricks Hub MCP server for AI clients and self-hos
 
 import { Callout } from "@stainless-api/docs/components";
 
-The `@formbricks/hub-mcp` package lets MCP-capable AI clients work with Formbricks Hub through the generated Hub TypeScript client. AI clients can launch it as a local stdio MCP server, while release smoke tests can start it over HTTP. In both cases it points at either a local Hub instance or a self-hosted production deployment.
+The `@formbricks/hub-mcp` package lets MCP-capable AI clients work with Formbricks Hub through the generated Hub TypeScript client. AI clients launch it as a local stdio MCP server and point it at either a local Hub instance or a self-hosted production deployment.
 
 ## What You Need
 
@@ -13,33 +13,11 @@ The `@formbricks/hub-mcp` package lets MCP-capable AI clients work with Formbric
 - The Hub API key configured as `API_KEY` on the Hub server.
 - Node.js and `npx` on the machine where your AI client starts MCP servers.
 - An AI client that supports local stdio MCP servers.
-- For local Code Mode, Deno installed on the same machine as the MCP server.
 
 <Callout variant="note">
   Treat MCP access like direct API access. The MCP package receives an API key
   with the same permissions as `Authorization: Bearer &lt;API_KEY&gt;`, so keep
   it out of committed config files and use environment-specific keys.
-</Callout>
-
-## Choose Code Execution Mode
-
-The generated MCP server exposes an `execute` tool. By default, generated MCP
-packages may run that tool through Stainless-hosted Code Mode. For self-hosted
-Hub deployments, prefer local Code Mode so the generated code runs on the same
-machine as the MCP server and calls your Hub API directly.
-
-Local Code Mode:
-
-- keeps execution local to the MCP server machine
-- avoids hosted sandbox network allowlist issues for self-hosted Hub domains
-- requires Deno on the machine that runs the MCP server
-- still treats the Hub API key like a direct Hub API credential
-
-<Callout variant="note">
-  The examples below require an MCP package release that supports
-  <code>FORMBRICKS_HUB_BASE_URL</code> and <code>--code-execution-mode</code>.
-  If you are validating changes before that package is published, use a local
-  MCP build as shown in the smoke test section.
 </Callout>
 
 ## Configure the MCP Server
@@ -51,14 +29,7 @@ Add a stdio MCP server entry to your AI client's MCP configuration:
   "mcpServers": {
     "formbricks-hub": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@formbricks/hub-mcp@latest",
-        "--code-execution-mode",
-        "local",
-        "--docs-search-mode",
-        "local"
-      ],
+      "args": ["-y", "@formbricks/hub-mcp@latest"],
       "env": {
         "HUB_API_KEY": "your_hub_api_key",
         "FORMBRICKS_HUB_BASE_URL": "https://hub.example.com"
@@ -75,14 +46,7 @@ For local Docker Compose from the [Quick Start](/quickstart), use:
   "mcpServers": {
     "formbricks-hub-local": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@formbricks/hub-mcp@latest",
-        "--code-execution-mode",
-        "local",
-        "--docs-search-mode",
-        "local"
-      ],
+      "args": ["-y", "@formbricks/hub-mcp@latest"],
       "env": {
         "HUB_API_KEY": "your_secure_api_key_here",
         "FORMBRICKS_HUB_BASE_URL": "http://localhost:8080"
@@ -94,7 +58,7 @@ For local Docker Compose from the [Quick Start](/quickstart), use:
 
 `HUB_API_KEY` is the key the MCP package sends to Hub. It should match the `API_KEY` value used by the Hub API.
 
-`FORMBRICKS_HUB_BASE_URL` is the public base URL for the Hub API. Use the API root, not a `/v1` URL. Examples:
+`FORMBRICKS_HUB_BASE_URL` is the Hub API root URL reachable from the MCP server. Use the API root, not a `/v1` URL. Examples:
 
 | Deployment style          | Base URL                  |
 | ------------------------- | ------------------------- |
@@ -102,64 +66,25 @@ For local Docker Compose from the [Quick Start](/quickstart), use:
 | Dedicated domain          | `https://hub.example.com` |
 | Reverse-proxy path prefix | `https://example.com/hub` |
 
-The Hub source repository's smoke test accepts `HUB_BASE_URL` as a legacy input
-alias, but MCP client configurations should use `FORMBRICKS_HUB_BASE_URL`.
-
 <Callout variant="note">
-  Avoid running one shared remote MCP server with a single global Hub API key for
-  multiple users. For shared MCP infrastructure, prefer per-request
+  Avoid running one shared remote MCP server with a single global Hub API key
+  for multiple users. For shared MCP infrastructure, prefer per-request
   authorization headers and revocable, environment-specific Hub keys. Local
   stdio MCP keeps each user's key on the machine where their AI client runs.
 </Callout>
 
 ## Use the MCP Tool
 
-The MCP package exposes an `execute` tool that runs JavaScript against the Hub client. In most AI clients, you can ask the assistant to create, list, update, delete, or search feedback records and let it call the MCP tool.
+After the MCP server is configured, you do not need to write API code yourself.
+Ask your AI client what you want to do in Hub, and the client can call the MCP
+tool with the generated Hub client behind the scenes.
 
-A typical workflow looks like this:
-
-```js
-async function run(client) {
-  let created = null;
-
-  try {
-    created = await client.feedbackRecords.create({
-      tenant_id: "org-123",
-      submission_id: "mcp-demo-001",
-      source_type: "survey",
-      source_id: "mcp-demo",
-      source_name: "MCP Demo",
-      field_id: "q1",
-      field_label: "How satisfied are you?",
-      field_type: "rating",
-      value_number: 5,
-      user_id: "mcp-demo-user",
-      language: "en",
-    });
-
-    const listed = await client.feedbackRecords.list({
-      tenant_id: "org-123",
-      submission_id: "mcp-demo-001",
-      limit: 10,
-    });
-
-    return {
-      createdID: created.id,
-      listedCount: listed.data.length,
-    };
-  } finally {
-    if (created?.id) {
-      await client.feedbackRecords.delete(created.id);
-    }
-  }
-}
-```
-
-Useful prompts for an MCP-enabled AI client:
+Useful prompts:
 
 - "List the latest 10 feedback records for tenant `org-123`."
 - "Create a test text feedback record for tenant `org-123`, then delete it."
-- "Find feedback records for submission `subm-001` and summarize the fields."
+- "Find feedback records for tenant `org-123` and submission `subm-001`, then summarize the fields."
+- "Summarize the latest feedback records for tenant `org-123` by source type."
 
 ## Self-Hosted Production Setup
 
@@ -188,43 +113,6 @@ Those endpoints are public by design, like `GET /health`. Keep `/v1/*` protected
   but they are read by different processes.
 </Callout>
 
-## Run the MCP Smoke Test
-
-In a checkout of the Hub source repository, you can run the live MCP package smoke test against a deployed Hub instance:
-
-```bash
-HUB_API_KEY=your_hub_api_key \
-FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
-HUB_MCP_PACKAGE=@formbricks/hub-mcp@latest \
-make mcp-smoke
-```
-
-The smoke test starts the configured MCP server over local HTTP, checks for the `execute` tool, creates a feedback record, lists it, and deletes it again. `HUB_API_KEY` is sent to the local MCP HTTP server as an authorization header; the key should match the Hub server's `API_KEY`.
-
-To test a specific package version or preview build, change `HUB_MCP_PACKAGE`:
-
-```bash
-HUB_API_KEY=your_hub_api_key \
-FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
-HUB_MCP_PACKAGE=@formbricks/hub-mcp@1.2.3 \
-make mcp-smoke
-```
-
-To test a local MCP build instead of a published package, use `HUB_MCP_COMMAND`. `HUB_MCP_COMMAND` takes precedence over `HUB_MCP_PACKAGE`; `HUB_MCP_ARGS` is split into command arguments.
-
-```bash
-HUB_API_KEY=your_hub_api_key \
-FORMBRICKS_HUB_BASE_URL=https://hub.example.com \
-HUB_MCP_COMMAND=node \
-HUB_MCP_ARGS="/workspace/hub-typescript/packages/mcp-server/dist/index.js --code-execution-mode local --docs-search-mode local" \
-make mcp-smoke
-```
-
-The `make mcp-smoke` target sources `.env` from the Hub repository before
-running the test. If `.env` contains a different `FORMBRICKS_HUB_BASE_URL`,
-`HUB_BASE_URL`, or `HUB_API_KEY`, update `.env` or run the underlying `go test`
-command with explicit environment values.
-
 ## Troubleshooting
 
 ### MCP Requests Return 401
@@ -235,28 +123,14 @@ Check that `HUB_API_KEY` in the MCP configuration exactly matches the Hub server
 
 Make sure `FORMBRICKS_HUB_BASE_URL` is reachable from the machine running the AI client. For local Docker Compose on the same machine, `http://localhost:8080` usually works. If the AI client runs inside another container, use the hostname that is reachable from that container.
 
-If hosted Code Mode returns a message such as `Network access to <host>:443 is
-blocked`, switch to local Code Mode or regenerate/release the MCP package from
-an OpenAPI spec whose `servers` array explicitly includes that host.
-
-### MCP Local Code Mode Cannot Start
-
-Install Deno and make sure it is available on `PATH` for the process that starts
-the MCP server:
-
-```bash
-deno --version
-```
-
-Local Code Mode uses Deno to run the AI-generated SDK code with constrained
-network access to the configured Hub base URL.
+If your client reports that network access to the Hub host is blocked, make
+sure the configured Hub URL is reachable from the MCP execution environment.
 
 ### Hub Rejects `user_id`
 
-If the smoke test or MCP demo returns `json: unknown field "user_id"`, the Hub
-deployment is older than the current API contract. Deploy a Hub version that
-includes the `user_identifier` to `user_id` migration and regenerated OpenAPI
-contract, then rerun the smoke test.
+If your AI client returns `json: unknown field "user_id"`, the Hub deployment
+is older than the current API contract. Deploy the latest Hub version and try
+again.
 
 ### Runtime OpenAPI URLs Show the Wrong Host
 
@@ -270,15 +144,8 @@ Pin the package in your MCP config:
 "args": ["-y", "@formbricks/hub-mcp@1.2.3"]
 ```
 
-For release validation, use the same package spec in `HUB_MCP_PACKAGE` when running `make mcp-smoke`.
-
-Before publishing docs that use `@latest`, confirm the npm package has the
-expected release:
+To see which version `npx` will install, check the published package:
 
 ```bash
 npm view @formbricks/hub-mcp version
 ```
-
-### `make mcp-smoke` Requires a Package or Command
-
-Set either `HUB_MCP_PACKAGE` for a published package or `HUB_MCP_COMMAND` for a local MCP server build. The smoke test intentionally requires one of these so it validates the exact MCP build under review.
