@@ -8,7 +8,6 @@ import { Callout } from "@stainless-api/docs/components";
 ## Prerequisites
 
 - **Docker** and **Docker Compose**: [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- **Text Editor**: For editing the `.env` file
 
 ## Installation
 
@@ -51,13 +50,31 @@ services:
       postgres
       -c shared_preload_libraries=vector
 
+  hub-migrate:
+    image: ghcr.io/formbricks/hub:${HUB_IMAGE_TAG:-latest}
+    container_name: formbricks_hub_migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_dev}@postgres:5432/hub?sslmode=disable
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      /usr/local/bin/goose -dir /app/migrations postgres "$$DATABASE_URL" up &&
+      /usr/local/bin/river migrate-up --database-url "$$DATABASE_URL"
+    networks:
+      - formbricks_hub
+
   hub:
-    image: ghcr.io/formbricks/hub:latest
+    image: ghcr.io/formbricks/hub:${HUB_IMAGE_TAG:-latest}
     container_name: formbricks_hub_api
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      hub-migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_dev}@postgres:5432/hub?sslmode=disable
       API_KEY: ${API_KEY:-}
@@ -84,12 +101,14 @@ services:
       - formbricks_hub
 
   hub-worker:
-    image: ghcr.io/formbricks/hub:latest
+    image: ghcr.io/formbricks/hub:${HUB_IMAGE_TAG:-latest}
     container_name: formbricks_hub_worker
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      hub-migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://formbricks:${POSTGRES_PASSWORD:-formbricks_dev}@postgres:5432/hub?sslmode=disable
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -119,9 +138,10 @@ POSTGRES_PASSWORD=your_secure_postgres_password_here
 # Required: API authentication key
 API_KEY=your_secure_api_key_here
 
-# Optional: Host port configuration
+# Optional: Host ports and Hub image tag
 HUB_PORT=8080
 POSTGRES_PORT=5432
+HUB_IMAGE_TAG=latest
 LOG_LEVEL=info
 
 # Optional: Public URL advertised in /openapi.yaml and /openapi.json
@@ -139,48 +159,28 @@ openssl rand -base64 32
 openssl rand -base64 32
 ```
 
-#### 3. Start PostgreSQL
+#### 3. Start Hub
 
 ```bash
-docker compose up -d postgres
+docker compose up -d
 ```
 
 This will:
 
 - Start PostgreSQL with persistent storage
-
-#### 4. Run Database Migrations
-
-Migrations are managed with [goose](https://github.com/pressly/goose) and [River](https://riverqueue.com/). The Hub image includes both migration CLIs and the migration files:
-
-```bash
-docker compose run --rm --entrypoint /bin/sh hub -c \
-  'goose -dir /app/migrations postgres "$DATABASE_URL" up && river migrate-up --database-url "$DATABASE_URL"'
-```
-
-<Callout variant="note">
-  You only need to run this once when setting up the database for the first
-  time.
-</Callout>
-
-#### 5. Start Hub
-
-```bash
-docker compose up -d hub hub-worker
-```
-
-This will:
-
+- Run database migrations and create River tables with the one-shot `hub-migrate` service
 - Pull the latest Formbricks Hub image from GitHub Container Registry
 - Start the Hub API on port 8080
 - Start the Hub worker for asynchronous jobs
 
-#### 6. Verify Installation
+Migrations are managed with [goose](https://github.com/pressly/goose) and [River](https://riverqueue.com/). The published Hub image includes `goose`, `river`, and `/app/migrations`, so Docker Compose can migrate the database without local Go, goose, river, or migration files.
+
+#### 4. Verify Installation
 
 Check that the services are running:
 
 ```bash
-docker compose ps
+docker compose ps --all
 ```
 
 Expected output:
@@ -188,6 +188,7 @@ Expected output:
 ```text
 NAME                        STATUS              PORTS
 formbricks_hub_api          Up (healthy)        0.0.0.0:8080->8080/tcp
+formbricks_hub_migrate      Exited (0)
 formbricks_hub_postgres     Up (healthy)        0.0.0.0:5432->5432/tcp
 formbricks_hub_worker       Up
 ```
@@ -214,7 +215,21 @@ Expected response: an OpenAPI JSON document with Hub API metadata and paths.
 
 ### Option 2: Docker Run (Minimal)
 
-If you have an existing PostgreSQL instance, run just the Hub API:
+If you have an existing PostgreSQL instance, run migrations first:
+
+```bash
+docker run --rm \
+  -e DATABASE_URL="postgresql://user:password@host:5432/hub?sslmode=disable" \
+  --entrypoint /bin/sh \
+  ghcr.io/formbricks/hub:latest \
+  -c 'goose -dir /app/migrations postgres "$DATABASE_URL" up && river migrate-up --database-url "$DATABASE_URL"'
+```
+
+The published Hub image includes `goose`, `river`, and `/app/migrations`, so
+this applies both Hub database migrations and River queue migrations without
+local Go, goose, river, or migration files.
+
+Then run the Hub API:
 
 ```bash
 docker run -d \
@@ -225,12 +240,6 @@ docker run -d \
   -e LOG_LEVEL="info" \
   ghcr.io/formbricks/hub:latest
 ```
-
-<Callout variant="note">
-  <strong>Warning:</strong> Make sure to run migrations before starting the API.
-  The Hub image includes `goose`, `river`, and `/app/migrations`; run the same
-  migration command from the Docker Compose setup against your database.
-</Callout>
 
 ## Making Your First API Call
 
@@ -410,8 +419,13 @@ docker compose restart
 
 ```bash
 docker compose pull
+docker compose stop hub hub-worker
+docker compose up --force-recreate hub-migrate
 docker compose up -d
 ```
+
+When updating Hub images, recreate `hub-migrate` so goose and River migrations
+from the new image are applied before the API and worker continue running.
 
 ## Next Steps
 
