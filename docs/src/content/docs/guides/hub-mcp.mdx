@@ -1,0 +1,151 @@
+---
+title: Connect Hub to AI Clients via MCP
+description: Configure the Formbricks Hub MCP server for AI clients and self-hosted Hub deployments.
+---
+
+import { Callout } from "@stainless-api/docs/components";
+
+The `@formbricks/hub-mcp` package lets MCP-capable AI clients work with Formbricks Hub through a local stdio MCP server. Point it at either a local Hub instance or a self-hosted production deployment, then ask your AI client to create, search, update, or summarize feedback records.
+
+## What You Need
+
+- A running Hub API, such as `http://localhost:8080` from the [Quick Start](/quickstart) or a deployed HTTPS URL.
+- The Hub API key configured as `API_KEY` on the Hub server.
+- Node.js and `npx` on the machine where your AI client starts MCP servers.
+- An AI client that supports local stdio MCP servers.
+
+<Callout variant="note">
+  Treat MCP access like direct API access. The MCP package receives an API key
+  with the same permissions as `Authorization: Bearer &lt;API_KEY&gt;`, so keep
+  it out of committed config files and use environment-specific keys.
+</Callout>
+
+## Configure the MCP Server
+
+Add a stdio MCP server entry to your AI client's MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "formbricks-hub": {
+      "command": "npx",
+      "args": ["-y", "@formbricks/hub-mcp@latest"],
+      "env": {
+        "HUB_API_KEY": "your_hub_api_key",
+        "FORMBRICKS_HUB_BASE_URL": "https://hub.example.com"
+      }
+    }
+  }
+}
+```
+
+For local Docker Compose from the [Quick Start](/quickstart), use:
+
+```json
+{
+  "mcpServers": {
+    "formbricks-hub-local": {
+      "command": "npx",
+      "args": ["-y", "@formbricks/hub-mcp@latest"],
+      "env": {
+        "HUB_API_KEY": "your_secure_api_key_here",
+        "FORMBRICKS_HUB_BASE_URL": "http://localhost:8080"
+      }
+    }
+  }
+}
+```
+
+`HUB_API_KEY` is the key the MCP package sends to Hub. It should match the `API_KEY` value used by the Hub API.
+
+`FORMBRICKS_HUB_BASE_URL` is the Hub API root URL reachable from the MCP server. Use the API root, not a `/v1` URL. Examples:
+
+| Deployment style          | Base URL                  |
+| ------------------------- | ------------------------- |
+| Local Docker Compose      | `http://localhost:8080`   |
+| Dedicated domain          | `https://hub.example.com` |
+| Reverse-proxy path prefix | `https://example.com/hub` |
+
+<Callout variant="note">
+  Avoid running one shared remote MCP server with a single global Hub API key
+  for multiple users. For shared MCP infrastructure, prefer per-request
+  authorization headers and revocable, environment-specific Hub keys. Local
+  stdio MCP keeps each user's key on the machine where their AI client runs.
+</Callout>
+
+## Use the MCP Tool
+
+After the MCP server is configured, you do not need to write API code yourself.
+Ask your AI client what you want to do in Hub, and the client can call the MCP
+tool with the generated Hub client behind the scenes.
+
+Useful prompts:
+
+- "List the latest 10 feedback records for tenant `org-123`."
+- "Create a test text feedback record for tenant `org-123`, then delete it."
+- "Find feedback records for tenant `org-123` and submission `subm-001`, then summarize the fields."
+- "Summarize the latest feedback records for tenant `org-123` by source type."
+
+## Self-Hosted Production Setup
+
+For production deployments, set `PUBLIC_BASE_URL` on the Hub API process when Hub is exposed through ingress, TLS termination, a reverse proxy, or a path prefix:
+
+```bash
+PUBLIC_BASE_URL=https://hub.example.com
+```
+
+or:
+
+```bash
+PUBLIC_BASE_URL=https://example.com/hub
+```
+
+Hub uses `PUBLIC_BASE_URL` when serving runtime OpenAPI specs at:
+
+- `GET /openapi.yaml`
+- `GET /openapi.json`
+
+Those endpoints are public by design, like `GET /health`. Keep `/v1/*` protected with `Authorization: Bearer <API_KEY>`.
+
+<Callout variant="note">
+  `PUBLIC_BASE_URL` belongs to the Hub API deployment. `FORMBRICKS_HUB_BASE_URL`
+  belongs to the MCP client process. In many deployments they have the same URL,
+  but they are read by different processes.
+</Callout>
+
+## Troubleshooting
+
+### MCP Requests Return 401
+
+Check that `HUB_API_KEY` in the MCP configuration exactly matches the Hub server's `API_KEY`.
+
+### The Client Cannot Reach Hub
+
+Make sure `FORMBRICKS_HUB_BASE_URL` is reachable from the machine running the AI client. For local Docker Compose on the same machine, `http://localhost:8080` usually works. If the AI client runs inside another container, use the hostname that is reachable from that container.
+
+If your client reports that network access to the Hub host is blocked, make
+sure the configured Hub URL is reachable from the MCP execution environment.
+
+### Hub Rejects `user_id`
+
+If your AI client returns `json: unknown field "user_id"`, the Hub deployment
+is older than the current API contract. Deploy the latest Hub version and try
+again.
+
+### Runtime OpenAPI URLs Show the Wrong Host
+
+Set `PUBLIC_BASE_URL` on the Hub API deployment and restart the API. Use an absolute `http` or `https` URL without query strings, fragments, or credentials.
+
+### `npx` Starts the Wrong Package Version
+
+Pin the package in your MCP config:
+
+```json
+"args": ["-y", "@formbricks/hub-mcp@1.2.3"]
+```
+
+To see which version `npx` will install, check the published package:
+
+```bash
+npm view @formbricks/hub-mcp version
+```

@@ -53,14 +53,12 @@ If `event_types` is omitted, `null`, or `[]`, the webhook receives all event typ
 
 ### 1. Prepare Hub
 
-Run database migrations and River migrations (required for webhook delivery jobs):
+Start Hub with the [Quick Start Docker Compose setup](/quickstart). It applies
+database migrations and River migrations automatically before starting the API
+and worker:
 
 ```bash
-make init-db
-make river-migrate
-make run
-# In another terminal:
-make run-worker
+docker compose up -d
 ```
 
 ### 2. Create a Receiver Endpoint
@@ -217,7 +215,7 @@ MESSAGE_PUBLISHER_QUEUE_MAX_SIZE=16384
 
 ### No Webhooks Delivered
 
-1. Confirm River migrations were applied: `make river-migrate`
+1. Confirm `hub-migrate` completed successfully: `docker compose ps --all hub-migrate`
 2. Check webhook is enabled: `GET /v1/webhooks/{id}`
 3. Verify `event_types` includes the emitted event
 4. Ensure your endpoint is reachable from Hub and returns `2xx`
