@@ -1,6 +1,6 @@
 module github.com/formbricks/hub
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/go-playground/form/v4 v4.3.0
