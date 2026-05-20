@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -19,8 +20,8 @@ import (
 
 // mockFeedbackRecordsService mocks FeedbackRecordsService for handler tests.
 type mockFeedbackRecordsService struct {
-	createFunc     func(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
-	bulkDeleteFunc func(ctx context.Context, filters *models.BulkDeleteFilters) (int, error)
+	createFunc       func(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	deleteByUserFunc func(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) (int, error)
 }
 
 func (m *mockFeedbackRecordsService) CreateFeedbackRecord(
@@ -53,11 +54,11 @@ func (m *mockFeedbackRecordsService) DeleteFeedbackRecord(context.Context, uuid.
 	return nil
 }
 
-func (m *mockFeedbackRecordsService) BulkDeleteFeedbackRecords(
-	ctx context.Context, filters *models.BulkDeleteFilters,
+func (m *mockFeedbackRecordsService) DeleteFeedbackRecordsByUser(
+	ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters,
 ) (int, error) {
-	if m.bulkDeleteFunc != nil {
-		return m.bulkDeleteFunc(ctx, filters)
+	if m.deleteByUserFunc != nil {
+		return m.deleteByUserFunc(ctx, filters)
 	}
 
 	return 0, nil
@@ -200,10 +201,10 @@ func feedbackRecordCreateBody(t *testing.T, tenantID string) *bytes.Reader {
 	return bytes.NewReader(body)
 }
 
-func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
+func TestFeedbackRecordsHandler_DeleteByUser(t *testing.T) {
 	t.Run("success returns 200 with deleted_count and message", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{
-			bulkDeleteFunc: func(_ context.Context, filters *models.BulkDeleteFilters) (int, error) {
+			deleteByUserFunc: func(_ context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) (int, error) {
 				assert.Equal(t, "user-123", filters.UserID)
 				assert.Nil(t, filters.TenantID)
 
@@ -216,11 +217,11 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 			http.MethodDelete, "http://test/v1/feedback-records?user_id=user-123", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		handler.BulkDelete(rec, req)
+		handler.DeleteByUser(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 
-		var resp models.BulkDeleteResponse
+		var resp models.DeleteFeedbackRecordsByUserResponse
 
 		err := json.Unmarshal(rec.Body.Bytes(), &resp)
 		require.NoError(t, err)
@@ -230,7 +231,7 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 
 	t.Run("optional tenant_id query parameter is passed to service", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{
-			bulkDeleteFunc: func(_ context.Context, filters *models.BulkDeleteFilters) (int, error) {
+			deleteByUserFunc: func(_ context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) (int, error) {
 				assert.Equal(t, "user-456", filters.UserID)
 				require.NotNil(t, filters.TenantID)
 				assert.Equal(t, "tenant-a", *filters.TenantID)
@@ -244,7 +245,7 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 			http.MethodDelete, "http://test/v1/feedback-records?user_id=user-456&tenant_id=tenant-a", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		handler.BulkDelete(rec, req)
+		handler.DeleteByUser(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
@@ -257,7 +258,21 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 			http.MethodDelete, "http://test/v1/feedback-records?user_id=user-123&tenant_id=", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		handler.BulkDelete(rec, req)
+		handler.DeleteByUser(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("overlength tenant_id returns bad request", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		handler := NewFeedbackRecordsHandler(mock)
+		tenantID := strings.Repeat("a", 256)
+
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodDelete, "http://test/v1/feedback-records?user_id=user-123&tenant_id="+tenantID, http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.DeleteByUser(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
@@ -269,7 +284,7 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "http://test/v1/feedback-records", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		handler.BulkDelete(rec, req)
+		handler.DeleteByUser(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
@@ -282,14 +297,28 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 			http.MethodDelete, "http://test/v1/feedback-records?user_id=", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		handler.BulkDelete(rec, req)
+		handler.DeleteByUser(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("overlength user_id returns bad request", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		handler := NewFeedbackRecordsHandler(mock)
+		userID := strings.Repeat("a", 256)
+
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodDelete, "http://test/v1/feedback-records?user_id="+userID, http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.DeleteByUser(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
 	t.Run("service error returns 500", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{
-			bulkDeleteFunc: func(_ context.Context, _ *models.BulkDeleteFilters) (int, error) {
+			deleteByUserFunc: func(_ context.Context, _ *models.DeleteFeedbackRecordsByUserFilters) (int, error) {
 				return 0, assert.AnError
 			},
 		}
@@ -299,14 +328,14 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 			http.MethodDelete, "http://test/v1/feedback-records?user_id=user-789", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		handler.BulkDelete(rec, req)
+		handler.DeleteByUser(rec, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
 
 	t.Run("zero deleted returns 200 with deleted_count 0", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{
-			bulkDeleteFunc: func(_ context.Context, _ *models.BulkDeleteFilters) (int, error) {
+			deleteByUserFunc: func(_ context.Context, _ *models.DeleteFeedbackRecordsByUserFilters) (int, error) {
 				return 0, nil
 			},
 		}
@@ -316,11 +345,11 @@ func TestFeedbackRecordsHandler_BulkDelete(t *testing.T) {
 			http.MethodDelete, "http://test/v1/feedback-records?user_id=nonexistent", http.NoBody)
 		rec := httptest.NewRecorder()
 
-		handler.BulkDelete(rec, req)
+		handler.DeleteByUser(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 
-		var resp models.BulkDeleteResponse
+		var resp models.DeleteFeedbackRecordsByUserResponse
 
 		err := json.Unmarshal(rec.Body.Bytes(), &resp)
 		require.NoError(t, err)

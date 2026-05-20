@@ -25,7 +25,7 @@ type FeedbackRecordsService interface {
 	ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error)
 	UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error
-	BulkDeleteFeedbackRecords(ctx context.Context, filters *models.BulkDeleteFilters) (int, error)
+	DeleteFeedbackRecordsByUser(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) (int, error)
 }
 
 // FeedbackRecordsHandler handles HTTP requests for feedback records.
@@ -226,9 +226,9 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// BulkDelete handles DELETE /v1/feedback-records?user_id=<id>[&tenant_id=<id>].
-func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
-	filters := &models.BulkDeleteFilters{}
+// DeleteByUser handles DELETE /v1/feedback-records?user_id=<id>[&tenant_id=<id>].
+func (h *FeedbackRecordsHandler) DeleteByUser(w http.ResponseWriter, r *http.Request) {
+	filters := &models.DeleteFeedbackRecordsByUserFilters{}
 
 	// Decode and validate query parameters
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
@@ -237,7 +237,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	deletedCount, err := h.service.BulkDeleteFeedbackRecords(r.Context(), filters)
+	deletedCount, err := h.service.DeleteFeedbackRecordsByUser(r.Context(), filters)
 	if err != nil {
 		if errors.Is(err, huberrors.ErrValidation) {
 			validation.RespondValidationError(w, err)
@@ -250,7 +250,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 			tenantID = *filters.TenantID
 		}
 
-		slog.Error("Failed to bulk delete feedback records", // #nosec G706 -- slog key-values
+		slog.Error("Failed to delete feedback records by user", // #nosec G706 -- slog key-values
 			"method", r.Method,
 			"path", r.URL.Path,
 			"user_id", filters.UserID,
@@ -263,7 +263,7 @@ func (h *FeedbackRecordsHandler) BulkDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	resp := models.BulkDeleteResponse{
+	resp := models.DeleteFeedbackRecordsByUserResponse{
 		DeletedCount: int64(deletedCount),
 		Message:      fmt.Sprintf("Successfully deleted %d feedback records", deletedCount),
 	}

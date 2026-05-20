@@ -262,6 +262,7 @@ func newTestHTTPServerWithPublicBaseURL(t *testing.T, publicBaseURL string) *htt
 		newTestOpenAPIHandler(t, publicBaseURL),
 		handlers.NewFeedbackRecordsHandler(nil),
 		handlers.NewWebhooksHandler(nil),
+		handlers.NewTenantDataHandler(nil),
 		handlers.NewSearchHandler(nil),
 		nil,
 		nil,

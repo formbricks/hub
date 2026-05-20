@@ -32,8 +32,9 @@ import (
 const defaultTestDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
 
 const (
-	testWebhookURL   = "https://192.0.2.1/webhook"
-	testWebhookURLV2 = "https://192.0.2.1/webhook-v2"
+	tenantDataCleanupTimeout = 2 * time.Second
+	testWebhookURL           = "https://192.0.2.1/webhook"
+	testWebhookURLV2         = "https://192.0.2.1/webhook-v2"
 )
 
 // requireUUIDv7 asserts that an ID uses UUID version 7 with the RFC4122 variant.
@@ -80,6 +81,7 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	tenantDataRepo := repository.NewTenantDataRepository(db)
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
 		embeddingsRepo,
@@ -90,6 +92,8 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 		0,
 	)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
+	tenantDataService := service.NewTenantDataService(tenantDataRepo)
+	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Set up public endpoints
@@ -105,12 +109,13 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 	protectedMux.HandleFunc("GET /v1/feedback-records/{id}", feedbackRecordsHandler.Get)
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
-	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.BulkDelete)
+	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.DeleteByUser)
 	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
 	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
 	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
 	protectedMux.HandleFunc("PATCH /v1/webhooks/{id}", webhooksHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/webhooks/{id}", webhooksHandler.Delete)
+	protectedMux.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantDataHandler.Delete)
 
 	var protectedHandler http.Handler = protectedMux
 
@@ -880,12 +885,12 @@ func TestDeleteFeedbackRecord(t *testing.T) {
 	})
 }
 
-func TestBulkDeleteFeedbackRecords(t *testing.T) {
+func TestDeleteFeedbackRecordsByUser(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	client := &http.Client{}
-	userID := "bulk-delete-test-user-" + uuid.New().String()
+	userID := "user-delete-test-user-" + uuid.New().String()
 	subID := uuid.New().String() // unique per run to avoid 409 from leftover data
 
 	// Create several feedback records with the same user_id across tenants.
@@ -952,7 +957,7 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var scopedResp models.BulkDeleteResponse
+	var scopedResp models.DeleteFeedbackRecordsByUserResponse
 
 	err = decodeData(resp, &scopedResp)
 	require.NoError(t, err)
@@ -966,8 +971,8 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	tenantAID2 := createRecord("nps_4", tenantA, 7)
 
 	// Omitting tenant_id deletes every remaining matching record for GDPR erasure, regardless of tenant.
-	bulkDelURL := server.URL + "/v1/feedback-records?user_id=" + url.QueryEscape(userID)
-	req, err = http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL, http.NoBody)
+	userDeleteURL := server.URL + "/v1/feedback-records?user_id=" + url.QueryEscape(userID)
+	req, err = http.NewRequestWithContext(context.Background(), http.MethodDelete, userDeleteURL, http.NoBody)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 
@@ -975,38 +980,243 @@ func TestBulkDeleteFeedbackRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var bulkResp models.BulkDeleteResponse
+	var userDeleteResp models.DeleteFeedbackRecordsByUserResponse
 
-	err = decodeData(resp, &bulkResp)
+	err = decodeData(resp, &userDeleteResp)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	assert.Equal(t, int64(3), bulkResp.DeletedCount)
-	assert.Equal(t, "Successfully deleted 3 feedback records", bulkResp.Message)
+	assert.Equal(t, int64(3), userDeleteResp.DeletedCount)
+	assert.Equal(t, "Successfully deleted 3 feedback records", userDeleteResp.Message)
 
 	// Verify records are gone
 	for _, id := range []string{tenantAID2, tenantBID1, tenantBID2} {
 		requireStatus(id, http.StatusNotFound)
 	}
 
-	// Bulk delete again (no matching records) returns 0
-	bulkDelURL2 := server.URL + "/v1/feedback-records?user_id=" + url.QueryEscape(userID)
-	req2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, bulkDelURL2, http.NoBody)
+	// Deleting again with no matching records returns 0.
+	userDeleteURL2 := server.URL + "/v1/feedback-records?user_id=" + url.QueryEscape(userID)
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, userDeleteURL2, http.NoBody)
 	require.NoError(t, err)
 	req2.Header.Set("Authorization", "Bearer "+testAPIKey)
 	resp2, err := client.Do(req2)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp2.StatusCode)
 
-	var bulkResp2 models.BulkDeleteResponse
+	var userDeleteResp2 models.DeleteFeedbackRecordsByUserResponse
 
-	err = decodeData(resp2, &bulkResp2)
+	err = decodeData(resp2, &userDeleteResp2)
 	require.NoError(t, err)
 	require.NoError(t, resp2.Body.Close())
-	assert.Equal(t, int64(0), bulkResp2.DeletedCount)
+	assert.Equal(t, int64(0), userDeleteResp2.DeletedCount)
 }
 
-// TestFeedbackRecordsRepository_BulkDelete tests the repository BulkDelete return value (deleted IDs).
-func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
+func TestDeleteTenantData(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(cfg.Database.PoolConfig()),
+	)
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	client := &http.Client{}
+	tenantA := "tenant-data-delete-a-" + uuid.NewString()
+	tenantB := "tenant-data-delete-b-" + uuid.NewString()
+	subID := uuid.NewString()
+	modelName := "model-name"
+
+	tenantARecord1 := createTenantDataFeedbackRecord(ctx, t, client, server.URL, tenantA, subID, "tenant-data-delete-a-1")
+	tenantARecord2 := createTenantDataFeedbackRecord(ctx, t, client, server.URL, tenantA, subID, "tenant-data-delete-a-2")
+	tenantBRecord := createTenantDataFeedbackRecord(ctx, t, client, server.URL, tenantB, subID, "tenant-data-delete-b-1")
+	tenantAWebhook := createTenantDataWebhook(ctx, t, client, server.URL, tenantA, "tenant-data-delete-a")
+
+	tenantBWebhook := createTenantDataWebhook(ctx, t, client, server.URL, tenantB, "tenant-data-delete-b")
+	defer cleanupTenantDataBestEffort(ctx, client, server.URL, tenantB)
+
+	embedding := make([]float32, models.EmbeddingVectorDimensions)
+	embedding[0] = 0.25
+	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantARecord1.ID, modelName, embedding))
+	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantARecord2.ID, modelName, embedding))
+	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantBRecord.ID, modelName, embedding))
+
+	deleteResp := deleteTenantData(ctx, t, client, server.URL, tenantA)
+	assert.Equal(t, tenantA, deleteResp.TenantID)
+	assert.Equal(t, int64(2), deleteResp.DeletedFeedbackRecords)
+	assert.Equal(t, int64(2), deleteResp.DeletedEmbeddings)
+	assert.Equal(t, int64(1), deleteResp.DeletedWebhooks)
+
+	requireTenantDataResourceStatus(
+		ctx, t, client, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, tenantARecord1.ID), http.StatusNotFound,
+	)
+	requireTenantDataResourceStatus(
+		ctx, t, client, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, tenantARecord2.ID), http.StatusNotFound,
+	)
+	requireTenantDataResourceStatus(
+		ctx, t, client, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, tenantAWebhook.ID), http.StatusNotFound,
+	)
+	_, err = embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, tenantARecord1.ID, modelName)
+	require.ErrorIs(t, err, repository.ErrEmbeddingNotFound)
+
+	requireTenantDataResourceStatus(
+		ctx, t, client, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, tenantBRecord.ID), http.StatusOK,
+	)
+	requireTenantDataResourceStatus(ctx, t, client, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, tenantBWebhook.ID), http.StatusOK)
+	_, err = embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, tenantBRecord.ID, modelName)
+	require.NoError(t, err)
+
+	repeatedResp := deleteTenantData(ctx, t, client, server.URL, tenantA)
+	assert.Equal(t, int64(0), repeatedResp.DeletedFeedbackRecords)
+	assert.Equal(t, int64(0), repeatedResp.DeletedEmbeddings)
+	assert.Equal(t, int64(0), repeatedResp.DeletedWebhooks)
+}
+
+func createTenantDataFeedbackRecord(
+	ctx context.Context,
+	t *testing.T,
+	client *http.Client,
+	serverURL string,
+	tenantID string,
+	submissionID string,
+	fieldID string,
+) models.FeedbackRecord {
+	t.Helper()
+
+	body, err := json.Marshal(map[string]any{
+		"source_type":   "formbricks",
+		"submission_id": submissionID,
+		"tenant_id":     tenantID,
+		"user_id":       "tenant-data-delete-user-" + uuid.NewString(),
+		"field_id":      fieldID,
+		"field_type":    "text",
+		"value_text":    "delete tenant data",
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/v1/feedback-records", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var rec models.FeedbackRecord
+
+	err = decodeData(resp, &rec)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	return rec
+}
+
+func createTenantDataWebhook(
+	ctx context.Context,
+	t *testing.T,
+	client *http.Client,
+	serverURL string,
+	tenantID string,
+	path string,
+) models.Webhook {
+	t.Helper()
+
+	body, err := json.Marshal(map[string]any{
+		"url":       testWebhookURL + "/" + path,
+		"tenant_id": tenantID,
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/v1/webhooks", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var webhook models.Webhook
+
+	err = decodeData(resp, &webhook)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	return webhook
+}
+
+func requireTenantDataResourceStatus(
+	ctx context.Context,
+	t *testing.T,
+	client *http.Client,
+	resourceURL string,
+	status int,
+) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, http.NoBody)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, status, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+}
+
+func deleteTenantData(
+	ctx context.Context,
+	t *testing.T,
+	client *http.Client,
+	serverURL string,
+	tenantID string,
+) models.TenantDataDeleteResponse {
+	t.Helper()
+
+	deleteURL := fmt.Sprintf("%s/v1/tenants/%s/data", serverURL, url.PathEscape(tenantID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteURL, http.NoBody)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var deleteResp models.TenantDataDeleteResponse
+
+	err = decodeData(resp, &deleteResp)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	return deleteResp
+}
+
+func cleanupTenantDataBestEffort(ctx context.Context, client *http.Client, serverURL, tenantID string) {
+	cleanupCtx, cancel := context.WithTimeout(ctx, tenantDataCleanupTimeout)
+	defer cancel()
+
+	cleanupURL := fmt.Sprintf("%s/v1/tenants/%s/data", serverURL, url.PathEscape(tenantID))
+
+	req, err := http.NewRequestWithContext(cleanupCtx, http.MethodDelete, cleanupURL, http.NoBody)
+	if err != nil {
+		return
+	}
+
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+	resp, err := client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+}
+
+// TestFeedbackRecordsRepository_DeleteByUser tests the repository DeleteByUser return value (deleted IDs).
+func TestFeedbackRecordsRepository_DeleteByUser(t *testing.T) {
 	ctx := context.Background()
 
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -1027,23 +1237,24 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	defer db.Close()
 
 	repo := repository.NewFeedbackRecordsRepository(db)
-	userID := "repo-bulk-delete-user-" + uuid.New().String()
+	userID := "repo-user-delete-user-" + uuid.New().String()
 	sourceType := "formbricks"
 
 	// Create records with same user_id across tenants.
-	const bulkDeleteTenant = "bulk-delete-tenant"
+	const deleteByUserTenant = "user-delete-tenant"
 
-	const otherBulkDeleteTenant = "bulk-delete-tenant-other"
+	const otherDeleteByUserTenant = "user-delete-tenant-other"
 
 	req1 := &models.CreateFeedbackRecordRequest{
 		SourceType:   sourceType,
 		SubmissionID: userID,
-		TenantID:     bulkDeleteTenant,
+		TenantID:     deleteByUserTenant,
 		FieldID:      "f1",
 		FieldType:    models.FieldTypeNumber,
-		ValueNumber:  new(1.0),
 		UserID:       &userID,
 	}
+	valueNumber1 := 1.0
+	req1.ValueNumber = &valueNumber1
 	rec1, err := repo.Create(ctx, req1)
 	require.NoError(t, err)
 	require.NotEmpty(t, rec1.ID)
@@ -1051,12 +1262,13 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	req2 := &models.CreateFeedbackRecordRequest{
 		SourceType:   sourceType,
 		SubmissionID: userID,
-		TenantID:     bulkDeleteTenant,
+		TenantID:     deleteByUserTenant,
 		FieldID:      "f2",
 		FieldType:    models.FieldTypeNumber,
-		ValueNumber:  new(2.0),
 		UserID:       &userID,
 	}
+	valueNumber2 := 2.0
+	req2.ValueNumber = &valueNumber2
 	rec2, err := repo.Create(ctx, req2)
 	require.NoError(t, err)
 	require.NotEmpty(t, rec2.ID)
@@ -1065,7 +1277,7 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	req3 := &models.CreateFeedbackRecordRequest{
 		SourceType:   sourceType,
 		SubmissionID: userID,
-		TenantID:     otherBulkDeleteTenant,
+		TenantID:     otherDeleteByUserTenant,
 		FieldID:      "f3",
 		FieldType:    models.FieldTypeText,
 		ValueText:    &valueText,
@@ -1075,15 +1287,15 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, rec3.ID)
 
-	// BulkDelete with tenant_id restricts deletion to that tenant and returns tenant-safe groups.
-	tenantFilter := bulkDeleteTenant
-	deletedGroups, err := repo.BulkDelete(ctx, &models.BulkDeleteFilters{
+	// DeleteByUser with tenant_id restricts deletion to that tenant and returns tenant-safe groups.
+	tenantFilter := deleteByUserTenant
+	deletedGroups, err := repo.DeleteByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{
 		UserID:   userID,
 		TenantID: &tenantFilter,
 	})
 	require.NoError(t, err)
 	require.Len(t, deletedGroups, 1)
-	require.Equal(t, bulkDeleteTenant, deletedGroups[0].TenantID)
+	require.Equal(t, deleteByUserTenant, deletedGroups[0].TenantID)
 	assert.ElementsMatch(t, []uuid.UUID{rec1.ID, rec2.ID}, deletedGroups[0].IDs)
 
 	_, err = repo.GetByID(ctx, rec1.ID)
@@ -1092,13 +1304,13 @@ func TestFeedbackRecordsRepository_BulkDelete(t *testing.T) {
 	require.Error(t, err)
 	remaining, err := repo.GetByID(ctx, rec3.ID)
 	require.NoError(t, err)
-	require.Equal(t, otherBulkDeleteTenant, remaining.TenantID)
+	require.Equal(t, otherDeleteByUserTenant, remaining.TenantID)
 
 	// Omitting tenant_id deletes the rest of the user records across tenants.
-	deletedGroups, err = repo.BulkDelete(ctx, &models.BulkDeleteFilters{UserID: userID})
+	deletedGroups, err = repo.DeleteByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{UserID: userID})
 	require.NoError(t, err)
 	require.Len(t, deletedGroups, 1)
-	require.Equal(t, otherBulkDeleteTenant, deletedGroups[0].TenantID)
+	require.Equal(t, otherDeleteByUserTenant, deletedGroups[0].TenantID)
 	assert.ElementsMatch(t, []uuid.UUID{rec3.ID}, deletedGroups[0].IDs)
 
 	_, err = repo.GetByID(ctx, rec3.ID)

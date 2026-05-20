@@ -394,11 +394,11 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// BulkDelete deletes all feedback records matching user_id.
+// DeleteByUser deletes all feedback records matching user_id.
 // When tenant_id is provided, deletion is restricted to that tenant; otherwise all user records are deleted.
 // It returns deleted IDs grouped by tenant so callers can publish tenant-scoped side effects.
-func (r *FeedbackRecordsRepository) BulkDelete(
-	ctx context.Context, filters *models.BulkDeleteFilters,
+func (r *FeedbackRecordsRepository) DeleteByUser(
+	ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters,
 ) ([]models.DeletedFeedbackRecordsByTenant, error) {
 	query := `
 		DELETE FROM feedback_records
@@ -416,7 +416,7 @@ func (r *FeedbackRecordsRepository) BulkDelete(
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to bulk delete feedback records: %w", err)
+		return nil, fmt.Errorf("failed to delete feedback records by user: %w", err)
 	}
 	defer rows.Close()
 
@@ -444,7 +444,7 @@ func (r *FeedbackRecordsRepository) BulkDelete(
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating bulk delete result: %w", err)
+		return nil, fmt.Errorf("error iterating delete feedback records by user result: %w", err)
 	}
 
 	return groups, nil

@@ -229,6 +229,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	tenantDataRepo := repository.NewTenantDataRepository(db)
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
 	embeddingModelForDB := embeddingModel
 
@@ -317,6 +318,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
+	tenantDataService := service.NewTenantDataService(tenantDataRepo)
+	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	healthHandler := handlers.NewHealthHandler()
@@ -329,7 +332,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	server := newHTTPServer(
-		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, searchHandler,
+		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler, searchHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -353,6 +356,7 @@ func newHTTPServer(
 	openapi *handlers.OpenAPIHandler,
 	feedback *handlers.FeedbackRecordsHandler,
 	webhooks *handlers.WebhooksHandler,
+	tenantData *handlers.TenantDataHandler,
 	search *handlers.SearchHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
@@ -368,13 +372,14 @@ func newHTTPServer(
 	protected.HandleFunc("GET /v1/feedback-records/{id}", feedback.Get)
 	protected.HandleFunc("PATCH /v1/feedback-records/{id}", feedback.Update)
 	protected.HandleFunc("DELETE /v1/feedback-records/{id}", feedback.Delete)
-	protected.HandleFunc("DELETE /v1/feedback-records", feedback.BulkDelete)
+	protected.HandleFunc("DELETE /v1/feedback-records", feedback.DeleteByUser)
 
 	protected.HandleFunc("POST /v1/webhooks", webhooks.Create)
 	protected.HandleFunc("GET /v1/webhooks", webhooks.List)
 	protected.HandleFunc("GET /v1/webhooks/{id}", webhooks.Get)
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
+	protected.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantData.Delete)
 
 	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
