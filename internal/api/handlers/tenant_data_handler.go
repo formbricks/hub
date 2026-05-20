@@ -12,6 +12,8 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+const tenantDataDeleteRoute = "DELETE /v1/tenants/{tenant_id}/data"
+
 // TenantDataService defines the interface for tenant data purge business logic.
 type TenantDataService interface {
 	DeleteTenantData(ctx context.Context, tenantID string) (*models.TenantDataDeleteResult, error)
@@ -40,9 +42,9 @@ func (h *TenantDataHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 
 		slog.Error("Failed to delete tenant data", // #nosec G706 -- slog key-values
-			"method", r.Method,
-			"path", r.URL.Path,
-			"tenant_id", tenantID,
+			"route", tenantDataDeleteRoute,
+			"tenant_id_present", tenantID != "",
+			"tenant_id_length", len(tenantID),
 			"error", err,
 		)
 

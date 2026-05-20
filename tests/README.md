@@ -46,6 +46,7 @@ The integration tests cover:
 - ✅ Update feedback record
 - ✅ Delete feedback record
 - ✅ Delete feedback records by user
+- ✅ Delete tenant data (feedback records, embeddings, webhooks)
 - ✅ Webhook CRUD and validation
 - ✅ Authentication middleware
 - ✅ Error handling

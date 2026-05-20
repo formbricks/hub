@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,11 +22,16 @@ import (
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/pkg/database"
 )
+
+type testEventProvider interface {
+	PublishEvent(ctx context.Context, event service.Event)
+}
 
 // defaultTestDatabaseURL is the default Postgres URL used by compose (postgres/postgres/test_db).
 // Used when DATABASE_URL is not set (e.g. CI uses job env; local can rely on .env).
@@ -49,6 +55,12 @@ func requireUUIDv7(t *testing.T, id uuid.UUID) {
 // setupTestServer creates a test HTTP server with all routes configured.
 // Database URL comes from env (DATABASE_URL) when set; otherwise config.Load() uses its default.
 func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
+	return setupTestServerWithEventProviders(t)
+}
+
+func setupTestServerWithEventProviders(
+	t *testing.T, providers ...testEventProvider,
+) (server *httptest.Server, cleanup func()) {
 	ctx := context.Background()
 
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -71,7 +83,11 @@ func setupTestServer(t *testing.T) (server *httptest.Server, cleanup func()) {
 
 	// Initialize message publisher manager for tests (no providers required)
 	perEventTimeout := time.Duration(cfg.MessagePublisher.PerEventTimeoutSec) * time.Second
+
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisher.BufferSize, perEventTimeout, nil)
+	for _, provider := range providers {
+		messageManager.RegisterProvider(provider)
+	}
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)
@@ -1011,7 +1027,9 @@ func TestDeleteFeedbackRecordsByUser(t *testing.T) {
 }
 
 func TestDeleteTenantData(t *testing.T) {
-	server, cleanup := setupTestServer(t)
+	eventRecorder := &tenantDataEventRecorder{}
+
+	server, cleanup := setupTestServerWithEventProviders(t, eventRecorder)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -1050,6 +1068,7 @@ func TestDeleteTenantData(t *testing.T) {
 	assert.Equal(t, int64(2), deleteResp.DeletedFeedbackRecords)
 	assert.Equal(t, int64(2), deleteResp.DeletedEmbeddings)
 	assert.Equal(t, int64(1), deleteResp.DeletedWebhooks)
+	requireNoTenantDataDeleteEvents(t, eventRecorder)
 
 	requireTenantDataResourceStatus(
 		ctx, t, client, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, tenantARecord1.ID), http.StatusNotFound,
@@ -1074,6 +1093,47 @@ func TestDeleteTenantData(t *testing.T) {
 	assert.Equal(t, int64(0), repeatedResp.DeletedFeedbackRecords)
 	assert.Equal(t, int64(0), repeatedResp.DeletedEmbeddings)
 	assert.Equal(t, int64(0), repeatedResp.DeletedWebhooks)
+	requireNoTenantDataDeleteEvents(t, eventRecorder)
+}
+
+type tenantDataEventRecorder struct {
+	mu     sync.Mutex
+	events []service.Event
+}
+
+func (r *tenantDataEventRecorder) PublishEvent(_ context.Context, event service.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.events = append(r.events, event)
+}
+
+func (r *tenantDataEventRecorder) tenantDataDeleteEventCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	count := 0
+
+	for _, event := range r.events {
+		if event.Type == datatypes.FeedbackRecordDeleted || event.Type == datatypes.WebhookDeleted {
+			count++
+		}
+	}
+
+	return count
+}
+
+func requireNoTenantDataDeleteEvents(t *testing.T, recorder *tenantDataEventRecorder) {
+	t.Helper()
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if count := recorder.tenantDataDeleteEventCount(); count > 0 {
+			t.Fatalf("tenant data purge published %d delete events, want 0", count)
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func createTenantDataFeedbackRecord(

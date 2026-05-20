@@ -245,16 +245,18 @@ func (h *FeedbackRecordsHandler) DeleteByUser(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		var tenantID string
+		tenantIDLength := 0
 		if filters.TenantID != nil {
-			tenantID = *filters.TenantID
+			tenantIDLength = len(*filters.TenantID)
 		}
 
 		slog.Error("Failed to delete feedback records by user", // #nosec G706 -- slog key-values
 			"method", r.Method,
 			"path", r.URL.Path,
-			"user_id", filters.UserID,
-			"tenant_id", tenantID,
+			"user_id_present", filters.UserID != "",
+			"user_id_length", len(filters.UserID),
+			"tenant_id_present", tenantIDLength > 0,
+			"tenant_id_length", tenantIDLength,
 			"error", err,
 		)
 

@@ -1076,6 +1076,7 @@ paths:
                 Permanently deletes all Hub-owned data for the specified tenant_id. This includes feedback records,
                 derived embeddings, and webhooks for the tenant. This operation is synchronous and idempotent;
                 repeated calls return zero counts after the tenant data has already been deleted.
+                No webhook events are published as part of this purge operation.
             operationId: delete-tenant-data
             parameters:
                 - name: tenant_id

@@ -59,7 +59,12 @@ func (r *TenantDataRepository) DeleteByTenant(ctx context.Context, tenantID stri
 
 	defer func() {
 		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			slog.Error("tenant data delete: rollback failed", "tenant_id", tenantID, "error", err)
+			slog.Error(
+				"tenant data delete: rollback failed",
+				"tenant_id_present", tenantID != "",
+				"tenant_id_length", len(tenantID),
+				"error", err,
+			)
 		}
 	}()
 
@@ -69,7 +74,12 @@ func (r *TenantDataRepository) DeleteByTenant(ctx context.Context, tenantID stri
 	}
 
 	if err := dbTx.Commit(ctx); err != nil {
-		slog.Error("tenant data delete: commit failed", "tenant_id", tenantID, "error", err)
+		slog.Error(
+			"tenant data delete: commit failed",
+			"tenant_id_present", tenantID != "",
+			"tenant_id_length", len(tenantID),
+			"error", err,
+		)
 
 		return nil, fmt.Errorf("commit tenant data delete transaction: %w", err)
 	}

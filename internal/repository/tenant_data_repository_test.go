@@ -107,8 +107,10 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 	})
 
 	t.Run("rolls back and returns delete error", func(t *testing.T) {
+		rollbackErr := errors.New("rollback failed")
 		transaction := &fakeTenantDataTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{errAtQuery: 2},
+			rollbackErr:            rollbackErr,
 		}
 		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}}
 
