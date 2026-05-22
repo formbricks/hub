@@ -9,13 +9,12 @@ Hub stores all data in a single PostgreSQL database. You can analyze it in **Dat
 
 ## Summary
 
-| Step | Action                                                                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Run Hub, worker, and Postgres ([Quick Start](/quickstart))                                                                                        |
-| 2    | Make sure Databricks can reach Hub's Postgres (Private Link, VPC peering, or a public endpoint with `sslmode=require` and IP allowlisting)        |
-| 3    | Either create a **Lakehouse Federation** connection to PostgreSQL in Catalog Explorer, or open a notebook and use the built-in JDBC driver        |
-| 4    | Query `feedback_records` live (Federation) or load it into a Delta table with `spark.read.format("jdbc")` -> `df.write.format("delta")`           |
-| 5    | Build queries and dashboards in Databricks SQL using the same dimensions and metrics as in the [Quick reference](#quick-reference-dimensions-and-metrics) below |
+| Step | Action                                                                                                                                                                                 |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Run Hub, worker, and Postgres ([Quick Start](/quickstart)); make sure Databricks can reach the Postgres host (Private Link / VPC peering / public endpoint with `sslmode=require`)     |
+| 2    | Choose a path: **Lakehouse Federation** (UI, zero-ETL, queries Hub live through Unity Catalog) or **JDBC + Delta** (notebook code, materialized copy)                                  |
+| 3    | Federation: create a `CONNECTION` and foreign `CATALOG`. JDBC: read with `spark.read.format("postgresql")` and `df.write.format("delta").saveAsTable(...)`                             |
+| 4    | Run analytics queries using the same dimensions and metrics as in the [Quick reference](#quick-reference-dimensions-and-metrics) below                                                 |
 
 ## Why Hub + Databricks?
 
@@ -53,7 +52,7 @@ Databricks ships the PostgreSQL JDBC driver (`org.postgresql.Driver`) on every c
 - **Lakehouse Federation** (recommended when you have Unity Catalog) - Create a `CONNECTION` and a foreign `CATALOG` once, then query Hub live from any notebook, SQL editor, or dashboard. Filters, aggregates, and joins are pushed down to Postgres.
 - **JDBC + Delta** - From a notebook, read `feedback_records` via JDBC into a Spark DataFrame and optionally write it to a Delta table for repeat queries.
 
-Pick Federation for governed, low-latency live access; pick JDBC + Delta when you want a local materialized copy or are on a workspace without Unity Catalog.
+Pick Federation for governed, low-latency live access; pick JDBC + Delta when you want a local materialized copy or are on a workspace without Unity Catalog. Step 3 covers both paths - follow only the one you chose.
 
 ## Step 3a: Lakehouse Federation (Unity Catalog)
 

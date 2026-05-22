@@ -113,15 +113,15 @@ abctl local credentials --password <your-password>
    - **Username** - `formbricks`
    - **Password** - Your Postgres password
    - **SSL Mode** - `disable` for local, `require` for production
-3. Under **Replication method**, choose **Standard (Xmin or cursor-based)** and select **Cursor-based** with `updated_at` as the cursor field. CDC is not required for Hub's workload.
-4. Click **Set up source**. Airbyte will run a connection check and discover the schema.
+3. Under **Update Method**, choose **Standard** (Airbyte's Postgres source offers **Standard**, **Xmin**, and **CDC**; Standard means cursor-based incremental with a user-defined cursor).
+4. Click **Set up source**. Airbyte will run a connection check and discover the schema. You will pick `updated_at` as the cursor field per stream in [Step 5](#step-5-create-the-connection).
 
 <Callout variant="note">
   Standard cursor-based replication does not require any Postgres-side
   configuration (no publication, no replication slot, no `wal_level=logical`).
-  Airbyte just needs a user with `SELECT` on `feedback_records`. Use CDC only
-  if you need delete tracking or are working with very large tables; the
-  Postgres source docs cover the extra setup.
+  Airbyte just needs a user with `SELECT` on `feedback_records`. Use **CDC**
+  if you need delete tracking or are working with very large tables (500 GB+);
+  the Postgres source docs cover the extra setup.
 </Callout>
 
 ### Optional: a read-only user for Airbyte
@@ -197,14 +197,14 @@ Other supported destinations include **Postgres**, **ClickHouse**, **S3** (raw f
   where each feedback record is mutable and time-ordered.
 </Callout>
 
-## Step 6: Query in the destination
+## Query in the destination
 
 After the first sync completes, you can query `feedback_records` in the destination warehouse using the same dimensions and metrics as everywhere else in Hub. The `metadata` JSONB column is preserved as a native semi-structured type in the destination:
 
 - **Snowflake** - `VARIANT` (use `metadata:campaign_id::string`)
 - **BigQuery** - `JSON` (use `JSON_VALUE(metadata, '$.campaign_id')`)
 - **Redshift** - `SUPER` (use `metadata.campaign_id`)
-- **Databricks** - parsed via `from_json` or kept as STRING depending on connector version
+- **Databricks** - `STRING` (parse with `from_json(metadata, 'map<string,string>')` as needed)
 
 **NPS trend over time (any warehouse, SQL is portable):**
 
