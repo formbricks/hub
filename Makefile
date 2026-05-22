@@ -60,7 +60,7 @@ mcp-smoke:
 # Run unit tests (fast, no database required)
 test-unit:
 	@echo "Running unit tests..."
-	go test ./internal/... -v
+	go test ./cmd/api ./internal/... -v
 
 # Run all tests (unit + integration)
 test-all: test-unit tests
