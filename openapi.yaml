@@ -35,6 +35,10 @@ servers:
             description: Optional reverse-proxy path prefix, for example /hub
     - url: https://hub-internal.formbricks.com
       description: Formbricks staging Hub server
+    - url: https://app.formbricks.com
+      description: Formbricks Cloud
+    - url: https://staging.app.formbricks.com
+      description: Formbricks Cloud (staging)
     - url: http://localhost:8080
       description: Local development server
 tags:
