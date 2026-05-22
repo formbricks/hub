@@ -1073,9 +1073,12 @@ paths:
                 - Tenant Data
             summary: Delete tenant data
             description: |
-                Permanently deletes all Hub-owned data for the specified tenant_id. This includes feedback records,
-                derived embeddings, and webhooks for the tenant. This operation is synchronous and idempotent;
-                repeated calls return zero counts after the tenant data has already been deleted.
+                Permanently deletes Hub-owned data for the specified tenant_id. This endpoint is intended for
+                tenant/account offboarding after the tenant has been deprovisioned and upstream writes for that
+                tenant have stopped. This includes feedback records, derived embeddings, and webhooks for the
+                tenant. This operation is synchronous and idempotent; repeated calls return zero counts after the
+                tenant data has already been deleted. Concurrent writes for the same tenant_id are not serialized
+                by Hub in this version.
                 No webhook events are published as part of this purge operation.
             operationId: delete-tenant-data
             parameters:
