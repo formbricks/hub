@@ -13,7 +13,7 @@ Hub stores all data in a single PostgreSQL database. You can analyze it in **Dat
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1    | Run Hub, worker, and Postgres ([Quick Start](/quickstart)); make sure Databricks can reach the Postgres host (Private Link / VPC peering / public endpoint with `sslmode=require`)     |
 | 2    | Choose a path: **Lakehouse Federation** (UI, zero-ETL, queries Hub live through Unity Catalog) or **JDBC + Delta** (notebook code, materialized copy)                                  |
-| 3    | Federation: create a `CONNECTION` and foreign `CATALOG`. JDBC: read with `spark.read.format("postgresql")` and `df.write.format("delta").saveAsTable(...)`                             |
+| 3    | Federation: create a `CONNECTION` and foreign `CATALOG`. JDBC: read with `spark.read.format("jdbc")` and `df.write.format("delta").saveAsTable(...)`                                   |
 | 4    | Run analytics queries using the same dimensions and metrics as in the [Quick reference](#quick-reference-dimensions-and-metrics) below                                                 |
 
 ## Why Hub + Databricks?
@@ -49,7 +49,7 @@ Note the **database connection details** you use for Hub (host, port, database n
 
 Databricks ships the PostgreSQL JDBC driver (`org.postgresql.Driver`) on every current Databricks Runtime, so no extra library install is needed. You have two practical ways to query `feedback_records`:
 
-- **Lakehouse Federation** (recommended when you have Unity Catalog) - Create a `CONNECTION` and a foreign `CATALOG` once, then query Hub live from any notebook, SQL editor, or dashboard. Filters, aggregates, and joins are pushed down to Postgres.
+- **Lakehouse Federation** (recommended when you have Unity Catalog) - Create a `CONNECTION` and a foreign `CATALOG` once, then query Hub live from any notebook, SQL editor, or dashboard. Filters, projections, limits, and aggregates are pushed down to Postgres on DBR 13.3 LTS+ (join pushdown is a separate Public Preview feature that requires DBR 17.2+ or SQL warehouses 2025.30+).
 - **JDBC + Delta** - From a notebook, read `feedback_records` via JDBC into a Spark DataFrame and optionally write it to a Delta table for repeat queries.
 
 Pick Federation for governed, low-latency live access; pick JDBC + Delta when you want a local materialized copy or are on a workspace without Unity Catalog. Step 3 covers both paths - follow only the one you chose.
@@ -129,8 +129,9 @@ databricks secrets put-secret hub pg_password --string-value <your-password>
 jdbc_url = "jdbc:postgresql://<hub-postgres-host>:5432/hub?sslmode=require"
 
 reader = (
-    spark.read.format("postgresql")  # built-in shortcut; equivalent to format("jdbc")
+    spark.read.format("jdbc")
     .option("url", jdbc_url)
+    .option("driver", "org.postgresql.Driver")
     .option("user", dbutils.secrets.get("hub", "pg_user"))
     .option("password", dbutils.secrets.get("hub", "pg_password"))
 )
@@ -155,6 +156,13 @@ df_recent = (
     .load()
 )
 ```
+
+<Callout variant="note">
+  Databricks Runtime 11.3 LTS and above also ship a named PostgreSQL connector
+  (`spark.read.format("postgresql")`) that accepts separate `host`, `port`,
+  and `database` options instead of a JDBC `url`. Either form works; this
+  guide uses `format("jdbc")` so the same code runs on older runtimes too.
+</Callout>
 
 <Callout variant="note">
   `dbtable` and `query` are mutually exclusive. Use `dbtable` when you also want

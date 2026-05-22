@@ -126,14 +126,41 @@ abctl local credentials --password <your-password>
 
 ### Optional: a read-only user for Airbyte
 
-For production, create a dedicated read-only user instead of reusing the `formbricks` superuser:
+For production, create a dedicated read-only user instead of reusing the `formbricks` superuser.
+
+<Callout variant="note">
+  The grant below gives Airbyte access to **all rows in `feedback_records`,
+  across every tenant**. This is the right default for an internal analytics
+  warehouse where you want cross-tenant reporting on your own Hub. If you are
+  building a per-tenant pipeline (for example, replicating a single customer's
+  data into their own warehouse), grant on a tenant-scoped view instead - see
+  the next subsection.
+</Callout>
 
 ```sql
+-- All-tenant replication (default)
 CREATE USER airbyte WITH PASSWORD '<strong-password>';
 GRANT CONNECT ON DATABASE hub TO airbyte;
 GRANT USAGE ON SCHEMA public TO airbyte;
 GRANT SELECT ON public.feedback_records TO airbyte;
 ```
+
+#### Tenant-scoped replication
+
+To restrict Airbyte to a single tenant, create a view that filters by `tenant_id` and grant on the view only:
+
+```sql
+CREATE USER airbyte_acme WITH PASSWORD '<strong-password>';
+GRANT CONNECT ON DATABASE hub TO airbyte_acme;
+GRANT USAGE ON SCHEMA public TO airbyte_acme;
+
+CREATE VIEW public.feedback_records_acme AS
+  SELECT * FROM public.feedback_records WHERE tenant_id = 'acme';
+
+GRANT SELECT ON public.feedback_records_acme TO airbyte_acme;
+```
+
+Then in Step 3, set **Schemas** to `public`, and in Step 5 enable only the `feedback_records_acme` stream. Use Standard cursor-based replication exactly as before - Postgres views work transparently with Airbyte's Postgres source.
 
 ## Step 4: Configure a destination
 
