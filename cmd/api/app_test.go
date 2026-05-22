@@ -240,6 +240,24 @@ func TestNewHTTPServerKeepsV1RoutesProtected(t *testing.T) {
 	}
 }
 
+func TestNewHTTPServerKeepsTenantDataRoutesProtected(t *testing.T) {
+	server := newTestHTTPServer(t)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodDelete,
+		"/v1/tenants/test-tenant-id/data",
+		http.NoBody,
+	)
+
+	server.Handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("DELETE /v1/tenants/{tenant_id}/data status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+}
+
 func newTestHTTPServer(t *testing.T) *http.Server {
 	t.Helper()
 
@@ -262,6 +280,7 @@ func newTestHTTPServerWithPublicBaseURL(t *testing.T, publicBaseURL string) *htt
 		newTestOpenAPIHandler(t, publicBaseURL),
 		handlers.NewFeedbackRecordsHandler(nil),
 		handlers.NewWebhooksHandler(nil),
+		handlers.NewTenantDataHandler(nil),
 		handlers.NewSearchHandler(nil),
 		nil,
 		nil,

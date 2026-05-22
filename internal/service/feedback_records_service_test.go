@@ -3,21 +3,23 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
 type mockFeedbackRecordsRepo struct {
-	record            *models.FeedbackRecord
-	createReq         *models.CreateFeedbackRecordRequest
-	bulkGroups        []models.DeletedFeedbackRecordsByTenant
-	deletedID         uuid.UUID
-	bulkDeleteFilters *models.BulkDeleteFilters
+	record              *models.FeedbackRecord
+	createReq           *models.CreateFeedbackRecordRequest
+	deleteByUserGroups  []models.DeletedFeedbackRecordsByTenant
+	deletedID           uuid.UUID
+	deleteByUserFilters *models.DeleteFeedbackRecordsByUserFilters
 }
 
 func (m *mockFeedbackRecordsRepo) Create(
@@ -61,12 +63,12 @@ func (m *mockFeedbackRecordsRepo) Delete(_ context.Context, id uuid.UUID) error 
 	return nil
 }
 
-func (m *mockFeedbackRecordsRepo) BulkDelete(
-	_ context.Context, filters *models.BulkDeleteFilters,
+func (m *mockFeedbackRecordsRepo) DeleteByUser(
+	_ context.Context, filters *models.DeleteFeedbackRecordsByUserFilters,
 ) ([]models.DeletedFeedbackRecordsByTenant, error) {
-	m.bulkDeleteFilters = filters
+	m.deleteByUserFilters = filters
 
-	return m.bulkGroups, nil
+	return m.deleteByUserGroups, nil
 }
 
 func TestFeedbackRecordsService_DeleteFeedbackRecord_PublishesTenantAwareDeletedEvent(t *testing.T) {
@@ -124,14 +126,14 @@ func TestFeedbackRecordsService_CreateFeedbackRecord_NormalizesTenantID(t *testi
 	}
 }
 
-func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_PublishesTenantAwareDeletedEventsByTenant(t *testing.T) {
+func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_PublishesTenantAwareDeletedEventsByTenant(t *testing.T) {
 	ctx := context.Background()
 	tenantA := "org-123"
 	tenantB := "org-456"
 	tenantAIDs := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
 	tenantBIDs := []uuid.UUID{uuid.Must(uuid.NewV7())}
 	repo := &mockFeedbackRecordsRepo{
-		bulkGroups: []models.DeletedFeedbackRecordsByTenant{
+		deleteByUserGroups: []models.DeletedFeedbackRecordsByTenant{
 			{TenantID: tenantA, IDs: tenantAIDs},
 			{TenantID: tenantB, IDs: tenantBIDs},
 		},
@@ -139,21 +141,21 @@ func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_PublishesTenantAwareDe
 	publisher := &capturePublisher{}
 	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
 
-	count, err := svc.BulkDeleteFeedbackRecords(ctx, &models.BulkDeleteFilters{UserID: "user-123"})
+	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{UserID: " user-123 "})
 	if err != nil {
-		t.Fatalf("BulkDeleteFeedbackRecords() error = %v", err)
+		t.Fatalf("DeleteFeedbackRecordsByUser() error = %v", err)
 	}
 
-	if repo.bulkDeleteFilters == nil {
-		t.Fatal("repo BulkDelete filters = nil")
+	if repo.deleteByUserFilters == nil {
+		t.Fatal("repo DeleteByUser filters = nil")
 	}
 
-	if repo.bulkDeleteFilters.UserID != "user-123" {
-		t.Fatalf("repo UserID = %q, want user-123", repo.bulkDeleteFilters.UserID)
+	if repo.deleteByUserFilters.UserID != "user-123" {
+		t.Fatalf("repo UserID = %q, want user-123", repo.deleteByUserFilters.UserID)
 	}
 
-	if repo.bulkDeleteFilters.TenantID != nil {
-		t.Fatalf("repo TenantID = %q, want nil for all-tenant delete", *repo.bulkDeleteFilters.TenantID)
+	if repo.deleteByUserFilters.TenantID != nil {
+		t.Fatalf("repo TenantID = %q, want nil for all-tenant delete", *repo.deleteByUserFilters.TenantID)
 	}
 
 	if count != len(tenantAIDs)+len(tenantBIDs) {
@@ -164,54 +166,107 @@ func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_PublishesTenantAwareDe
 	assertDeletedEventDataAt(t, publisher, 1, datatypes.FeedbackRecordDeleted, tenantB, tenantBIDs)
 }
 
-func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_NormalizesTenantFilter(t *testing.T) {
+func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_NormalizesTenantFilter(t *testing.T) {
 	ctx := context.Background()
 	tenantID := " org-123 "
 	deletedID := uuid.Must(uuid.NewV7())
 	repo := &mockFeedbackRecordsRepo{
-		bulkGroups: []models.DeletedFeedbackRecordsByTenant{
+		deleteByUserGroups: []models.DeletedFeedbackRecordsByTenant{
 			{TenantID: "org-123", IDs: []uuid.UUID{deletedID}},
 		},
 	}
 	publisher := &capturePublisher{}
 	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
 
-	count, err := svc.BulkDeleteFeedbackRecords(ctx, &models.BulkDeleteFilters{
+	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{
 		UserID:   "user-123",
 		TenantID: &tenantID,
 	})
 	if err != nil {
-		t.Fatalf("BulkDeleteFeedbackRecords() error = %v", err)
+		t.Fatalf("DeleteFeedbackRecordsByUser() error = %v", err)
 	}
 
 	if count != 1 {
 		t.Fatalf("count = %d, want 1", count)
 	}
 
-	if repo.bulkDeleteFilters == nil || repo.bulkDeleteFilters.TenantID == nil {
+	if repo.deleteByUserFilters == nil || repo.deleteByUserFilters.TenantID == nil {
 		t.Fatal("repo TenantID = nil, want normalized tenant")
 	}
 
-	if *repo.bulkDeleteFilters.TenantID != "org-123" {
-		t.Fatalf("repo TenantID = %q, want org-123", *repo.bulkDeleteFilters.TenantID)
+	if *repo.deleteByUserFilters.TenantID != "org-123" {
+		t.Fatalf("repo TenantID = %q, want org-123", *repo.deleteByUserFilters.TenantID)
 	}
 
 	assertDeletedEventData(t, publisher, datatypes.FeedbackRecordDeleted, "org-123", []uuid.UUID{deletedID})
 }
 
-func TestFeedbackRecordsService_BulkDeleteFeedbackRecords_RequiresUserID(t *testing.T) {
+func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RejectsOverlengthTenantFilter(t *testing.T) {
+	ctx := context.Background()
+	tenantID := strings.Repeat("a", maxTenantIDLength+1)
+	repo := &mockFeedbackRecordsRepo{}
+	publisher := &capturePublisher{}
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+
+	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{
+		UserID:   "user-123",
+		TenantID: &tenantID,
+	})
+	if !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("DeleteFeedbackRecordsByUser() error = %v, want validation error", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+
+	if repo.deleteByUserFilters != nil {
+		t.Fatal("repo DeleteByUser was called, want validation before repository")
+	}
+
+	if publisher.callCount != 0 {
+		t.Fatalf("published %d events, want 0", publisher.callCount)
+	}
+}
+
+func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RejectsOverlengthUserID(t *testing.T) {
+	ctx := context.Background()
+	userID := strings.Repeat("a", maxUserIDLength+1)
+	repo := &mockFeedbackRecordsRepo{}
+	publisher := &capturePublisher{}
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+
+	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{UserID: userID})
+	if !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("DeleteFeedbackRecordsByUser() error = %v, want validation error", err)
+	}
+
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+
+	if repo.deleteByUserFilters != nil {
+		t.Fatal("repo DeleteByUser was called, want validation before repository")
+	}
+
+	if publisher.callCount != 0 {
+		t.Fatalf("published %d events, want 0", publisher.callCount)
+	}
+}
+
+func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RequiresUserID(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockFeedbackRecordsRepo{
-		bulkGroups: []models.DeletedFeedbackRecordsByTenant{
+		deleteByUserGroups: []models.DeletedFeedbackRecordsByTenant{
 			{TenantID: "org-123", IDs: []uuid.UUID{uuid.Must(uuid.NewV7())}},
 		},
 	}
 	publisher := &capturePublisher{}
 	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
 
-	count, err := svc.BulkDeleteFeedbackRecords(ctx, &models.BulkDeleteFilters{})
+	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{})
 	if !errors.Is(err, ErrUserIDRequired) {
-		t.Fatalf("BulkDeleteFeedbackRecords() error = %v, want ErrUserIDRequired", err)
+		t.Fatalf("DeleteFeedbackRecordsByUser() error = %v, want ErrUserIDRequired", err)
 	}
 
 	if count != 0 {

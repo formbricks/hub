@@ -44,6 +44,8 @@ tags:
       description: Feedback record CRUD and search
     - name: Webhooks
       description: Webhook subscription management
+    - name: Tenant Data
+      description: Tenant-scoped data purge operations
 security:
     - ApiKeyAuth: []
 paths:
@@ -396,7 +398,7 @@ paths:
                                               message: "field_type has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
                                               value: "textt"
                 "409":
-                    description: Conflict – a feedback record with the same tenant_id, submission_id, and field_id already exists (idempotent create).
+                    description: Conflict – duplicate tenant_id/submission_id/field_id.
                     content:
                         application/problem+json:
                             schema:
@@ -410,9 +412,14 @@ paths:
         delete:
             tags:
                 - Feedback Records
-            summary: Bulk delete feedback records by user ID
-            description: Permanently deletes feedback record data points matching the specified user_id. Omit tenant_id to delete that user_id across all tenants for GDPR Article 17 (Right to Erasure) requests. Provide tenant_id to restrict deletion to that tenant only.
-            operationId: bulk-delete-feedback-records
+            summary: Delete feedback records by user ID
+            description: |
+                Permanently deletes feedback record data points for the specified user_id/data subject.
+                Omit tenant_id to delete that user_id across all tenants for GDPR Article 17 (Right to Erasure)
+                requests. Provide tenant_id to restrict deletion to that tenant only. Derived embeddings for deleted
+                feedback records are removed by database cascade. The operation is idempotent; repeated calls return
+                deleted_count 0 after matching records have already been deleted.
+            operationId: delete-feedback-records-by-user
             parameters:
                 - name: user_id
                   in: query
@@ -422,6 +429,7 @@ paths:
                     type: string
                     description: Delete records matching this user ID (required). NULL bytes not allowed.
                     minLength: 1
+                    maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "user-abc-123"
                 - name: tenant_id
@@ -431,6 +439,7 @@ paths:
                     type: string
                     description: Optional tenant scope. Omit this parameter to delete all records matching user_id across tenants; provide it to delete only records for this tenant. Empty strings and NULL bytes are not allowed.
                     minLength: 1
+                    maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
             responses:
@@ -439,10 +448,10 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/BulkDeleteFeedbackRecordsOutputBody'
+                                $ref: '#/components/schemas/DeleteFeedbackRecordsByUserOutputBody'
                             examples:
                                 success:
-                                    summary: Successful bulk delete
+                                    summary: Successful feedback records delete by user
                                     value:
                                         deleted_count: 42
                                         message: "Successfully deleted 42 feedback records"
@@ -1058,6 +1067,59 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/tenants/{tenant_id}/data:
+        delete:
+            tags:
+                - Tenant Data
+            summary: Delete tenant data
+            description: |
+                Permanently deletes Hub-owned data for the specified tenant_id. This endpoint is intended for
+                tenant/account offboarding after the tenant has been deprovisioned and upstream writes for that
+                tenant have stopped. This includes feedback records, derived embeddings, and webhooks for the
+                tenant. This operation is synchronous and idempotent; repeated calls return zero counts after the
+                tenant data has already been deleted. Concurrent writes for the same tenant_id are not serialized
+                by Hub in this version.
+                No webhook events are published as part of this purge operation.
+            operationId: delete-tenant-data
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  description: Tenant ID whose Hub-owned data should be deleted. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: Tenant data deleted
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TenantDataDeleteOutputBody'
+                            examples:
+                                success:
+                                    summary: Successful tenant data delete
+                                    value:
+                                        tenant_id: "org-123"
+                                        deleted_feedback_records: 42
+                                        deleted_embeddings: 17
+                                        deleted_webhooks: 3
+                                        message: "Successfully deleted tenant data for org-123"
+                "400":
+                    description: Bad Request (e.g. missing or invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
 components:
     securitySchemes:
         ApiKeyAuth:
@@ -1066,7 +1128,7 @@ components:
             bearerFormat: API Key
             description: API key authentication via Bearer token in Authorization header
     schemas:
-        BulkDeleteFeedbackRecordsOutputBody:
+        DeleteFeedbackRecordsByUserOutputBody:
             type: object
             additionalProperties: false
             properties:
@@ -1079,6 +1141,38 @@ components:
                     description: Human-readable status message
             required:
                 - deleted_count
+                - message
+        TenantDataDeleteOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                tenant_id:
+                    type: string
+                    description: Tenant ID whose data was deleted
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                deleted_feedback_records:
+                    type: integer
+                    description: Number of feedback records deleted
+                    format: int64
+                deleted_embeddings:
+                    type: integer
+                    description: Number of embedding rows deleted
+                    format: int64
+                deleted_webhooks:
+                    type: integer
+                    description: Number of webhooks deleted
+                    format: int64
+                message:
+                    type: string
+                    description: Human-readable status message
+            required:
+                - tenant_id
+                - deleted_feedback_records
+                - deleted_embeddings
+                - deleted_webhooks
                 - message
         SemanticSearchInputBody:
             type: object
@@ -1642,7 +1736,7 @@ components:
             type: array
             description: |
                 For feedback_record.deleted and webhook.deleted events only.
-                Array of deleted resource IDs (UUID strings). Single delete sends one ID; bulk delete sends all deleted IDs.
+                Array of deleted resource IDs (UUID strings). Single-resource deletes send one ID; multi-record deletes send all deleted IDs.
             items:
                 type: string
                 format: uuid

@@ -22,12 +22,12 @@ help:
 	@echo "  make mcp-smoke        - Run the live MCP package smoke test (requires Hub env vars)"
 	@echo "  make test-all         - Run all tests (unit + integration)"
 	@echo "  make tests-coverage   - Run tests with coverage report"
-	@echo "  make check-coverage   - Run tests and fail if coverage below COVERAGE_THRESHOLD (excludes cmd/api)"
+	@echo "  make check-coverage   - Run tests and fail if coverage below COVERAGE_THRESHOLD"
 	@echo "  make init-db          - Initialize database schema (run migrations with goose)"
 	@echo "  make migrate-status   - Show migration status"
 	@echo "  make migrate-validate - Validate migration files (no DB)"
 	@echo "  make river-migrate    - Run River job queue migrations (required for webhook delivery)"
-	@echo "  make fmt              - Format code (golangci-lint run --fix)"
+	@echo "  make fmt              - Format code"
 	@echo "  make lint             - Run linter (includes format checks)"
 	@echo "  make lint-new         - Run linter only on new code since base (default origin/main; for CI set LINT_BASE_REV to PR base SHA)"
 	@echo "  make deps             - Install Go dependencies"
@@ -60,17 +60,17 @@ mcp-smoke:
 # Run unit tests (fast, no database required)
 test-unit:
 	@echo "Running unit tests..."
-	go test ./internal/... -v
+	go test ./cmd/api ./internal/... -v
 
 # Run all tests (unit + integration)
 test-all: test-unit tests
 	@echo "All tests passed!"
 
-# Run tests with coverage (unit + integration).
-# cmd/api (app.go, main.go) is excluded—coverage is for internal/, pkg/, and tests/.
+# Run tests with package-instrumented coverage (unit + integration).
+# Integration tests live in tests/, so coverpkg is required for those tests to count against app packages.
 tests-coverage:
 	@echo "Running tests with coverage..."
-	go test ./internal/... ./pkg/... ./tests/... -v -cover -coverprofile=coverage.out
+	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./cmd/api ./internal/... ./pkg/... ./tests/... -v -coverpkg=./cmd/api,./internal/...,./pkg/... -coverprofile=coverage.out)
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
@@ -78,10 +78,10 @@ tests-coverage:
 COVERAGE_THRESHOLD ?= 15
 
 # Check coverage threshold (fail if below COVERAGE_THRESHOLD).
-# Excludes cmd/api (app.go, main.go) from coverage. Includes internal/, tests/, and pkg/.
+# Uses package-instrumented coverage so integration tests contribute to app package coverage.
 check-coverage:
 	@echo "Running tests with coverage (threshold: $(COVERAGE_THRESHOLD)%)..."
-	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./internal/... ./pkg/... ./tests/... -coverprofile=coverage.out)
+	@(set -a && [ -f .env ] && . ./.env && set +a; go test ./cmd/api ./internal/... ./pkg/... ./tests/... -coverpkg=./cmd/api,./internal/...,./pkg/... -coverprofile=coverage.out)
 	@COV=$$(go tool cover -func=coverage.out | \tail -1 | awk '{gsub(/%/, ""); print $$3}') && \
 	if [ -z "$$COV" ] || ! awk -v c="$$COV" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { exit (c+0 >= t) ? 0 : 1 }'; then \
 		echo ""; \
@@ -292,11 +292,11 @@ install-tools:
 	go install github.com/riverqueue/river/cmd/river@$(RIVER_VERSION)
 	@echo "Tools installed (golangci-lint $(GOLANGCI_LINT_VERSION), govulncheck $(GOVULNCHECK_VERSION), goose $(GOOSE_VERSION), river $(RIVER_VERSION))"
 
-# Format code (golangci-lint applies gofumpt + gci from .golangci.yml formatters)
+# Format code (golangci-lint applies gofumpt + gci from .golangci.yml formatters).
 fmt:
 	@echo "Formatting code..."
 	@test -x $(GOLANGCI_LINT) || { echo "Error: golangci-lint not found. Install with: make install-tools"; exit 1; }
-	$(GOLANGCI_LINT) run --fix ./...
+	$(GOLANGCI_LINT) fmt ./...
 	@echo "Code formatted"
 
 # Lint code

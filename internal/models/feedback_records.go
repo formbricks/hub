@@ -246,14 +246,14 @@ type ListFeedbackRecordsResponse struct {
 	NextCursor string           `json:"next_cursor,omitempty"` // present when there may be more results
 }
 
-// BulkDeleteFilters represents query parameters for bulk delete operation.
-type BulkDeleteFilters struct {
-	UserID   string  `form:"user_id"   validate:"required,no_null_bytes,min=1"`
-	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes,min=1"`
+// DeleteFeedbackRecordsByUserFilters represents query parameters for deleting feedback records by user.
+type DeleteFeedbackRecordsByUserFilters struct {
+	UserID   string  `form:"user_id"   validate:"required,no_null_bytes,min=1,max=255"`
+	TenantID *string `form:"tenant_id" validate:"omitempty,no_null_bytes,min=1,max=255"`
 }
 
-// BulkDeleteResponse represents the response for bulk delete operation.
-type BulkDeleteResponse struct {
+// DeleteFeedbackRecordsByUserResponse represents the response for deleting feedback records by user.
+type DeleteFeedbackRecordsByUserResponse struct {
 	DeletedCount int64  `json:"deleted_count"`
 	Message      string `json:"message"`
 }

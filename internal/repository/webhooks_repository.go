@@ -28,6 +28,14 @@ func NewWebhooksRepository(db *pgxpool.Pool) *WebhooksRepository {
 
 // Create inserts a new webhook.
 func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebhookRequest) (*models.Webhook, error) {
+	if req == nil {
+		return nil, huberrors.NewValidationError("request", "request is required")
+	}
+
+	if req.TenantID == nil || strings.TrimSpace(*req.TenantID) == "" {
+		return nil, huberrors.NewValidationError("tenant_id", "tenant_id is required")
+	}
+
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled

@@ -13,12 +13,13 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/pkg/cursor"
 )
 
-// ErrUserIDRequired is returned when bulk delete is called without user_id (err113).
-var ErrUserIDRequired = errors.New("user_id is required")
+// ErrUserIDRequired is returned when deleting feedback records by user is called without user_id.
+var ErrUserIDRequired = huberrors.NewValidationError("user_id", "user_id is required")
 
 // ErrEmbeddingBackfillNotConfigured is returned when BackfillEmbeddings is called without embedding inserter/queue.
 var ErrEmbeddingBackfillNotConfigured = errors.New("embedding backfill not configured")
@@ -36,7 +37,7 @@ type FeedbackRecordsRepository interface {
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	Delete(ctx context.Context, id uuid.UUID) error
-	BulkDelete(ctx context.Context, filters *models.BulkDeleteFilters) ([]models.DeletedFeedbackRecordsByTenant, error)
+	DeleteByUser(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) ([]models.DeletedFeedbackRecordsByTenant, error)
 }
 
 // EmbeddingsRepository defines the interface for embeddings table access.
@@ -212,12 +213,23 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecord(ctx context.Context, id uu
 	return nil
 }
 
-// BulkDeleteFeedbackRecords deletes all feedback records matching user_id.
+// DeleteFeedbackRecordsByUser deletes all feedback records matching user_id.
 // When tenant_id is provided, deletion is restricted to that tenant; otherwise all user records are deleted.
 // It publishes one tenant-aware FeedbackRecordDeleted event per tenant represented in the deleted rows.
-func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, filters *models.BulkDeleteFilters) (int, error) {
-	if filters == nil || filters.UserID == "" {
+func (s *FeedbackRecordsService) DeleteFeedbackRecordsByUser(
+	ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters,
+) (int, error) {
+	if filters == nil {
 		return 0, ErrUserIDRequired
+	}
+
+	normalizedUserID, err := normalizeRequiredUserIDValue(filters.UserID)
+	if err != nil {
+		return 0, err
+	}
+
+	normalizedFilters := &models.DeleteFeedbackRecordsByUserFilters{
+		UserID: normalizedUserID,
 	}
 
 	if filters.TenantID != nil {
@@ -226,15 +238,12 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 			return 0, err
 		}
 
-		filters = &models.BulkDeleteFilters{
-			UserID:   filters.UserID,
-			TenantID: &normalizedTenantID,
-		}
+		normalizedFilters.TenantID = &normalizedTenantID
 	}
 
-	groups, err := s.repo.BulkDelete(ctx, filters)
+	groups, err := s.repo.DeleteByUser(ctx, normalizedFilters)
 	if err != nil {
-		return 0, fmt.Errorf("bulk delete feedback records: %w", err)
+		return 0, fmt.Errorf("delete feedback records by user: %w", err)
 	}
 
 	deletedCount := 0
@@ -246,7 +255,7 @@ func (s *FeedbackRecordsService) BulkDeleteFeedbackRecords(ctx context.Context, 
 		}
 
 		if group.TenantID == "" {
-			slog.Error("bulk delete feedback records: deleted rows missing tenant_id; skipping webhook event",
+			slog.Error("delete feedback records by user: deleted rows missing tenant_id; skipping webhook event",
 				"deleted_count", len(group.IDs),
 			)
 

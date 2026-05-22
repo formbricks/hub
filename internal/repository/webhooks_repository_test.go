@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -8,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/datatypes"
+	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/models"
 )
 
 func TestListEnabledForEventTypeAndTenantQuery(t *testing.T) {
@@ -46,6 +49,44 @@ func TestListEnabledForEventTypeAndTenantQuery(t *testing.T) {
 			assert.Contains(t, query, tt.wantTenantClause)
 			assert.NotContains(t, query, tt.rejectTenantClause)
 			assert.True(t, strings.HasSuffix(strings.TrimSpace(query), "ORDER BY id"))
+		})
+	}
+}
+
+func TestWebhooksRepository_CreateValidatesTenantBoundary(t *testing.T) {
+	emptyTenantID := ""
+	whitespaceTenantID := " \t\n "
+
+	tests := []struct {
+		name string
+		req  *models.CreateWebhookRequest
+	}{
+		{
+			name: "nil request",
+		},
+		{
+			name: "nil tenant",
+			req:  &models.CreateWebhookRequest{},
+		},
+		{
+			name: "empty tenant",
+			req:  &models.CreateWebhookRequest{TenantID: &emptyTenantID},
+		},
+		{
+			name: "whitespace tenant",
+			req:  &models.CreateWebhookRequest{TenantID: &whitespaceTenantID},
+		},
+	}
+
+	repo := NewWebhooksRepository(nil)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			webhook, err := repo.Create(context.Background(), tt.req)
+
+			require.Nil(t, webhook)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, huberrors.ErrValidation)
 		})
 	}
 }
