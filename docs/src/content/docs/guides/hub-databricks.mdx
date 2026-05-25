@@ -1,0 +1,263 @@
+---
+title: Connecting Hub to Databricks
+description: Connect Formbricks Hub to Databricks via JDBC or Lakehouse Federation and analyze feedback data alongside the rest of your lakehouse - no ETL layer required.
+---
+
+import { Callout } from "@stainless-api/docs/components";
+
+Hub stores all data in a single PostgreSQL database. You can analyze it in **Databricks** by connecting Databricks directly to Hub's Postgres - either through **Lakehouse Federation** (zero-ETL, queried live) or with a **JDBC read** from a notebook (load once into a Delta table).
+
+## Summary
+
+| Step | Action                                                                                                                                                                                 |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Run Hub, worker, and Postgres ([Quick Start](/quickstart)); make sure Databricks can reach the Postgres host (Private Link / VPC peering / public endpoint with `sslmode=require`)     |
+| 2    | Choose a path: **Lakehouse Federation** (UI, zero-ETL, queries Hub live through Unity Catalog) or **JDBC + Delta** (notebook code, materialized copy)                                  |
+| 3    | Federation: create a `CONNECTION` and foreign `CATALOG`. JDBC: read with `spark.read.format("jdbc")` and `df.write.format("delta").saveAsTable(...)`                                   |
+| 4    | Run analytics queries using the same dimensions and metrics as in the [Quick reference](#quick-reference-dimensions-and-metrics) below                                                 |
+
+## Why Hub + Databricks?
+
+- **Direct access** - Databricks connects to Hub's Postgres database; no separate ETL pipeline required.
+- **Two integration paths** - Use [Lakehouse Federation](https://docs.databricks.com/aws/en/query-federation/) for live, governed queries through Unity Catalog, or use JDBC + Delta for a materialized lakehouse copy.
+- **Same data model** - Hub's [Data Model](/core-concepts/data-model) uses one row per response in a single table; ready for Spark SQL aggregations.
+
+## Step 1: Get Hub running
+
+If Formbricks Hub is not running yet, follow the [Quick Start Guide](/quickstart) to start Postgres, apply migrations automatically, and start the Hub API and worker.
+
+Note the **database connection details** you use for Hub (host, port, database name, user, password). You will need them for Databricks. If you use the [compose file](/quickstart#option-1-docker-compose-recommended) from the docs, that is typically:
+
+| Setting       | Example value                                                                                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host          | A hostname or IP that Databricks can reach (for example, your Postgres public endpoint or a Private Link target)                            |
+| Port          | `5432`                                                                                                                                      |
+| Database name | `hub`                                                                                                                                       |
+| Username      | `formbricks`                                                                                                                                |
+| Password      | Your Postgres password (in the [Quick Start](/quickstart) compose setup this is `POSTGRES_PASSWORD` in `.env`; default is `formbricks_dev`) |
+
+<Callout variant="note">
+  Databricks workspaces run in a cloud VPC/VNet, so they cannot reach a Hub
+  Postgres on `localhost`. For production, prefer
+  [AWS PrivateLink](https://docs.databricks.com/aws/en/security/network/classic/privatelink),
+  [Azure Private Endpoint](https://learn.microsoft.com/en-us/azure/databricks/security/network/classic/private-link),
+  or VPC peering; for a quick test, expose Postgres on a public endpoint with
+  `sslmode=require` and allowlist the Databricks workspace NAT IPs.
+</Callout>
+
+## Step 2: Choose a connection path
+
+Databricks ships the PostgreSQL JDBC driver (`org.postgresql.Driver`) on every current Databricks Runtime, so no extra library install is needed. You have two practical ways to query `feedback_records`:
+
+- **Lakehouse Federation** (recommended when you have Unity Catalog) - Create a `CONNECTION` and a foreign `CATALOG` once, then query Hub live from any notebook, SQL editor, or dashboard. Filters, projections, limits, and aggregates are pushed down to Postgres on DBR 13.3 LTS+ (join pushdown is a separate Public Preview feature that requires DBR 17.2+ or SQL warehouses 2025.30+).
+- **JDBC + Delta** - From a notebook, read `feedback_records` via JDBC into a Spark DataFrame and optionally write it to a Delta table for repeat queries.
+
+Pick Federation for governed, low-latency live access; pick JDBC + Delta when you want a local materialized copy or are on a workspace without Unity Catalog. Step 3 covers both paths - follow only the one you chose.
+
+## Step 3a: Lakehouse Federation (Unity Catalog)
+
+Requires Databricks Runtime 13.3 LTS or later in Standard/Dedicated mode, or a Pro/Serverless SQL warehouse, plus `CREATE CONNECTION` and `CREATE CATALOG` privileges on the metastore.
+
+### Create the connection
+
+1. In your Databricks workspace, open **Catalog Explorer**, then click **+ Add -> Add a connection**.
+2. Choose **PostgreSQL** as the connection type.
+3. Enter the values from the [Step 1 table](#step-1-get-hub-running):
+   - **Host** - Hub's Postgres host
+   - **Port** - `5432`
+   - **User** - `formbricks`
+   - **Password** - Hub's Postgres password (Databricks will offer to store it as a Secret)
+4. Click **Test connection**, then **Create**.
+
+Or use SQL:
+
+```sql
+CREATE CONNECTION hub_pg
+  TYPE postgresql
+  OPTIONS (
+    host '<hub-postgres-host>',
+    port '5432',
+    user '<user>',
+    password secret('<scope>', '<key>')
+  );
+```
+
+### Create the foreign catalog
+
+1. Still in Catalog Explorer, click **+ Add -> Add a catalog**.
+2. Choose **Foreign catalog**, name it (for example, `hub`), select the connection `hub_pg`, and set the **Database** to `hub`.
+3. Click **Create**.
+
+Or use SQL:
+
+```sql
+CREATE FOREIGN CATALOG hub
+  USING CONNECTION hub_pg
+  OPTIONS (database 'hub');
+```
+
+You can now query `feedback_records` live from anywhere in Databricks:
+
+```sql
+SELECT * FROM hub.public.feedback_records LIMIT 100;
+```
+
+For the full table schema - column names, types, and field semantics (for example, `field_type`, `value_number`, `value_text`) - see the [Data Model](/core-concepts/data-model) doc.
+
+<Callout variant="note">
+  Federation does not copy data. Each query is rewritten to a pushdown-aware
+  PostgreSQL query, so make sure Hub's Postgres has enough capacity for your
+  analytics workload, or schedule materialized copies with the JDBC pattern
+  below.
+</Callout>
+
+## Step 3b: JDBC + Delta (notebook)
+
+If you do not have Unity Catalog or you want a materialized copy of `feedback_records` in Delta, read it from a notebook.
+
+### Store Postgres credentials as a secret
+
+```bash
+databricks secrets create-scope hub
+databricks secrets put-secret hub pg_user --string-value formbricks
+databricks secrets put-secret hub pg_password --string-value <your-password>
+```
+
+### Read `feedback_records` via JDBC
+
+```python
+jdbc_url = "jdbc:postgresql://<hub-postgres-host>:5432/hub?sslmode=require"
+
+reader = (
+    spark.read.format("jdbc")
+    .option("url", jdbc_url)
+    .option("driver", "org.postgresql.Driver")
+    .option("user", dbutils.secrets.get("hub", "pg_user"))
+    .option("password", dbutils.secrets.get("hub", "pg_password"))
+)
+
+# Whole table
+df = reader.option("dbtable", "public.feedback_records").load()
+
+# Or push a query down (faster for incremental loads)
+df_recent = (
+    reader
+    .option(
+        "query",
+        """
+        SELECT id, tenant_id, submission_id, source_type, source_id,
+               field_id, field_type, value_text, value_number,
+               value_boolean, value_date, metadata, collected_at,
+               created_at, updated_at
+        FROM public.feedback_records
+        WHERE updated_at > now() - interval '1 day'
+        """,
+    )
+    .load()
+)
+```
+
+<Callout variant="note">
+  Databricks Runtime 11.3 LTS and above also ship a named PostgreSQL connector
+  (`spark.read.format("postgresql")`) that accepts separate `host`, `port`,
+  and `database` options instead of a JDBC `url`. Either form works; this
+  guide uses `format("jdbc")` so the same code runs on older runtimes too.
+</Callout>
+
+<Callout variant="note">
+  `dbtable` and `query` are mutually exclusive. Use `dbtable` when you also want
+  parallel reads with `partitionColumn`, `lowerBound`, `upperBound`, and
+  `numPartitions`. Use `query` to push filters and projections down to Postgres.
+</Callout>
+
+### Write to a Delta table
+
+```python
+(
+    df.write
+    .mode("overwrite")  # or .mode("append") for incremental loads
+    .format("delta")
+    .saveAsTable("main.hub.feedback_records")
+)
+```
+
+You can now query the Delta table from Databricks SQL or any notebook:
+
+```sql
+SELECT source_type, count(*) FROM main.hub.feedback_records GROUP BY source_type;
+```
+
+## Step 4: Example queries
+
+Whether you query the foreign catalog (`hub.public.feedback_records`) or a Delta table (`main.hub.feedback_records`), the analytics are identical.
+
+### NPS trend over time
+
+Average NPS per week, filtered to NPS questions:
+
+```sql
+SELECT
+  date_trunc('week', collected_at) AS week,
+  ROUND(AVG(value_number), 2)      AS avg_nps,
+  COUNT(*)                         AS responses
+FROM hub.public.feedback_records
+WHERE field_type = 'nps' AND value_number IS NOT NULL
+GROUP BY 1
+ORDER BY 1;
+```
+
+### Feedback count by source
+
+```sql
+SELECT source_type, COUNT(*) AS count
+FROM hub.public.feedback_records
+GROUP BY source_type
+ORDER BY count DESC;
+```
+
+### NPS promoters / passives / detractors
+
+```sql
+SELECT
+  CASE
+    WHEN value_number <= 6 THEN 'Detractor (0-6)'
+    WHEN value_number <= 8 THEN 'Passive (7-8)'
+    ELSE                        'Promoter (9-10)'
+  END                AS nps_bucket,
+  COUNT(*)           AS count
+FROM hub.public.feedback_records
+WHERE field_type = 'nps' AND value_number IS NOT NULL
+GROUP BY 1
+ORDER BY MIN(value_number);
+```
+
+### Quick reference: dimensions and metrics
+
+For the complete list of columns and field types, see the [Data Model](/core-concepts/data-model).
+
+| Use case              | Dimension / filter                          | Metric                            |
+| --------------------- | ------------------------------------------- | --------------------------------- |
+| NPS/CSAT over time    | `collected_at`; filter `field_type = nps`   | AVG(value_number) or custom NPS % |
+| Count by source       | `source_type`                               | COUNT(\*)                         |
+| Score by question     | `field_id` or `field_label`                 | AVG(value_number)                 |
+| Categorical breakdown | `value_text` (for example, device, segment) | COUNT(\*)                         |
+| Multi-tenant          | Filter `tenant_id`                          | any                               |
+
+Once Databricks can reach Hub's Postgres, your feedback data is ready for SQL, notebooks, and dashboards alongside everything else in your lakehouse.
+
+## References
+
+**Hub**
+
+- [Quick Start](/quickstart) - Run Hub, worker, and Postgres
+- [Data Model](/core-concepts/data-model) - Table schema, columns, and field types for `feedback_records`
+- [Connecting Hub to Power BI](./hub-powerbi) - Same data, with Microsoft Power BI
+- [Connecting Hub to Superset](./hub-superset) - Same data, with Apache Superset
+- [Connecting Hub to Airbyte](./hub-airbyte) - Schedule periodic syncs into Snowflake, Databricks, BigQuery, or Redshift
+
+**Databricks**
+
+- [Query PostgreSQL with Databricks](https://docs.databricks.com/aws/en/connect/external-systems/postgresql) - JDBC reads and writes
+- [Run federated queries on PostgreSQL](https://docs.databricks.com/aws/en/query-federation/postgresql) - Lakehouse Federation setup
+- [What is Lakehouse Federation?](https://docs.databricks.com/aws/en/query-federation/) - Overview
+- [Secrets management](https://docs.databricks.com/aws/en/security/secrets/) - Store database credentials safely

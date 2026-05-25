@@ -143,6 +143,14 @@ export default defineConfig({
                   label: "Connecting Hub to Superset",
                   slug: "guides/hub-superset",
                 },
+                {
+                  label: "Connecting Hub to Databricks",
+                  slug: "guides/hub-databricks",
+                },
+                {
+                  label: "Connecting Hub to Airbyte",
+                  slug: "guides/hub-airbyte",
+                },
               ],
             },
             {
