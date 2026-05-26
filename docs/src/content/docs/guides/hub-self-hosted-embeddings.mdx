@@ -1,0 +1,279 @@
+---
+title: Self-Hosted Embeddings
+description: Run Hub embeddings against a self-hosted, OpenAI-compatible embeddings endpoint with the bundled Helm runtime or your own service.
+---
+
+import { Callout } from "@stainless-api/docs/components";
+
+Hub's similar-feedback and semantic-search endpoints rely on text embeddings.
+By default these are produced by a managed provider, but Hub can also run
+against a self-hosted, OpenAI-compatible embeddings endpoint. This keeps
+open-text feedback inside your own infrastructure and removes the dependency on
+an external AI provider.
+
+This guide shows how to configure Hub to use a self-hosted embeddings runtime
+and how to deploy the bundled
+[Hugging Face Text Embeddings Inference (TEI)](https://github.com/huggingface/text-embeddings-inference)
+runtime that ships with the Hub Helm chart.
+
+<Callout variant="note">
+  Hub stores embeddings as `halfvec(768)` and indexes them with HNSW. The
+  vector dimension is fixed at `768`. Self-hosted models must produce
+  768-dimensional vectors, either natively or by requesting a 768-dim output.
+</Callout>
+
+## Recommended Model
+
+The default recommended model for self-hosted Hub deployments is
+[`Alibaba-NLP/gte-multilingual-base`](https://huggingface.co/Alibaba-NLP/gte-multilingual-base):
+
+- Apache-2.0 licensed, no Hugging Face access gating.
+- Native `768`-dimensional output, matching Hub's stored embedding dimension.
+- 8192-token context window.
+- 75+ languages out of the box.
+- Runs on CPU; a 4 vCPU / 8 GiB node is sufficient for the bundled runtime.
+
+You can run any model that TEI supports as long as it returns 768-dimensional
+vectors, but the rest of this guide assumes the recommended model.
+
+## How Hub Talks to a Self-Hosted Endpoint
+
+Hub speaks the OpenAI embeddings protocol when `EMBEDDING_PROVIDER=openai` and
+sends requests to the URL in `EMBEDDING_BASE_URL`. The endpoint must accept
+`POST /v1/embeddings` with an `Authorization: Bearer <key>` header and return
+an OpenAI-compatible response.
+
+### Hub Environment Variables
+
+Set these on `hub-api` and `hub-worker`. Both processes must agree on the
+provider and model.
+
+| Variable                     | Required | Example                                       | Description                                                                                                |
+| ---------------------------- | -------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `EMBEDDING_PROVIDER`         | Yes      | `openai`                                      | Must be `openai` to use a custom OpenAI-compatible endpoint.                                               |
+| `EMBEDDING_MODEL`            | Yes      | `Alibaba-NLP/gte-multilingual-base`           | Model identifier Hub sends in the `model` field. Must match the model name served by your endpoint.        |
+| `EMBEDDING_BASE_URL`         | Yes      | `https://embeddings.example.com/v1`           | OpenAI-compatible embeddings root. Hub appends `/embeddings` to this URL.                                  |
+| `EMBEDDING_PROVIDER_API_KEY` | Yes      | `s3cret-internal-key`                         | Bearer token Hub sends to the endpoint. Required even when the endpoint runs inside your private network.  |
+| `EMBEDDING_MAX_CONCURRENT`   | No       | `5`                                           | Max concurrent embedding jobs run by `hub-worker`. Defaults to `5`.                                        |
+| `EMBEDDING_NORMALIZE`        | No       | `false`                                       | Whether Hub normalizes the returned vector before storage. Leave at `false` unless your model requires it. |
+
+See [Environment Variables](/reference/environment-variables) for the full
+runtime configuration reference.
+
+## Option 1: Bundled TEI Runtime (Helm)
+
+The Hub Helm chart can deploy TEI as a sidecar `Deployment` and wire Hub to it
+automatically. This is the simplest path when you already deploy Hub with the
+chart.
+
+Enable it under the `embeddings` key in your `values.yaml`:
+
+```yaml
+embeddings:
+  enabled: true
+  model: Alibaba-NLP/gte-multilingual-base
+
+  # Optional: pin a model revision for reproducible builds.
+  # revision: "<commit-sha-from-Hugging-Face>"
+
+  image:
+    repository: ghcr.io/huggingface/text-embeddings-inference
+    tag: cpu-1.9
+
+  # Keeps the default GTE CPU runtime within the default memory budget.
+  extraArgs:
+    - --dtype
+    - float16
+
+  resources:
+    requests:
+      cpu: "4"
+      memory: 8Gi
+    limits:
+      memory: 8Gi
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    accessModes:
+      - ReadWriteOnce
+```
+
+When `embeddings.enabled` is `true` the chart automatically sets the following
+on `hub-api` and `hub-worker`, so you do not need to define them under
+`config.data` or `secrets.stringData`:
+
+- `EMBEDDING_PROVIDER=openai`
+- `EMBEDDING_MODEL` from `embeddings.servedModelName` (or `embeddings.model` when unset)
+- `EMBEDDING_BASE_URL` from the in-cluster Service
+- `EMBEDDING_PROVIDER_API_KEY` from the embeddings Secret
+- `EMBEDDING_MAX_CONCURRENT` from `embeddings.maxConcurrent`
+- `EMBEDDING_NORMALIZE` from `embeddings.normalize`
+
+### Secrets
+
+The bundled runtime needs two secrets:
+
+- **Internal API key** — Hub and TEI must share the same bearer token so Hub's
+  requests are accepted by TEI.
+- **Hugging Face token (optional)** — Only required for private or gated
+  models. `Alibaba-NLP/gte-multilingual-base` is public, so this is normally
+  left unset.
+
+#### Internal API key
+
+You have three options, in order of preference for production:
+
+1. **Provide an existing Secret.** Recommended when you manage secrets with an
+   external system such as External Secrets Operator or sealed-secrets.
+
+   ```yaml
+   embeddings:
+     auth:
+       enabled: true
+       existingSecret: hub-embeddings-auth
+       secretKey: EMBEDDING_PROVIDER_API_KEY
+   ```
+
+2. **Provide the key inline.** Suitable for evaluation and tightly controlled
+   environments.
+
+   ```yaml
+   embeddings:
+     auth:
+       enabled: true
+       apiKey: "replace-with-a-strong-random-value"
+   ```
+
+3. **Let the chart generate one.** If neither `existingSecret` nor `apiKey`
+   is set, the chart generates a random 32-character key on first install and
+   keeps it stable across upgrades. Useful for getting started, but harder to
+   rotate.
+
+#### Hugging Face token
+
+Only set this if you switch to a gated model.
+
+```yaml
+embeddings:
+  huggingFace:
+    existingSecret: hub-embeddings-hf
+    tokenKey: HF_TOKEN
+```
+
+Or inline:
+
+```yaml
+embeddings:
+  huggingFace:
+    token: "hf_xxx"
+```
+
+### Verify the Endpoint
+
+After `helm upgrade`, port-forward the embeddings Service and check that it
+returns 768-dimensional vectors.
+
+```bash
+kubectl port-forward svc/<release>-hub-embeddings 8080:8080
+
+curl -s http://localhost:8080/v1/embeddings \
+  -H "Authorization: Bearer <EMBEDDING_PROVIDER_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Alibaba-NLP/gte-multilingual-base","input":"hello"}' \
+  | jq '.data[0].embedding | length'
+# 768
+```
+
+A `768` response confirms that TEI is healthy, the model is loaded, and the
+auth token matches what Hub will send.
+
+### Operational Limits
+
+The default chart settings are intentionally conservative:
+
+- **Single replica.** `embeddings.replicaCount` defaults to `1`.
+- **Autoscaling disabled.** `embeddings.autoscaling.enabled` defaults to
+  `false`.
+- **`ReadWriteOnce` model cache.** `embeddings.persistence.accessModes`
+  defaults to `[ReadWriteOnce]`, which is incompatible with multiple replicas
+  on most CSI drivers.
+
+To run more than one replica you need to choose one of:
+
+1. **Use a `ReadWriteMany` volume.** Set
+   `embeddings.persistence.accessModes: [ReadWriteMany]` and a storage class
+   that supports RWX. Each replica can then mount the same model cache.
+2. **Disable persistence.** Set `embeddings.persistence.enabled: false`. Each
+   replica downloads the model into an `emptyDir` on startup, which trades
+   storage for slower rollouts and more egress.
+3. **Pre-bake the model into a custom image.** Build a TEI image with the
+   model files baked in, set `embeddings.image.repository` to your image, and
+   keep persistence disabled. Best for air-gapped or rollout-sensitive
+   environments.
+
+Then enable autoscaling:
+
+```yaml
+embeddings:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+```
+
+<Callout variant="note">
+  The startup probe uses a long `failureThreshold` so the runtime has time to
+  download the model on first boot. When you change to a larger model or run
+  on a slower node, increase `embeddings.probes.startupProbe.failureThreshold`
+  and `periodSeconds` so the pod is not killed before TEI is ready.
+</Callout>
+
+## Option 2: Bring Your Own Endpoint
+
+If you already operate an embeddings service or use a different runtime, set
+`embeddings.enabled: false` (or omit the section entirely) and configure Hub
+directly. Any service that accepts `POST /v1/embeddings` with a bearer token
+and returns 768-dim vectors works.
+
+Set the variables on `hub-api` and `hub-worker`:
+
+```bash
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=Alibaba-NLP/gte-multilingual-base
+EMBEDDING_BASE_URL=https://embeddings.internal.example.com/v1
+EMBEDDING_PROVIDER_API_KEY=<bearer-token>
+```
+
+In the Helm chart these go under `config.data` (non-secret) and
+`secrets.stringData` (secret), or via your external secret store.
+
+Then verify against your endpoint with the same curl command as above.
+
+## Troubleshooting
+
+### Embedding Jobs Stay in `discarded`
+
+Check `river_job` for `feedback_embedding` rows and inspect their `errors`
+column. The two most common causes:
+
+- **`connection reset by peer` or `connection refused`** — Hub reached the
+  endpoint before it was ready. Wait for the runtime to finish model warmup,
+  then re-enqueue with `make run-backfill-embeddings`.
+- **`401 Unauthorized`** — `EMBEDDING_PROVIDER_API_KEY` does not match the
+  bearer token the endpoint expects.
+
+### Search Endpoints Return `503`
+
+Hub returns `503 Service Unavailable` from
+`/v1/feedback-records/search/semantic` and `/v1/feedback-records/{id}/similar`
+when embeddings are not configured. Confirm both `EMBEDDING_PROVIDER` and
+`EMBEDDING_MODEL` are set on `hub-api`.
+
+### Vector Length Is Not 768
+
+Hub rejects writes whose vector dimension does not equal `768`. Configure your
+model or runtime to return 768-dim output, either by selecting a native-768
+model or by requesting a 768-dim slice if the model supports Matryoshka
+truncation.
