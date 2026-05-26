@@ -1,10 +1,26 @@
-import { defineConfig } from "astro/config";
+import { defineConfig, envField } from "astro/config";
 import { generateAPIReferenceItems, stainlessDocs } from "@stainless-api/docs";
 import aiChat from "@stainless-api/docs-ai-chat/plugin";
+import { posthog } from "./src/integrations/posthog";
 
 // https://astro.build/config
 export default defineConfig({
+  env: {
+    schema: {
+      PUBLIC_POSTHOG_KEY: envField.string({
+        context: "client",
+        access: "public",
+        optional: true,
+      }),
+      PUBLIC_POSTHOG_HOST: envField.string({
+        context: "client",
+        access: "public",
+        default: "https://eu.i.posthog.com",
+      }),
+    },
+  },
   integrations: [
+    posthog,
     stainlessDocs({
       apiReference: {
         stainlessProject: "hub",
