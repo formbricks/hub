@@ -31,6 +31,14 @@ type problemErrorWriter struct {
 	intercepted bool
 }
 
+// Unwrap exposes the wrapped ResponseWriter so http.NewResponseController can
+// traverse the middleware chain to reach optional interfaces (Flusher,
+// Hijacker, Pusher, ReaderFrom). Handlers needing streaming or upgrades should
+// use NewResponseController(w) rather than a direct type assertion on w.
+func (w *problemErrorWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func (w *problemErrorWriter) WriteHeader(code int) {
 	if w.wroteHeader {
 		return

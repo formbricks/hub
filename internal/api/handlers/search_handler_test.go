@@ -231,3 +231,28 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 		assert.Equal(t, similarVal, resp.Data[0].ValueText)
 	})
 }
+
+func TestSearchHandler_MethodNotAllowedSetsAllowHeader(t *testing.T) {
+	t.Run("semantic search wrong method advertises POST", func(t *testing.T) {
+		handler := NewSearchHandler(&mockSearchService{})
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+			"http://test/v1/feedback-records/search/semantic", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.SemanticSearch(rec, req)
+
+		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+		assert.Equal(t, http.MethodPost, rec.Header().Get("Allow"))
+	})
+
+	t.Run("similar feedback wrong method advertises GET", func(t *testing.T) {
+		handler := NewSearchHandler(&mockSearchService{})
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/v1/feedback-records/abc/similar", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.SimilarFeedback(rec, req)
+
+		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+		assert.Equal(t, http.MethodGet, rec.Header().Get("Allow"))
+	})
+}

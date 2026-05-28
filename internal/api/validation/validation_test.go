@@ -59,4 +59,6 @@ func TestValidateStructPreservesValidationDetails(t *testing.T) {
 	require.ErrorAs(t, err, &validationErrors)
 	require.Len(t, validationErrors, 1)
 	assert.Equal(t, "value_text", validationErrors[0].Field())
+	assert.Equal(t, "no_null_bytes", validationErrors[0].Tag())
+	assert.Equal(t, valueText, validationErrors[0].Value())
 }

@@ -18,6 +18,13 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap exposes the wrapped ResponseWriter so http.NewResponseController can
+// traverse the middleware chain to reach optional interfaces (Flusher,
+// Hijacker, Pusher, ReaderFrom).
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 // Logging middleware logs HTTP requests.
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

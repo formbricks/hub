@@ -9,6 +9,11 @@ import (
 	"github.com/formbricks/hub/internal/observability"
 )
 
+// requestIDHeader names the header that carries the request correlation ID.
+// It mirrors the body field `request_id` so callers get parity regardless of
+// middleware ordering. Kept in sync with middleware/request_id.go.
+const requestIDHeader = "X-Request-ID"
+
 // RespondError maps err to an RFC 9457 problem response, logs it exactly once,
 // and writes it. It is the single error exit point for handlers: domain and
 // sentinel errors are translated to the right status, code, and invalid_params,
@@ -66,6 +71,12 @@ func writeProblem(w http.ResponseWriter, r *http.Request, problem ProblemDetails
 
 	w.Header().Set("Content-Type", problemContentType)
 	w.Header().Set("Cache-Control", "no-store")
+
+	// Mirror request_id into the response header so header/body stay consistent
+	// even if upstream middleware ordering changes.
+	if problem.RequestID != "" {
+		w.Header().Set(requestIDHeader, problem.RequestID)
+	}
 
 	// RFC 9110 §11.6.1 requires a WWW-Authenticate challenge on 401 responses.
 	if problem.Status == http.StatusUnauthorized {

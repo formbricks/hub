@@ -66,6 +66,36 @@ func TestProblemErrorsPassesThroughExistingProblemJSON(t *testing.T) {
 	assert.Equal(t, "feedback record not found", problem.Detail)
 }
 
+// flushableRecorder wraps an httptest.ResponseRecorder with a Flush method so
+// it satisfies http.Flusher. This lets us verify that the middleware wrapper
+// exposes the underlying writer's optional interfaces via Unwrap.
+type flushableRecorder struct {
+	*httptest.ResponseRecorder
+
+	flushed bool
+}
+
+func (r *flushableRecorder) Flush() { r.flushed = true }
+
+func TestProblemErrorsForwardsOptionalInterfacesViaUnwrap(t *testing.T) {
+	rec := &flushableRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	var flushErr error
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Modern Go uses NewResponseController to reach optional interfaces
+		// through middleware wrappers. The middleware must expose Unwrap() for
+		// this to traverse the chain.
+		flushErr = http.NewResponseController(w).Flush()
+	})
+	handler := ProblemErrors(inner)
+
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x", http.NoBody))
+
+	require.NoError(t, flushErr)
+	assert.True(t, rec.flushed, "Flush should reach the underlying ResponseWriter")
+}
+
 func TestProblemErrorsPassesThroughSuccess(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

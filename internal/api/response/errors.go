@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -96,8 +97,10 @@ func problemFromJSONDecodeError(err error) (ProblemDetails, bool) {
 		return problem, true
 	}
 
+	// json.SyntaxError covers malformed JSON; io.ErrUnexpectedEOF covers truncated
+	// payloads (e.g. `{"x":`). Both are client mistakes, not server failures.
 	var syntaxErr *json.SyntaxError
-	if errors.As(err, &syntaxErr) {
+	if errors.As(err, &syntaxErr) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return newProblem(http.StatusBadRequest, "Invalid JSON: "+err.Error()), true
 	}
 
@@ -110,13 +113,12 @@ func problemFromJSONDecodeError(err error) (ProblemDetails, bool) {
 		return problem, true
 	}
 
-	if strings.Contains(err.Error(), "unknown field") {
+	// unknownJSONField is anchored on the json decoder's exact `unknown field "X"`
+	// format, so an unrelated error that happens to contain those words won't be
+	// misclassified as a validation problem.
+	if field, ok := unknownJSONField(err); ok {
 		problem := newValidationProblem()
-		if field, ok := unknownJSONField(err); ok {
-			problem.InvalidParams = []InvalidParam{{Name: field, Reason: "is not a recognized request field"}}
-		} else {
-			problem.Detail = "Request body contains an unrecognized field"
-		}
+		problem.InvalidParams = []InvalidParam{{Name: field, Reason: "is not a recognized request field"}}
 
 		return problem, true
 	}

@@ -65,6 +65,7 @@ const invalidCursorReason = "omit it for the first page, or use the exact next_c
 // SemanticSearch handles POST /v1/feedback-records/search/semantic.
 func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
 		response.RespondProblem(w, r, http.StatusMethodNotAllowed, "POST required")
 
 		return
@@ -132,6 +133,7 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 // SimilarFeedback handles GET /v1/feedback-records/{id}/similar.
 func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
 		response.RespondProblem(w, r, http.StatusMethodNotAllowed, "GET required")
 
 		return

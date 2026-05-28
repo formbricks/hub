@@ -401,6 +401,38 @@ func TestRespondErrorPayloadTooLarge(t *testing.T) {
 	assert.Contains(t, problem.Detail, "1048576")
 }
 
+func TestRespondErrorTruncatedJSONIsBadRequest(t *testing.T) {
+	// A truncated body (`{"x":`) returns io.ErrUnexpectedEOF from the decoder,
+	// which is a client mistake, not a server failure.
+	var dst struct {
+		X string `json:"x"`
+	}
+
+	dec := json.NewDecoder(strings.NewReader(`{"x":`))
+	err := dec.Decode(&dst)
+	require.Error(t, err)
+
+	rec := httptest.NewRecorder()
+	RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), err)
+
+	problem := decodeProblem(t, rec)
+	assert.Equal(t, http.StatusBadRequest, problem.Status)
+	assert.Equal(t, CodeBadRequest, problem.Code)
+	assert.Contains(t, problem.Detail, "Invalid JSON")
+}
+
+func TestProblemResponseMirrorsRequestIDIntoHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := newReq(t, http.MethodGet, "/v1/x")
+	r = r.WithContext(context.WithValue(r.Context(), observability.RequestIDKey, "req-mirror-1"))
+
+	RespondError(rec, r, huberrors.NewNotFoundError("x", "not found"))
+
+	problem := decodeProblem(t, rec)
+	assert.Equal(t, "req-mirror-1", problem.RequestID)
+	assert.Equal(t, "req-mirror-1", rec.Header().Get("X-Request-ID"))
+}
+
 func TestProblemResponseSetsNoStoreCacheControl(t *testing.T) {
 	rec := httptest.NewRecorder()
 	RespondError(rec, newReq(t, http.MethodGet, "/v1/x"), huberrors.NewNotFoundError("x", "not found"))

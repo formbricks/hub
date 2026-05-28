@@ -1444,6 +1444,7 @@ components:
                         - /v1/feedback-records
                 invalid_params:
                     type: array
+                    maxItems: 100
                     description: Field-level validation failures (RFC 9457 "invalid_params" extension). Present on validation errors.
                     items:
                         $ref: '#/components/schemas/InvalidParam'
