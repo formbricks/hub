@@ -17,7 +17,7 @@ func Auth(apiKey string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				response.RespondUnauthorized(w, "Missing Authorization header")
+				response.RespondUnauthorized(w, r, "Missing Authorization header")
 
 				return
 			}
@@ -27,14 +27,14 @@ func Auth(apiKey string) func(http.Handler) http.Handler {
 
 			parts := strings.SplitN(authHeader, " ", bearerParts)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
-				response.RespondUnauthorized(w, "Invalid Authorization header format. Expected: Bearer <api-key>")
+				response.RespondUnauthorized(w, r, "Invalid Authorization header format. Expected: Bearer <api-key>")
 
 				return
 			}
 
 			providedKey := parts[1]
 			if providedKey == "" {
-				response.RespondUnauthorized(w, "API key is empty")
+				response.RespondUnauthorized(w, r, "API key is empty")
 
 				return
 			}
@@ -52,7 +52,7 @@ func Auth(apiKey string) func(http.Handler) http.Handler {
 			copy(paddedExpected, expected)
 
 			if subtle.ConstantTimeCompare(paddedProvided, paddedExpected) != 1 {
-				response.RespondUnauthorized(w, "Invalid API key")
+				response.RespondUnauthorized(w, r, "Invalid API key")
 
 				return
 			}

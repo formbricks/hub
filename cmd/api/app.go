@@ -404,8 +404,14 @@ func newHTTPServer(
 		otelOpts = append(otelOpts, otelhttp.WithTracerProvider(tracerProvider))
 	}
 
+	// maxRequestBodyBytes caps request bodies (1 MiB); larger payloads decode to 413 Payload Too Large.
+	const maxRequestBodyBytes = 1 << 20
+
+	limited := middleware.MaxBodyBytes(maxRequestBodyBytes)(mux)
+
+	// ProblemErrors normalizes ServeMux's plain-text 404/405 into problem+json.
 	// Logging runs inside otelhttp so r.Context() has the span when we log (trace_id/span_id in access logs).
-	inner := middleware.Logging(mux)
+	inner := middleware.Logging(middleware.ProblemErrors(limited))
 	handler := otelhttp.NewHandler(inner, "hub-api", otelOpts...)
 	handler = middleware.RequestID(handler)
 

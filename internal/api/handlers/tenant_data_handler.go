@@ -2,17 +2,11 @@ package handlers
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/formbricks/hub/internal/api/response"
-	"github.com/formbricks/hub/internal/api/validation"
-	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
-
-const tenantDataDeleteRoute = "DELETE /v1/tenants/{tenant_id}/data"
 
 // TenantDataService defines the interface for tenant data purge business logic.
 type TenantDataService interface {
@@ -35,20 +29,7 @@ func (h *TenantDataHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.service.DeleteTenantData(r.Context(), tenantID)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrValidation) {
-			validation.RespondValidationError(w, err)
-
-			return
-		}
-
-		slog.Error("Failed to delete tenant data", // #nosec G706 -- slog key-values
-			"route", tenantDataDeleteRoute,
-			"tenant_id_present", tenantID != "",
-			"tenant_id_length", len(tenantID),
-			"error", err,
-		)
-
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}

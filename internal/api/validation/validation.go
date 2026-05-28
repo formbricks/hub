@@ -2,7 +2,6 @@
 package validation
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,7 +14,6 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"github.com/formbricks/hub/internal/api/response"
-	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -99,14 +97,15 @@ func ValidateStruct(s any) error {
 	return nil
 }
 
-// formatValidationErrors converts validator errors to a formatted error message
-// that can be used in RFC 7807 Problem Details responses.
+// formatValidationErrors wraps validator errors so they carry both a readable
+// joined message (for logs) and the underlying validator.ValidationErrors, which
+// the response layer extracts to build RFC 9457 invalid_params.
 func formatValidationErrors(err error) error {
 	var validationErrors validator.ValidationErrors
 	if errors.As(err, &validationErrors) {
 		messages := make([]string, 0, len(validationErrors))
 		for _, fieldError := range validationErrors {
-			messages = append(messages, formatFieldError(fieldError))
+			messages = append(messages, fieldError.Field()+" "+response.FormatFieldError(fieldError))
 		}
 
 		return requestValidationError{
@@ -140,96 +139,6 @@ func (e requestValidationError) As(target any) bool {
 	*validationErrors = e.validationErrors
 
 	return true
-}
-
-// formatFieldError formats a single field validation error.
-func formatFieldError(fieldError validator.FieldError) string {
-	field := fieldError.Field()
-	tag := fieldError.Tag()
-
-	switch tag {
-	case "required":
-		return field + " is required"
-	case "min":
-		return fmt.Sprintf("%s must be at least %s", field, fieldError.Param())
-	case "max":
-		return fmt.Sprintf("%s must be at most %s", field, fieldError.Param())
-	case "gte":
-		return fmt.Sprintf("%s must be greater than or equal to %s", field, fieldError.Param())
-	case "lte":
-		return fmt.Sprintf("%s must be less than or equal to %s", field, fieldError.Param())
-	case "oneof":
-		return fmt.Sprintf("%s must be one of: %s", field, fieldError.Param())
-	case "field_type":
-		return field + " must be one of: " + models.ValidFieldTypeValuesString()
-	case "uuid":
-		return field + " must be a valid UUID"
-	case "rfc3339":
-		return field + " must be in RFC3339 format (ISO 8601)"
-	case "no_null_bytes":
-		return field + " must not contain NULL bytes"
-	case "http_url":
-		return field + " must be a valid HTTP or HTTPS URL"
-	case "url":
-		return field + " must be a valid URL"
-	default:
-		return field + " is invalid"
-	}
-}
-
-// GetValidationErrorDetails extracts field-level error details from validation errors
-// Returns a slice of ErrorDetail for RFC 7807 Problem Details.
-// Supports both validator.ValidationErrors and huberrors.ValidationError.
-func GetValidationErrorDetails(err error) []response.ErrorDetail {
-	var details []response.ErrorDetail
-
-	var validationErrors validator.ValidationErrors
-	if errors.As(err, &validationErrors) {
-		for _, fieldError := range validationErrors {
-			details = append(details, response.ErrorDetail{
-				Location: fieldError.Field(),
-				Message:  formatFieldError(fieldError),
-				Value:    fieldError.Value(),
-			})
-		}
-
-		return details
-	}
-
-	var hubValidation *huberrors.ValidationError
-	if errors.As(err, &hubValidation) {
-		msg := hubValidation.Message
-		if msg == "" {
-			msg = "validation failed"
-		}
-
-		details = append(details, response.ErrorDetail{
-			Location: hubValidation.Field,
-			Message:  msg,
-		})
-	}
-
-	return details
-}
-
-// RespondValidationError writes a validation error response with RFC 7807 Problem Details.
-func RespondValidationError(w http.ResponseWriter, err error) {
-	details := GetValidationErrorDetails(err)
-
-	problem := response.ProblemDetails{
-		Type:   response.ProblemTypeValidationError,
-		Title:  "Validation Error",
-		Status: http.StatusBadRequest,
-		Detail: err.Error(),
-		Errors: details,
-	}
-
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(http.StatusBadRequest)
-
-	if err := json.NewEncoder(w).Encode(problem); err != nil {
-		slog.Error("Failed to encode validation error response", "error", err)
-	}
 }
 
 // DecodeQueryParams decodes URL query parameters into a struct.

@@ -60,16 +60,18 @@ const (
 	maxSearchLimit     = 100
 )
 
+const invalidCursorReason = "omit it for the first page, or use the exact next_cursor value from the previous response"
+
 // SemanticSearch handles POST /v1/feedback-records/search/semantic.
 func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		response.RespondError(w, http.StatusMethodNotAllowed, "Method Not Allowed", "POST required")
+		response.RespondProblem(w, r, http.StatusMethodNotAllowed, "POST required")
 
 		return
 	}
 
 	if h.service == nil {
-		response.RespondServiceUnavailable(w, "Semantic search is not available: embeddings are not configured.")
+		response.RespondServiceUnavailable(w, r, "Semantic search is not available: embeddings are not configured.")
 
 		return
 	}
@@ -80,13 +82,13 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	if req.TenantID == "" {
-		response.RespondBadRequest(w, "tenant_id is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "tenant_id", Reason: "is required"})
 
 		return
 	}
@@ -98,24 +100,24 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	res, err := h.service.SemanticSearch(r.Context(), req.Query, req.TenantID, limit, minScore, cursor)
 	if err != nil {
 		if errors.Is(err, service.ErrMissingTenantID) {
-			response.RespondBadRequest(w, "tenant_id is required")
+			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "tenant_id", Reason: "is required"})
 
 			return
 		}
 
 		if errors.Is(err, service.ErrEmptyQuery) {
-			response.RespondBadRequest(w, "query is required and must be non-empty")
+			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "query", Reason: "is required and must be non-empty"})
 
 			return
 		}
 
 		if errors.Is(err, service.ErrInvalidCursor) {
-			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
+			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "cursor", Reason: invalidCursorReason})
 
 			return
 		}
 
-		response.RespondInternalServerError(w, "Search failed")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -130,34 +132,34 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 // SimilarFeedback handles GET /v1/feedback-records/{id}/similar.
 func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		response.RespondError(w, http.StatusMethodNotAllowed, "Method Not Allowed", "GET required")
+		response.RespondProblem(w, r, http.StatusMethodNotAllowed, "GET required")
 
 		return
 	}
 
 	if h.service == nil {
-		response.RespondServiceUnavailable(w, "Similar feedback is not available: embeddings are not configured.")
+		response.RespondServiceUnavailable(w, r, "Similar feedback is not available: embeddings are not configured.")
 
 		return
 	}
 
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		response.RespondBadRequest(w, "Feedback record ID is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "is required"})
 
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		response.RespondBadRequest(w, "Invalid feedback record ID")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
 
 		return
 	}
 
 	tenantID := r.URL.Query().Get("tenant_id")
 	if tenantID == "" {
-		response.RespondBadRequest(w, "tenant_id query parameter is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "tenant_id", Reason: "is required"})
 
 		return
 	}
@@ -169,24 +171,24 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 	res, err := h.service.SimilarFeedback(r.Context(), id, tenantID, limit, minScore, cursor)
 	if err != nil {
 		if errors.Is(err, service.ErrEmbeddingNotFound) {
-			response.RespondNotFound(w, "Feedback record has no embedding for the current model")
+			response.RespondNotFound(w, r, "Feedback record has no embedding for the current model")
 
 			return
 		}
 
 		if errors.Is(err, service.ErrMissingTenantID) {
-			response.RespondBadRequest(w, "tenant_id is required")
+			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "tenant_id", Reason: "is required"})
 
 			return
 		}
 
 		if errors.Is(err, service.ErrInvalidCursor) {
-			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
+			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "cursor", Reason: invalidCursorReason})
 
 			return
 		}
 
-		response.RespondInternalServerError(w, "Similar feedback failed")
+		response.RespondError(w, r, err)
 
 		return
 	}

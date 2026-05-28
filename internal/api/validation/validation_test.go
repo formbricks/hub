@@ -3,6 +3,7 @@ package validation
 import (
 	"testing"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,11 +19,10 @@ func TestValidateStructUsesAPITagNames(t *testing.T) {
 		require.ErrorIs(t, err, ErrValidationFailed)
 		assert.Equal(t, "validation failed: field_id is required", err.Error())
 
-		details := GetValidationErrorDetails(err)
-		require.Len(t, details, 1)
-		assert.Equal(t, "field_id", details[0].Location)
-		assert.Equal(t, "field_id is required", details[0].Message)
-		assert.Empty(t, details[0].Value)
+		var validationErrors validator.ValidationErrors
+		require.ErrorAs(t, err, &validationErrors)
+		require.Len(t, validationErrors, 1)
+		assert.Equal(t, "field_id", validationErrors[0].Field())
 	})
 
 	t.Run("form tag", func(t *testing.T) {
@@ -35,11 +35,10 @@ func TestValidateStructUsesAPITagNames(t *testing.T) {
 		require.ErrorIs(t, err, ErrValidationFailed)
 		assert.Equal(t, "validation failed: tenant_id is required", err.Error())
 
-		details := GetValidationErrorDetails(err)
-		require.Len(t, details, 1)
-		assert.Equal(t, "tenant_id", details[0].Location)
-		assert.Equal(t, "tenant_id is required", details[0].Message)
-		assert.Nil(t, details[0].Value)
+		var validationErrors validator.ValidationErrors
+		require.ErrorAs(t, err, &validationErrors)
+		require.Len(t, validationErrors, 1)
+		assert.Equal(t, "tenant_id", validationErrors[0].Field())
 	})
 }
 
@@ -56,9 +55,8 @@ func TestValidateStructPreservesValidationDetails(t *testing.T) {
 	require.ErrorIs(t, err, ErrValidationFailed)
 	assert.Equal(t, "validation failed: value_text must not contain NULL bytes", err.Error())
 
-	details := GetValidationErrorDetails(err)
-	require.Len(t, details, 1)
-	assert.Equal(t, "value_text", details[0].Location)
-	assert.Equal(t, "value_text must not contain NULL bytes", details[0].Message)
-	assert.Equal(t, valueText, details[0].Value)
+	var validationErrors validator.ValidationErrors
+	require.ErrorAs(t, err, &validationErrors)
+	require.Len(t, validationErrors, 1)
+	assert.Equal(t, "value_text", validationErrors[0].Field())
 }

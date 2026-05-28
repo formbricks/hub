@@ -3,17 +3,13 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/api/validation"
-	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
-	"github.com/formbricks/hub/pkg/cursor"
 )
 
 // WebhooksService defines the interface for webhooks business logic.
@@ -43,34 +39,20 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		slog.Warn("Invalid request body", "method", r.Method, "path", r.URL.Path, "error", err) // #nosec G706 -- slog key-values
-		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	if err := validation.ValidateStruct(&req); err != nil {
-		validation.RespondValidationError(w, err)
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	webhook, err := h.service.CreateWebhook(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrValidation) {
-			validation.RespondValidationError(w, err)
-
-			return
-		}
-
-		if errors.Is(err, huberrors.ErrLimitExceeded) {
-			response.RespondError(w, http.StatusForbidden, "Forbidden", err.Error())
-
-			return
-		}
-
-		slog.Error("Failed to create webhook", "method", r.Method, "path", r.URL.Path, "error", err) // #nosec G706 -- slog key-values
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -82,28 +64,21 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *WebhooksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		response.RespondBadRequest(w, "Webhook ID is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "is required"})
 
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		response.RespondBadRequest(w, "Invalid UUID format")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
 
 		return
 	}
 
 	webhook, err := h.service.GetWebhook(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrNotFound) {
-			response.RespondNotFound(w, "Webhook not found")
-
-			return
-		}
-
-		slog.Error("Failed to get webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err) // #nosec G706 -- slog key-values
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -117,21 +92,14 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 	filters := &models.ListWebhooksFilters{}
 
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
-		validation.RespondValidationError(w, err)
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	result, err := h.service.ListWebhooks(r.Context(), filters)
 	if err != nil {
-		if errors.Is(err, cursor.ErrInvalidCursor) {
-			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
-
-			return
-		}
-
-		slog.Error("Failed to list webhooks", "method", r.Method, "path", r.URL.Path, "error", err) // #nosec G706 -- slog key-values
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -152,14 +120,14 @@ func (h *WebhooksHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		response.RespondBadRequest(w, "Webhook ID is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "is required"})
 
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		response.RespondBadRequest(w, "Invalid UUID format")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
 
 		return
 	}
@@ -170,34 +138,20 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		slog.Warn("Invalid request body for update", "method", r.Method, "path", r.URL.Path, "id", id, "error", err) // #nosec G706
-		response.RespondBadRequest(w, response.JSONDecodeErrorDetail(err))
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	if err := validation.ValidateStruct(&req); err != nil {
-		validation.RespondValidationError(w, err)
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	webhook, err := h.service.UpdateWebhook(r.Context(), id, &req)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrValidation) {
-			validation.RespondValidationError(w, err)
-
-			return
-		}
-
-		if errors.Is(err, huberrors.ErrNotFound) {
-			response.RespondNotFound(w, "Webhook not found")
-
-			return
-		}
-
-		slog.Error("Failed to update webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err) // #nosec G706 -- slog key-values
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -210,27 +164,20 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *WebhooksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		response.RespondBadRequest(w, "Webhook ID is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "is required"})
 
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		response.RespondBadRequest(w, "Invalid UUID format")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
 
 		return
 	}
 
 	if err := h.service.DeleteWebhook(r.Context(), id); err != nil {
-		if errors.Is(err, huberrors.ErrNotFound) {
-			response.RespondNotFound(w, "Webhook not found")
-
-			return
-		}
-
-		slog.Error("Failed to delete webhook", "method", r.Method, "path", r.URL.Path, "id", id, "error", err) // #nosec G706 -- slog key-values
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}

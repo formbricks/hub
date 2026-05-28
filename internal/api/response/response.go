@@ -1,232 +1,102 @@
-// Package response provides HTTP response helpers and RFC 7807 problem details.
 package response
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 
-	"github.com/iancoleman/strcase"
-
-	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 )
 
-const (
-	// ProblemTypeBadRequest identifies malformed request problems.
-	ProblemTypeBadRequest = "https://hub.formbricks.com/problems/bad-request"
-	// ProblemTypeValidationError identifies request validation problems.
-	ProblemTypeValidationError = "https://hub.formbricks.com/problems/validation-error"
-	// ProblemTypeClientError identifies unclassified client-side request problems.
-	ProblemTypeClientError = "https://hub.formbricks.com/problems/client-error"
-	// ProblemTypeUnauthorized identifies authentication problems.
-	ProblemTypeUnauthorized = "https://hub.formbricks.com/problems/unauthorized"
-	// ProblemTypeNotFound identifies missing resource problems.
-	ProblemTypeNotFound = "https://hub.formbricks.com/problems/not-found"
-	// ProblemTypeConflict identifies resource conflict problems.
-	ProblemTypeConflict = "https://hub.formbricks.com/problems/conflict"
-	// ProblemTypeForbidden identifies authorization problems.
-	ProblemTypeForbidden = "https://hub.formbricks.com/problems/forbidden"
-	// ProblemTypeMethodNotAllowed identifies unsupported HTTP method problems.
-	ProblemTypeMethodNotAllowed = "https://hub.formbricks.com/problems/method-not-allowed"
-	// ProblemTypeServiceUnavailable identifies temporary dependency problems.
-	ProblemTypeServiceUnavailable = "https://hub.formbricks.com/problems/service-unavailable"
-	// ProblemTypeInternalServerError identifies unexpected server problems.
-	ProblemTypeInternalServerError = "https://hub.formbricks.com/problems/internal-server-error"
-)
-
-// ErrorDetail represents a single error detail in RFC 7807 Problem Details.
-type ErrorDetail struct {
-	Location string `json:"location,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Value    any    `json:"value,omitempty"`
+// RespondError maps err to an RFC 9457 problem response, logs it exactly once,
+// and writes it. It is the single error exit point for handlers: domain and
+// sentinel errors are translated to the right status, code, and invalid_params,
+// and the underlying cause of server errors is logged but never sent to clients.
+func RespondError(w http.ResponseWriter, r *http.Request, err error) {
+	writeProblem(w, r, problemFromError(err), err)
 }
 
-// ProblemDetails represents an RFC 7807 Problem Details error response.
-type ProblemDetails struct {
-	Type     string        `json:"type,omitempty"`
-	Title    string        `json:"title"`
-	Status   int           `json:"status"`
-	Detail   string        `json:"detail,omitempty"`
-	Instance string        `json:"instance,omitempty"`
-	Errors   []ErrorDetail `json:"errors,omitempty"`
+// RespondProblem writes an explicit problem response when there is no error
+// value to map, e.g. for request preconditions like a missing path parameter
+// or an unsupported HTTP method.
+func RespondProblem(w http.ResponseWriter, r *http.Request, status int, detail string) {
+	writeProblem(w, r, newProblem(status, detail), nil)
 }
 
-// RespondError writes an RFC 7807 Problem Details error response.
-func RespondError(w http.ResponseWriter, statusCode int, title, detail string) {
-	problem := ProblemDetails{
-		Type:   problemTypeForStatus(statusCode),
-		Title:  title,
-		Status: statusCode,
-		Detail: detail,
+// RespondUnauthorized writes a 401 Unauthorized problem. The writer adds the
+// required WWW-Authenticate challenge for the 401 status (RFC 9110 §11.6.1).
+func RespondUnauthorized(w http.ResponseWriter, r *http.Request, detail string) {
+	RespondProblem(w, r, http.StatusUnauthorized, detail)
+}
+
+// RespondNotFound writes a 404 Not Found problem.
+func RespondNotFound(w http.ResponseWriter, r *http.Request, detail string) {
+	RespondProblem(w, r, http.StatusNotFound, detail)
+}
+
+// RespondServiceUnavailable writes a 503 Service Unavailable problem.
+func RespondServiceUnavailable(w http.ResponseWriter, r *http.Request, detail string) {
+	RespondProblem(w, r, http.StatusServiceUnavailable, detail)
+}
+
+// RespondInvalidParams writes a 400 validation problem describing one or more
+// invalid request fields. Use it for request-level checks (path or query
+// parameters) where there is no error value to map through RespondError, so
+// field errors share one machine-readable shape across the API.
+func RespondInvalidParams(w http.ResponseWriter, r *http.Request, params ...InvalidParam) {
+	problem := newValidationProblem()
+	problem.InvalidParams = params
+
+	writeProblem(w, r, problem, nil)
+}
+
+// writeProblem populates instance + request_id from the request, logs the
+// problem exactly once, and encodes it as application/problem+json.
+func writeProblem(w http.ResponseWriter, r *http.Request, problem ProblemDetails, cause error) {
+	ctx := r.Context()
+
+	if problem.Instance == "" {
+		problem.Instance = r.URL.Path
 	}
 
-	respondProblem(w, statusCode, problem)
-}
+	problem.RequestID = observability.RequestIDFromContext(ctx)
 
-// RespondInvalidRequestBody writes a 400 response for JSON request body decoding failures.
-func RespondInvalidRequestBody(w http.ResponseWriter, err error) {
-	problemType := jsonDecodeProblemType(err)
+	logProblem(ctx, r, problem, cause)
 
-	problem := ProblemDetails{
-		Type:   problemType,
-		Title:  jsonDecodeProblemTitle(problemType),
-		Status: http.StatusBadRequest,
-		Detail: JSONDecodeErrorDetail(err),
-		Errors: JSONDecodeErrorDetails(err),
+	w.Header().Set("Content-Type", problemContentType)
+	w.Header().Set("Cache-Control", "no-store")
+
+	// RFC 9110 §11.6.1 requires a WWW-Authenticate challenge on 401 responses.
+	if problem.Status == http.StatusUnauthorized {
+		w.Header().Set("WWW-Authenticate", "Bearer")
 	}
 
-	respondProblem(w, http.StatusBadRequest, problem)
-}
-
-func jsonDecodeProblemType(err error) string {
-	if _, ok := invalidFieldTypeErrorDetail(err); ok {
-		return ProblemTypeValidationError
-	}
-
-	return ProblemTypeBadRequest
-}
-
-func jsonDecodeProblemTitle(problemType string) string {
-	if problemType == ProblemTypeValidationError {
-		return "Validation Error"
-	}
-
-	return "Bad Request"
-}
-
-func respondProblem(w http.ResponseWriter, statusCode int, problem ProblemDetails) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(statusCode)
+	w.WriteHeader(problem.Status)
 
 	if err := json.NewEncoder(w).Encode(problem); err != nil {
-		slog.Error("Failed to encode error response", "error", err)
+		slog.ErrorContext(ctx, "Failed to encode problem response", "error", err)
 	}
 }
 
-func problemTypeForStatus(statusCode int) string {
-	switch statusCode {
-	case http.StatusBadRequest:
-		return ProblemTypeBadRequest
-	case http.StatusUnauthorized:
-		return ProblemTypeUnauthorized
-	case http.StatusForbidden:
-		return ProblemTypeForbidden
-	case http.StatusMethodNotAllowed:
-		return ProblemTypeMethodNotAllowed
-	case http.StatusNotFound:
-		return ProblemTypeNotFound
-	case http.StatusConflict:
-		return ProblemTypeConflict
-	case http.StatusServiceUnavailable:
-		return ProblemTypeServiceUnavailable
-	case http.StatusInternalServerError:
-		return ProblemTypeInternalServerError
-	default:
-		if statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError {
-			return ProblemTypeClientError
-		}
+// logProblem logs every error response exactly once. A response is logged at
+// Error only when it is a server error (5xx) that carries an underlying cause —
+// i.e. an unexpected failure worth alerting on. Everything else (client errors,
+// and deliberate 5xx like a disabled feature returning 503 with no cause) is
+// logged at Warn, so expected operational states do not trigger false alarms.
+// trace_id and request_id are added automatically by the slog handler from ctx.
+func logProblem(ctx context.Context, r *http.Request, problem ProblemDetails, cause error) {
+	attrs := []any{"status", problem.Status, "code", problem.Code, "method", r.Method, "path", r.URL.Path}
 
-		return ProblemTypeInternalServerError
-	}
-}
+	if problem.Status >= http.StatusInternalServerError && cause != nil {
+		attrs = append(attrs, "error", cause)
+		slog.ErrorContext(ctx, "Request failed", attrs...) // #nosec G706 -- structured slog key-values
 
-// RespondBadRequest writes a 400 Bad Request error response.
-func RespondBadRequest(w http.ResponseWriter, detail string) {
-	RespondError(w, http.StatusBadRequest, "Bad Request", detail)
-}
-
-// JSONDecodeErrorDetail returns a user-friendly message for json.Decode errors.
-// Use this when decoding request bodies to give clients actionable feedback.
-// Note: Missing fields do not cause Decode to fail; validate required fields after decode.
-func JSONDecodeErrorDetail(err error) string {
-	if err == nil {
-		return "Invalid request body"
+		return
 	}
 
-	if detail, ok := invalidFieldTypeErrorDetail(err); ok {
-		return detail.Message
-	}
-
-	var syntaxErr *json.SyntaxError
-	if errors.As(err, &syntaxErr) {
-		return "Invalid JSON: " + err.Error()
-	}
-
-	var typeErr *json.UnmarshalTypeError
-	if errors.As(err, &typeErr) {
-		field := fieldNameForAPI(typeErr.Field)
-
-		return fmt.Sprintf("field %q must be %s", field, typeErr.Type.String())
-	}
-
-	if strings.Contains(err.Error(), "unknown field") {
-		return err.Error()
-	}
-
-	return "Invalid request body"
-}
-
-// JSONDecodeErrorDetails returns field-level details for JSON request body decoding failures.
-func JSONDecodeErrorDetails(err error) []ErrorDetail {
-	if detail, ok := invalidFieldTypeErrorDetail(err); ok {
-		return []ErrorDetail{detail}
-	}
-
-	return nil
-}
-
-func invalidFieldTypeErrorDetail(err error) (ErrorDetail, bool) {
-	var invalidFieldType *models.InvalidFieldTypeError
-	if !errors.As(err, &invalidFieldType) {
-		return ErrorDetail{}, false
-	}
-
-	return ErrorDetail{
-		Location: "field_type",
-		Message: fmt.Sprintf(
-			"field_type has invalid value %q; must be one of: %s",
-			invalidFieldType.Value,
-			models.ValidFieldTypeValuesString(),
-		),
-		Value: invalidFieldType.Value,
-	}, true
-}
-
-// fieldNameForAPI converts a struct field path (e.g. "TenantID" or "X.Y") to API-style snake_case.
-func fieldNameForAPI(fieldPath string) string {
-	if i := strings.LastIndex(fieldPath, "."); i >= 0 && i+1 < len(fieldPath) {
-		fieldPath = fieldPath[i+1:]
-	}
-
-	return strcase.ToSnake(fieldPath)
-}
-
-// RespondUnauthorized writes a 401 Unauthorized error response.
-func RespondUnauthorized(w http.ResponseWriter, detail string) {
-	RespondError(w, http.StatusUnauthorized, "Unauthorized", detail)
-}
-
-// RespondNotFound writes a 404 Not Found error response.
-func RespondNotFound(w http.ResponseWriter, detail string) {
-	RespondError(w, http.StatusNotFound, "Not Found", detail)
-}
-
-// RespondConflict writes a 409 Conflict error response.
-func RespondConflict(w http.ResponseWriter, detail string) {
-	RespondError(w, http.StatusConflict, "Conflict", detail)
-}
-
-// RespondInternalServerError writes a 500 Internal Server Error response.
-func RespondInternalServerError(w http.ResponseWriter, detail string) {
-	RespondError(w, http.StatusInternalServerError, "Internal Server Error", detail)
-}
-
-// RespondServiceUnavailable writes a 503 Service Unavailable error response.
-func RespondServiceUnavailable(w http.ResponseWriter, detail string) {
-	RespondError(w, http.StatusServiceUnavailable, "Service Unavailable", detail)
+	attrs = append(attrs, "detail", problem.Detail)
+	slog.WarnContext(ctx, "Request rejected", attrs...) // #nosec G706 -- structured slog key-values
 }
 
 // RespondJSON writes a JSON response directly without wrapping.

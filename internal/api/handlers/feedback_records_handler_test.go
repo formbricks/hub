@@ -138,14 +138,15 @@ func TestFeedbackRecordsHandler_Create(t *testing.T) {
 		err := json.Unmarshal(rec.Body.Bytes(), &problem)
 		require.NoError(t, err)
 
-		assert.Equal(t, response.ProblemTypeValidationError, problem.Type)
+		assert.Equal(t, response.ProblemTypeValidation, problem.Type)
 		assert.NotEqual(t, "about:blank", problem.Type)
 		assert.Equal(t, "Validation Error", problem.Title)
-		require.Len(t, problem.Errors, 1)
-		assert.Equal(t, "field_type", problem.Errors[0].Location)
-		assert.Equal(t, "textt", problem.Errors[0].Value)
-		assert.Contains(t, problem.Errors[0].Message, "text")
-		assert.Contains(t, problem.Errors[0].Message, "date")
+		assert.Equal(t, response.CodeValidation, problem.Code)
+		require.Len(t, problem.InvalidParams, 1)
+		assert.Equal(t, "field_type", problem.InvalidParams[0].Name)
+		assert.Contains(t, problem.InvalidParams[0].Reason, "textt")
+		assert.Contains(t, problem.InvalidParams[0].Reason, "text")
+		assert.Contains(t, problem.InvalidParams[0].Reason, "date")
 	})
 
 	t.Run("service validation error returns bad request", func(t *testing.T) {
