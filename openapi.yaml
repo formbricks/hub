@@ -1423,7 +1423,6 @@ components:
                         - not_found
                         - conflict
                         - method_not_allowed
-                        - payload_too_large
                         - service_unavailable
                         - internal_server_error
                     examples:

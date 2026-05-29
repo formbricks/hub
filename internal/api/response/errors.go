@@ -84,12 +84,6 @@ func problemFromError(err error) ProblemDetails {
 		return problem
 	}
 
-	var maxBytesErr *http.MaxBytesError
-	if errors.As(err, &maxBytesErr) {
-		return newProblem(http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("Request body exceeds the maximum allowed size of %d bytes", maxBytesErr.Limit))
-	}
-
 	if problem, ok := problemFromJSONDecodeError(err); ok {
 		return problem
 	}

@@ -413,17 +413,6 @@ func TestRespondErrorInvalidCursorIsValidationParam(t *testing.T) {
 	assert.Equal(t, "cursor", problem.InvalidParams[0].Name)
 }
 
-func TestRespondErrorPayloadTooLarge(t *testing.T) {
-	rec := httptest.NewRecorder()
-	RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), &http.MaxBytesError{Limit: 1048576})
-
-	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
-
-	problem := decodeProblem(t, rec)
-	assert.Equal(t, CodePayloadTooLarge, problem.Code)
-	assert.Contains(t, problem.Detail, "1048576")
-}
-
 func TestRespondErrorTruncatedJSONIsBadRequest(t *testing.T) {
 	// A truncated body (`{"x":`) returns io.ErrUnexpectedEOF from the decoder,
 	// which is a client mistake, not a server failure.
@@ -479,7 +468,6 @@ func TestNonUnauthorizedProblemHasNoWWWAuthenticate(t *testing.T) {
 }
 
 func TestCodeAndTypeForStatusDefaults(t *testing.T) {
-	assert.Equal(t, CodePayloadTooLarge, codeForStatus(http.StatusRequestEntityTooLarge))
 	assert.Equal(t, CodeMethodNotAllowed, codeForStatus(http.StatusMethodNotAllowed))
 	// Unlisted client error falls back to bad_request / client-error type.
 	assert.Equal(t, CodeBadRequest, codeForStatus(http.StatusTeapot))

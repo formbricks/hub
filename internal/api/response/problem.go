@@ -15,7 +15,6 @@ const (
 	ProblemTypeNotFound            = "https://hub.formbricks.com/problems/not-found"
 	ProblemTypeConflict            = "https://hub.formbricks.com/problems/conflict"
 	ProblemTypeMethodNotAllowed    = "https://hub.formbricks.com/problems/method-not-allowed"
-	ProblemTypePayloadTooLarge     = "https://hub.formbricks.com/problems/payload-too-large"
 	ProblemTypeServiceUnavailable  = "https://hub.formbricks.com/problems/service-unavailable"
 	ProblemTypeInternalServerError = "https://hub.formbricks.com/problems/internal-server-error"
 	ProblemTypeClientError         = "https://hub.formbricks.com/problems/client-error"
@@ -33,7 +32,6 @@ const (
 	CodeNotFound            = "not_found"
 	CodeConflict            = "conflict"
 	CodeMethodNotAllowed    = "method_not_allowed"
-	CodePayloadTooLarge     = "payload_too_large"
 	CodeServiceUnavailable  = "service_unavailable"
 	CodeInternalServerError = "internal_server_error"
 )
@@ -102,8 +100,6 @@ func codeForStatus(status int) string {
 		return CodeConflict
 	case http.StatusMethodNotAllowed:
 		return CodeMethodNotAllowed
-	case http.StatusRequestEntityTooLarge:
-		return CodePayloadTooLarge
 	case http.StatusServiceUnavailable:
 		return CodeServiceUnavailable
 	case http.StatusInternalServerError:
@@ -132,8 +128,6 @@ func problemTypeForStatus(status int) string {
 		return ProblemTypeConflict
 	case http.StatusMethodNotAllowed:
 		return ProblemTypeMethodNotAllowed
-	case http.StatusRequestEntityTooLarge:
-		return ProblemTypePayloadTooLarge
 	case http.StatusServiceUnavailable:
 		return ProblemTypeServiceUnavailable
 	case http.StatusInternalServerError:
