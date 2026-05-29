@@ -167,6 +167,10 @@ export default defineConfig({
                   label: "Connecting Hub to Airbyte",
                   slug: "guides/hub-airbyte",
                 },
+                {
+                  label: "Self-Hosted Embeddings",
+                  slug: "guides/hub-self-hosted-embeddings",
+                },
               ],
             },
             {

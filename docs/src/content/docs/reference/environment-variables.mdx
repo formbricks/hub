@@ -79,6 +79,7 @@ strings, fragments, or credentials. Hub serves runtime OpenAPI specs at
 | `EMBEDDING_PROVIDER`              | -       | Embedding provider. One of `openai`, `google`, or `google-vertex`. |
 | `EMBEDDING_PROVIDER_API_KEY`      | -       | API key for the embedding provider.                                |
 | `EMBEDDING_MODEL`                 | -       | Embedding model name.                                              |
+| `EMBEDDING_BASE_URL`              | -       | OpenAI-compatible embeddings root URL. Use with `EMBEDDING_PROVIDER=openai` to target a self-hosted endpoint. See [Self-Hosted Embeddings](/guides/hub-self-hosted-embeddings). |
 | `EMBEDDING_MAX_CONCURRENT`        | `5`     | Max concurrent embedding jobs.                                     |
 | `EMBEDDING_MAX_ATTEMPTS`          | `3`     | Max embedding attempts.                                            |
 | `EMBEDDING_NORMALIZE`             | `false` | Whether to normalize embeddings before storage.                    |
