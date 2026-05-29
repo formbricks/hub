@@ -60,8 +60,6 @@ const (
 	maxSearchLimit     = 100
 )
 
-const invalidCursorReason = "omit it for the first page, or use the exact next_cursor value from the previous response"
-
 // SemanticSearch handles POST /v1/feedback-records/search/semantic.
 func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -113,7 +111,7 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, service.ErrInvalidCursor) {
-			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "cursor", Reason: invalidCursorReason})
+			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "cursor", Reason: response.InvalidCursorReason})
 
 			return
 		}
@@ -185,7 +183,7 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if errors.Is(err, service.ErrInvalidCursor) {
-			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "cursor", Reason: invalidCursorReason})
+			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "cursor", Reason: response.InvalidCursorReason})
 
 			return
 		}

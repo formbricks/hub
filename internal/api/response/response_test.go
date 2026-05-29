@@ -11,11 +11,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	apivalidation "github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
@@ -133,6 +135,27 @@ func TestRespondErrorInvalidFieldTypeReason(t *testing.T) {
 	assert.Contains(t, problem.InvalidParams[0].Reason, "textt")
 	assert.Contains(t, problem.InvalidParams[0].Reason, "text")
 	assert.Contains(t, problem.InvalidParams[0].Reason, "date")
+}
+
+func TestRespondErrorQueryDecodeErrorIsValidationProblem(t *testing.T) {
+	var filters struct {
+		Since *time.Time `form:"since"`
+	}
+
+	queryReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?since=not-a-date", http.NoBody)
+	err := apivalidation.ValidateAndDecodeQueryParams(queryReq, &filters)
+	require.Error(t, err)
+
+	rec := httptest.NewRecorder()
+	RespondError(rec, newReq(t, http.MethodGet, "/v1/x"), err)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	problem := decodeProblem(t, rec)
+	assert.Equal(t, CodeValidation, problem.Code)
+	require.Len(t, problem.InvalidParams, 1)
+	assert.Equal(t, "since", problem.InvalidParams[0].Name)
+	assert.Equal(t, "must be in RFC3339 (ISO 8601) format", problem.InvalidParams[0].Reason)
 }
 
 func TestRespondErrorJSONDecodeFailures(t *testing.T) {
@@ -311,7 +334,7 @@ func TestFormatFieldErrorReasons(t *testing.T) {
 
 	got := map[string]string{}
 	for _, fieldErr := range validationErrors {
-		got[fieldErr.Field()] = FormatFieldError(fieldErr)
+		got[fieldErr.Field()] = apivalidation.FormatFieldError(fieldErr)
 	}
 
 	assert.Equal(t, "is required", got["Req"])

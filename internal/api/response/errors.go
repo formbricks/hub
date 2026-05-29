@@ -11,16 +11,19 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/iancoleman/strcase"
 
+	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/pkg/cursor"
 )
 
 const (
-	detailInternal      = "An unexpected error occurred"
-	detailValidation    = "One or more request parameters are invalid"
-	reasonInvalidCursor = "omit it for the first page, or use the exact next_cursor value from the previous response"
+	detailInternal   = "An unexpected error occurred"
+	detailValidation = "One or more request parameters are invalid"
 )
+
+// InvalidCursorReason explains how clients should recover from a malformed pagination cursor.
+const InvalidCursorReason = "omit it for the first page, or use the exact next_cursor value from the previous response"
 
 // problemFromError translates a Go error into an RFC 9457 problem. Domain and
 // sentinel errors map to specific statuses, codes, and invalid_params; anything
@@ -34,6 +37,14 @@ func problemFromError(err error) ProblemDetails {
 	if errors.As(err, &validationErrs) {
 		problem := newValidationProblem()
 		problem.InvalidParams = invalidParamsFromValidator(validationErrs)
+
+		return problem
+	}
+
+	var queryDecodeErr *validation.QueryDecodeError
+	if errors.As(err, &queryDecodeErr) {
+		problem := newValidationProblem()
+		problem.InvalidParams = invalidParamsFromValidationParams(queryDecodeErr.InvalidParams())
 
 		return problem
 	}
@@ -68,7 +79,7 @@ func problemFromError(err error) ProblemDetails {
 
 	if errors.Is(err, cursor.ErrInvalidCursor) {
 		problem := newValidationProblem()
-		problem.InvalidParams = []InvalidParam{{Name: "cursor", Reason: reasonInvalidCursor}}
+		problem.InvalidParams = []InvalidParam{{Name: "cursor", Reason: InvalidCursorReason}}
 
 		return problem
 	}
@@ -147,9 +158,18 @@ func invalidParamsFromValidator(validationErrs validator.ValidationErrors) []Inv
 	params := make([]InvalidParam, 0, len(validationErrs))
 	for _, fieldErr := range validationErrs {
 		params = append(params, InvalidParam{
-			Name:   fieldPath(fieldErr),
-			Reason: FormatFieldError(fieldErr),
+			Name:   validation.FieldPath(fieldErr),
+			Reason: validation.FormatFieldError(fieldErr),
 		})
+	}
+
+	return params
+}
+
+func invalidParamsFromValidationParams(validationParams []validation.InvalidParam) []InvalidParam {
+	params := make([]InvalidParam, 0, len(validationParams))
+	for _, param := range validationParams {
+		params = append(params, InvalidParam{Name: param.Name, Reason: param.Reason})
 	}
 
 	return params
@@ -162,52 +182,6 @@ func validationErrorParam(err *huberrors.ValidationError) InvalidParam {
 	}
 
 	return InvalidParam{Name: err.Field, Reason: reason}
-}
-
-// fieldPath returns the dotted path to the offending field using API (JSON/form)
-// names, e.g. "field_type" or "items[0].field_type", so a client can map the
-// error straight back to the input it sent.
-func fieldPath(fieldErr validator.FieldError) string {
-	if _, after, found := strings.Cut(fieldErr.Namespace(), "."); found {
-		return after
-	}
-
-	return fieldErr.Field()
-}
-
-// FormatFieldError returns a self-correcting reason fragment for a single field
-// validation failure, naming allowed values or constraints where applicable.
-// The field name is carried separately in InvalidParam.Name, so the fragment
-// does not repeat it.
-func FormatFieldError(fieldErr validator.FieldError) string {
-	switch fieldErr.Tag() {
-	case "required":
-		return "is required"
-	case "min":
-		return "must be at least " + fieldErr.Param()
-	case "max":
-		return "must be at most " + fieldErr.Param()
-	case "gte":
-		return "must be greater than or equal to " + fieldErr.Param()
-	case "lte":
-		return "must be less than or equal to " + fieldErr.Param()
-	case "oneof":
-		return "must be one of: " + fieldErr.Param()
-	case "field_type":
-		return "must be one of: " + models.ValidFieldTypeValuesString()
-	case "uuid":
-		return "must be a valid UUID"
-	case "rfc3339":
-		return "must be in RFC3339 (ISO 8601) format"
-	case "no_null_bytes":
-		return "must not contain NULL bytes"
-	case "http_url":
-		return "must be a valid HTTP or HTTPS URL"
-	case "url":
-		return "must be a valid URL"
-	default:
-		return "is invalid"
-	}
 }
 
 func invalidFieldTypeParam(err error) (InvalidParam, bool) {

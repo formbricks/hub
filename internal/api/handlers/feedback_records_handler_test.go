@@ -76,6 +76,28 @@ func TestFeedbackRecordsHandler_List(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
+
+	t.Run("invalid since returns validation problem", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+			"http://test/v1/feedback-records?tenant_id=org-123&since=not-a-date", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.List(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+		var problem response.ProblemDetails
+
+		err := json.Unmarshal(rec.Body.Bytes(), &problem)
+		require.NoError(t, err)
+		assert.Equal(t, response.CodeValidation, problem.Code)
+		require.Len(t, problem.InvalidParams, 1)
+		assert.Equal(t, "since", problem.InvalidParams[0].Name)
+		assert.Equal(t, "must be in RFC3339 (ISO 8601) format", problem.InvalidParams[0].Reason)
+	})
 }
 
 func TestFeedbackRecordsHandler_Create(t *testing.T) {
