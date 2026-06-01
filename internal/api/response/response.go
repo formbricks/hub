@@ -19,7 +19,15 @@ const requestIDHeader = "X-Request-ID"
 // sentinel errors are translated to the right status, code, and invalid_params,
 // and the underlying cause of server errors is logged but never sent to clients.
 func RespondError(w http.ResponseWriter, r *http.Request, err error) {
-	writeProblem(w, r, problemFromError(err), err)
+	RespondErrorWithLogAttrs(w, r, err)
+}
+
+// RespondErrorWithLogAttrs maps err to a problem response and adds sanitized,
+// caller-supplied context to the single centralized problem log entry. Use this
+// for security-sensitive paths that need audit breadcrumbs without logging raw
+// user input or emitting duplicate handler-level errors.
+func RespondErrorWithLogAttrs(w http.ResponseWriter, r *http.Request, err error, attrs ...any) {
+	writeProblem(w, r, problemFromError(err), err, attrs...)
 }
 
 // RespondProblem writes an explicit problem response when there is no error
@@ -58,7 +66,7 @@ func RespondInvalidParams(w http.ResponseWriter, r *http.Request, params ...Inva
 
 // writeProblem populates instance + request_id from the request, logs the
 // problem exactly once, and encodes it as application/problem+json.
-func writeProblem(w http.ResponseWriter, r *http.Request, problem ProblemDetails, cause error) {
+func writeProblem(w http.ResponseWriter, r *http.Request, problem ProblemDetails, cause error, extraLogAttrs ...any) {
 	ctx := r.Context()
 
 	if problem.Instance == "" {
@@ -67,7 +75,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, problem ProblemDetails
 
 	problem.RequestID = observability.RequestIDFromContext(ctx)
 
-	logProblem(ctx, r, problem, cause)
+	logProblem(ctx, r, problem, cause, extraLogAttrs...)
 
 	w.Header().Set("Content-Type", problemContentType)
 	w.Header().Set("Cache-Control", "no-store")
@@ -96,8 +104,9 @@ func writeProblem(w http.ResponseWriter, r *http.Request, problem ProblemDetails
 // and deliberate 5xx like a disabled feature returning 503 with no cause) is
 // logged at Warn, so expected operational states do not trigger false alarms.
 // trace_id and request_id are added automatically by the slog handler from ctx.
-func logProblem(ctx context.Context, r *http.Request, problem ProblemDetails, cause error) {
+func logProblem(ctx context.Context, r *http.Request, problem ProblemDetails, cause error, extraAttrs ...any) {
 	attrs := []any{"status", problem.Status, "code", problem.Code, "method", r.Method, "path", r.URL.Path}
+	attrs = append(attrs, extraAttrs...)
 
 	if problem.Status >= http.StatusInternalServerError && cause != nil {
 		attrs = append(attrs, "error", cause)

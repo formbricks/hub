@@ -42,7 +42,7 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, err)
+		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
 
 		return
 	}
@@ -131,7 +131,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, err)
+		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
 
 		return
 	}
@@ -189,7 +189,17 @@ func (h *FeedbackRecordsHandler) DeleteByUser(w http.ResponseWriter, r *http.Req
 
 	deletedCount, err := h.service.DeleteFeedbackRecordsByUser(r.Context(), filters)
 	if err != nil {
-		response.RespondError(w, r, err)
+		tenantIDLength := 0
+		if filters.TenantID != nil {
+			tenantIDLength = len(*filters.TenantID)
+		}
+
+		response.RespondErrorWithLogAttrs(w, r, err,
+			"user_id_present", filters.UserID != "",
+			"user_id_length", len(filters.UserID),
+			"tenant_id_present", tenantIDLength > 0,
+			"tenant_id_length", tenantIDLength,
+		)
 
 		return
 	}

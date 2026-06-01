@@ -39,7 +39,7 @@ func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, err)
+		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
 
 		return
 	}
@@ -138,7 +138,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, err)
+		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
 
 		return
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +80,11 @@ func TestRespondErrorMapping(t *testing.T) {
 		},
 		{
 			name: "unknown error maps to internal", err: errors.New("boom"),
+			wantStatus: http.StatusInternalServerError, wantCode: CodeInternalServerError, wantType: ProblemTypeInternalServerError,
+		},
+		{
+			name:       "internal error wrapping unexpected EOF stays internal",
+			err:        fmt.Errorf("read repository payload: %w", io.ErrUnexpectedEOF),
 			wantStatus: http.StatusInternalServerError, wantCode: CodeInternalServerError, wantType: ProblemTypeInternalServerError,
 		},
 	}
@@ -167,7 +174,7 @@ func TestRespondErrorJSONDecodeFailures(t *testing.T) {
 		require.Error(t, err)
 
 		rec := httptest.NewRecorder()
-		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), err)
+		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
 
 		problem := decodeProblem(t, rec)
 		assert.Equal(t, http.StatusBadRequest, problem.Status)
@@ -186,7 +193,7 @@ func TestRespondErrorJSONDecodeFailures(t *testing.T) {
 		require.Error(t, err)
 
 		rec := httptest.NewRecorder()
-		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), err)
+		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
 
 		problem := decodeProblem(t, rec)
 		assert.Equal(t, http.StatusBadRequest, problem.Status)
@@ -208,7 +215,7 @@ func TestRespondErrorJSONDecodeFailures(t *testing.T) {
 		require.Error(t, err)
 
 		rec := httptest.NewRecorder()
-		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), err)
+		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
 
 		problem := decodeProblem(t, rec)
 		assert.Equal(t, http.StatusBadRequest, problem.Status)
@@ -216,6 +223,34 @@ func TestRespondErrorJSONDecodeFailures(t *testing.T) {
 		require.Len(t, problem.InvalidParams, 1)
 		assert.Equal(t, "unexpected", problem.InvalidParams[0].Name)
 		assert.Contains(t, problem.InvalidParams[0].Reason, "not a recognized")
+	})
+
+	t.Run("empty body is bad request", func(t *testing.T) {
+		var dst struct{}
+
+		dec := json.NewDecoder(strings.NewReader(""))
+		err := dec.Decode(&dst)
+		require.ErrorIs(t, err, io.EOF)
+
+		rec := httptest.NewRecorder()
+		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
+
+		problem := decodeProblem(t, rec)
+		assert.Equal(t, http.StatusBadRequest, problem.Status)
+		assert.Equal(t, CodeBadRequest, problem.Code)
+		assert.Equal(t, "Invalid request body", problem.Detail)
+	})
+
+	t.Run("raw json-like error is not treated as request decode", func(t *testing.T) {
+		err := fmt.Errorf("downstream payload failed: %w", io.ErrUnexpectedEOF)
+
+		rec := httptest.NewRecorder()
+		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), err)
+
+		problem := decodeProblem(t, rec)
+		assert.Equal(t, http.StatusInternalServerError, problem.Status)
+		assert.Equal(t, CodeInternalServerError, problem.Code)
+		assert.Equal(t, detailInternal, problem.Detail)
 	})
 }
 
@@ -425,7 +460,7 @@ func TestRespondErrorTruncatedJSONIsBadRequest(t *testing.T) {
 	require.Error(t, err)
 
 	rec := httptest.NewRecorder()
-	RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), err)
+	RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
 
 	problem := decodeProblem(t, rec)
 	assert.Equal(t, http.StatusBadRequest, problem.Status)
@@ -531,6 +566,26 @@ func TestRespondErrorLogsOnce(t *testing.T) {
 		require.Len(t, records, 1)
 		assert.Equal(t, slog.LevelWarn, records[0].Level)
 		assert.Equal(t, CodeServiceUnavailable, attrValue(records[0], "code"))
+	})
+
+	t.Run("caller log attrs are included once", func(t *testing.T) {
+		handler.reset()
+
+		rec := httptest.NewRecorder()
+		RespondErrorWithLogAttrs(rec, newReq(t, http.MethodDelete, "/v1/feedback-records"), errors.New("db down"),
+			"user_id_present", true,
+			"user_id_length", 8,
+			"tenant_id_present", false,
+			"tenant_id_length", 0,
+		)
+
+		records := handler.snapshot()
+		require.Len(t, records, 1)
+		assert.Equal(t, slog.LevelError, records[0].Level)
+		assert.Equal(t, "true", attrValue(records[0], "user_id_present"))
+		assert.Equal(t, "8", attrValue(records[0], "user_id_length"))
+		assert.Equal(t, "false", attrValue(records[0], "tenant_id_present"))
+		assert.Equal(t, "0", attrValue(records[0], "tenant_id_length"))
 	})
 }
 

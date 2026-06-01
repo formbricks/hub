@@ -33,6 +33,22 @@ func problemFromError(err error) ProblemDetails {
 		return newProblem(http.StatusInternalServerError, detailInternal)
 	}
 
+	if param, ok := invalidFieldTypeParam(err); ok {
+		problem := newValidationProblem()
+		problem.InvalidParams = []InvalidParam{param}
+
+		return problem
+	}
+
+	var requestJSONErr *RequestJSONDecodeError
+	if errors.As(err, &requestJSONErr) {
+		if problem, ok := problemFromJSONDecodeError(requestJSONErr.Unwrap()); ok {
+			return problem
+		}
+
+		return newProblem(http.StatusBadRequest, "Invalid request body")
+	}
+
 	var validationErrs validator.ValidationErrors
 	if errors.As(err, &validationErrs) {
 		problem := newValidationProblem()
@@ -84,11 +100,32 @@ func problemFromError(err error) ProblemDetails {
 		return problem
 	}
 
-	if problem, ok := problemFromJSONDecodeError(err); ok {
-		return problem
+	return newProblem(http.StatusInternalServerError, detailInternal)
+}
+
+// RequestJSONDecodeError marks an error as coming from decoding an HTTP request
+// JSON body. This keeps JSON-specific 400 mappings scoped to request parsing,
+// so downstream service or repository errors cannot be misclassified as client
+// body errors merely because they wrap io.ErrUnexpectedEOF or contain decoder-like text.
+type RequestJSONDecodeError struct {
+	err error
+}
+
+// NewRequestJSONDecodeError wraps a request-body JSON decode failure.
+func NewRequestJSONDecodeError(err error) error {
+	if err == nil {
+		return nil
 	}
 
-	return newProblem(http.StatusInternalServerError, detailInternal)
+	return &RequestJSONDecodeError{err: err}
+}
+
+func (e *RequestJSONDecodeError) Error() string {
+	return e.err.Error()
+}
+
+func (e *RequestJSONDecodeError) Unwrap() error {
+	return e.err
 }
 
 // problemFromJSONDecodeError recognizes errors from decoding a JSON request body
@@ -107,6 +144,10 @@ func problemFromJSONDecodeError(err error) (ProblemDetails, bool) {
 	var syntaxErr *json.SyntaxError
 	if errors.As(err, &syntaxErr) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return newProblem(http.StatusBadRequest, "Invalid JSON: "+err.Error()), true
+	}
+
+	if errors.Is(err, io.EOF) {
+		return newProblem(http.StatusBadRequest, "Invalid request body"), true
 	}
 
 	var typeErr *json.UnmarshalTypeError
