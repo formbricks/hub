@@ -88,9 +88,11 @@ func TestTenantDataHandler_Delete(t *testing.T) {
 
 		err := json.Unmarshal(rec.Body.Bytes(), &problem)
 		require.NoError(t, err)
-		assert.Equal(t, response.ProblemTypeValidationError, problem.Type)
-		require.Len(t, problem.Errors, 1)
-		assert.Equal(t, "tenant_id", problem.Errors[0].Location)
+		assert.Equal(t, response.ProblemTypeValidation, problem.Type)
+		assert.Equal(t, response.CodeValidation, problem.Code)
+		require.Len(t, problem.InvalidParams, 1)
+		assert.Equal(t, "tenant_id", problem.InvalidParams[0].Name)
+		assert.Equal(t, "tenant_id is required and cannot be empty", problem.InvalidParams[0].Reason)
 	})
 
 	t.Run("unexpected service error returns internal server error", func(t *testing.T) {

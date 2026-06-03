@@ -15,6 +15,16 @@ type requestIDKey struct{}
 // RequestIDKey is the context key for storing the request ID.
 var RequestIDKey = &requestIDKey{}
 
+// RequestIDFromContext returns the request ID (X-Request-ID) stored in ctx by
+// the RequestID middleware, or "" if none is present.
+func RequestIDFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(RequestIDKey).(string); ok {
+		return id
+	}
+
+	return ""
+}
+
 // TraceContextHandler wraps a slog.Handler and injects trace_id, span_id, and request_id
 // from the context into each log record when present.
 type TraceContextHandler struct {
@@ -41,7 +51,7 @@ func (h *TraceContextHandler) Handle(ctx context.Context, r slog.Record) error {
 		)
 	}
 
-	if id, ok := ctx.Value(RequestIDKey).(string); ok && id != "" {
+	if id := RequestIDFromContext(ctx); id != "" {
 		r.AddAttrs(slog.String("request_id", id))
 	}
 

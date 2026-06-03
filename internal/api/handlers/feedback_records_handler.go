@@ -4,18 +4,14 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/api/validation"
-	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
-	"github.com/formbricks/hub/pkg/cursor"
 )
 
 // FeedbackRecordsService defines the interface for feedback records business logic.
@@ -46,39 +42,20 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondInvalidRequestBody(w, err)
+		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
 
 		return
 	}
 
-	// Validate request
 	if err := validation.ValidateStruct(&req); err != nil {
-		validation.RespondValidationError(w, err)
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	record, err := h.service.CreateFeedbackRecord(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrValidation) {
-			validation.RespondValidationError(w, err)
-
-			return
-		}
-
-		if errors.Is(err, huberrors.ErrNotFound) {
-			response.RespondNotFound(w, "Feedback record not found")
-
-			return
-		}
-
-		if errors.Is(err, huberrors.ErrConflict) {
-			response.RespondConflict(w, err.Error())
-
-			return
-		}
-
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -90,27 +67,21 @@ func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) 
 func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		response.RespondBadRequest(w, "Feedback Record ID is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "is required"})
 
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		response.RespondBadRequest(w, "Invalid UUID format")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
 
 		return
 	}
 
 	record, err := h.service.GetFeedbackRecord(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrNotFound) {
-			response.RespondNotFound(w, "Feedback record not found")
-
-			return
-		}
-
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -122,22 +93,15 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 	filters := &models.ListFeedbackRecordsFilters{}
 
-	// Decode and validate query parameters
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
-		validation.RespondValidationError(w, err)
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	result, err := h.service.ListFeedbackRecords(r.Context(), filters)
 	if err != nil {
-		if errors.Is(err, cursor.ErrInvalidCursor) {
-			response.RespondBadRequest(w, "Invalid cursor: omit for first page, or use the exact next_cursor value from the previous response")
-
-			return
-		}
-
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -149,14 +113,14 @@ func (h *FeedbackRecordsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		response.RespondBadRequest(w, "Feedback Record ID is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "is required"})
 
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		response.RespondBadRequest(w, "Invalid UUID format")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
 
 		return
 	}
@@ -167,27 +131,20 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
-		response.RespondInvalidRequestBody(w, err)
+		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
 
 		return
 	}
 
-	// Validate request (all fields are optional for update, but validate if provided)
 	if err := validation.ValidateStruct(&req); err != nil {
-		validation.RespondValidationError(w, err)
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	record, err := h.service.UpdateFeedbackRecord(r.Context(), id, &req)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrNotFound) {
-			response.RespondNotFound(w, "Feedback record not found")
-
-			return
-		}
-
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -199,26 +156,20 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
-		response.RespondBadRequest(w, "Feedback Record ID is required")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "is required"})
 
 		return
 	}
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		response.RespondBadRequest(w, "Invalid UUID format")
+		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
 
 		return
 	}
 
 	if err := h.service.DeleteFeedbackRecord(r.Context(), id); err != nil {
-		if errors.Is(err, huberrors.ErrNotFound) {
-			response.RespondNotFound(w, "Feedback record not found")
-
-			return
-		}
-
-		response.RespondInternalServerError(w, "An unexpected error occurred")
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -230,37 +181,25 @@ func (h *FeedbackRecordsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 func (h *FeedbackRecordsHandler) DeleteByUser(w http.ResponseWriter, r *http.Request) {
 	filters := &models.DeleteFeedbackRecordsByUserFilters{}
 
-	// Decode and validate query parameters
 	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
-		validation.RespondValidationError(w, err)
+		response.RespondError(w, r, err)
 
 		return
 	}
 
 	deletedCount, err := h.service.DeleteFeedbackRecordsByUser(r.Context(), filters)
 	if err != nil {
-		if errors.Is(err, huberrors.ErrValidation) {
-			validation.RespondValidationError(w, err)
-
-			return
-		}
-
 		tenantIDLength := 0
 		if filters.TenantID != nil {
 			tenantIDLength = len(*filters.TenantID)
 		}
 
-		slog.Error("Failed to delete feedback records by user", // #nosec G706 -- slog key-values
-			"method", r.Method,
-			"path", r.URL.Path,
+		response.RespondErrorWithLogAttrs(w, r, err,
 			"user_id_present", filters.UserID != "",
 			"user_id_length", len(filters.UserID),
 			"tenant_id_present", tenantIDLength > 0,
 			"tenant_id_length", tenantIDLength,
-			"error", err,
 		)
-
-		response.RespondInternalServerError(w, "An unexpected error occurred")
 
 		return
 	}

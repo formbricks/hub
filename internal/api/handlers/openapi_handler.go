@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/formbricks/hub/internal/api/response"
 )
 
 const (
@@ -97,8 +99,7 @@ func (h *OpenAPIHandler) YAML(w http.ResponseWriter, r *http.Request) {
 
 	rendered, err := marshalYAML(h.specForBaseURL(requestBaseURL(r)))
 	if err != nil {
-		slog.Error("failed to marshal openapi yaml", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		response.RespondError(w, r, fmt.Errorf("marshal openapi yaml: %w", err))
 
 		return
 	}
@@ -124,8 +125,7 @@ func (h *OpenAPIHandler) JSON(w http.ResponseWriter, r *http.Request) {
 
 	rendered, err := marshalJSON(h.specForBaseURL(requestBaseURL(r)))
 	if err != nil {
-		slog.Error("failed to marshal openapi json", "error", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		response.RespondError(w, r, fmt.Errorf("marshal openapi json: %w", err))
 
 		return
 	}

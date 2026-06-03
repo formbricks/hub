@@ -229,14 +229,16 @@ paths:
                                 validation_error:
                                     summary: Validation error
                                     value:
-                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        type: "https://hub.formbricks.com/problems/validation"
                                         title: "Validation Error"
                                         status: 400
-                                        detail: "validation failed: tenant_id is required"
-                                        instance: "https://hub.formbricks.com/v1/feedback-records"
-                                        errors:
-                                            - location: "tenant_id"
-                                              message: "tenant_id is required"
+                                        code: "validation"
+                                        detail: "One or more request parameters are invalid"
+                                        instance: "/v1/feedback-records"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        invalid_params:
+                                            - name: "tenant_id"
+                                              reason: "is required"
         post:
             tags:
                 - Feedback Records
@@ -393,14 +395,16 @@ paths:
                                 invalid_field_type:
                                     summary: Invalid field_type enum
                                     value:
-                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        type: "https://hub.formbricks.com/problems/validation"
                                         title: "Validation Error"
                                         status: 400
-                                        detail: "field_type has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
-                                        errors:
-                                            - location: "field_type"
-                                              message: "field_type has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
-                                              value: "textt"
+                                        code: "validation"
+                                        detail: "One or more request parameters are invalid"
+                                        instance: "/v1/feedback-records"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        invalid_params:
+                                            - name: "field_type"
+                                              reason: "has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
                 "409":
                     description: Conflict – duplicate tenant_id/submission_id/field_id.
                     content:
@@ -645,20 +649,25 @@ paths:
                                         type: "https://hub.formbricks.com/problems/not-found"
                                         title: "Not Found"
                                         status: 404
-                                        detail: "Feedback record with ID '018e1234-5678-9abc-def0-123456789abc' not found"
-                                        instance: "https://hub.formbricks.com/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
+                                        code: "not_found"
+                                        detail: "feedback record not found"
+                                        instance: "/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        details:
+                                            resource_type: "feedback record"
                                 validation_error:
                                     summary: Validation error
                                     value:
-                                        type: "https://hub.formbricks.com/problems/validation-error"
+                                        type: "https://hub.formbricks.com/problems/validation"
                                         title: "Validation Error"
                                         status: 400
-                                        detail: "validation failed: value_text must not contain NULL bytes"
-                                        instance: "https://hub.formbricks.com/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
-                                        errors:
-                                            - location: "value_text"
-                                              message: "value_text must not contain NULL bytes"
-                                              value: 'contains\u0000null'
+                                        code: "validation"
+                                        detail: "One or more request parameters are invalid"
+                                        instance: "/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        invalid_params:
+                                            - name: "value_text"
+                                              reason: "must not contain NULL bytes"
     /v1/feedback-records/search/semantic:
         post:
             tags:
@@ -1371,38 +1380,78 @@ components:
                 - field_type
                 - submission_id
                 - tenant_id
-        ErrorDetail:
+        InvalidParam:
             type: object
             additionalProperties: false
+            description: A single invalid request parameter (RFC 9457 "invalid_params" extension member).
+            required:
+                - name
+                - reason
             properties:
-                location:
+                name:
                     type: string
-                    description: Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'
-                message:
+                    description: Dotted path to the offending request field, e.g. 'field_type' or 'items[0].field_type'.
+                    examples:
+                        - field_type
+                reason:
                     type: string
-                    description: Error message text
-                value:
-                    description: The value at the given location
+                    description: Human- and agent-readable explanation of why the value is invalid, naming allowed values or constraints where applicable so the request can be corrected without guessing.
+                    examples:
+                        - "must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
         ErrorModel:
             type: object
             additionalProperties: false
+            description: RFC 9457 problem details (application/problem+json). Branch on the stable `code` member rather than on `title` or `type`.
+            required:
+                - title
+                - status
+                - code
+                - request_id
             properties:
+                code:
+                    type: string
+                    description: >-
+                        Stable, machine-readable error code; the primary value to branch on.
+                        service_unavailable indicates a feature or dependency is temporarily
+                        unavailable and the request may be retried later; all other codes are
+                        terminal until the request itself is changed.
+                    enum:
+                        - validation
+                        - bad_request
+                        - unauthorized
+                        - forbidden
+                        - not_found
+                        - conflict
+                        - method_not_allowed
+                        - service_unavailable
+                        - internal_server_error
+                    examples:
+                        - validation
                 detail:
                     type: string
                     description: A human-readable explanation specific to this occurrence of the problem.
                     examples:
-                        - Property foo is required but is missing.
-                errors:
-                    type: array
-                    description: Optional list of individual error details
-                    items:
-                        $ref: '#/components/schemas/ErrorDetail'
+                        - One or more request parameters are invalid
+                details:
+                    type: object
+                    additionalProperties: true
+                    description: Optional structured context for this problem, e.g. resource_type on a 404.
                 instance:
                     type: string
-                    description: A URI reference that identifies the specific occurrence of the problem.
-                    format: uri
+                    description: A URI reference (typically the request path) identifying the specific occurrence of the problem.
                     examples:
-                        - https://example.com/error-log/abc123
+                        - /v1/feedback-records
+                invalid_params:
+                    type: array
+                    maxItems: 100
+                    description: Field-level validation failures (RFC 9457 "invalid_params" extension). Present on validation errors.
+                    items:
+                        $ref: '#/components/schemas/InvalidParam'
+                request_id:
+                    type: string
+                    description: Identifier for this request, also returned in the X-Request-ID response header; include it when reporting a problem.
+                    examples:
+                        - 0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b
                 status:
                     type: integer
                     description: HTTP status code
@@ -1416,7 +1465,7 @@ components:
                         - Bad Request
                 type:
                     type: string
-                    description: A URI reference to human-readable documentation for the error.
+                    description: A URI reference identifying the problem type.
                     format: uri
                     examples:
                         - https://hub.formbricks.com/problems/bad-request

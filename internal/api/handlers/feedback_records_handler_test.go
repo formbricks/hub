@@ -76,6 +76,28 @@ func TestFeedbackRecordsHandler_List(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
+
+	t.Run("invalid since returns validation problem", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+			"http://test/v1/feedback-records?tenant_id=org-123&since=not-a-date", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.List(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+		var problem response.ProblemDetails
+
+		err := json.Unmarshal(rec.Body.Bytes(), &problem)
+		require.NoError(t, err)
+		assert.Equal(t, response.CodeValidation, problem.Code)
+		require.Len(t, problem.InvalidParams, 1)
+		assert.Equal(t, "since", problem.InvalidParams[0].Name)
+		assert.Equal(t, "must be in RFC3339 (ISO 8601) format", problem.InvalidParams[0].Reason)
+	})
 }
 
 func TestFeedbackRecordsHandler_Create(t *testing.T) {
@@ -138,14 +160,15 @@ func TestFeedbackRecordsHandler_Create(t *testing.T) {
 		err := json.Unmarshal(rec.Body.Bytes(), &problem)
 		require.NoError(t, err)
 
-		assert.Equal(t, response.ProblemTypeValidationError, problem.Type)
+		assert.Equal(t, response.ProblemTypeValidation, problem.Type)
 		assert.NotEqual(t, "about:blank", problem.Type)
 		assert.Equal(t, "Validation Error", problem.Title)
-		require.Len(t, problem.Errors, 1)
-		assert.Equal(t, "field_type", problem.Errors[0].Location)
-		assert.Equal(t, "textt", problem.Errors[0].Value)
-		assert.Contains(t, problem.Errors[0].Message, "text")
-		assert.Contains(t, problem.Errors[0].Message, "date")
+		assert.Equal(t, response.CodeValidation, problem.Code)
+		require.Len(t, problem.InvalidParams, 1)
+		assert.Equal(t, "field_type", problem.InvalidParams[0].Name)
+		assert.Contains(t, problem.InvalidParams[0].Reason, "textt")
+		assert.Contains(t, problem.InvalidParams[0].Reason, "text")
+		assert.Contains(t, problem.InvalidParams[0].Reason, "date")
 	})
 
 	t.Run("service validation error returns bad request", func(t *testing.T) {

@@ -2,20 +2,18 @@
 package validation
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/go-playground/form/v4"
 	"github.com/go-playground/validator/v10"
 
-	"github.com/formbricks/hub/internal/api/response"
-	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -33,6 +31,53 @@ const tagSplitParts = 2
 
 // ErrValidationFailed is returned when struct validation fails (err113).
 var ErrValidationFailed = errors.New("validation failed")
+
+// ErrQueryDecodeFailed is returned when query parameters cannot be decoded into
+// the target filter struct.
+var ErrQueryDecodeFailed = errors.New("query parameter decode failed")
+
+// InvalidParam describes a request parameter that failed validation or decoding.
+type InvalidParam struct {
+	Name   string
+	Reason string
+}
+
+// QueryDecodeError preserves the original form decoder error while exposing
+// field-level invalid params for RFC 9457 responses.
+type QueryDecodeError struct {
+	err    error
+	params []InvalidParam
+}
+
+func (e *QueryDecodeError) Error() string {
+	if e == nil || e.err == nil {
+		return ErrQueryDecodeFailed.Error()
+	}
+
+	return ErrQueryDecodeFailed.Error() + ": " + e.err.Error()
+}
+
+func (e *QueryDecodeError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+
+	return e.err
+}
+
+// Is reports whether target is ErrQueryDecodeFailed.
+func (e *QueryDecodeError) Is(target error) bool {
+	return target == ErrQueryDecodeFailed
+}
+
+// InvalidParams returns a copy of the query parameters that failed decoding.
+func (e *QueryDecodeError) InvalidParams() []InvalidParam {
+	if e == nil {
+		return nil
+	}
+
+	return append([]InvalidParam(nil), e.params...)
+}
 
 func init() {
 	validate = validator.New()
@@ -90,7 +135,7 @@ func init() {
 }
 
 // ValidateStruct validates a struct using go-playground/validator
-// Returns validation errors formatted as RFC 7807 Problem Details.
+// Returns validation errors formatted for RFC 9457 Problem Details.
 func ValidateStruct(s any) error {
 	if err := validate.Struct(s); err != nil {
 		return formatValidationErrors(err)
@@ -99,14 +144,15 @@ func ValidateStruct(s any) error {
 	return nil
 }
 
-// formatValidationErrors converts validator errors to a formatted error message
-// that can be used in RFC 7807 Problem Details responses.
+// formatValidationErrors wraps validator errors so they carry both a readable
+// joined message (for logs) and the underlying validator.ValidationErrors, which
+// the response layer extracts to build RFC 9457 invalid_params.
 func formatValidationErrors(err error) error {
 	var validationErrors validator.ValidationErrors
 	if errors.As(err, &validationErrors) {
 		messages := make([]string, 0, len(validationErrors))
 		for _, fieldError := range validationErrors {
-			messages = append(messages, formatFieldError(fieldError))
+			messages = append(messages, fieldError.Field()+" "+FormatFieldError(fieldError))
 		}
 
 		return requestValidationError{
@@ -142,100 +188,10 @@ func (e requestValidationError) As(target any) bool {
 	return true
 }
 
-// formatFieldError formats a single field validation error.
-func formatFieldError(fieldError validator.FieldError) string {
-	field := fieldError.Field()
-	tag := fieldError.Tag()
-
-	switch tag {
-	case "required":
-		return field + " is required"
-	case "min":
-		return fmt.Sprintf("%s must be at least %s", field, fieldError.Param())
-	case "max":
-		return fmt.Sprintf("%s must be at most %s", field, fieldError.Param())
-	case "gte":
-		return fmt.Sprintf("%s must be greater than or equal to %s", field, fieldError.Param())
-	case "lte":
-		return fmt.Sprintf("%s must be less than or equal to %s", field, fieldError.Param())
-	case "oneof":
-		return fmt.Sprintf("%s must be one of: %s", field, fieldError.Param())
-	case "field_type":
-		return field + " must be one of: " + models.ValidFieldTypeValuesString()
-	case "uuid":
-		return field + " must be a valid UUID"
-	case "rfc3339":
-		return field + " must be in RFC3339 format (ISO 8601)"
-	case "no_null_bytes":
-		return field + " must not contain NULL bytes"
-	case "http_url":
-		return field + " must be a valid HTTP or HTTPS URL"
-	case "url":
-		return field + " must be a valid URL"
-	default:
-		return field + " is invalid"
-	}
-}
-
-// GetValidationErrorDetails extracts field-level error details from validation errors
-// Returns a slice of ErrorDetail for RFC 7807 Problem Details.
-// Supports both validator.ValidationErrors and huberrors.ValidationError.
-func GetValidationErrorDetails(err error) []response.ErrorDetail {
-	var details []response.ErrorDetail
-
-	var validationErrors validator.ValidationErrors
-	if errors.As(err, &validationErrors) {
-		for _, fieldError := range validationErrors {
-			details = append(details, response.ErrorDetail{
-				Location: fieldError.Field(),
-				Message:  formatFieldError(fieldError),
-				Value:    fieldError.Value(),
-			})
-		}
-
-		return details
-	}
-
-	var hubValidation *huberrors.ValidationError
-	if errors.As(err, &hubValidation) {
-		msg := hubValidation.Message
-		if msg == "" {
-			msg = "validation failed"
-		}
-
-		details = append(details, response.ErrorDetail{
-			Location: hubValidation.Field,
-			Message:  msg,
-		})
-	}
-
-	return details
-}
-
-// RespondValidationError writes a validation error response with RFC 7807 Problem Details.
-func RespondValidationError(w http.ResponseWriter, err error) {
-	details := GetValidationErrorDetails(err)
-
-	problem := response.ProblemDetails{
-		Type:   response.ProblemTypeValidationError,
-		Title:  "Validation Error",
-		Status: http.StatusBadRequest,
-		Detail: err.Error(),
-		Errors: details,
-	}
-
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(http.StatusBadRequest)
-
-	if err := json.NewEncoder(w).Encode(problem); err != nil {
-		slog.Error("Failed to encode validation error response", "error", err)
-	}
-}
-
 // DecodeQueryParams decodes URL query parameters into a struct.
 func DecodeQueryParams(r *http.Request, dst any) error {
 	if err := decoder.Decode(dst, r.URL.Query()); err != nil {
-		return fmt.Errorf("failed to decode query parameters: %w", err)
+		return newQueryDecodeError(err)
 	}
 
 	return nil
@@ -248,6 +204,111 @@ func ValidateAndDecodeQueryParams(r *http.Request, dst any) error {
 	}
 
 	return ValidateStruct(dst)
+}
+
+func newQueryDecodeError(err error) *QueryDecodeError {
+	return &QueryDecodeError{
+		err:    err,
+		params: invalidParamsFromQueryDecodeError(err),
+	}
+}
+
+func invalidParamsFromQueryDecodeError(err error) []InvalidParam {
+	var decodeErrors form.DecodeErrors
+	if !errors.As(err, &decodeErrors) {
+		return []InvalidParam{{Name: "query", Reason: "contains invalid query parameters"}}
+	}
+
+	fields := make([]string, 0, len(decodeErrors))
+	for field := range decodeErrors {
+		fields = append(fields, field)
+	}
+
+	sort.Strings(fields)
+
+	params := make([]InvalidParam, 0, len(fields))
+	for _, field := range fields {
+		params = append(params, InvalidParam{
+			Name:   strings.TrimPrefix(field, "."),
+			Reason: queryDecodeReason(decodeErrors[field]),
+		})
+	}
+
+	return params
+}
+
+// queryDecodeReason classifies a form decoder error into an agent-readable
+// reason. The custom-converter branch above uses errors.As on our own typed
+// error and is robust; the cases below string-match against go-playground/form's
+// stdlib-type error wording. If that library changes its messages, these
+// branches silently fall back to the generic reason — the tests in
+// TestValidateAndDecodeQueryParamsReturnsInvalidParams cover each branch and
+// will catch a regression on upgrade.
+func queryDecodeReason(err error) string {
+	var invalidFieldType *models.InvalidFieldTypeError
+	if errors.As(err, &invalidFieldType) {
+		return "must be one of: " + models.ValidFieldTypeValuesString()
+	}
+
+	text := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(text, "invalid date format"):
+		return "must be in RFC3339 (ISO 8601) format"
+	case strings.Contains(text, "invalid boolean value"):
+		return "must be a valid boolean"
+	case strings.Contains(text, "invalid integer value"), strings.Contains(text, "invalid unsigned integer value"):
+		return "must be a valid integer"
+	case strings.Contains(text, "invalid float value"):
+		return "must be a valid number"
+	default:
+		return "must be a valid query parameter value"
+	}
+}
+
+// FieldPath returns the dotted path to the offending field using API (JSON/form)
+// names, e.g. "field_type" or "items[0].field_type", so a client can map the
+// error straight back to the input it sent.
+func FieldPath(fieldErr validator.FieldError) string {
+	if _, after, found := strings.Cut(fieldErr.Namespace(), "."); found {
+		return after
+	}
+
+	return fieldErr.Field()
+}
+
+// FormatFieldError returns a self-correcting reason fragment for a single field
+// validation failure, naming allowed values or constraints where applicable.
+// The field name is carried separately in InvalidParam.Name, so the fragment
+// does not repeat it.
+func FormatFieldError(fieldErr validator.FieldError) string {
+	switch fieldErr.Tag() {
+	case "required":
+		return "is required"
+	case "min":
+		return "must be at least " + fieldErr.Param()
+	case "max":
+		return "must be at most " + fieldErr.Param()
+	case "gte":
+		return "must be greater than or equal to " + fieldErr.Param()
+	case "lte":
+		return "must be less than or equal to " + fieldErr.Param()
+	case "oneof":
+		return "must be one of: " + fieldErr.Param()
+	case "field_type":
+		return "must be one of: " + models.ValidFieldTypeValuesString()
+	case "uuid":
+		return "must be a valid UUID"
+	case "rfc3339":
+		return "must be in RFC3339 (ISO 8601) format"
+	case "no_null_bytes":
+		return "must not contain NULL bytes"
+	case "http_url":
+		return "must be a valid HTTP or HTTPS URL"
+	case "url":
+		return "must be a valid URL"
+	default:
+		return "is invalid"
+	}
 }
 
 // validateFieldType is a custom validator for field_type enum

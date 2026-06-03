@@ -1567,7 +1567,9 @@ func TestWebhooksCreateRequiresTenantID(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, "Validation Error", problem.Title)
-	assert.Contains(t, problem.Detail, "tenant_id is required")
+	require.Len(t, problem.InvalidParams, 1)
+	assert.Equal(t, "tenant_id", problem.InvalidParams[0].Name)
+	assert.Contains(t, problem.InvalidParams[0].Reason, "required")
 }
 
 // TestWebhooksInvalidSigningKey asserts that create and update reject invalid signing_key with 400.
@@ -1602,9 +1604,9 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, createResp.Body.Close())
 	assert.Equal(t, "Validation Error", problem.Title)
-	require.Len(t, problem.Errors, 1)
-	assert.Equal(t, "signing_key", problem.Errors[0].Location)
-	assert.Contains(t, problem.Errors[0].Message, "Standard Webhooks")
+	require.Len(t, problem.InvalidParams, 1)
+	assert.Equal(t, "signing_key", problem.InvalidParams[0].Name)
+	assert.Contains(t, problem.InvalidParams[0].Reason, "Standard Webhooks")
 
 	// Create a valid webhook first for update test
 	validBody := map[string]any{
@@ -1647,6 +1649,6 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	err = json.NewDecoder(updateResp.Body).Decode(&updateProblem)
 	require.NoError(t, err)
 	require.NoError(t, updateResp.Body.Close())
-	require.Len(t, updateProblem.Errors, 1)
-	assert.Equal(t, "signing_key", updateProblem.Errors[0].Location)
+	require.Len(t, updateProblem.InvalidParams, 1)
+	assert.Equal(t, "signing_key", updateProblem.InvalidParams[0].Name)
 }
