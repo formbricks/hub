@@ -2,17 +2,33 @@
 # Stage 1: Build
 # =============================================================================
 # TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
-FROM golang:1.26.3-alpine AS builder
+FROM golang:1.26.4-alpine AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
+ARG GOOSE_VERSION=v3.27.1
+ARG RIVER_VERSION=v0.39.0
+ARG X_CRYPTO_VERSION=v0.52.0
+ARG X_NET_VERSION=v0.55.0
+ARG X_SYS_VERSION=v0.45.0
 
 RUN apk add --no-cache git ca-certificates
 
 WORKDIR /build
 
-# Install goose and river CLI for migrations (for target platform)
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/pressly/goose/v3/cmd/goose@v3.27.1 && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/riverqueue/river/cmd/river@v0.35.0
+# Install goose and river CLI for migrations (for target platform).
+# Build them through a temporary module so we can force patched transitive
+# versions even when the CLI upstream has not released a dependency bump.
+RUN mkdir -p /tmp/migration-tools && \
+    cd /tmp/migration-tools && \
+    go mod init migration-tools && \
+    go get \
+      github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION} \
+      github.com/riverqueue/river/cmd/river@${RIVER_VERSION} \
+      golang.org/x/crypto@${X_CRYPTO_VERSION} \
+      golang.org/x/net@${X_NET_VERSION} \
+      golang.org/x/sys@${X_SYS_VERSION} && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/pressly/goose/v3/cmd/goose && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/riverqueue/river/cmd/river
 
 # Cache dependencies
 COPY go.mod go.sum ./

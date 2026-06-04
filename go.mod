@@ -1,6 +1,6 @@
 module github.com/formbricks/hub
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/go-playground/form/v4 v4.3.0
@@ -13,9 +13,9 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/openai/openai-go/v3 v3.32.0
 	github.com/pgvector/pgvector-go v0.3.0
-	github.com/riverqueue/river v0.35.0
-	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.35.0
-	github.com/riverqueue/river/rivertype v0.35.0
+	github.com/riverqueue/river v0.39.0
+	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.39.0
+	github.com/riverqueue/river/rivertype v0.39.0
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.0-20260424193505-a2086b6cd44f
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
@@ -66,9 +66,9 @@ require (
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/riverqueue/river/riverdriver v0.35.0 // indirect
-	github.com/riverqueue/river/rivershared v0.35.0 // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/riverqueue/river/riverdriver v0.39.0 // indirect
+	github.com/riverqueue/river/rivershared v0.39.0 // indirect
+	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
@@ -77,7 +77,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.43.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.uber.org/goleak v1.3.0 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	google.golang.org/api v0.276.0 // indirect

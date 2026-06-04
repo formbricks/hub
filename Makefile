@@ -280,7 +280,7 @@ deps:
 GOLANGCI_LINT_VERSION := v2.11.4
 GOVULNCHECK_VERSION := v1.3.0
 GOOSE_VERSION := v3.27.1
-RIVER_VERSION := v0.35.0
+RIVER_VERSION := v0.39.0
 # Use pinned path so lint uses the version from make install-tools, not PATH
 GOLANGCI_LINT ?= $(HOME)/go/bin/golangci-lint
 
