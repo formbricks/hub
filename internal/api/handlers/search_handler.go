@@ -163,6 +163,12 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 
 	res, err := h.service.SimilarFeedback(r.Context(), id, limit, minScore, cursor)
 	if err != nil {
+		if errors.Is(err, service.ErrMissingTenantID) {
+			response.RespondNotFound(w, r, "Source feedback record not found or has no tenant")
+
+			return
+		}
+
 		if errors.Is(err, service.ErrEmbeddingNotFound) {
 			response.RespondNotFound(w, r, "Feedback record has no embedding for the current model")
 

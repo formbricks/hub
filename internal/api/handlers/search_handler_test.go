@@ -206,6 +206,26 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
+	t.Run("source record without tenant returns 404", func(t *testing.T) {
+		id := uuid.MustParse("018e1234-5678-9abc-def0-123456789abc")
+		mock := &mockSearchService{
+			similarFunc: func(_ context.Context, fid uuid.UUID, _ int, _ float64, _ string) (service.SearchResult, error) {
+				assert.Equal(t, id, fid)
+
+				return service.SearchResult{}, service.ErrMissingTenantID
+			},
+		}
+		handler := NewSearchHandler(mock)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL, nil)
+		req.SetPathValue("id", id.String())
+
+		rec := httptest.NewRecorder()
+
+		handler.SimilarFeedback(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
 	t.Run("success returns 200 with data and value", func(t *testing.T) {
 		id := uuid.MustParse("018e1234-5678-9abc-def0-123456789abc")
 		similarID := uuid.MustParse("018e1234-5678-9abc-def0-aaaaaaaaaaaa")
