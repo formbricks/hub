@@ -122,21 +122,40 @@ var ErrEmbeddingNotFound = errors.New("embedding not found for feedback record a
 func (r *EmbeddingsRepository) GetEmbeddingByFeedbackRecordAndModel(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string,
 ) ([]float32, error) {
-	var vec pgvector.HalfVector
-
-	err := r.db.QueryRow(ctx,
-		`SELECT embedding FROM embeddings WHERE feedback_record_id = $1 AND model = $2`,
-		feedbackRecordID, model,
-	).Scan(&vec)
+	embedding, _, err := r.GetEmbeddingAndTenantByFeedbackRecordAndModel(ctx, feedbackRecordID, model)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrEmbeddingNotFound
-		}
-
-		return nil, fmt.Errorf("get embedding: %w", err)
+		return nil, err
 	}
 
-	return vec.Slice(), nil
+	return embedding, nil
+}
+
+// GetEmbeddingAndTenantByFeedbackRecordAndModel returns the stored embedding and its feedback record tenant.
+// Used by record-level similar feedback so the source record determines the tenant boundary for the search.
+// Returns ErrEmbeddingNotFound when no embedding exists for the current model.
+func (r *EmbeddingsRepository) GetEmbeddingAndTenantByFeedbackRecordAndModel(
+	ctx context.Context, feedbackRecordID uuid.UUID, model string,
+) ([]float32, string, error) {
+	var (
+		vec      pgvector.HalfVector
+		tenantID string
+	)
+
+	err := r.db.QueryRow(ctx,
+		`SELECT e.embedding, fr.tenant_id FROM embeddings e
+		 INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
+		 WHERE e.feedback_record_id = $1 AND e.model = $2`,
+		feedbackRecordID, model,
+	).Scan(&vec, &tenantID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", ErrEmbeddingNotFound
+		}
+
+		return nil, "", fmt.Errorf("get embedding and tenant: %w", err)
+	}
+
+	return vec.Slice(), tenantID, nil
 }
 
 // GetEmbeddingByFeedbackRecordAndModelAndTenant returns the stored embedding only when the feedback record
