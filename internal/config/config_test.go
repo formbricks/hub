@@ -323,6 +323,57 @@ func TestLoad_EmbeddingBaseURLValidation(t *testing.T) {
 	}
 }
 
+func TestLoad_TaxonomyConfig(t *testing.T) {
+	t.Setenv("TAXONOMY_SERVICE_URL", "https://taxonomy.example.com/root/")
+	t.Setenv("TAXONOMY_SERVICE_TOKEN", "taxonomy-service-token")
+	t.Setenv("HUB_INTERNAL_API_TOKEN", "hub-internal-token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Taxonomy.ServiceURL != "https://taxonomy.example.com/root" {
+		t.Errorf("Taxonomy.ServiceURL = %q, want https://taxonomy.example.com/root", cfg.Taxonomy.ServiceURL)
+	}
+
+	if cfg.Taxonomy.ServiceToken != "taxonomy-service-token" {
+		t.Errorf("Taxonomy.ServiceToken = %q, want taxonomy-service-token", cfg.Taxonomy.ServiceToken)
+	}
+
+	if cfg.Taxonomy.HubInternalAPIToken != "hub-internal-token" {
+		t.Errorf("Taxonomy.HubInternalAPIToken = %q, want hub-internal-token", cfg.Taxonomy.HubInternalAPIToken)
+	}
+}
+
+func TestLoad_TaxonomyServiceURLValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "rejects relative url", value: "/taxonomy"},
+		{name: "rejects unsupported scheme", value: "ftp://taxonomy.example.com"},
+		{name: "rejects query", value: "https://taxonomy.example.com?x=1"},
+		{name: "rejects fragment", value: "https://taxonomy.example.com#frag"},
+		{name: "rejects user info", value: "https://user:pass@taxonomy.example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TAXONOMY_SERVICE_URL", tt.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() error = nil, want error")
+			}
+
+			if !errors.Is(err, ErrInvalidTaxonomyServiceURL) {
+				t.Fatalf("Load() error = %v, want %v", err, ErrInvalidTaxonomyServiceURL)
+			}
+		})
+	}
+}
+
 func TestLoad_PublicBaseURLValidation(t *testing.T) {
 	tests := []struct {
 		name  string

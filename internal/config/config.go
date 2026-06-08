@@ -28,6 +28,7 @@ var (
 	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
 	ErrInvalidPublicBaseURL            = errors.New("PUBLIC_BASE_URL must be an absolute http(s) URL without query or fragment")
 	ErrInvalidEmbeddingBaseURL         = errors.New("EMBEDDING_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidTaxonomyServiceURL       = errors.New("TAXONOMY_SERVICE_URL must be an absolute http(s) URL without query or fragment")
 )
 
 // DefaultDatabaseURL is the default connection URL when DATABASE_URL is unset (local/test only).
@@ -44,6 +45,7 @@ type Config struct {
 	Webhook          WebhookConfig
 	MessagePublisher MessagePublisherConfig
 	Embedding        EmbeddingConfig
+	Taxonomy         TaxonomyConfig
 	Observability    ObservabilityConfig
 }
 
@@ -122,6 +124,13 @@ type EmbeddingConfig struct {
 	Normalize           bool   `env:"EMBEDDING_NORMALIZE"             env-default:"false"`
 	GoogleCloudProject  string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
 	GoogleCloudLocation string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
+}
+
+// TaxonomyConfig holds Hub-to-taxonomy service settings.
+type TaxonomyConfig struct {
+	ServiceURL          string `env:"TAXONOMY_SERVICE_URL"`
+	ServiceToken        string `env:"TAXONOMY_SERVICE_TOKEN"`
+	HubInternalAPIToken string `env:"HUB_INTERNAL_API_TOKEN"`
 }
 
 // ObservabilityConfig holds OpenTelemetry settings.
@@ -329,6 +338,15 @@ func validate(cfg *Config) error {
 		}
 
 		cfg.Embedding.BaseURL = normalized
+	}
+
+	if cfg.Taxonomy.ServiceURL != "" {
+		normalized, err := normalizeHTTPBaseURL(cfg.Taxonomy.ServiceURL, ErrInvalidTaxonomyServiceURL)
+		if err != nil {
+			return err
+		}
+
+		cfg.Taxonomy.ServiceURL = normalized
 	}
 
 	return nil

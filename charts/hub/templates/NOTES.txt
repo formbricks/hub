@@ -18,6 +18,12 @@ Recommended production configuration
 - PUBLIC_BASE_URL (ConfigMap/env): set this when Hub is exposed through ingress, TLS termination,
   or a reverse-proxy path prefix so /openapi.yaml and /openapi.json advertise the correct public URL.
 - hub-worker: keep values.worker.enabled=true unless another deployment processes the same River queues.
+
+Beta taxonomy configuration
+---------------------------
+- TAXONOMY_SERVICE_URL (ConfigMap/env): internal URL for the standalone taxonomy service.
+- TAXONOMY_SERVICE_TOKEN (Secret): token Hub sends to the standalone taxonomy service.
+- HUB_INTERNAL_API_TOKEN (Secret): protects /internal/v1/taxonomy/* when taxonomy internals are enabled.
 {{- if .Values.embeddings.enabled }}
 - embeddings: provide values.embeddings.huggingFace.token or values.embeddings.huggingFace.existingSecret
   only when using private or gated models.
@@ -28,6 +34,8 @@ Secret management options (choose one):
   values.secrets.create=true and set:
     values.secrets.stringData.DATABASE_URL
     values.secrets.stringData.API_KEY
+    values.secrets.stringData.TAXONOMY_SERVICE_TOKEN
+    values.secrets.stringData.HUB_INTERNAL_API_TOKEN
 
 2) Existing Secret:
   values.secrets.existingSecret=<name>

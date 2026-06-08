@@ -258,6 +258,89 @@ func TestNewHTTPServerKeepsTenantDataRoutesProtected(t *testing.T) {
 	}
 }
 
+func TestNewHTTPServerInternalTaxonomyRouteRequiresInternalToken(t *testing.T) {
+	server := newTestHTTPServer(t)
+
+	tests := []struct {
+		name          string
+		authHeader    string
+		wantStatus    int
+		wantBodyMatch string
+	}{
+		{
+			name:       "missing auth",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "malformed auth",
+			authHeader: "Basic test-internal-token",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "public API key rejected",
+			authHeader: "Bearer test-api-key",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "wrong internal token rejected",
+			authHeader: "Bearer wrong-token",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:          "internal token accepted",
+			authHeader:    "Bearer test-internal-token",
+			wantStatus:    http.StatusOK,
+			wantBodyMatch: "hub-taxonomy-internal",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequestWithContext(
+				context.Background(),
+				http.MethodGet,
+				"/internal/v1/taxonomy/auth-check",
+				http.NoBody,
+			)
+			if tt.authHeader != "" {
+				request.Header.Set("Authorization", tt.authHeader)
+			}
+
+			server.Handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("GET /internal/v1/taxonomy/auth-check status = %d, want %d; body=%s",
+					recorder.Code, tt.wantStatus, recorder.Body.String())
+			}
+
+			if tt.wantBodyMatch != "" && !strings.Contains(recorder.Body.String(), tt.wantBodyMatch) {
+				t.Fatalf("GET /internal/v1/taxonomy/auth-check body = %s, want %q",
+					recorder.Body.String(), tt.wantBodyMatch)
+			}
+		})
+	}
+}
+
+func TestNewHTTPServerInternalTaxonomyRouteDisabledWithoutToken(t *testing.T) {
+	server := newTestHTTPServerWithConfig(t, "https://hub.example.com/base", config.TaxonomyConfig{})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/internal/v1/taxonomy/auth-check",
+		http.NoBody,
+	)
+
+	server.Handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("GET /internal/v1/taxonomy/auth-check status = %d, want %d",
+			recorder.Code, http.StatusNotFound)
+	}
+}
+
 func newTestHTTPServer(t *testing.T) *http.Server {
 	t.Helper()
 
@@ -267,11 +350,20 @@ func newTestHTTPServer(t *testing.T) *http.Server {
 func newTestHTTPServerWithPublicBaseURL(t *testing.T, publicBaseURL string) *http.Server {
 	t.Helper()
 
+	return newTestHTTPServerWithConfig(t, publicBaseURL, config.TaxonomyConfig{
+		HubInternalAPIToken: "test-internal-token",
+	})
+}
+
+func newTestHTTPServerWithConfig(t *testing.T, publicBaseURL string, taxonomy config.TaxonomyConfig) *http.Server {
+	t.Helper()
+
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			Port:      "0",
 			HubAPIKey: "test-api-key",
 		},
+		Taxonomy: taxonomy,
 	}
 
 	return newHTTPServer(
@@ -282,6 +374,7 @@ func newTestHTTPServerWithPublicBaseURL(t *testing.T, publicBaseURL string) *htt
 		handlers.NewWebhooksHandler(nil),
 		handlers.NewTenantDataHandler(nil),
 		handlers.NewSearchHandler(nil),
+		handlers.NewTaxonomyInternalHandler(),
 		nil,
 		nil,
 	)
