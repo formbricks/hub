@@ -14,7 +14,7 @@ func NewTaxonomyInternalHandler() *TaxonomyInternalHandler {
 	return &TaxonomyInternalHandler{}
 }
 
-// AuthCheck verifies that the caller passed the internal Hub API token.
+// AuthCheck returns success after middleware.Auth enforces the internal Hub API token.
 func (h *TaxonomyInternalHandler) AuthCheck(w http.ResponseWriter, _ *http.Request) {
 	response.RespondJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
