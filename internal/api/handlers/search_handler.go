@@ -20,8 +20,8 @@ import (
 type SearchService interface {
 	SemanticSearch(ctx context.Context, query, tenantID string, limit int, minScore float64, cursor string) (
 		service.SearchResult, error)
-	SimilarFeedback(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int,
-		minScore float64, cursor string) (service.SearchResult, error)
+	SimilarFeedback(ctx context.Context, feedbackRecordID uuid.UUID, limit int, minScore float64, cursor string) (
+		service.SearchResult, error)
 }
 
 // SearchHandler handles HTTP requests for semantic search and similar feedback.
@@ -157,27 +157,20 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID == "" {
-		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "tenant_id", Reason: "is required"})
-
-		return
-	}
-
 	limit := parseLimit(r.URL.Query().Get("limit"), defaultSearchLimit, maxSearchLimit)
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
 	minScore := parseMinScore(r.URL.Query().Get("min_score"))
 
-	res, err := h.service.SimilarFeedback(r.Context(), id, tenantID, limit, minScore, cursor)
+	res, err := h.service.SimilarFeedback(r.Context(), id, limit, minScore, cursor)
 	if err != nil {
-		if errors.Is(err, service.ErrEmbeddingNotFound) {
-			response.RespondNotFound(w, r, "Feedback record has no embedding for the current model")
+		if errors.Is(err, service.ErrMissingTenantID) {
+			response.RespondNotFound(w, r, "Source feedback record not found or has no tenant")
 
 			return
 		}
 
-		if errors.Is(err, service.ErrMissingTenantID) {
-			response.RespondInvalidParams(w, r, response.InvalidParam{Name: "tenant_id", Reason: "is required"})
+		if errors.Is(err, service.ErrEmbeddingNotFound) {
+			response.RespondNotFound(w, r, "Feedback record has no embedding for the current model")
 
 			return
 		}

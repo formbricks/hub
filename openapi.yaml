@@ -750,7 +750,7 @@ paths:
                 **Only available when embeddings are configured** (EMBEDDING_PROVIDER and EMBEDDING_MODEL set).
                 Supported providers: openai, google (Gemini Developer API / Google AI Studio), google-gemini (Gemini Enterprise Agent Platform API).
                 When embeddings are disabled, this endpoint returns 503 Service Unavailable.
-                The source feedback record must belong to the given tenant_id (enforced).
+                Hub derives the tenant from the source feedback record and scopes the nearest-neighbor search to that tenant.
             operationId: similar-feedback-records
             parameters:
                 - name: id
@@ -761,14 +761,6 @@ paths:
                     type: string
                     format: uuid
                     example: "018e1234-5678-9abc-def0-123456789abc"
-                - name: tenant_id
-                  in: query
-                  description: Tenant ID (required for isolation; must match feedback record tenant_id)
-                  required: true
-                  schema:
-                    type: string
-                    minLength: 1
-                    example: "org-123"
                 - name: limit
                   in: query
                   description: Number of results to return (default 10, max 100). Consistent with list endpoints.
@@ -802,13 +794,13 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/SemanticSearchResponse'
                 "400":
-                    description: Bad Request (e.g. missing or empty tenant_id, invalid cursor)
+                    description: Bad Request (e.g. invalid cursor)
                     content:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
                 "404":
-                    description: Not Found (feedback record has no embedding for the current model)
+                    description: Not Found (feedback record has no embedding for the current model, or source record has no tenant)
                     content:
                         application/problem+json:
                             schema:

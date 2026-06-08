@@ -19,8 +19,8 @@ import (
 type mockSearchService struct {
 	semanticFunc func(ctx context.Context, query, tenantID string, limit int, minScore float64,
 		cursor string) (service.SearchResult, error)
-	similarFunc func(ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int,
-		minScore float64, cursor string) (service.SearchResult, error)
+	similarFunc func(ctx context.Context, feedbackRecordID uuid.UUID, limit int, minScore float64,
+		cursor string) (service.SearchResult, error)
 }
 
 func (m *mockSearchService) SemanticSearch(
@@ -34,10 +34,10 @@ func (m *mockSearchService) SemanticSearch(
 }
 
 func (m *mockSearchService) SimilarFeedback(
-	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int, minScore float64, cursor string,
+	ctx context.Context, feedbackRecordID uuid.UUID, limit int, minScore float64, cursor string,
 ) (service.SearchResult, error) {
 	if m.similarFunc != nil {
-		return m.similarFunc(ctx, feedbackRecordID, tenantID, limit, minScore, cursor)
+		return m.similarFunc(ctx, feedbackRecordID, limit, minScore, cursor)
 	}
 
 	return service.SearchResult{}, nil
@@ -159,27 +159,65 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 const similarURL = "http://test/v1/feedback-records/018e1234-5678-9abc-def0-123456789abc/similar"
 
 func TestSearchHandler_SimilarFeedback(t *testing.T) {
-	t.Run("missing tenant_id returns 400", func(t *testing.T) {
-		handler := NewSearchHandler(&mockSearchService{})
+	t.Run("success derives tenant from source record", func(t *testing.T) {
+		id := uuid.MustParse("018e1234-5678-9abc-def0-123456789abc")
+		similarID := uuid.MustParse("018e1234-5678-9abc-def0-aaaaaaaaaaaa")
+		mock := &mockSearchService{
+			similarFunc: func(_ context.Context, fid uuid.UUID, limit int, minScore float64,
+				cursor string,
+			) (service.SearchResult, error) {
+				assert.Equal(t, id, fid)
+				assert.Equal(t, 10, limit)
+				assert.InDelta(t, 0.7, minScore, 1e-9)
+				assert.Empty(t, cursor)
+
+				return service.SearchResult{
+					Results: []models.FeedbackRecordWithScore{
+						{FeedbackRecordID: similarID, Score: 0.88, FieldLabel: "Similar field", ValueText: "Similar feedback text."},
+					},
+				}, nil
+			},
+		}
+		handler := NewSearchHandler(mock)
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL, nil)
 		rec := httptest.NewRecorder()
 
-		req.SetPathValue("id", "018e1234-5678-9abc-def0-123456789abc")
+		req.SetPathValue("id", id.String())
 
 		handler.SimilarFeedback(rec, req)
 
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
 	t.Run("embedding not found returns 404", func(t *testing.T) {
 		mock := &mockSearchService{
-			similarFunc: func(_ context.Context, _ uuid.UUID, _ string, _ int, _ float64, _ string) (service.SearchResult, error) {
+			similarFunc: func(_ context.Context, _ uuid.UUID, _ int, _ float64, _ string) (service.SearchResult, error) {
 				return service.SearchResult{}, service.ErrEmbeddingNotFound
 			},
 		}
 		handler := NewSearchHandler(mock)
-		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL+"?tenant_id=env-1", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL, nil)
 		req.SetPathValue("id", "018e1234-5678-9abc-def0-123456789abc")
+
+		rec := httptest.NewRecorder()
+
+		handler.SimilarFeedback(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("source record without tenant returns 404", func(t *testing.T) {
+		id := uuid.MustParse("018e1234-5678-9abc-def0-123456789abc")
+		mock := &mockSearchService{
+			similarFunc: func(_ context.Context, fid uuid.UUID, _ int, _ float64, _ string) (service.SearchResult, error) {
+				assert.Equal(t, id, fid)
+
+				return service.SearchResult{}, service.ErrMissingTenantID
+			},
+		}
+		handler := NewSearchHandler(mock)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL, nil)
+		req.SetPathValue("id", id.String())
 
 		rec := httptest.NewRecorder()
 
@@ -193,11 +231,10 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 		similarID := uuid.MustParse("018e1234-5678-9abc-def0-aaaaaaaaaaaa")
 		similarVal := "Similar feedback text."
 		mock := &mockSearchService{
-			similarFunc: func(_ context.Context, fid uuid.UUID, tenantID string, limit int, minScore float64,
+			similarFunc: func(_ context.Context, fid uuid.UUID, limit int, minScore float64,
 				cursor string,
 			) (service.SearchResult, error) {
 				assert.Equal(t, id, fid)
-				assert.Equal(t, "env-1", tenantID)
 				assert.Equal(t, 10, limit)
 				assert.InDelta(t, 0.7, minScore, 1e-9)
 				assert.Empty(t, cursor)
@@ -210,7 +247,7 @@ func TestSearchHandler_SimilarFeedback(t *testing.T) {
 			},
 		}
 		handler := NewSearchHandler(mock)
-		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL+"?tenant_id=env-1&limit=10", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, similarURL+"?limit=10", nil)
 		req.SetPathValue("id", id.String())
 
 		rec := httptest.NewRecorder()

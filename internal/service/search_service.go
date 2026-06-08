@@ -28,9 +28,9 @@ var (
 // EmbeddingsRepositoryForSearch provides the embedding read operations needed for semantic search.
 // HasMore is true when there may be additional results (full page returned or full fetch limit consumed).
 type EmbeddingsRepositoryForSearch interface {
-	GetEmbeddingByFeedbackRecordAndModelAndTenant(
-		ctx context.Context, feedbackRecordID uuid.UUID, model, tenantID string,
-	) ([]float32, error)
+	GetEmbeddingAndTenantByFeedbackRecordAndModel(
+		ctx context.Context, feedbackRecordID uuid.UUID, model string,
+	) ([]float32, string, error)
 	NearestFeedbackRecordsByEmbedding(
 		ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
 	) ([]models.FeedbackRecordWithScore, bool, error)
@@ -149,24 +149,20 @@ func (s *SearchService) SemanticSearch(
 	return out, nil
 }
 
-// SimilarFeedback returns feedback record IDs and similarity scores for records similar to the given one, scoped to tenantID.
-// Requires non-empty tenantID. Returns ErrEmbeddingNotFound when the record has no embedding for the current model.
-// Uses cursor-based pagination.
+// SimilarFeedback returns feedback record IDs and similarity scores for records similar to the given one.
+// The tenant boundary is derived from the source record before running nearest-neighbor search.
+// Returns ErrEmbeddingNotFound when the record has no embedding for the current model. Uses cursor-based pagination.
 func (s *SearchService) SimilarFeedback(
-	ctx context.Context, feedbackRecordID uuid.UUID, tenantID string, limit int, minScore float64, cursor string,
+	ctx context.Context, feedbackRecordID uuid.UUID, limit int, minScore float64, cursor string,
 ) (SearchResult, error) {
 	out := SearchResult{}
-	if tenantID == "" {
-		return out, ErrMissingTenantID
-	}
 
-	// Load source embedding only if the record belongs to this tenant (tenant isolation).
-	embedding, err := s.embeddingsRepo.GetEmbeddingByFeedbackRecordAndModelAndTenant(ctx, feedbackRecordID, s.model, tenantID)
+	embedding, tenantID, err := s.getSimilarFeedbackSourceEmbedding(ctx, feedbackRecordID)
 	if err != nil {
 		if errors.Is(err, repository.ErrEmbeddingNotFound) {
-			s.logger.Debug("similar feedback: no embedding or tenant mismatch",
+			s.logger.Debug("similar feedback: no embedding",
 				"feedbackRecordId", feedbackRecordID.String(), "model", s.model)
-			//nolint:wrapcheck // return as-is so handler can map to 404
+
 			return out, err
 		}
 
@@ -212,6 +208,23 @@ func (s *SearchService) SimilarFeedback(
 	}
 
 	return out, nil
+}
+
+func (s *SearchService) getSimilarFeedbackSourceEmbedding(
+	ctx context.Context,
+	feedbackRecordID uuid.UUID,
+) ([]float32, string, error) {
+	embedding, resolvedTenantID, err := s.embeddingsRepo.GetEmbeddingAndTenantByFeedbackRecordAndModel(
+		ctx, feedbackRecordID, s.model)
+	if err != nil {
+		return nil, "", fmt.Errorf("get embedding and tenant: %w", err)
+	}
+
+	if resolvedTenantID == "" {
+		return nil, "", ErrMissingTenantID
+	}
+
+	return embedding, resolvedTenantID, nil
 }
 
 func (s *SearchService) getQueryEmbeddingCached(ctx context.Context, query string) ([]float32, error) {
