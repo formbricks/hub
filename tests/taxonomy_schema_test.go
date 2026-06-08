@@ -41,13 +41,14 @@ func TestTaxonomySchemaRelationshipsAndCascades(t *testing.T) {
 	db := setupTaxonomySchemaTestDB(t)
 
 	tenantID := "taxonomy-schema-" + uuid.NewString()
+	otherTenantID := tenantID + "-other"
 	sourceType := "formbricks"
 	sourceID := "feedback-directory-" + uuid.NewString()
 	fieldID := "feedback"
 
 	t.Cleanup(func() {
 		_, _ = db.Exec(ctx, `DELETE FROM taxonomy_runs WHERE tenant_id = $1`, tenantID)
-		_, _ = db.Exec(ctx, `DELETE FROM feedback_records WHERE tenant_id = $1`, tenantID)
+		_, _ = db.Exec(ctx, `DELETE FROM feedback_records WHERE tenant_id IN ($1, $2)`, tenantID, otherTenantID)
 	})
 
 	var feedbackRecordID uuid.UUID
@@ -62,6 +63,20 @@ func TestTaxonomySchemaRelationshipsAndCascades(t *testing.T) {
 		sourceType, sourceID, "Feedback Directory", fieldID, "Feedback", "text",
 		"Login was confusing", tenantID, "submission-"+uuid.NewString(),
 	).Scan(&feedbackRecordID)
+	require.NoError(t, err)
+
+	var otherFeedbackRecordID uuid.UUID
+
+	err = db.QueryRow(ctx, `
+		INSERT INTO feedback_records (
+			source_type, source_id, source_name, field_id, field_label, field_type,
+			value_text, tenant_id, submission_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6::field_type_enum, $7, $8, $9)
+		RETURNING id`,
+		sourceType, sourceID, "Feedback Directory", fieldID, "Feedback", "text",
+		"Billing was confusing", otherTenantID, "submission-"+uuid.NewString(),
+	).Scan(&otherFeedbackRecordID)
 	require.NoError(t, err)
 
 	var runID uuid.UUID
@@ -89,19 +104,28 @@ func TestTaxonomySchemaRelationshipsAndCascades(t *testing.T) {
 
 	_, err = db.Exec(ctx, `
 		INSERT INTO taxonomy_cluster_memberships (
-			run_id, cluster_id, feedback_record_id, confidence, metadata
+			run_id, tenant_id, cluster_id, feedback_record_id, confidence, metadata
 		)
-		VALUES ($1, $2, $3, 0.91, $4::jsonb)`,
-		runID, clusterID, feedbackRecordID, `{"rank":1}`,
+		VALUES ($1, $2, $3, $4, 0.91, $5::jsonb)`,
+		runID, tenantID, clusterID, feedbackRecordID, `{"rank":1}`,
 	)
 	require.NoError(t, err)
 
 	_, err = db.Exec(ctx, `
 		INSERT INTO taxonomy_cluster_memberships (
-			run_id, cluster_id, feedback_record_id, confidence
+			run_id, tenant_id, cluster_id, feedback_record_id, confidence
 		)
-		VALUES ($1, $2, $3, 0.90)`,
-		runID, clusterID, feedbackRecordID,
+		VALUES ($1, $2, $3, $4, 0.75)`,
+		runID, tenantID, clusterID, otherFeedbackRecordID,
+	)
+	require.Error(t, err, "memberships cannot attach feedback records from another tenant")
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO taxonomy_cluster_memberships (
+			run_id, tenant_id, cluster_id, feedback_record_id, confidence
+		)
+		VALUES ($1, $2, $3, $4, 0.90)`,
+		runID, tenantID, clusterID, feedbackRecordID,
 	)
 	require.Error(t, err, "a feedback record can be assigned only once per run")
 
@@ -186,7 +210,7 @@ func TestTaxonomySchemaRelationshipsAndCascades(t *testing.T) {
 			tenant_id, source_type, source_id, field_id, run_id, activated_by
 		)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
-		tenantID, sourceType, sourceID, fieldID, runID, "user-1",
+		tenantID, sourceType, sourceID, fieldID, otherRunID, "user-1",
 	)
 	require.Error(t, err, "only one active run is allowed per directory field")
 

@@ -1,6 +1,9 @@
--- +goose Up
+-- +goose up
 -- Taxonomy generation artifacts are stored as run-scoped Hub data. Keep them
 -- separate from feedback_records so repeated generation never mutates source feedback.
+ALTER TABLE feedback_records
+  ADD CONSTRAINT feedback_records_id_tenant_unique UNIQUE (id, tenant_id);
+
 CREATE TYPE taxonomy_run_status_enum AS ENUM (
   'pending',
   'running',
@@ -47,6 +50,7 @@ CREATE TABLE taxonomy_runs (
   CONSTRAINT taxonomy_runs_embedding_count_nonnegative CHECK (embedding_count >= 0),
   CONSTRAINT taxonomy_runs_cluster_count_nonnegative CHECK (cluster_count >= 0),
   CONSTRAINT taxonomy_runs_node_count_nonnegative CHECK (node_count >= 0),
+  UNIQUE (id, tenant_id),
   UNIQUE (id, tenant_id, source_type, source_id, field_id)
 );
 
@@ -78,22 +82,26 @@ CREATE INDEX idx_taxonomy_clusters_run_size
 CREATE TABLE taxonomy_cluster_memberships (
   id UUID PRIMARY KEY DEFAULT uuidv7(),
   run_id UUID NOT NULL,
+  tenant_id VARCHAR(255) NOT NULL,
   cluster_id UUID NOT NULL,
-  feedback_record_id UUID NOT NULL REFERENCES feedback_records(id) ON DELETE CASCADE,
+  feedback_record_id UUID NOT NULL,
   confidence DOUBLE PRECISION,
   distance DOUBLE PRECISION,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (run_id, tenant_id) REFERENCES taxonomy_runs(id, tenant_id) ON DELETE CASCADE,
   FOREIGN KEY (cluster_id, run_id) REFERENCES taxonomy_clusters(id, run_id) ON DELETE CASCADE,
+  FOREIGN KEY (feedback_record_id, tenant_id) REFERENCES feedback_records(id, tenant_id) ON DELETE CASCADE,
   CONSTRAINT taxonomy_cluster_memberships_confidence_range
     CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+  CONSTRAINT taxonomy_cluster_memberships_tenant_id_required CHECK (btrim(tenant_id) <> ''),
   UNIQUE (run_id, feedback_record_id)
 );
 
 CREATE INDEX idx_taxonomy_cluster_memberships_run_cluster
   ON taxonomy_cluster_memberships (run_id, cluster_id, feedback_record_id);
 CREATE INDEX idx_taxonomy_cluster_memberships_feedback_record
-  ON taxonomy_cluster_memberships (feedback_record_id, run_id);
+  ON taxonomy_cluster_memberships (tenant_id, feedback_record_id, run_id);
 
 CREATE TABLE taxonomy_nodes (
   id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -186,7 +194,7 @@ CREATE INDEX idx_taxonomy_node_events_tenant_created_at
 CREATE INDEX idx_taxonomy_node_events_run_node_created_at
   ON taxonomy_node_events (run_id, node_id, created_at DESC, id);
 
--- +goose Down
+-- +goose down
 DROP TABLE IF EXISTS taxonomy_node_events;
 DROP TABLE IF EXISTS taxonomy_active_runs;
 DROP TABLE IF EXISTS taxonomy_nodes;
@@ -197,3 +205,6 @@ DROP TABLE IF EXISTS taxonomy_runs;
 DROP TYPE IF EXISTS taxonomy_node_event_type_enum;
 DROP TYPE IF EXISTS taxonomy_node_type_enum;
 DROP TYPE IF EXISTS taxonomy_run_status_enum;
+
+ALTER TABLE feedback_records
+  DROP CONSTRAINT IF EXISTS feedback_records_id_tenant_unique;
