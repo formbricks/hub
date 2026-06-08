@@ -13,8 +13,14 @@ import (
 )
 
 var (
-	ErrTaxonomyServiceURLRequired   = errors.New("TAXONOMY_SERVICE_URL is required")
+	// ErrTaxonomyServiceURLRequired is returned when TAXONOMY_SERVICE_URL is missing.
+	ErrTaxonomyServiceURLRequired = errors.New("TAXONOMY_SERVICE_URL is required")
+
+	// ErrTaxonomyServiceTokenRequired is returned when TAXONOMY_SERVICE_TOKEN is missing.
 	ErrTaxonomyServiceTokenRequired = errors.New("TAXONOMY_SERVICE_TOKEN is required")
+
+	// ErrTaxonomyServiceUnexpectedStatus is returned when the taxonomy service returns a non-2xx response.
+	ErrTaxonomyServiceUnexpectedStatus = errors.New("taxonomy service returned non-success status")
 )
 
 const defaultTaxonomyClientTimeout = 30 * time.Second
@@ -68,6 +74,7 @@ func (c *TaxonomyClient) StartRun(ctx context.Context, runID string) error {
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
+
 	if requestID := observability.RequestIDFromContext(ctx); requestID != "" {
 		req.Header.Set("X-Request-ID", requestID)
 	}
@@ -76,12 +83,13 @@ func (c *TaxonomyClient) StartRun(ctx context.Context, runID string) error {
 	if err != nil {
 		return fmt.Errorf("start taxonomy run: %w", err)
 	}
+
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("start taxonomy run: taxonomy service returned status %d", resp.StatusCode)
+		return fmt.Errorf("%w: status %d", ErrTaxonomyServiceUnexpectedStatus, resp.StatusCode)
 	}
 
 	return nil

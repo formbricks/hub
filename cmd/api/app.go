@@ -393,12 +393,14 @@ func newHTTPServer(
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", protectedWithAuth)
+
 	if cfg.Taxonomy.HubInternalAPIToken != "" {
 		internalTaxonomy := http.NewServeMux()
 		internalTaxonomy.HandleFunc("GET /internal/v1/taxonomy/auth-check", taxonomyInternal.AuthCheck)
 		internalTaxonomyWithAuth := middleware.Auth(cfg.Taxonomy.HubInternalAPIToken)(internalTaxonomy)
 		mux.Handle("/internal/v1/taxonomy/", internalTaxonomyWithAuth)
 	}
+
 	mux.Handle("/", public)
 
 	otelOpts := []otelhttp.Option{

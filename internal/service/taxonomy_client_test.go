@@ -23,14 +23,17 @@ func TestNewTaxonomyClientRequiresConfig(t *testing.T) {
 }
 
 func TestTaxonomyClientStartRunSendsBearerTokenAndRequestID(t *testing.T) {
-	var gotAuth string
-	var gotRequestID string
-	var gotPath string
+	var (
+		gotAuth      string
+		gotRequestID string
+		gotPath      string
+	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotRequestID = r.Header.Get("X-Request-ID")
 		gotPath = r.URL.Path
+
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer server.Close()
@@ -75,7 +78,8 @@ func TestTaxonomyClientStartRunReturnsNon2xxError(t *testing.T) {
 		t.Fatalf("NewTaxonomyClient() error = %v", err)
 	}
 
-	if err := client.StartRun(context.Background(), "run-1"); err == nil {
-		t.Fatal("StartRun() error = nil, want non-2xx error")
+	err = client.StartRun(context.Background(), "run-1")
+	if !errors.Is(err, ErrTaxonomyServiceUnexpectedStatus) {
+		t.Fatalf("StartRun() error = %v, want %v", err, ErrTaxonomyServiceUnexpectedStatus)
 	}
 }
