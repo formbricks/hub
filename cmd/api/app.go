@@ -322,6 +322,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
+	taxonomyInternalHandler := handlers.NewTaxonomyInternalHandler()
 	healthHandler := handlers.NewHealthHandler()
 
 	openapiHandler, err := handlers.NewOpenAPIHandler(handlers.ResolveOpenAPISpecPath(), cfg.Server.PublicBaseURL)
@@ -333,6 +334,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	server := newHTTPServer(
 		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler, searchHandler,
+		taxonomyInternalHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -348,7 +350,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}, nil
 }
 
-// newHTTPServer builds the HTTP server and muxes (no auth on /health or /openapi.*, API key on /v1/).
+// newHTTPServer builds the HTTP server and muxes (no auth on /health or /openapi.*, API key on /v1/,
+// internal taxonomy token on /internal/v1/taxonomy/ when configured).
 // Handler chain: RequestID -> otelhttp(Logging(mux)) so access logs get trace_id/span_id from context.
 func newHTTPServer(
 	cfg *config.Config,
@@ -358,6 +361,7 @@ func newHTTPServer(
 	webhooks *handlers.WebhooksHandler,
 	tenantData *handlers.TenantDataHandler,
 	search *handlers.SearchHandler,
+	taxonomyInternal *handlers.TaxonomyInternalHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
 ) *http.Server {
@@ -386,8 +390,17 @@ func newHTTPServer(
 	protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
 
 	protectedWithAuth := middleware.Auth(cfg.Server.HubAPIKey)(protected)
+
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", protectedWithAuth)
+
+	if cfg.Taxonomy.HubInternalAPIToken != "" {
+		internalTaxonomy := http.NewServeMux()
+		internalTaxonomy.HandleFunc("GET /internal/v1/taxonomy/auth-check", taxonomyInternal.AuthCheck)
+		internalTaxonomyWithAuth := middleware.Auth(cfg.Taxonomy.HubInternalAPIToken)(internalTaxonomy)
+		mux.Handle("/internal/v1/taxonomy/", internalTaxonomyWithAuth)
+	}
+
 	mux.Handle("/", public)
 
 	otelOpts := []otelhttp.Option{
