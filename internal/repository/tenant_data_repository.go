@@ -99,6 +99,13 @@ func deleteTenantDataInTx(
 		return nil, fmt.Errorf("delete tenant embeddings: %w", err)
 	}
 
+	_, err = exec.Exec(ctx, `
+		DELETE FROM taxonomy_runs
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy runs: %w", err)
+	}
+
 	feedbackRecordsTag, err := exec.Exec(ctx, `
 		DELETE FROM feedback_records
 		WHERE tenant_id = $1`, tenantID)

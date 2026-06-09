@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -1063,6 +1064,13 @@ func TestDeleteTenantData(t *testing.T) {
 	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantARecord2.ID, modelName, embedding))
 	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantBRecord.ID, modelName, embedding))
 
+	tenantATaxonomyRunID := createTenantDataTaxonomyGraph(
+		ctx, t, db, tenantA, tenantARecord1.ID, "tenant-data-delete-a-taxonomy-"+uuid.NewString(), tenantARecord1.FieldID,
+	)
+	tenantBTaxonomyRunID := createTenantDataTaxonomyGraph(
+		ctx, t, db, tenantB, tenantBRecord.ID, "tenant-data-delete-b-taxonomy-"+uuid.NewString(), tenantBRecord.FieldID,
+	)
+
 	deleteResp := deleteTenantData(ctx, t, client, server.URL, tenantA)
 	assert.Equal(t, tenantA, deleteResp.TenantID)
 	assert.Equal(t, int64(2), deleteResp.DeletedFeedbackRecords)
@@ -1081,6 +1089,7 @@ func TestDeleteTenantData(t *testing.T) {
 	)
 	_, err = embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, tenantARecord1.ID, modelName)
 	require.ErrorIs(t, err, repository.ErrEmbeddingNotFound)
+	requireTenantDataTaxonomyRunDeleted(ctx, t, db, tenantATaxonomyRunID)
 
 	requireTenantDataResourceStatus(
 		ctx, t, client, fmt.Sprintf("%s/v1/feedback-records/%s", server.URL, tenantBRecord.ID), http.StatusOK,
@@ -1088,6 +1097,7 @@ func TestDeleteTenantData(t *testing.T) {
 	requireTenantDataResourceStatus(ctx, t, client, fmt.Sprintf("%s/v1/webhooks/%s", server.URL, tenantBWebhook.ID), http.StatusOK)
 	_, err = embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, tenantBRecord.ID, modelName)
 	require.NoError(t, err)
+	requireTenantDataTaxonomyRunPresent(ctx, t, db, tenantBTaxonomyRunID)
 
 	repeatedResp := deleteTenantData(ctx, t, client, server.URL, tenantA)
 	assert.Equal(t, int64(0), repeatedResp.DeletedFeedbackRecords)
@@ -1208,6 +1218,132 @@ func createTenantDataWebhook(
 	require.NoError(t, resp.Body.Close())
 
 	return webhook
+}
+
+func createTenantDataTaxonomyGraph(
+	ctx context.Context,
+	t *testing.T,
+	db *pgxpool.Pool,
+	tenantID string,
+	feedbackRecordID uuid.UUID,
+	sourceID string,
+	fieldID string,
+) uuid.UUID {
+	t.Helper()
+
+	var runID uuid.UUID
+
+	err := db.QueryRow(ctx, `
+		INSERT INTO taxonomy_runs (
+			tenant_id, source_type, source_id, field_id, field_label, status,
+			record_count, embedding_count
+		)
+		VALUES ($1, 'formbricks', $2, $3, 'Feedback', 'succeeded'::taxonomy_run_status_enum, 1, 1)
+		RETURNING id`,
+		tenantID, sourceID, fieldID,
+	).Scan(&runID)
+	require.NoError(t, err)
+
+	var clusterID uuid.UUID
+
+	err = db.QueryRow(ctx, `
+		INSERT INTO taxonomy_clusters (run_id, cluster_key, label, llm_label, keywords, size)
+		VALUES ($1, 1, 'login', 'Login issues', '["login"]'::jsonb, 1)
+		RETURNING id`,
+		runID,
+	).Scan(&clusterID)
+	require.NoError(t, err)
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO taxonomy_cluster_memberships (run_id, tenant_id, cluster_id, feedback_record_id, confidence)
+		VALUES ($1, $2, $3, $4, 0.95)`,
+		runID, tenantID, clusterID, feedbackRecordID,
+	)
+	require.NoError(t, err)
+
+	var rootID uuid.UUID
+
+	err = db.QueryRow(ctx, `
+		INSERT INTO taxonomy_nodes (run_id, node_type, label, original_label, level, sort_order)
+		VALUES ($1, 'root'::taxonomy_node_type_enum, 'Feedback', 'Feedback', 0, 0)
+		RETURNING id`,
+		runID,
+	).Scan(&rootID)
+	require.NoError(t, err)
+
+	var branchID uuid.UUID
+
+	err = db.QueryRow(ctx, `
+		INSERT INTO taxonomy_nodes (run_id, parent_id, node_type, label, original_label, level, sort_order)
+		VALUES ($1, $2, 'branch'::taxonomy_node_type_enum, 'Product Access', 'Product Access', 1, 0)
+		RETURNING id`,
+		runID, rootID,
+	).Scan(&branchID)
+	require.NoError(t, err)
+
+	var leafID uuid.UUID
+
+	err = db.QueryRow(ctx, `
+		INSERT INTO taxonomy_nodes (run_id, parent_id, cluster_id, node_type, label, original_label, level, sort_order)
+		VALUES ($1, $2, $3, 'leaf'::taxonomy_node_type_enum, 'Login Problems', 'Login Problems', 2, 0)
+		RETURNING id`,
+		runID, branchID, clusterID,
+	).Scan(&leafID)
+	require.NoError(t, err)
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO taxonomy_active_runs (tenant_id, source_type, source_id, field_id, run_id, activated_by)
+		VALUES ($1, 'formbricks', $2, $3, $4, 'tenant-data-test')`,
+		tenantID, sourceID, fieldID, runID,
+	)
+	require.NoError(t, err)
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO taxonomy_node_events (
+			tenant_id, source_type, source_id, field_id, run_id, node_id,
+			event_type, actor_id, old_value, new_value
+		)
+		VALUES (
+			$1, 'formbricks', $2, $3, $4, $5,
+			'rename'::taxonomy_node_event_type_enum, 'tenant-data-test',
+			'{"label":"Login Problems"}'::jsonb, '{"label":"Authentication Problems"}'::jsonb
+		)`,
+		tenantID, sourceID, fieldID, runID, leafID,
+	)
+	require.NoError(t, err)
+
+	return runID
+}
+
+func requireTenantDataTaxonomyRunDeleted(ctx context.Context, t *testing.T, db *pgxpool.Pool, runID uuid.UUID) {
+	t.Helper()
+
+	assert.Equal(t, int64(0), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_runs WHERE id = $1`, runID))
+	assert.Equal(t, int64(0), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_clusters WHERE run_id = $1`, runID))
+	assert.Equal(t, int64(0), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_cluster_memberships WHERE run_id = $1`, runID))
+	assert.Equal(t, int64(0), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_nodes WHERE run_id = $1`, runID))
+	assert.Equal(t, int64(0), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_active_runs WHERE run_id = $1`, runID))
+	assert.Equal(t, int64(0), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_node_events WHERE run_id = $1`, runID))
+}
+
+func requireTenantDataTaxonomyRunPresent(ctx context.Context, t *testing.T, db *pgxpool.Pool, runID uuid.UUID) {
+	t.Helper()
+
+	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_runs WHERE id = $1`, runID))
+	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_cluster_memberships WHERE run_id = $1`, runID))
+	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_active_runs WHERE run_id = $1`, runID))
+	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_node_events WHERE run_id = $1`, runID))
+}
+
+func countTenantDataRows(ctx context.Context, t *testing.T, db *pgxpool.Pool, query string, args ...any) int64 {
+	t.Helper()
+
+	var count int64
+
+	err := db.QueryRow(ctx, query, args...).Scan(&count)
+	require.NoError(t, err)
+
+	return count
 }
 
 func requireTenantDataResourceStatus(
