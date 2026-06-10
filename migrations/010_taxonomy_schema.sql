@@ -2,7 +2,8 @@
 -- Taxonomy generation artifacts are stored as run-scoped Hub data. Keep them
 -- separate from feedback_records so repeated generation never mutates source feedback.
 ALTER TABLE feedback_records
-  ADD CONSTRAINT feedback_records_id_tenant_unique UNIQUE (id, tenant_id);
+  ADD CONSTRAINT feedback_records_id_tenant_unique
+  UNIQUE USING INDEX feedback_records_id_tenant_uidx;
 
 CREATE TYPE taxonomy_run_status_enum AS ENUM (
   'pending',
