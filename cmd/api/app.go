@@ -322,7 +322,9 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 
 	taxonomyRepo := repository.NewTaxonomyRepository(db)
+
 	var taxonomyStarter service.TaxonomyRunStarter
+
 	if cfg.Taxonomy.ServiceURL != "" || cfg.Taxonomy.ServiceToken != "" {
 		taxonomyClient, err := service.NewTaxonomyClient(service.TaxonomyClientConfig{
 			ServiceURL:   cfg.Taxonomy.ServiceURL,

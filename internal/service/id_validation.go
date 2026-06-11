@@ -23,14 +23,14 @@ func normalizeRequiredTenantID(tenantID *string) (string, error) {
 }
 
 func normalizeRequiredTenantIDValue(tenantID string) (string, error) {
-	return normalizeRequiredIdentifier("tenant_id", tenantID, maxTenantIDLength)
+	return normalizeRequiredIdentifier("tenant_id", tenantID)
 }
 
 func normalizeRequiredUserIDValue(userID string) (string, error) {
-	return normalizeRequiredIdentifier("user_id", userID, maxUserIDLength)
+	return normalizeRequiredIdentifier("user_id", userID)
 }
 
-func normalizeRequiredIdentifier(fieldName, value string, maxLength int) (string, error) {
+func normalizeRequiredIdentifier(fieldName, value string) (string, error) {
 	normalized := strings.TrimSpace(value)
 	if normalized == "" {
 		return "", huberrors.NewValidationError(fieldName, fieldName+" is required and cannot be empty")
@@ -40,8 +40,8 @@ func normalizeRequiredIdentifier(fieldName, value string, maxLength int) (string
 		return "", huberrors.NewValidationError(fieldName, fieldName+" must not contain NULL bytes")
 	}
 
-	if utf8.RuneCountInString(normalized) > maxLength {
-		return "", huberrors.NewValidationError(fieldName, fieldName+" must be at most "+strconv.Itoa(maxLength)+" characters")
+	if utf8.RuneCountInString(normalized) > maxIdentifierLength {
+		return "", huberrors.NewValidationError(fieldName, fieldName+" must be at most "+strconv.Itoa(maxIdentifierLength)+" characters")
 	}
 
 	return normalized, nil

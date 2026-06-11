@@ -27,22 +27,27 @@ var (
 	defaultJSONArr = json.RawMessage(`[]`)
 )
 
+// TaxonomyRepository stores taxonomy runs, artifacts, and edit events.
 type TaxonomyRepository struct {
 	db *pgxpool.Pool
 }
 
+// CreateTaxonomyRunParams contains the data needed to create a taxonomy run.
 type CreateTaxonomyRunParams struct {
 	models.TaxonomyScope
+
 	FieldLabel     *string
 	Params         json.RawMessage
 	RecordCount    int
 	EmbeddingCount int
 }
 
+// NewTaxonomyRepository creates a taxonomy repository.
 func NewTaxonomyRepository(db *pgxpool.Pool) *TaxonomyRepository {
 	return &TaxonomyRepository{db: db}
 }
 
+// ListFieldOptions returns taxonomy-capable feedback fields for a tenant.
 func (r *TaxonomyRepository) ListFieldOptions(
 	ctx context.Context,
 	tenantID string,
@@ -75,6 +80,7 @@ func (r *TaxonomyRepository) ListFieldOptions(
 	defer rows.Close()
 
 	out := make([]models.TaxonomyFieldOption, 0)
+
 	for rows.Next() {
 		var option models.TaxonomyFieldOption
 		if err := rows.Scan(
@@ -100,6 +106,7 @@ func (r *TaxonomyRepository) ListFieldOptions(
 	return out, nil
 }
 
+// CountScopeInput counts text records and embeddings for a taxonomy scope.
 func (r *TaxonomyRepository) CountScopeInput(
 	ctx context.Context,
 	scope models.TaxonomyScope,
@@ -133,25 +140,26 @@ func (r *TaxonomyRepository) CountScopeInput(
 	return recordCount, embeddingCount, fieldLabel, nil
 }
 
+// CreateRunIfAvailable creates a taxonomy run unless one is already pending or running.
 func (r *TaxonomyRepository) CreateRunIfAvailable(
 	ctx context.Context,
 	params CreateTaxonomyRunParams,
 ) (*models.TaxonomyRun, bool, error) {
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, false, fmt.Errorf("begin taxonomy run create tx: %w", err)
 	}
 
 	defer func() {
-		_ = tx.Rollback(ctx)
+		_ = transaction.Rollback(ctx)
 	}()
 
 	lockKey := taxonomyScopeLockKey(params.TaxonomyScope)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+	if _, err := transaction.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 		return nil, false, fmt.Errorf("lock taxonomy run scope: %w", err)
 	}
 
-	existing, err := queryTaxonomyRun(ctx, tx, taxonomyRunSelect+`
+	existing, err := queryTaxonomyRun(ctx, transaction, taxonomyRunSelect+`
 		FROM taxonomy_runs
 		WHERE tenant_id = $1
 		  AND source_type = $2
@@ -165,15 +173,16 @@ func (r *TaxonomyRepository) CreateRunIfAvailable(
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, fmt.Errorf("find in-progress taxonomy run: %w", err)
 	}
+
 	if existing != nil {
-		if err := tx.Commit(ctx); err != nil {
+		if err := transaction.Commit(ctx); err != nil {
 			return nil, false, fmt.Errorf("commit existing taxonomy run tx: %w", err)
 		}
 
 		return existing, false, nil
 	}
 
-	run, err := queryTaxonomyRun(ctx, tx, `
+	run, err := queryTaxonomyRun(ctx, transaction, `
 		WITH taxonomy_runs AS (
 			INSERT INTO taxonomy_runs (
 				tenant_id, source_type, source_id, field_id, field_label,
@@ -195,7 +204,7 @@ func (r *TaxonomyRepository) CreateRunIfAvailable(
 		return nil, false, fmt.Errorf("insert taxonomy run: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := transaction.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("commit taxonomy run create tx: %w", err)
 	}
 
@@ -212,6 +221,7 @@ func taxonomyScopeLockKey(scope models.TaxonomyScope) string {
 	)
 }
 
+// MarkRunRunning transitions a taxonomy run to running.
 func (r *TaxonomyRepository) MarkRunRunning(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error) {
 	run, err := queryTaxonomyRun(ctx, r.db, `
 		WITH taxonomy_runs AS (
@@ -233,6 +243,7 @@ func (r *TaxonomyRepository) MarkRunRunning(ctx context.Context, runID uuid.UUID
 	return run, nil
 }
 
+// MarkRunFailed transitions a taxonomy run to failed with an error message.
 func (r *TaxonomyRepository) MarkRunFailed(ctx context.Context, runID uuid.UUID, message string) (*models.TaxonomyRun, error) {
 	run, err := queryTaxonomyRun(ctx, r.db, `
 		WITH taxonomy_runs AS (
@@ -254,6 +265,7 @@ func (r *TaxonomyRepository) MarkRunFailed(ctx context.Context, runID uuid.UUID,
 	return run, nil
 }
 
+// GetRun returns a taxonomy run by ID.
 func (r *TaxonomyRepository) GetRun(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error) {
 	run, err := queryTaxonomyRun(ctx, r.db, taxonomyRunSelect+` FROM taxonomy_runs WHERE id = $1`, runID)
 	if err != nil {
@@ -267,6 +279,7 @@ func (r *TaxonomyRepository) GetRun(ctx context.Context, runID uuid.UUID) (*mode
 	return run, nil
 }
 
+// GetActiveRun returns the active taxonomy run for a scope.
 func (r *TaxonomyRepository) GetActiveRun(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyRun, error) {
 	run, err := queryTaxonomyRun(ctx, r.db, taxonomyRunSelect+`
 		FROM taxonomy_active_runs ar
@@ -288,6 +301,7 @@ func (r *TaxonomyRepository) GetActiveRun(ctx context.Context, scope models.Taxo
 	return run, nil
 }
 
+// ListRuns returns taxonomy run history for a tenant and optional scope filters.
 func (r *TaxonomyRepository) ListRuns(
 	ctx context.Context,
 	filters models.ListTaxonomyRunsFilters,
@@ -325,6 +339,7 @@ func (r *TaxonomyRepository) ListRuns(
 	return scanTaxonomyRuns(rows)
 }
 
+// GetRunInput returns feedback records and embeddings for a taxonomy run.
 func (r *TaxonomyRepository) GetRunInput(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -355,6 +370,7 @@ func (r *TaxonomyRepository) GetRunInput(
 	defer rows.Close()
 
 	records := make([]models.TaxonomyRunInputRecord, 0, run.EmbeddingCount)
+
 	for rows.Next() {
 		var (
 			record models.TaxonomyRunInputRecord
@@ -375,21 +391,22 @@ func (r *TaxonomyRepository) GetRunInput(
 	return &models.TaxonomyRunInputResponse{Run: *run, Records: records}, nil
 }
 
+// StoreResultAndActivate stores generated taxonomy artifacts and activates the run.
 func (r *TaxonomyRepository) StoreResultAndActivate(
 	ctx context.Context,
 	runID uuid.UUID,
 	req models.TaxonomyRunResultRequest,
 ) (*models.TaxonomyRun, error) {
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin taxonomy result tx: %w", err)
 	}
 
 	defer func() {
-		_ = tx.Rollback(ctx)
+		_ = transaction.Rollback(ctx)
 	}()
 
-	run, err := queryTaxonomyRun(ctx, tx, taxonomyRunSelect+` FROM taxonomy_runs WHERE id = $1 FOR UPDATE`, runID)
+	run, err := queryTaxonomyRun(ctx, transaction, taxonomyRunSelect+` FROM taxonomy_runs WHERE id = $1 FOR UPDATE`, runID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
@@ -401,7 +418,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 	clusterIDs := make(map[int]uuid.UUID, len(req.Clusters))
 	for _, cluster := range req.Clusters {
 		var clusterID uuid.UUID
-		if err := tx.QueryRow(ctx, `
+		if err := transaction.QueryRow(ctx, `
 			INSERT INTO taxonomy_clusters (
 				run_id, cluster_key, label, llm_label, keywords, size, is_outlier, metrics
 			)
@@ -428,7 +445,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 			return nil, huberrors.NewValidationError("memberships.cluster_key", "references an unknown cluster")
 		}
 
-		if _, err := tx.Exec(ctx, `
+		if _, err := transaction.Exec(ctx, `
 			INSERT INTO taxonomy_cluster_memberships (
 				run_id, tenant_id, cluster_id, feedback_record_id, confidence, distance, metadata
 			)
@@ -457,6 +474,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 	nodeIDs := make(map[string]uuid.UUID, len(nodes))
 	for _, node := range nodes {
 		var parentID *uuid.UUID
+
 		if node.ParentKey != nil {
 			resolved, ok := nodeIDs[*node.ParentKey]
 			if !ok {
@@ -467,6 +485,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 		}
 
 		var clusterID *uuid.UUID
+
 		if node.ClusterKey != nil {
 			resolved, ok := clusterIDs[*node.ClusterKey]
 			if !ok {
@@ -477,7 +496,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 		}
 
 		var nodeID uuid.UUID
-		if err := tx.QueryRow(ctx, `
+		if err := transaction.QueryRow(ctx, `
 			INSERT INTO taxonomy_nodes (
 				run_id, parent_id, cluster_id, node_type, label, original_label,
 				description, level, sort_order, metadata
@@ -501,7 +520,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 	}
 
 	activatedBy := taxonomyRunRequestedBy(run.Params)
-	if _, err := tx.Exec(ctx, `
+	if _, err := transaction.Exec(ctx, `
 		INSERT INTO taxonomy_active_runs (
 			tenant_id, source_type, source_id, field_id, run_id, activated_by
 		)
@@ -521,7 +540,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 		return nil, fmt.Errorf("activate taxonomy run: %w", err)
 	}
 
-	updated, err := queryTaxonomyRun(ctx, tx, `
+	updated, err := queryTaxonomyRun(ctx, transaction, `
 		WITH taxonomy_runs AS (
 			UPDATE taxonomy_runs
 			SET status = 'succeeded',
@@ -543,13 +562,14 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 		return nil, fmt.Errorf("mark taxonomy run succeeded: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := transaction.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit taxonomy result tx: %w", err)
 	}
 
 	return updated, nil
 }
 
+// GetTree returns the visible taxonomy tree for a run.
 func (r *TaxonomyRepository) GetTree(ctx context.Context, runID uuid.UUID) (*models.TaxonomyTreeResponse, error) {
 	run, err := r.GetRun(ctx, runID)
 	if err != nil {
@@ -566,6 +586,7 @@ func (r *TaxonomyRepository) GetTree(ctx context.Context, runID uuid.UUID) (*mod
 	return &models.TaxonomyTreeResponse{Run: *run, Root: root}, nil
 }
 
+// RenameNode updates a taxonomy node label and records an edit event.
 func (r *TaxonomyRepository) RenameNode(
 	ctx context.Context,
 	nodeID uuid.UUID,
@@ -573,21 +594,21 @@ func (r *TaxonomyRepository) RenameNode(
 	actorID string,
 	label string,
 ) (*models.TaxonomyNode, error) {
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin taxonomy node rename tx: %w", err)
 	}
 
 	defer func() {
-		_ = tx.Rollback(ctx)
+		_ = transaction.Rollback(ctx)
 	}()
 
-	node, run, err := getNodeForUpdate(ctx, tx, nodeID, tenantID)
+	node, run, err := getNodeForUpdate(ctx, transaction, nodeID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 
-	updated, err := queryTaxonomyNode(ctx, tx, `
+	updated, err := queryTaxonomyNode(ctx, transaction, `
 		WITH taxonomy_nodes AS (
 			UPDATE taxonomy_nodes
 			SET label = $2, updated_at = NOW()
@@ -600,40 +621,41 @@ func (r *TaxonomyRepository) RenameNode(
 		return nil, fmt.Errorf("rename taxonomy node: %w", err)
 	}
 
-	if err := insertNodeEvent(ctx, tx, run, nodeID, "rename", actorID,
+	if err := insertNodeEvent(ctx, transaction, run, nodeID, "rename", actorID,
 		map[string]string{"label": node.Label},
 		map[string]string{"label": label}); err != nil {
 		return nil, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := transaction.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit taxonomy node rename tx: %w", err)
 	}
 
 	return updated, nil
 }
 
+// RemoveNode soft-removes a taxonomy node and records an edit event.
 func (r *TaxonomyRepository) RemoveNode(
 	ctx context.Context,
 	nodeID uuid.UUID,
 	tenantID string,
 	actorID string,
 ) (*models.TaxonomyNode, error) {
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin taxonomy node remove tx: %w", err)
 	}
 
 	defer func() {
-		_ = tx.Rollback(ctx)
+		_ = transaction.Rollback(ctx)
 	}()
 
-	_, run, err := getNodeForUpdate(ctx, tx, nodeID, tenantID)
+	_, run, err := getNodeForUpdate(ctx, transaction, nodeID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 
-	updated, err := queryTaxonomyNode(ctx, tx, `
+	updated, err := queryTaxonomyNode(ctx, transaction, `
 		WITH taxonomy_nodes AS (
 			UPDATE taxonomy_nodes
 			SET removed_at = NOW(), removed_by = $2, updated_at = NOW()
@@ -646,19 +668,20 @@ func (r *TaxonomyRepository) RemoveNode(
 		return nil, fmt.Errorf("remove taxonomy node: %w", err)
 	}
 
-	if err := insertNodeEvent(ctx, tx, run, nodeID, "soft_remove", actorID,
+	if err := insertNodeEvent(ctx, transaction, run, nodeID, "soft_remove", actorID,
 		map[string]any{"removed_at": nil},
 		map[string]string{"removed_by": actorID}); err != nil {
 		return nil, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if err := transaction.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit taxonomy node remove tx: %w", err)
 	}
 
 	return updated, nil
 }
 
+// ListNodeRecords returns feedback records assigned to a visible taxonomy node or descendants.
 func (r *TaxonomyRepository) ListNodeRecords(
 	ctx context.Context,
 	nodeID uuid.UUID,
@@ -700,10 +723,11 @@ func (r *TaxonomyRepository) ListNodeRecords(
 	defer rows.Close()
 
 	records := []models.FeedbackRecord{}
+
 	for rows.Next() {
 		record, err := scanFeedbackRecord(rows)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("scan taxonomy node record: %w", err)
 		}
 
 		records = append(records, *record)
@@ -729,6 +753,7 @@ func (r *TaxonomyRepository) listVisibleNodes(ctx context.Context, runID uuid.UU
 	defer rows.Close()
 
 	nodes := []models.TaxonomyNode{}
+
 	for rows.Next() {
 		node, err := scanTaxonomyNode(rows)
 		if err != nil {
@@ -788,7 +813,7 @@ func scanTaxonomyRun(row scanner) (*models.TaxonomyRun, error) {
 		&run.CreatedAt,
 		&run.UpdatedAt,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan taxonomy run: %w", err)
 	}
 
 	return &run, nil
@@ -796,6 +821,7 @@ func scanTaxonomyRun(row scanner) (*models.TaxonomyRun, error) {
 
 func scanTaxonomyRuns(rows pgx.Rows) ([]models.TaxonomyRun, error) {
 	out := make([]models.TaxonomyRun, 0)
+
 	for rows.Next() {
 		run, err := scanTaxonomyRun(rows)
 		if err != nil {
@@ -847,11 +873,11 @@ func scanTaxonomyNode(row scanner) (*models.TaxonomyNode, error) {
 
 func getNodeForUpdate(
 	ctx context.Context,
-	tx pgx.Tx,
+	transaction pgx.Tx,
 	nodeID uuid.UUID,
 	tenantID string,
 ) (*models.TaxonomyNode, *models.TaxonomyRun, error) {
-	node, err := queryTaxonomyNode(ctx, tx, taxonomyNodeSelect+`
+	node, err := queryTaxonomyNode(ctx, transaction, taxonomyNodeSelect+`
 		FROM taxonomy_nodes
 		WHERE id = $1 AND removed_at IS NULL
 		FOR UPDATE`,
@@ -865,7 +891,7 @@ func getNodeForUpdate(
 		return nil, nil, fmt.Errorf("lock taxonomy node: %w", err)
 	}
 
-	run, err := queryTaxonomyRun(ctx, tx, taxonomyRunSelect+`
+	run, err := queryTaxonomyRun(ctx, transaction, taxonomyRunSelect+`
 		FROM taxonomy_runs
 		WHERE id = $1 AND tenant_id = $2`,
 		node.RunID, tenantID,
@@ -883,7 +909,7 @@ func getNodeForUpdate(
 
 func insertNodeEvent(
 	ctx context.Context,
-	tx pgx.Tx,
+	transaction pgx.Tx,
 	run *models.TaxonomyRun,
 	nodeID uuid.UUID,
 	eventType string,
@@ -901,7 +927,7 @@ func insertNodeEvent(
 		return fmt.Errorf("marshal taxonomy node event new value: %w", err)
 	}
 
-	if _, err := tx.Exec(ctx, `
+	if _, err := transaction.Exec(ctx, `
 		INSERT INTO taxonomy_node_events (
 			tenant_id, source_type, source_id, field_id, run_id, node_id,
 			event_type, actor_id, old_value, new_value
@@ -937,6 +963,7 @@ func buildTaxonomyTree(nodes []models.TaxonomyNode) *models.TaxonomyNode {
 	}
 
 	var root *models.TaxonomyNode
+
 	for _, node := range byID {
 		if node.ParentID == nil {
 			root = node

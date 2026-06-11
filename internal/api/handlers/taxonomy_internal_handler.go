@@ -10,6 +10,7 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+// TaxonomyInternalService is the application service used by internal taxonomy endpoints.
 type TaxonomyInternalService interface {
 	GetRunInput(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRunInputResponse, error)
 	CompleteRun(ctx context.Context, runID uuid.UUID, req models.TaxonomyRunResultRequest) (*models.TaxonomyRun, error)
@@ -39,6 +40,7 @@ func (h *TaxonomyInternalHandler) AuthCheck(w http.ResponseWriter, _ *http.Reque
 	})
 }
 
+// GetRunInput returns run-scoped input for the taxonomy service.
 func (h *TaxonomyInternalHandler) GetRunInput(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Taxonomy internals are not available.")
@@ -61,6 +63,7 @@ func (h *TaxonomyInternalHandler) GetRunInput(w http.ResponseWriter, r *http.Req
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// CompleteRun stores successful taxonomy output from the taxonomy service.
 func (h *TaxonomyInternalHandler) CompleteRun(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Taxonomy internals are not available.")
@@ -90,6 +93,7 @@ func (h *TaxonomyInternalHandler) CompleteRun(w http.ResponseWriter, r *http.Req
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// FailRun records a failed taxonomy run from the taxonomy service.
 func (h *TaxonomyInternalHandler) FailRun(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Taxonomy internals are not available.")

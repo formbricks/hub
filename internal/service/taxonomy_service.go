@@ -15,14 +15,18 @@ import (
 )
 
 var (
+	// ErrTaxonomyEmbeddingsNotConfigured is returned when Hub embeddings are not configured.
 	ErrTaxonomyEmbeddingsNotConfigured = errors.New("taxonomy requires EMBEDDING_MODEL to be configured")
-	ErrTaxonomyServiceNotConfigured    = errors.New("taxonomy service is not configured")
-	ErrTaxonomyServiceStartFailed      = errors.New("taxonomy service failed to start run")
+	// ErrTaxonomyServiceNotConfigured is returned when the taxonomy compute service is unavailable.
+	ErrTaxonomyServiceNotConfigured = errors.New("taxonomy service is not configured")
+	// ErrTaxonomyServiceStartFailed is returned when the taxonomy compute service rejects a run.
+	ErrTaxonomyServiceStartFailed = errors.New("taxonomy service failed to start run")
 )
 
 const defaultMinimumTaxonomyEmbeddingCount = 20
 
-type TaxonomyRepository interface {
+// TaxonomyRepository persists taxonomy run state and generated artifacts.
+type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service coordinates one cohesive repository boundary.
 	ListFieldOptions(ctx context.Context, tenantID, embeddingModel string) ([]models.TaxonomyFieldOption, error)
 	CountScopeInput(ctx context.Context, scope models.TaxonomyScope, embeddingModel string) (int, int, *string, error)
 	CreateRunIfAvailable(ctx context.Context, params repository.CreateTaxonomyRunParams) (*models.TaxonomyRun, bool, error)
@@ -43,10 +47,12 @@ type TaxonomyRepository interface {
 	ListNodeRecords(ctx context.Context, nodeID uuid.UUID, tenantID string, limit int) ([]models.FeedbackRecord, int, error)
 }
 
+// TaxonomyRunStarter starts asynchronous taxonomy compute work.
 type TaxonomyRunStarter interface {
 	StartRun(ctx context.Context, runID string) error
 }
 
+// TaxonomyService coordinates taxonomy run lifecycle and edits.
 type TaxonomyService struct {
 	repo                  TaxonomyRepository
 	starter               TaxonomyRunStarter
@@ -54,6 +60,7 @@ type TaxonomyService struct {
 	minimumEmbeddingCount int
 }
 
+// NewTaxonomyServiceParams configures a TaxonomyService.
 type NewTaxonomyServiceParams struct {
 	Repo                  TaxonomyRepository
 	Starter               TaxonomyRunStarter
@@ -61,6 +68,7 @@ type NewTaxonomyServiceParams struct {
 	MinimumEmbeddingCount int
 }
 
+// NewTaxonomyService creates a taxonomy application service.
 func NewTaxonomyService(params NewTaxonomyServiceParams) *TaxonomyService {
 	minimumEmbeddingCount := params.MinimumEmbeddingCount
 	if minimumEmbeddingCount <= 0 {
@@ -75,6 +83,7 @@ func NewTaxonomyService(params NewTaxonomyServiceParams) *TaxonomyService {
 	}
 }
 
+// ListFieldOptions returns feedback fields that can run taxonomy generation.
 func (s *TaxonomyService) ListFieldOptions(
 	ctx context.Context,
 	tenantID string,
@@ -96,6 +105,7 @@ func (s *TaxonomyService) ListFieldOptions(
 	return &models.TaxonomyFieldsResponse{Data: options}, nil
 }
 
+// StartManualRun creates and starts a manual taxonomy generation run.
 func (s *TaxonomyService) StartManualRun(
 	ctx context.Context,
 	req models.CreateTaxonomyRunRequest,
@@ -135,6 +145,7 @@ func (s *TaxonomyService) StartManualRun(
 	}
 
 	params := taxonomyRunParams(req.ActorID, s.embeddingModel)
+
 	run, created, err := s.repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{
 		TaxonomyScope:  scope,
 		FieldLabel:     fieldLabel,
@@ -167,6 +178,7 @@ func (s *TaxonomyService) StartManualRun(
 	return &models.CreateTaxonomyRunResponse{Run: *runningRun}, nil
 }
 
+// ListRuns returns taxonomy run history for a scoped tenant.
 func (s *TaxonomyService) ListRuns(
 	ctx context.Context,
 	filters models.ListTaxonomyRunsFilters,
@@ -177,6 +189,7 @@ func (s *TaxonomyService) ListRuns(
 	}
 
 	filters.TenantID = normalizedTenantID
+
 	runs, err := s.repo.ListRuns(ctx, filters)
 	if err != nil {
 		return nil, fmt.Errorf("list taxonomy runs: %w", err)
@@ -185,10 +198,17 @@ func (s *TaxonomyService) ListRuns(
 	return &models.ListTaxonomyRunsResponse{Data: runs}, nil
 }
 
+// GetRun returns a taxonomy run by ID.
 func (s *TaxonomyService) GetRun(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error) {
-	return s.repo.GetRun(ctx, runID)
+	run, err := s.repo.GetRun(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("get taxonomy run: %w", err)
+	}
+
+	return run, nil
 }
 
+// GetActiveTree returns the active taxonomy tree for a field scope.
 func (s *TaxonomyService) GetActiveTree(
 	ctx context.Context,
 	scope models.TaxonomyScope,
@@ -200,16 +220,28 @@ func (s *TaxonomyService) GetActiveTree(
 
 	run, err := s.repo.GetActiveRun(ctx, normalizedScope)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get active taxonomy run: %w", err)
 	}
 
-	return s.repo.GetTree(ctx, run.ID)
+	tree, err := s.repo.GetTree(ctx, run.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get active taxonomy tree: %w", err)
+	}
+
+	return tree, nil
 }
 
+// GetTree returns a taxonomy tree by run ID.
 func (s *TaxonomyService) GetTree(ctx context.Context, runID uuid.UUID) (*models.TaxonomyTreeResponse, error) {
-	return s.repo.GetTree(ctx, runID)
+	tree, err := s.repo.GetTree(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("get taxonomy tree: %w", err)
+	}
+
+	return tree, nil
 }
 
+// GetRunInput returns feedback text and embeddings for the taxonomy service.
 func (s *TaxonomyService) GetRunInput(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -218,17 +250,29 @@ func (s *TaxonomyService) GetRunInput(
 		return nil, ErrTaxonomyEmbeddingsNotConfigured
 	}
 
-	return s.repo.GetRunInput(ctx, runID, s.embeddingModel)
+	input, err := s.repo.GetRunInput(ctx, runID, s.embeddingModel)
+	if err != nil {
+		return nil, fmt.Errorf("get taxonomy run input: %w", err)
+	}
+
+	return input, nil
 }
 
+// CompleteRun stores taxonomy output and activates the successful run.
 func (s *TaxonomyService) CompleteRun(
 	ctx context.Context,
 	runID uuid.UUID,
 	req models.TaxonomyRunResultRequest,
 ) (*models.TaxonomyRun, error) {
-	return s.repo.StoreResultAndActivate(ctx, runID, req)
+	run, err := s.repo.StoreResultAndActivate(ctx, runID, req)
+	if err != nil {
+		return nil, fmt.Errorf("complete taxonomy run: %w", err)
+	}
+
+	return run, nil
 }
 
+// FailRun records a taxonomy run failure.
 func (s *TaxonomyService) FailRun(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -239,9 +283,15 @@ func (s *TaxonomyService) FailRun(
 		sanitized = "taxonomy run failed"
 	}
 
-	return s.repo.MarkRunFailed(ctx, runID, sanitized)
+	run, err := s.repo.MarkRunFailed(ctx, runID, sanitized)
+	if err != nil {
+		return nil, fmt.Errorf("fail taxonomy run: %w", err)
+	}
+
+	return run, nil
 }
 
+// RenameNode renames a taxonomy node.
 func (s *TaxonomyService) RenameNode(
 	ctx context.Context,
 	nodeID uuid.UUID,
@@ -252,7 +302,7 @@ func (s *TaxonomyService) RenameNode(
 		return nil, err
 	}
 
-	actorID, err := normalizeRequiredIdentifier("actor_id", req.ActorID, maxIdentifierLength)
+	actorID, err := normalizeRequiredIdentifier("actor_id", req.ActorID)
 	if err != nil {
 		return nil, err
 	}
@@ -262,9 +312,15 @@ func (s *TaxonomyService) RenameNode(
 		return nil, huberrors.NewValidationError("label", "label is required and cannot be empty")
 	}
 
-	return s.repo.RenameNode(ctx, nodeID, tenantID, actorID, label)
+	node, err := s.repo.RenameNode(ctx, nodeID, tenantID, actorID, label)
+	if err != nil {
+		return nil, fmt.Errorf("rename taxonomy node: %w", err)
+	}
+
+	return node, nil
 }
 
+// RemoveNode soft-removes a taxonomy node.
 func (s *TaxonomyService) RemoveNode(
 	ctx context.Context,
 	nodeID uuid.UUID,
@@ -275,14 +331,20 @@ func (s *TaxonomyService) RemoveNode(
 		return nil, err
 	}
 
-	actorID, err := normalizeRequiredIdentifier("actor_id", filters.ActorID, maxIdentifierLength)
+	actorID, err := normalizeRequiredIdentifier("actor_id", filters.ActorID)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.repo.RemoveNode(ctx, nodeID, tenantID, actorID)
+	node, err := s.repo.RemoveNode(ctx, nodeID, tenantID, actorID)
+	if err != nil {
+		return nil, fmt.Errorf("remove taxonomy node: %w", err)
+	}
+
+	return node, nil
 }
 
+// ListNodeRecords returns feedback records assigned to a taxonomy node.
 func (s *TaxonomyService) ListNodeRecords(
 	ctx context.Context,
 	nodeID uuid.UUID,
@@ -307,17 +369,17 @@ func normalizeTaxonomyScope(scope models.TaxonomyScope) (models.TaxonomyScope, e
 		return models.TaxonomyScope{}, err
 	}
 
-	sourceType, err := normalizeRequiredIdentifier("source_type", scope.SourceType, maxIdentifierLength)
+	sourceType, err := normalizeRequiredIdentifier("source_type", scope.SourceType)
 	if err != nil {
 		return models.TaxonomyScope{}, err
 	}
 
-	sourceID, err := normalizeRequiredIdentifier("source_id", scope.SourceID, maxIdentifierLength)
+	sourceID, err := normalizeRequiredIdentifier("source_id", scope.SourceID)
 	if err != nil {
 		return models.TaxonomyScope{}, err
 	}
 
-	fieldID, err := normalizeRequiredIdentifier("field_id", scope.FieldID, maxIdentifierLength)
+	fieldID, err := normalizeRequiredIdentifier("field_id", scope.FieldID)
 	if err != nil {
 		return models.TaxonomyScope{}, err
 	}

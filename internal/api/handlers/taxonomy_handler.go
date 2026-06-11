@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/formbricks/hub/internal/service"
 )
 
+// TaxonomyService is the application service used by taxonomy HTTP handlers.
 type TaxonomyService interface {
 	ListFieldOptions(ctx context.Context, tenantID string) (*models.TaxonomyFieldsResponse, error)
 	StartManualRun(ctx context.Context, req models.CreateTaxonomyRunRequest) (*models.CreateTaxonomyRunResponse, error)
@@ -30,14 +32,17 @@ type TaxonomyService interface {
 	) (*models.TaxonomyNodeRecordsResponse, error)
 }
 
+// TaxonomyHandler hosts public taxonomy API endpoints.
 type TaxonomyHandler struct {
 	service TaxonomyService
 }
 
+// NewTaxonomyHandler creates a public taxonomy handler.
 func NewTaxonomyHandler(service TaxonomyService) *TaxonomyHandler {
 	return &TaxonomyHandler{service: service}
 }
 
+// ListFields returns taxonomy-capable feedback fields.
 func (h *TaxonomyHandler) ListFields(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
@@ -46,6 +51,7 @@ func (h *TaxonomyHandler) ListFields(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := r.URL.Query().Get("tenant_id")
+
 	result, err := h.service.ListFieldOptions(r.Context(), tenantID)
 	if err != nil {
 		respondTaxonomyError(w, r, err)
@@ -56,6 +62,7 @@ func (h *TaxonomyHandler) ListFields(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// CreateRun starts a manual taxonomy generation run.
 func (h *TaxonomyHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
@@ -85,6 +92,7 @@ func (h *TaxonomyHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, status, result)
 }
 
+// ListRuns returns taxonomy run history.
 func (h *TaxonomyHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
@@ -109,6 +117,7 @@ func (h *TaxonomyHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// GetRun returns a taxonomy run by ID.
 func (h *TaxonomyHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	runID, ok := parseUUIDPathValue(w, r, "run_id")
 	if !ok {
@@ -125,6 +134,7 @@ func (h *TaxonomyHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// GetActiveTree returns the active taxonomy tree for a field scope.
 func (h *TaxonomyHandler) GetActiveTree(w http.ResponseWriter, r *http.Request) {
 	scope, ok := taxonomyScopeFromQuery(w, r)
 	if !ok {
@@ -141,6 +151,7 @@ func (h *TaxonomyHandler) GetActiveTree(w http.ResponseWriter, r *http.Request) 
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// GetTree returns a taxonomy tree for a run.
 func (h *TaxonomyHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	runID, ok := parseUUIDPathValue(w, r, "run_id")
 	if !ok {
@@ -157,6 +168,7 @@ func (h *TaxonomyHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// RenameNode renames a taxonomy node.
 func (h *TaxonomyHandler) RenameNode(w http.ResponseWriter, r *http.Request) {
 	nodeID, ok := parseUUIDPathValue(w, r, "node_id")
 	if !ok {
@@ -180,6 +192,7 @@ func (h *TaxonomyHandler) RenameNode(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// RemoveNode soft-removes a taxonomy node.
 func (h *TaxonomyHandler) RemoveNode(w http.ResponseWriter, r *http.Request) {
 	nodeID, ok := parseUUIDPathValue(w, r, "node_id")
 	if !ok {
@@ -203,6 +216,7 @@ func (h *TaxonomyHandler) RemoveNode(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// ListNodeRecords returns feedback records assigned to a taxonomy node.
 func (h *TaxonomyHandler) ListNodeRecords(w http.ResponseWriter, r *http.Request) {
 	nodeID, ok := parseUUIDPathValue(w, r, "node_id")
 	if !ok {
@@ -229,11 +243,16 @@ func (h *TaxonomyHandler) ListNodeRecords(w http.ResponseWriter, r *http.Request
 func decodeAndValidateJSON(r *http.Request, dst any) error {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(dst); err != nil {
-		return response.NewRequestJSONDecodeError(err)
+		return fmt.Errorf("decode request JSON: %w", response.NewRequestJSONDecodeError(err))
 	}
 
-	return validation.ValidateStruct(dst)
+	if err := validation.ValidateStruct(dst); err != nil {
+		return fmt.Errorf("validate request body: %w", err)
+	}
+
+	return nil
 }
 
 func parseUUIDPathValue(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
