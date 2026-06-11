@@ -321,8 +321,31 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 
+	taxonomyRepo := repository.NewTaxonomyRepository(db)
+	var taxonomyStarter service.TaxonomyRunStarter
+	if cfg.Taxonomy.ServiceURL != "" || cfg.Taxonomy.ServiceToken != "" {
+		taxonomyClient, err := service.NewTaxonomyClient(service.TaxonomyClientConfig{
+			ServiceURL:   cfg.Taxonomy.ServiceURL,
+			ServiceToken: cfg.Taxonomy.ServiceToken,
+		}, nil)
+		if err != nil {
+			cleanupNewAppStartupFailure(context.Background(), messageManager, riverClient, tracerProvider, meterProvider)
+
+			return nil, fmt.Errorf("create taxonomy client: %w", err)
+		}
+
+		taxonomyStarter = taxonomyClient
+	}
+
+	taxonomyService := service.NewTaxonomyService(service.NewTaxonomyServiceParams{
+		Repo:                  taxonomyRepo,
+		Starter:               taxonomyStarter,
+		EmbeddingModel:        embeddingModelForDB,
+		MinimumEmbeddingCount: cfg.Taxonomy.MinimumEmbeddedRecords,
+	})
+	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
-	taxonomyInternalHandler := handlers.NewTaxonomyInternalHandler()
+	taxonomyInternalHandler := handlers.NewTaxonomyInternalHandler(taxonomyService)
 	healthHandler := handlers.NewHealthHandler()
 
 	openapiHandler, err := handlers.NewOpenAPIHandler(handlers.ResolveOpenAPISpecPath(), cfg.Server.PublicBaseURL)
@@ -334,7 +357,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	server := newHTTPServer(
 		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler, searchHandler,
-		taxonomyInternalHandler,
+		taxonomyHandler, taxonomyInternalHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -361,6 +384,7 @@ func newHTTPServer(
 	webhooks *handlers.WebhooksHandler,
 	tenantData *handlers.TenantDataHandler,
 	search *handlers.SearchHandler,
+	taxonomy *handlers.TaxonomyHandler,
 	taxonomyInternal *handlers.TaxonomyInternalHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
@@ -389,6 +413,16 @@ func newHTTPServer(
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
 	protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
 
+	protected.HandleFunc("GET /v1/taxonomy/fields", taxonomy.ListFields)
+	protected.HandleFunc("POST /v1/taxonomy/runs", taxonomy.CreateRun)
+	protected.HandleFunc("GET /v1/taxonomy/runs", taxonomy.ListRuns)
+	protected.HandleFunc("GET /v1/taxonomy/runs/active/tree", taxonomy.GetActiveTree)
+	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}", taxonomy.GetRun)
+	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/tree", taxonomy.GetTree)
+	protected.HandleFunc("PATCH /v1/taxonomy/nodes/{node_id}", taxonomy.RenameNode)
+	protected.HandleFunc("DELETE /v1/taxonomy/nodes/{node_id}", taxonomy.RemoveNode)
+	protected.HandleFunc("GET /v1/taxonomy/nodes/{node_id}/records", taxonomy.ListNodeRecords)
+
 	protectedWithAuth := middleware.Auth(cfg.Server.HubAPIKey)(protected)
 
 	mux := http.NewServeMux()
@@ -397,6 +431,9 @@ func newHTTPServer(
 	if cfg.Taxonomy.HubInternalAPIToken != "" {
 		internalTaxonomy := http.NewServeMux()
 		internalTaxonomy.HandleFunc("GET /internal/v1/taxonomy/auth-check", taxonomyInternal.AuthCheck)
+		internalTaxonomy.HandleFunc("GET /internal/v1/taxonomy/runs/{run_id}/input", taxonomyInternal.GetRunInput)
+		internalTaxonomy.HandleFunc("PUT /internal/v1/taxonomy/runs/{run_id}/result", taxonomyInternal.CompleteRun)
+		internalTaxonomy.HandleFunc("POST /internal/v1/taxonomy/runs/{run_id}/failed", taxonomyInternal.FailRun)
 		internalTaxonomyWithAuth := middleware.Auth(cfg.Taxonomy.HubInternalAPIToken)(internalTaxonomy)
 		mux.Handle("/internal/v1/taxonomy/", internalTaxonomyWithAuth)
 	}

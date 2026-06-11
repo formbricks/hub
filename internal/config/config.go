@@ -128,9 +128,10 @@ type EmbeddingConfig struct {
 
 // TaxonomyConfig holds Hub-to-taxonomy service settings.
 type TaxonomyConfig struct {
-	ServiceURL          string `env:"TAXONOMY_SERVICE_URL"`
-	ServiceToken        string `env:"TAXONOMY_SERVICE_TOKEN"`
-	HubInternalAPIToken string `env:"HUB_INTERNAL_API_TOKEN"`
+	ServiceURL             string `env:"TAXONOMY_SERVICE_URL"`
+	ServiceToken           string `env:"TAXONOMY_SERVICE_TOKEN"`
+	HubInternalAPIToken    string `env:"HUB_INTERNAL_API_TOKEN"`
+	MinimumEmbeddedRecords int    `env:"TAXONOMY_MIN_EMBEDDED_RECORDS" env-default:"20"`
 }
 
 // ObservabilityConfig holds OpenTelemetry settings.
@@ -277,6 +278,10 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Embedding.MaxAttempts <= 0 {
 		cfg.Embedding.MaxAttempts = 3
+	}
+
+	if cfg.Taxonomy.MinimumEmbeddedRecords <= 0 {
+		cfg.Taxonomy.MinimumEmbeddedRecords = 20
 	}
 }
 
