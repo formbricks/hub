@@ -16,8 +16,11 @@ type mockTaxonomyRepo struct {
 	countEmbeddingCount  int
 	createRun            *models.TaxonomyRun
 	createRunCreated     bool
+	internalRun          *models.TaxonomyRun
+	markRunRunningTenant string
 	markRunFailedMessage string
 	markRunFailedCode    models.TaxonomyRunFailureCode
+	markRunFailedTenant  string
 }
 
 func (m *mockTaxonomyRepo) ListFieldOptions(
@@ -46,16 +49,21 @@ func (m *mockTaxonomyRepo) CreateRunIfAvailable(
 func (m *mockTaxonomyRepo) MarkRunRunning(
 	_ context.Context,
 	runID uuid.UUID,
+	tenantID string,
 ) (*models.TaxonomyRun, error) {
+	m.markRunRunningTenant = tenantID
+
 	return &models.TaxonomyRun{ID: runID, Status: models.TaxonomyRunStatusRunning}, nil
 }
 
 func (m *mockTaxonomyRepo) MarkRunFailed(
 	_ context.Context,
 	runID uuid.UUID,
+	tenantID string,
 	message string,
 	errorCode models.TaxonomyRunFailureCode,
 ) (*models.TaxonomyRun, error) {
+	m.markRunFailedTenant = tenantID
 	m.markRunFailedMessage = message
 	m.markRunFailedCode = errorCode
 
@@ -67,8 +75,20 @@ func (m *mockTaxonomyRepo) MarkRunFailed(
 	}, nil
 }
 
-func (m *mockTaxonomyRepo) GetRun(_ context.Context, _ uuid.UUID) (*models.TaxonomyRun, error) {
-	return nil, nil
+func (m *mockTaxonomyRepo) GetRunForInternalService(_ context.Context, runID uuid.UUID) (*models.TaxonomyRun, error) {
+	if m.internalRun != nil {
+		return m.internalRun, nil
+	}
+
+	return &models.TaxonomyRun{ID: runID, TenantID: "tenant-1"}, nil
+}
+
+func (m *mockTaxonomyRepo) GetRunForTenant(
+	_ context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) (*models.TaxonomyRun, error) {
+	return &models.TaxonomyRun{ID: runID, TenantID: tenantID}, nil
 }
 
 func (m *mockTaxonomyRepo) GetActiveRun(
@@ -89,6 +109,7 @@ func (m *mockTaxonomyRepo) GetRunInput(
 	_ context.Context,
 	_ uuid.UUID,
 	_ string,
+	_ string,
 ) (*models.TaxonomyRunInputResponse, error) {
 	return nil, nil
 }
@@ -96,6 +117,7 @@ func (m *mockTaxonomyRepo) GetRunInput(
 func (m *mockTaxonomyRepo) StoreResultAndActivate(
 	_ context.Context,
 	_ uuid.UUID,
+	_ string,
 	_ models.TaxonomyRunResultRequest,
 ) (*models.TaxonomyRun, error) {
 	return nil, nil
@@ -104,6 +126,7 @@ func (m *mockTaxonomyRepo) StoreResultAndActivate(
 func (m *mockTaxonomyRepo) GetTree(
 	_ context.Context,
 	_ uuid.UUID,
+	_ string,
 ) (*models.TaxonomyTreeResponse, error) {
 	return nil, nil
 }
@@ -176,6 +199,14 @@ func TestTaxonomyService_StartManualRunMarksServiceUnavailableFailure(t *testing
 		t.Fatalf("MarkRunFailed message = %q", repo.markRunFailedMessage)
 	}
 
+	if repo.markRunRunningTenant != "tenant-1" {
+		t.Fatalf("MarkRunRunning tenant = %q, want tenant-1", repo.markRunRunningTenant)
+	}
+
+	if repo.markRunFailedTenant != "tenant-1" {
+		t.Fatalf("MarkRunFailed tenant = %q, want tenant-1", repo.markRunFailedTenant)
+	}
+
 	if repo.markRunFailedCode != models.TaxonomyRunFailureCodeServiceUnavailable {
 		t.Fatalf("MarkRunFailed code = %q, want service_unavailable", repo.markRunFailedCode)
 	}
@@ -197,6 +228,10 @@ func TestTaxonomyService_FailRunDefaultsFailureCode(t *testing.T) {
 
 	if repo.markRunFailedMessage != "generated invalid taxonomy" {
 		t.Fatalf("MarkRunFailed message = %q", repo.markRunFailedMessage)
+	}
+
+	if repo.markRunFailedTenant != "tenant-1" {
+		t.Fatalf("MarkRunFailed tenant = %q, want tenant-1", repo.markRunFailedTenant)
 	}
 
 	if *result.ErrorCode != models.TaxonomyRunFailureCodeGenerationFailed {

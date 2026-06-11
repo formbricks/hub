@@ -20,9 +20,9 @@ type TaxonomyService interface {
 	ListFieldOptions(ctx context.Context, tenantID string) (*models.TaxonomyFieldsResponse, error)
 	StartManualRun(ctx context.Context, req models.CreateTaxonomyRunRequest) (*models.CreateTaxonomyRunResponse, error)
 	ListRuns(ctx context.Context, filters models.ListTaxonomyRunsFilters) (*models.ListTaxonomyRunsResponse, error)
-	GetRun(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
+	GetRun(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyRun, error)
 	GetActiveTree(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyTreeResponse, error)
-	GetTree(ctx context.Context, runID uuid.UUID) (*models.TaxonomyTreeResponse, error)
+	GetTree(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyTreeResponse, error)
 	RenameNode(ctx context.Context, nodeID uuid.UUID, req models.RenameTaxonomyNodeRequest) (*models.TaxonomyNode, error)
 	RemoveNode(ctx context.Context, nodeID uuid.UUID, filters models.RemoveTaxonomyNodeFilters) (*models.TaxonomyNode, error)
 	ListNodeRecords(
@@ -124,7 +124,7 @@ func (h *TaxonomyHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.GetRun(r.Context(), runID)
+	result, err := h.service.GetRun(r.Context(), runID, r.URL.Query().Get("tenant_id"))
 	if err != nil {
 		respondTaxonomyError(w, r, err)
 
@@ -158,7 +158,7 @@ func (h *TaxonomyHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.GetTree(r.Context(), runID)
+	result, err := h.service.GetTree(r.Context(), runID, r.URL.Query().Get("tenant_id"))
 	if err != nil {
 		respondTaxonomyError(w, r, err)
 

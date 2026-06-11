@@ -222,19 +222,23 @@ func taxonomyScopeLockKey(scope models.TaxonomyScope) string {
 }
 
 // MarkRunRunning transitions a taxonomy run to running.
-func (r *TaxonomyRepository) MarkRunRunning(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error) {
+func (r *TaxonomyRepository) MarkRunRunning(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) (*models.TaxonomyRun, error) {
 	run, err := queryTaxonomyRun(ctx, r.db, `
 		WITH taxonomy_runs AS (
 			UPDATE taxonomy_runs
 			SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
-			WHERE id = $1 AND status = 'pending'
+			WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
 			RETURNING *
 		)`+taxonomyRunSelect+` FROM taxonomy_runs`,
-		runID,
+		runID, tenantID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, r.transitionError(ctx, runID, models.TaxonomyRunStatusRunning)
+			return nil, r.transitionError(ctx, runID, tenantID, models.TaxonomyRunStatusRunning)
 		}
 
 		return nil, fmt.Errorf("mark taxonomy run running: %w", err)
@@ -247,6 +251,7 @@ func (r *TaxonomyRepository) MarkRunRunning(ctx context.Context, runID uuid.UUID
 func (r *TaxonomyRepository) MarkRunFailed(
 	ctx context.Context,
 	runID uuid.UUID,
+	tenantID string,
 	message string,
 	errorCode models.TaxonomyRunFailureCode,
 ) (*models.TaxonomyRun, error) {
@@ -254,14 +259,14 @@ func (r *TaxonomyRepository) MarkRunFailed(
 		WITH taxonomy_runs AS (
 			UPDATE taxonomy_runs
 			SET status = 'failed', error = $2, error_code = $3, finished_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND status IN ('pending', 'running')
+			WHERE id = $1 AND tenant_id = $4 AND status IN ('pending', 'running')
 			RETURNING *
 		)`+taxonomyRunSelect+` FROM taxonomy_runs`,
-		runID, message, nullableFailureCode(errorCode),
+		runID, message, nullableFailureCode(errorCode), tenantID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, r.transitionError(ctx, runID, models.TaxonomyRunStatusFailed)
+			return nil, r.transitionError(ctx, runID, tenantID, models.TaxonomyRunStatusFailed)
 		}
 
 		return nil, fmt.Errorf("mark taxonomy run failed: %w", err)
@@ -270,8 +275,11 @@ func (r *TaxonomyRepository) MarkRunFailed(
 	return run, nil
 }
 
-// GetRun returns a taxonomy run by ID.
-func (r *TaxonomyRepository) GetRun(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error) {
+// GetRunForInternalService returns run metadata for internal taxonomy service-token workflows.
+func (r *TaxonomyRepository) GetRunForInternalService(
+	ctx context.Context,
+	runID uuid.UUID,
+) (*models.TaxonomyRun, error) {
 	run, err := queryTaxonomyRun(ctx, r.db, taxonomyRunSelect+` FROM taxonomy_runs WHERE id = $1`, runID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -279,6 +287,28 @@ func (r *TaxonomyRepository) GetRun(ctx context.Context, runID uuid.UUID) (*mode
 		}
 
 		return nil, fmt.Errorf("get taxonomy run: %w", err)
+	}
+
+	return run, nil
+}
+
+// GetRunForTenant returns a taxonomy run by ID scoped to a tenant.
+func (r *TaxonomyRepository) GetRunForTenant(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) (*models.TaxonomyRun, error) {
+	run, err := queryTaxonomyRun(ctx, r.db, taxonomyRunSelect+`
+		FROM taxonomy_runs
+		WHERE id = $1 AND tenant_id = $2`,
+		runID, tenantID,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
+		}
+
+		return nil, fmt.Errorf("get taxonomy run for tenant: %w", err)
 	}
 
 	return run, nil
@@ -348,9 +378,10 @@ func (r *TaxonomyRepository) ListRuns(
 func (r *TaxonomyRepository) GetRunInput(
 	ctx context.Context,
 	runID uuid.UUID,
+	tenantID string,
 	embeddingModel string,
 ) (*models.TaxonomyRunInputResponse, error) {
-	run, err := r.GetRun(ctx, runID)
+	run, err := r.GetRunForTenant(ctx, runID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -400,6 +431,7 @@ func (r *TaxonomyRepository) GetRunInput(
 func (r *TaxonomyRepository) StoreResultAndActivate(
 	ctx context.Context,
 	runID uuid.UUID,
+	tenantID string,
 	req models.TaxonomyRunResultRequest,
 ) (*models.TaxonomyRun, error) {
 	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
@@ -411,7 +443,12 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 		_ = transaction.Rollback(ctx)
 	}()
 
-	run, err := queryTaxonomyRun(ctx, transaction, taxonomyRunSelect+` FROM taxonomy_runs WHERE id = $1 FOR UPDATE`, runID)
+	run, err := queryTaxonomyRun(ctx, transaction, taxonomyRunSelect+`
+		FROM taxonomy_runs
+		WHERE id = $1 AND tenant_id = $2
+		FOR UPDATE`,
+		runID, tenantID,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
@@ -580,8 +617,12 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 }
 
 // GetTree returns the visible taxonomy tree for a run.
-func (r *TaxonomyRepository) GetTree(ctx context.Context, runID uuid.UUID) (*models.TaxonomyTreeResponse, error) {
-	run, err := r.GetRun(ctx, runID)
+func (r *TaxonomyRepository) GetTree(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) (*models.TaxonomyTreeResponse, error) {
+	run, err := r.GetRunForTenant(ctx, runID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -783,9 +824,10 @@ func (r *TaxonomyRepository) listVisibleNodes(ctx context.Context, runID uuid.UU
 func (r *TaxonomyRepository) transitionError(
 	ctx context.Context,
 	runID uuid.UUID,
+	tenantID string,
 	target models.TaxonomyRunStatus,
 ) error {
-	run, err := r.GetRun(ctx, runID)
+	run, err := r.GetRunForTenant(ctx, runID, tenantID)
 	if err != nil {
 		return err
 	}

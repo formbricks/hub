@@ -30,23 +30,31 @@ type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service 
 	ListFieldOptions(ctx context.Context, tenantID, embeddingModel string) ([]models.TaxonomyFieldOption, error)
 	CountScopeInput(ctx context.Context, scope models.TaxonomyScope, embeddingModel string) (int, int, *string, error)
 	CreateRunIfAvailable(ctx context.Context, params repository.CreateTaxonomyRunParams) (*models.TaxonomyRun, bool, error)
-	MarkRunRunning(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
+	MarkRunRunning(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyRun, error)
 	MarkRunFailed(
 		ctx context.Context,
 		runID uuid.UUID,
+		tenantID string,
 		message string,
 		errorCode models.TaxonomyRunFailureCode,
 	) (*models.TaxonomyRun, error)
-	GetRun(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
+	GetRunForInternalService(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
+	GetRunForTenant(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyRun, error)
 	GetActiveRun(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyRun, error)
 	ListRuns(ctx context.Context, filters models.ListTaxonomyRunsFilters) ([]models.TaxonomyRun, error)
-	GetRunInput(ctx context.Context, runID uuid.UUID, embeddingModel string) (*models.TaxonomyRunInputResponse, error)
+	GetRunInput(
+		ctx context.Context,
+		runID uuid.UUID,
+		tenantID string,
+		embeddingModel string,
+	) (*models.TaxonomyRunInputResponse, error)
 	StoreResultAndActivate(
 		ctx context.Context,
 		runID uuid.UUID,
+		tenantID string,
 		req models.TaxonomyRunResultRequest,
 	) (*models.TaxonomyRun, error)
-	GetTree(ctx context.Context, runID uuid.UUID) (*models.TaxonomyTreeResponse, error)
+	GetTree(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyTreeResponse, error)
 	RenameNode(ctx context.Context, nodeID uuid.UUID, tenantID, actorID, label string) (*models.TaxonomyNode, error)
 	RemoveNode(ctx context.Context, nodeID uuid.UUID, tenantID, actorID string) (*models.TaxonomyNode, error)
 	ListNodeRecords(ctx context.Context, nodeID uuid.UUID, tenantID string, limit int) ([]models.FeedbackRecord, int, error)
@@ -166,7 +174,7 @@ func (s *TaxonomyService) StartManualRun(
 		return &models.CreateTaxonomyRunResponse{Run: *run, InProgress: true}, nil
 	}
 
-	runningRun, err := s.repo.MarkRunRunning(ctx, run.ID)
+	runningRun, err := s.repo.MarkRunRunning(ctx, run.ID, scope.TenantID)
 	if err != nil {
 		return nil, fmt.Errorf("mark taxonomy run running: %w", err)
 	}
@@ -175,6 +183,7 @@ func (s *TaxonomyService) StartManualRun(
 		_, markErr := s.repo.MarkRunFailed(
 			ctx,
 			run.ID,
+			scope.TenantID,
 			"taxonomy service did not accept the run",
 			models.TaxonomyRunFailureCodeServiceUnavailable,
 		)
@@ -209,8 +218,17 @@ func (s *TaxonomyService) ListRuns(
 }
 
 // GetRun returns a taxonomy run by ID.
-func (s *TaxonomyService) GetRun(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error) {
-	run, err := s.repo.GetRun(ctx, runID)
+func (s *TaxonomyService) GetRun(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) (*models.TaxonomyRun, error) {
+	normalizedTenantID, err := normalizeRequiredTenantIDValue(tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	run, err := s.repo.GetRunForTenant(ctx, runID, normalizedTenantID)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run: %w", err)
 	}
@@ -233,7 +251,7 @@ func (s *TaxonomyService) GetActiveTree(
 		return nil, fmt.Errorf("get active taxonomy run: %w", err)
 	}
 
-	tree, err := s.repo.GetTree(ctx, run.ID)
+	tree, err := s.repo.GetTree(ctx, run.ID, normalizedScope.TenantID)
 	if err != nil {
 		return nil, fmt.Errorf("get active taxonomy tree: %w", err)
 	}
@@ -242,8 +260,17 @@ func (s *TaxonomyService) GetActiveTree(
 }
 
 // GetTree returns a taxonomy tree by run ID.
-func (s *TaxonomyService) GetTree(ctx context.Context, runID uuid.UUID) (*models.TaxonomyTreeResponse, error) {
-	tree, err := s.repo.GetTree(ctx, runID)
+func (s *TaxonomyService) GetTree(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) (*models.TaxonomyTreeResponse, error) {
+	normalizedTenantID, err := normalizeRequiredTenantIDValue(tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	tree, err := s.repo.GetTree(ctx, runID, normalizedTenantID)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy tree: %w", err)
 	}
@@ -260,7 +287,12 @@ func (s *TaxonomyService) GetRunInput(
 		return nil, ErrTaxonomyEmbeddingsNotConfigured
 	}
 
-	input, err := s.repo.GetRunInput(ctx, runID, s.embeddingModel)
+	run, err := s.repo.GetRunForInternalService(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("get taxonomy run: %w", err)
+	}
+
+	input, err := s.repo.GetRunInput(ctx, runID, run.TenantID, s.embeddingModel)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run input: %w", err)
 	}
@@ -274,7 +306,12 @@ func (s *TaxonomyService) CompleteRun(
 	runID uuid.UUID,
 	req models.TaxonomyRunResultRequest,
 ) (*models.TaxonomyRun, error) {
-	run, err := s.repo.StoreResultAndActivate(ctx, runID, req)
+	existingRun, err := s.repo.GetRunForInternalService(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("get taxonomy run: %w", err)
+	}
+
+	run, err := s.repo.StoreResultAndActivate(ctx, runID, existingRun.TenantID, req)
 	if err != nil {
 		return nil, fmt.Errorf("complete taxonomy run: %w", err)
 	}
@@ -291,7 +328,12 @@ func (s *TaxonomyService) FailRun(
 ) (*models.TaxonomyRun, error) {
 	sanitized, normalizedCode := normalizeRunFailure(message, errorCode)
 
-	run, err := s.repo.MarkRunFailed(ctx, runID, sanitized, normalizedCode)
+	existingRun, err := s.repo.GetRunForInternalService(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("get taxonomy run: %w", err)
+	}
+
+	run, err := s.repo.MarkRunFailed(ctx, runID, existingRun.TenantID, sanitized, normalizedCode)
 	if err != nil {
 		return nil, fmt.Errorf("fail taxonomy run: %w", err)
 	}
