@@ -31,7 +31,12 @@ type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service 
 	CountScopeInput(ctx context.Context, scope models.TaxonomyScope, embeddingModel string) (int, int, *string, error)
 	CreateRunIfAvailable(ctx context.Context, params repository.CreateTaxonomyRunParams) (*models.TaxonomyRun, bool, error)
 	MarkRunRunning(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
-	MarkRunFailed(ctx context.Context, runID uuid.UUID, message string) (*models.TaxonomyRun, error)
+	MarkRunFailed(
+		ctx context.Context,
+		runID uuid.UUID,
+		message string,
+		errorCode models.TaxonomyRunFailureCode,
+	) (*models.TaxonomyRun, error)
 	GetRun(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
 	GetActiveRun(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyRun, error)
 	ListRuns(ctx context.Context, filters models.ListTaxonomyRunsFilters) ([]models.TaxonomyRun, error)
@@ -167,7 +172,12 @@ func (s *TaxonomyService) StartManualRun(
 	}
 
 	if err := s.starter.StartRun(ctx, run.ID.String()); err != nil {
-		_, markErr := s.repo.MarkRunFailed(ctx, run.ID, "taxonomy service did not accept the run")
+		_, markErr := s.repo.MarkRunFailed(
+			ctx,
+			run.ID,
+			"taxonomy service did not accept the run",
+			models.TaxonomyRunFailureCodeServiceUnavailable,
+		)
 		if markErr != nil {
 			return nil, fmt.Errorf("mark taxonomy run failed after start error: %w", markErr)
 		}
@@ -277,18 +287,45 @@ func (s *TaxonomyService) FailRun(
 	ctx context.Context,
 	runID uuid.UUID,
 	message string,
+	errorCode models.TaxonomyRunFailureCode,
 ) (*models.TaxonomyRun, error) {
-	sanitized := strings.TrimSpace(message)
-	if sanitized == "" {
-		sanitized = "taxonomy run failed"
-	}
+	sanitized, normalizedCode := normalizeRunFailure(message, errorCode)
 
-	run, err := s.repo.MarkRunFailed(ctx, runID, sanitized)
+	run, err := s.repo.MarkRunFailed(ctx, runID, sanitized, normalizedCode)
 	if err != nil {
 		return nil, fmt.Errorf("fail taxonomy run: %w", err)
 	}
 
 	return run, nil
+}
+
+func normalizeRunFailure(
+	message string,
+	errorCode models.TaxonomyRunFailureCode,
+) (string, models.TaxonomyRunFailureCode) {
+	sanitized := strings.TrimSpace(message)
+	if sanitized == "" {
+		sanitized = "taxonomy run failed"
+	}
+
+	if !knownTaxonomyFailureCode(errorCode) {
+		errorCode = models.TaxonomyRunFailureCodeGenerationFailed
+	}
+
+	return sanitized, errorCode
+}
+
+func knownTaxonomyFailureCode(errorCode models.TaxonomyRunFailureCode) bool {
+	switch errorCode {
+	case models.TaxonomyRunFailureCodeInsufficientData,
+		models.TaxonomyRunFailureCodeServiceUnavailable,
+		models.TaxonomyRunFailureCodeGenerationFailed,
+		models.TaxonomyRunFailureCodeInvalidOutput,
+		models.TaxonomyRunFailureCodeInternalError:
+		return true
+	default:
+		return false
+	}
 }
 
 // RenameNode renames a taxonomy node.

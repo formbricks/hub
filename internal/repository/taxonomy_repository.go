@@ -227,14 +227,14 @@ func (r *TaxonomyRepository) MarkRunRunning(ctx context.Context, runID uuid.UUID
 		WITH taxonomy_runs AS (
 			UPDATE taxonomy_runs
 			SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
-			WHERE id = $1
+			WHERE id = $1 AND status = 'pending'
 			RETURNING *
 		)`+taxonomyRunSelect+` FROM taxonomy_runs`,
 		runID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
+			return nil, r.transitionError(ctx, runID, models.TaxonomyRunStatusRunning)
 		}
 
 		return nil, fmt.Errorf("mark taxonomy run running: %w", err)
@@ -244,19 +244,24 @@ func (r *TaxonomyRepository) MarkRunRunning(ctx context.Context, runID uuid.UUID
 }
 
 // MarkRunFailed transitions a taxonomy run to failed with an error message.
-func (r *TaxonomyRepository) MarkRunFailed(ctx context.Context, runID uuid.UUID, message string) (*models.TaxonomyRun, error) {
+func (r *TaxonomyRepository) MarkRunFailed(
+	ctx context.Context,
+	runID uuid.UUID,
+	message string,
+	errorCode models.TaxonomyRunFailureCode,
+) (*models.TaxonomyRun, error) {
 	run, err := queryTaxonomyRun(ctx, r.db, `
 		WITH taxonomy_runs AS (
 			UPDATE taxonomy_runs
-			SET status = 'failed', error = $2, finished_at = NOW(), updated_at = NOW()
-			WHERE id = $1
+			SET status = 'failed', error = $2, error_code = $3, finished_at = NOW(), updated_at = NOW()
+			WHERE id = $1 AND status IN ('pending', 'running')
 			RETURNING *
 		)`+taxonomyRunSelect+` FROM taxonomy_runs`,
-		runID, message,
+		runID, message, nullableFailureCode(errorCode),
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
+			return nil, r.transitionError(ctx, runID, models.TaxonomyRunStatusFailed)
 		}
 
 		return nil, fmt.Errorf("mark taxonomy run failed: %w", err)
@@ -415,6 +420,10 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 		return nil, fmt.Errorf("lock taxonomy run: %w", err)
 	}
 
+	if run.Status != models.TaxonomyRunStatusRunning {
+		return nil, taxonomyTransitionConflict(run, models.TaxonomyRunStatusSucceeded)
+	}
+
 	clusterIDs := make(map[int]uuid.UUID, len(req.Clusters))
 	for _, cluster := range req.Clusters {
 		var clusterID uuid.UUID
@@ -548,6 +557,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 				cluster_count = $3,
 				node_count = $4,
 				error = NULL,
+				error_code = NULL,
 				finished_at = NOW(),
 				updated_at = NOW()
 			WHERE id = $1
@@ -770,6 +780,35 @@ func (r *TaxonomyRepository) listVisibleNodes(ctx context.Context, runID uuid.UU
 	return nodes, nil
 }
 
+func (r *TaxonomyRepository) transitionError(
+	ctx context.Context,
+	runID uuid.UUID,
+	target models.TaxonomyRunStatus,
+) error {
+	run, err := r.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+
+	return taxonomyTransitionConflict(run, target)
+}
+
+func taxonomyTransitionConflict(run *models.TaxonomyRun, target models.TaxonomyRunStatus) error {
+	return huberrors.NewConflictError(
+		fmt.Sprintf("cannot transition taxonomy run from %s to %s", run.Status, target),
+	)
+}
+
+func nullableFailureCode(code models.TaxonomyRunFailureCode) *string {
+	if code == "" {
+		return nil
+	}
+
+	value := string(code)
+
+	return &value
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -783,7 +822,7 @@ const taxonomyRunSelect = `
 			taxonomy_runs.source_id, taxonomy_runs.field_id, taxonomy_runs.field_label,
 			taxonomy_runs.status, taxonomy_runs.params, taxonomy_runs.metrics,
 			taxonomy_runs.record_count, taxonomy_runs.embedding_count,
-			taxonomy_runs.cluster_count, taxonomy_runs.node_count, taxonomy_runs.error,
+			taxonomy_runs.cluster_count, taxonomy_runs.node_count, taxonomy_runs.error, taxonomy_runs.error_code,
 			taxonomy_runs.started_at, taxonomy_runs.finished_at,
 			taxonomy_runs.created_at, taxonomy_runs.updated_at`
 
@@ -792,7 +831,11 @@ func queryTaxonomyRun(ctx context.Context, q queryer, sql string, args ...any) (
 }
 
 func scanTaxonomyRun(row scanner) (*models.TaxonomyRun, error) {
-	var run models.TaxonomyRun
+	var (
+		run       models.TaxonomyRun
+		errorCode *string
+	)
+
 	if err := row.Scan(
 		&run.ID,
 		&run.TenantID,
@@ -808,12 +851,18 @@ func scanTaxonomyRun(row scanner) (*models.TaxonomyRun, error) {
 		&run.ClusterCount,
 		&run.NodeCount,
 		&run.Error,
+		&errorCode,
 		&run.StartedAt,
 		&run.FinishedAt,
 		&run.CreatedAt,
 		&run.UpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("scan taxonomy run: %w", err)
+	}
+
+	if errorCode != nil {
+		code := models.TaxonomyRunFailureCode(*errorCode)
+		run.ErrorCode = &code
 	}
 
 	return &run, nil

@@ -14,7 +14,12 @@ import (
 type TaxonomyInternalService interface {
 	GetRunInput(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRunInputResponse, error)
 	CompleteRun(ctx context.Context, runID uuid.UUID, req models.TaxonomyRunResultRequest) (*models.TaxonomyRun, error)
-	FailRun(ctx context.Context, runID uuid.UUID, message string) (*models.TaxonomyRun, error)
+	FailRun(
+		ctx context.Context,
+		runID uuid.UUID,
+		message string,
+		errorCode models.TaxonomyRunFailureCode,
+	) (*models.TaxonomyRun, error)
 }
 
 // TaxonomyInternalHandler hosts internal taxonomy service endpoints.
@@ -113,7 +118,7 @@ func (h *TaxonomyInternalHandler) FailRun(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	result, err := h.service.FailRun(r.Context(), runID, req.Error)
+	result, err := h.service.FailRun(r.Context(), runID, req.Error, req.ErrorCode)
 	if err != nil {
 		respondTaxonomyError(w, r, err)
 

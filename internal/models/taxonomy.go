@@ -7,7 +7,19 @@ import (
 	"github.com/google/uuid"
 )
 
-// TaxonomyRunStatus is the lifecycle state for a taxonomy generation run.
+// TaxonomyRunStatus is the persisted lifecycle state for a taxonomy generation run.
+//
+// Lifecycle contract:
+//   - pending: Hub accepted the manual request and persisted a run.
+//   - running: Hub handed the run to the taxonomy service.
+//   - succeeded: the taxonomy service persisted artifacts and Hub activated the run.
+//   - failed: the run ended with a sanitized error and optional failure code.
+//   - canceled: reserved for future user/operator cancellation.
+//
+// Allowed transitions are pending -> running|failed|canceled and
+// running -> succeeded|failed|canceled. Terminal states must not be overwritten.
+// Insufficient input and service availability are represented as failure/error
+// codes, not as additional persisted statuses.
 type TaxonomyRunStatus string
 
 // Taxonomy run statuses.
@@ -17,6 +29,18 @@ const (
 	TaxonomyRunStatusSucceeded TaxonomyRunStatus = "succeeded"
 	TaxonomyRunStatusFailed    TaxonomyRunStatus = "failed"
 	TaxonomyRunStatusCanceled  TaxonomyRunStatus = "canceled"
+)
+
+// TaxonomyRunFailureCode is a machine-readable reason for a failed taxonomy run or prerequisite error.
+type TaxonomyRunFailureCode string
+
+// Taxonomy run failure codes.
+const (
+	TaxonomyRunFailureCodeInsufficientData   TaxonomyRunFailureCode = "insufficient_data"
+	TaxonomyRunFailureCodeServiceUnavailable TaxonomyRunFailureCode = "service_unavailable"
+	TaxonomyRunFailureCodeGenerationFailed   TaxonomyRunFailureCode = "generation_failed"
+	TaxonomyRunFailureCodeInvalidOutput      TaxonomyRunFailureCode = "invalid_output"
+	TaxonomyRunFailureCodeInternalError      TaxonomyRunFailureCode = "internal_error"
 )
 
 // TaxonomyNodeType describes a taxonomy node's position in the tree.
@@ -56,24 +80,25 @@ type TaxonomyFieldsResponse struct {
 
 // TaxonomyRun is a persisted taxonomy generation run.
 type TaxonomyRun struct {
-	ID             uuid.UUID         `json:"id"`
-	TenantID       string            `json:"tenant_id"`
-	SourceType     string            `json:"source_type"`
-	SourceID       string            `json:"source_id"`
-	FieldID        string            `json:"field_id"`
-	FieldLabel     *string           `json:"field_label,omitempty"`
-	Status         TaxonomyRunStatus `json:"status"`
-	Params         json.RawMessage   `json:"params,omitempty"`
-	Metrics        json.RawMessage   `json:"metrics,omitempty"`
-	RecordCount    int               `json:"record_count"`
-	EmbeddingCount int               `json:"embedding_count"`
-	ClusterCount   int               `json:"cluster_count"`
-	NodeCount      int               `json:"node_count"`
-	Error          *string           `json:"error,omitempty"`
-	StartedAt      *time.Time        `json:"started_at,omitempty"`
-	FinishedAt     *time.Time        `json:"finished_at,omitempty"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
+	ID             uuid.UUID               `json:"id"`
+	TenantID       string                  `json:"tenant_id"`
+	SourceType     string                  `json:"source_type"`
+	SourceID       string                  `json:"source_id"`
+	FieldID        string                  `json:"field_id"`
+	FieldLabel     *string                 `json:"field_label,omitempty"`
+	Status         TaxonomyRunStatus       `json:"status"`
+	Params         json.RawMessage         `json:"params,omitempty"`
+	Metrics        json.RawMessage         `json:"metrics,omitempty"`
+	RecordCount    int                     `json:"record_count"`
+	EmbeddingCount int                     `json:"embedding_count"`
+	ClusterCount   int                     `json:"cluster_count"`
+	NodeCount      int                     `json:"node_count"`
+	Error          *string                 `json:"error,omitempty"`
+	ErrorCode      *TaxonomyRunFailureCode `json:"error_code,omitempty"`
+	StartedAt      *time.Time              `json:"started_at,omitempty"`
+	FinishedAt     *time.Time              `json:"finished_at,omitempty"`
+	CreatedAt      time.Time               `json:"created_at"`
+	UpdatedAt      time.Time               `json:"updated_at"`
 }
 
 // CreateTaxonomyRunRequest starts a manual taxonomy generation run.
@@ -202,7 +227,8 @@ type TaxonomyRunResultRequest struct {
 
 // TaxonomyRunFailedRequest records a taxonomy run failure.
 type TaxonomyRunFailedRequest struct {
-	Error string `json:"error" validate:"required,no_null_bytes,min=1,max=2000"`
+	Error     string                 `json:"error"                validate:"required,no_null_bytes,min=1,max=2000"`
+	ErrorCode TaxonomyRunFailureCode `json:"error_code,omitempty" validate:"omitempty,oneof=insufficient_data service_unavailable generation_failed invalid_output internal_error"` //nolint:lll // Validator oneof values are space-delimited.
 }
 
 // RenameTaxonomyNodeRequest renames a generated taxonomy node.
