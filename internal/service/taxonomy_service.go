@@ -23,7 +23,7 @@ var (
 const defaultMinimumTaxonomyEmbeddingCount = 20
 
 type TaxonomyRepository interface {
-	ListFieldOptions(ctx context.Context, tenantID string, embeddingModel string) ([]models.TaxonomyFieldOption, error)
+	ListFieldOptions(ctx context.Context, tenantID, embeddingModel string) ([]models.TaxonomyFieldOption, error)
 	CountScopeInput(ctx context.Context, scope models.TaxonomyScope, embeddingModel string) (int, int, *string, error)
 	CreateRunIfAvailable(ctx context.Context, params repository.CreateTaxonomyRunParams) (*models.TaxonomyRun, bool, error)
 	MarkRunRunning(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
@@ -38,8 +38,8 @@ type TaxonomyRepository interface {
 		req models.TaxonomyRunResultRequest,
 	) (*models.TaxonomyRun, error)
 	GetTree(ctx context.Context, runID uuid.UUID) (*models.TaxonomyTreeResponse, error)
-	RenameNode(ctx context.Context, nodeID uuid.UUID, tenantID string, actorID string, label string) (*models.TaxonomyNode, error)
-	RemoveNode(ctx context.Context, nodeID uuid.UUID, tenantID string, actorID string) (*models.TaxonomyNode, error)
+	RenameNode(ctx context.Context, nodeID uuid.UUID, tenantID, actorID, label string) (*models.TaxonomyNode, error)
+	RemoveNode(ctx context.Context, nodeID uuid.UUID, tenantID, actorID string) (*models.TaxonomyNode, error)
 	ListNodeRecords(ctx context.Context, nodeID uuid.UUID, tenantID string, limit int) ([]models.FeedbackRecord, int, error)
 }
 

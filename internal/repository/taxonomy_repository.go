@@ -973,7 +973,7 @@ func sortTaxonomyChildren(node *models.TaxonomyNode) {
 	}
 }
 
-func rawOrDefault(raw json.RawMessage, fallback json.RawMessage) json.RawMessage {
+func rawOrDefault(raw, fallback json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return fallback
 	}
