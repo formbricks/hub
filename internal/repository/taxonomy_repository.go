@@ -1046,38 +1046,35 @@ func buildTaxonomyTree(nodes []models.TaxonomyNode) *models.TaxonomyNode {
 		return nil
 	}
 
-	byID := make(map[uuid.UUID]*models.TaxonomyNode, len(nodes))
+	childrenByParent := make(map[uuid.UUID][]models.TaxonomyNode, len(nodes))
+	var root *models.TaxonomyNode
+
 	for _, node := range nodes {
 		copyNode := node
 		copyNode.Children = nil
-		byID[node.ID] = &copyNode
-	}
 
-	var root *models.TaxonomyNode
-
-	for _, node := range byID {
-		if node.ParentID == nil {
-			root = node
+		if copyNode.ParentID == nil {
+			if root == nil {
+				root = &copyNode
+			}
 
 			continue
 		}
 
-		parent := byID[*node.ParentID]
-		if parent != nil {
-			parent.Children = append(parent.Children, *node)
-		}
+		childrenByParent[*copyNode.ParentID] = append(childrenByParent[*copyNode.ParentID], copyNode)
 	}
 
-	sortTaxonomyChildren(root)
+	attachTaxonomyChildren(root, childrenByParent)
 
 	return root
 }
 
-func sortTaxonomyChildren(node *models.TaxonomyNode) {
+func attachTaxonomyChildren(node *models.TaxonomyNode, childrenByParent map[uuid.UUID][]models.TaxonomyNode) {
 	if node == nil {
 		return
 	}
 
+	node.Children = childrenByParent[node.ID]
 	sort.SliceStable(node.Children, func(i, j int) bool {
 		if node.Children[i].SortOrder == node.Children[j].SortOrder {
 			return node.Children[i].ID.String() < node.Children[j].ID.String()
@@ -1087,7 +1084,7 @@ func sortTaxonomyChildren(node *models.TaxonomyNode) {
 	})
 
 	for i := range node.Children {
-		sortTaxonomyChildren(&node.Children[i])
+		attachTaxonomyChildren(&node.Children[i], childrenByParent)
 	}
 }
 
