@@ -83,6 +83,15 @@ func problemFromError(err error) ProblemDetails {
 		return problem
 	}
 
+	var tenantWriteConflictErr *huberrors.TenantWriteConflictError
+	if errors.As(err, &tenantWriteConflictErr) {
+		problem := newProblem(http.StatusConflict, tenantWriteConflictErr.Error())
+		problem.Type = ProblemTypeTenantWriteConflict
+		problem.Code = CodeTenantWriteConflict
+
+		return problem
+	}
+
 	var conflictErr *huberrors.ConflictError
 	if errors.As(err, &conflictErr) {
 		return newProblem(http.StatusConflict, conflictErr.Error())

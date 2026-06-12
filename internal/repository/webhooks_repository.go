@@ -62,14 +62,21 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 		dbEventTypes []string
 	)
 
-	err := r.db.QueryRow(ctx, query,
-		req.URL, req.SigningKey, enabled, req.TenantID, eventTypes,
-	).Scan(
-		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
-	)
+	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{*req.TenantID}, func(dbTx tenantWriteTx) error {
+		err := dbTx.QueryRow(ctx, query,
+			req.URL, req.SigningKey, enabled, req.TenantID, eventTypes,
+		).Scan(
+			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
+			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create webhook: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create webhook: %w", err)
+		return nil, err
 	}
 
 	webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
@@ -78,6 +85,26 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 	}
 
 	return &webhook, nil
+}
+
+// resolveWebhookTenant reads the tenant boundary of a webhook inside the
+// current transaction so the caller can acquire the tenant write lock before
+// mutating. Webhook tenant_id is mutable (and NULL on legacy rows), so the
+// subsequent mutation must stay scoped to this resolved value; zero affected
+// rows then means the webhook moved tenants concurrently.
+func resolveWebhookTenant(ctx context.Context, querier queryer, id uuid.UUID) (*string, error) {
+	var tenantID *string
+
+	err := querier.QueryRow(ctx, `SELECT tenant_id FROM webhooks WHERE id = $1`, id).Scan(&tenantID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
+		}
+
+		return nil, fmt.Errorf("resolve webhook tenant: %w", err)
+	}
+
+	return tenantID, nil
 }
 
 // GetByID retrieves a single webhook by ID.
@@ -308,29 +335,59 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 
 	args = append(args, id)
 
+	// The resolved tenant boundary is appended inside the transaction below.
+	// IS NOT DISTINCT FROM keeps the predicate correct for legacy NULL-tenant rows.
 	query := fmt.Sprintf(`
 		UPDATE webhooks
 		SET %s
-		WHERE id = $%d
+		WHERE id = $%d AND tenant_id IS NOT DISTINCT FROM $%d
 		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types, disabled_reason, disabled_at
-	`, strings.Join(updates, ", "), argCount)
+	`, strings.Join(updates, ", "), argCount, argCount+1)
 
 	var (
 		webhook      models.Webhook
 		dbEventTypes []string
 	)
 
-	err := r.db.QueryRow(ctx, query, args...).Scan(
-		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
-		&webhook.DisabledReason, &webhook.DisabledAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
+	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+		currentTenantID, err := resolveWebhookTenant(ctx, dbTx, id)
+		if err != nil {
+			return err
 		}
 
-		return nil, fmt.Errorf("failed to update webhook: %w", err)
+		// Lock the current tenant and, for tenant-changing updates, the target
+		// tenant as well, so the webhook cannot move into or out of a tenant
+		// that is being purged.
+		var lockTenants []string
+		if currentTenantID != nil {
+			lockTenants = append(lockTenants, *currentTenantID)
+		}
+
+		if req.TenantID != nil {
+			lockTenants = append(lockTenants, *req.TenantID)
+		}
+
+		if err := tryLockTenantsShared(ctx, dbTx, lockTenants); err != nil {
+			return err
+		}
+
+		err = dbTx.QueryRow(ctx, query, append(args, currentTenantID)...).Scan(
+			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
+			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+			&webhook.DisabledReason, &webhook.DisabledAt,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return huberrors.NewTenantWriteConflictError("webhook was modified concurrently; retry later")
+			}
+
+			return fmt.Errorf("failed to update webhook: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
@@ -345,19 +402,37 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) (*models.DeletedWebhook, error) {
 	query := `
 		DELETE FROM webhooks
-		WHERE id = $1
+		WHERE id = $1 AND tenant_id IS NOT DISTINCT FROM $2
 		RETURNING id, tenant_id
 	`
 
 	var webhook models.DeletedWebhook
 
-	err := r.db.QueryRow(ctx, query, id).Scan(&webhook.ID, &webhook.TenantID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, huberrors.NewNotFoundError("webhook", "webhook not found")
+	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+		currentTenantID, err := resolveWebhookTenant(ctx, dbTx, id)
+		if err != nil {
+			return err
 		}
 
-		return nil, fmt.Errorf("failed to delete webhook: %w", err)
+		if currentTenantID != nil {
+			if err := tryLockTenantsShared(ctx, dbTx, []string{*currentTenantID}); err != nil {
+				return err
+			}
+		}
+
+		err = dbTx.QueryRow(ctx, query, id, currentTenantID).Scan(&webhook.ID, &webhook.TenantID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return huberrors.NewTenantWriteConflictError("webhook was modified concurrently; retry later")
+			}
+
+			return fmt.Errorf("failed to delete webhook: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &webhook, nil

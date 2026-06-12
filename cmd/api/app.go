@@ -229,7 +229,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
-	tenantDataRepo := repository.NewTenantDataRepository(db)
+	tenantDataRepo := repository.NewTenantDataRepository(db, cfg.TenantData.PurgeLockTimeout.Duration())
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
 	embeddingModelForDB := embeddingModel
 

@@ -346,6 +346,37 @@ func TestLoad_TaxonomyConfig(t *testing.T) {
 	}
 }
 
+func TestLoad_TenantDataPurgeLockTimeout(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		set   bool
+		want  time.Duration
+	}{
+		{name: "defaults to 5 seconds", set: false, want: 5 * time.Second},
+		{name: "honors env override", value: "9", set: true, want: 9 * time.Second},
+		{name: "coerces zero to default", value: "0", set: true, want: 5 * time.Second},
+		{name: "coerces negative to default", value: "-3", set: true, want: 5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv("TENANT_PURGE_LOCK_TIMEOUT_SECONDS", tt.value)
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			if got := cfg.TenantData.PurgeLockTimeout.Duration(); got != tt.want {
+				t.Errorf("TenantData.PurgeLockTimeout = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoad_TaxonomyServiceURLValidation(t *testing.T) {
 	tests := []struct {
 		name  string

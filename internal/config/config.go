@@ -46,6 +46,7 @@ type Config struct {
 	MessagePublisher MessagePublisherConfig
 	Embedding        EmbeddingConfig
 	Taxonomy         TaxonomyConfig
+	TenantData       TenantDataConfig
 	Observability    ObservabilityConfig
 }
 
@@ -132,6 +133,14 @@ type TaxonomyConfig struct {
 	ServiceToken           string `env:"TAXONOMY_SERVICE_TOKEN"`
 	HubInternalAPIToken    string `env:"HUB_INTERNAL_API_TOKEN"`
 	MinimumEmbeddedRecords int    `env:"TAXONOMY_MIN_EMBEDDED_RECORDS" env-default:"20"`
+}
+
+// TenantDataConfig holds tenant data purge settings.
+type TenantDataConfig struct {
+	// PurgeLockTimeout bounds how long a tenant data purge waits for in-flight
+	// tenant-owned writes to drain before giving up with a retryable conflict.
+	// Must be positive: 0 would mean "wait forever" at the database level.
+	PurgeLockTimeout DurationSec `env:"TENANT_PURGE_LOCK_TIMEOUT_SECONDS" env-default:"5"`
 }
 
 // ObservabilityConfig holds OpenTelemetry settings.
@@ -282,6 +291,11 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Taxonomy.MinimumEmbeddedRecords <= 0 {
 		cfg.Taxonomy.MinimumEmbeddedRecords = 20
+	}
+
+	const defaultPurgeLockTimeoutSec = 5
+	if cfg.TenantData.PurgeLockTimeout.Duration() <= 0 {
+		cfg.TenantData.PurgeLockTimeout = DurationSec(time.Duration(defaultPurgeLockTimeoutSec) * time.Second)
 	}
 }
 

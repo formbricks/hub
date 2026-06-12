@@ -51,33 +51,58 @@ func (r *EmbeddingsRepository) Upsert(
 	vec := pgvector.NewHalfVector(embedding)
 	now := time.Now()
 
-	_, err := r.db.Exec(ctx, `
-		INSERT INTO embeddings (feedback_record_id, embedding, model, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (feedback_record_id, model)
-		DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = $5`,
-		feedbackRecordID, vec, model, now, now,
-	)
-	if err != nil {
-		return fmt.Errorf("embeddings upsert: %w", err)
-	}
+	return withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+		// Embeddings derive their tenant boundary from the parent feedback
+		// record; resolve and lock it so embedding writes cannot race a tenant
+		// data purge. A missing parent means the record was deleted or purged.
+		tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, feedbackRecordID)
+		if err != nil {
+			return err
+		}
 
-	return nil
+		if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
+			return err
+		}
+
+		_, err = dbTx.Exec(ctx, `
+			INSERT INTO embeddings (feedback_record_id, embedding, model, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (feedback_record_id, model)
+			DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = $5`,
+			feedbackRecordID, vec, model, now, now,
+		)
+		if err != nil {
+			return fmt.Errorf("embeddings upsert: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // DeleteByFeedbackRecordAndModel removes the embedding row for the given feedback record and model.
 func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string,
 ) error {
-	_, err := r.db.Exec(ctx,
-		`DELETE FROM embeddings WHERE feedback_record_id = $1 AND model = $2`,
-		feedbackRecordID, model,
-	)
-	if err != nil {
-		return fmt.Errorf("embeddings delete: %w", err)
-	}
+	return withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+		tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, feedbackRecordID)
+		if err != nil {
+			return err
+		}
 
-	return nil
+		if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
+			return err
+		}
+
+		_, err = dbTx.Exec(ctx,
+			`DELETE FROM embeddings WHERE feedback_record_id = $1 AND model = $2`,
+			feedbackRecordID, model,
+		)
+		if err != nil {
+			return fmt.Errorf("embeddings delete: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // ListFeedbackRecordIDsForBackfill returns IDs of feedback records that have non-empty value_text

@@ -5,9 +5,12 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/formbricks/hub/internal/huberrors"
 )
 
 type fakeTenantDataDB struct {
@@ -74,20 +77,30 @@ func (f *fakeTenantDataTx) Rollback(context.Context) error {
 	return f.rollbackErr
 }
 
+// purgeLockTags are the command tags for the three lock-related statements
+// (set_config, advisory lock, set_config reset) that precede the deletes.
+func purgeLockTags() []pgconn.CommandTag {
+	return []pgconn.CommandTag{
+		pgconn.NewCommandTag("SELECT 1"),
+		pgconn.NewCommandTag("SELECT 1"),
+		pgconn.NewCommandTag("SELECT 1"),
+	}
+}
+
 func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
-	t.Run("commits transaction and returns counts", func(t *testing.T) {
+	t.Run("locks tenant exclusively, commits transaction, and returns counts", func(t *testing.T) {
 		transaction := &fakeTenantDataTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				tags: []pgconn.CommandTag{
+				tags: append(purgeLockTags(),
 					pgconn.NewCommandTag("DELETE 2"),
 					pgconn.NewCommandTag("DELETE 4"),
 					pgconn.NewCommandTag("DELETE 3"),
 					pgconn.NewCommandTag("DELETE 1"),
-				},
+				),
 			},
 			rollbackErr: pgx.ErrTxClosed,
 		}
-		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}}
+		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}, purgeLockTimeout: 5 * time.Second}
 
 		counts, err := repo.DeleteByTenant(context.Background(), "org-123")
 		if err != nil {
@@ -105,13 +118,62 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 		if !transaction.rolledBack {
 			t.Fatal("deferred rollback was not called")
 		}
+
+		if len(transaction.queries) != 7 {
+			t.Fatalf("queries = %d, want 7 (3 lock statements + 4 deletes)", len(transaction.queries))
+		}
+
+		assertQueryContains(t, transaction.queries[0], "set_config('lock_timeout', $1, true)")
+		assertQueryContains(t, transaction.queries[1], "pg_advisory_xact_lock(hashtextextended($1, 0))")
+		assertQueryContains(t, transaction.queries[2], "set_config('lock_timeout', '0', true)")
+		assertQueryContains(t, transaction.queries[3], "DELETE FROM embeddings")
+
+		if len(transaction.args[1]) != 1 || transaction.args[1][0] != TenantWriteLockKey("org-123") {
+			t.Fatalf("lock args = %#v, want tenant write lock key", transaction.args[1])
+		}
+	})
+
+	t.Run("lock timeout returns tenant write conflict without deletes", func(t *testing.T) {
+		transaction := &fakeTenantDataTx{
+			fakeTenantDataExecutor: fakeTenantDataExecutor{
+				errAtQuery: 2,
+				err:        &pgconn.PgError{Code: lockNotAvailableSQLState},
+			},
+		}
+		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}, purgeLockTimeout: time.Second}
+
+		counts, err := repo.DeleteByTenant(context.Background(), "org-123")
+		if !errors.Is(err, huberrors.ErrTenantWriteConflict) {
+			t.Fatalf("DeleteByTenant() error = %v, want tenant write conflict", err)
+		}
+
+		if counts != nil {
+			t.Fatalf("counts = %+v, want nil", counts)
+		}
+
+		if transaction.committed {
+			t.Fatal("transaction was committed after lock timeout")
+		}
+
+		if !transaction.rolledBack {
+			t.Fatal("transaction was not rolled back")
+		}
+
+		for _, query := range transaction.queries {
+			if strings.Contains(query, "DELETE FROM") {
+				t.Fatalf("delete executed despite lock timeout: %q", query)
+			}
+		}
 	})
 
 	t.Run("rolls back and returns delete error", func(t *testing.T) {
 		rollbackErr := errors.New("rollback failed")
 		transaction := &fakeTenantDataTx{
-			fakeTenantDataExecutor: fakeTenantDataExecutor{errAtQuery: 2},
-			rollbackErr:            rollbackErr,
+			fakeTenantDataExecutor: fakeTenantDataExecutor{
+				tags:       purgeLockTags(),
+				errAtQuery: 5,
+			},
+			rollbackErr: rollbackErr,
 		}
 		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}}
 
@@ -151,12 +213,12 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 		commitErr := errors.New("commit failed")
 		transaction := &fakeTenantDataTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				tags: []pgconn.CommandTag{
+				tags: append(purgeLockTags(),
 					pgconn.NewCommandTag("DELETE 2"),
 					pgconn.NewCommandTag("DELETE 4"),
 					pgconn.NewCommandTag("DELETE 3"),
 					pgconn.NewCommandTag("DELETE 1"),
-				},
+				),
 			},
 			commitErr:   commitErr,
 			rollbackErr: pgx.ErrTxClosed,

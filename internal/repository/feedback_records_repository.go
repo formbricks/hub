@@ -17,6 +17,10 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+// uniqueViolationSQLState is the SQLSTATE Postgres reports for unique
+// constraint violations (23505 unique_violation).
+const uniqueViolationSQLState = "23505"
+
 // FeedbackRecordsRepository handles data access for feedback records.
 type FeedbackRecordsRepository struct {
 	db *pgxpool.Pool
@@ -51,28 +55,54 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 
 	var record models.FeedbackRecord
 
-	err := r.db.QueryRow(ctx, query,
-		collectedAt, req.SourceType, req.SourceID, req.SourceName,
-		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
-		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
-		req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID,
-	).Scan(
-		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-	)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil, huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
+	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{req.TenantID}, func(dbTx tenantWriteTx) error {
+		err := dbTx.QueryRow(ctx, query,
+			collectedAt, req.SourceType, req.SourceID, req.SourceName,
+			req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
+			req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
+			req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID,
+		).Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
+		)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
+				return huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
+			}
+
+			return fmt.Errorf("failed to create feedback record: %w", err)
 		}
 
-		return nil, fmt.Errorf("failed to create feedback record: %w", err)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &record, nil
+}
+
+// resolveFeedbackRecordTenant reads the tenant boundary of a feedback record
+// inside the current transaction so the caller can acquire the tenant write
+// lock before mutating. tenant_id is immutable on feedback records, so a
+// plain read is race-free once the lock is held.
+func resolveFeedbackRecordTenant(ctx context.Context, querier queryer, id uuid.UUID) (string, error) {
+	var tenantID string
+
+	err := querier.QueryRow(ctx, `SELECT tenant_id FROM feedback_records WHERE id = $1`, id).Scan(&tenantID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", huberrors.NewNotFoundError("feedback record", "feedback record not found")
+		}
+
+		return "", fmt.Errorf("resolve feedback record tenant: %w", err)
+	}
+
+	return tenantID, nil
 }
 
 // GetByID retrieves a single feedback record by ID. Embedding is not selected (API/worker reads stay lean).
@@ -334,16 +364,18 @@ func buildUpdateQuery(
 
 	args = append(args, id)
 
+	// tenant_id is appended by the caller after resolving the row's tenant
+	// boundary inside the tenant write transaction.
 	query = fmt.Sprintf(`
 		UPDATE feedback_records
 		SET %s
-		WHERE id = $%d
+		WHERE id = $%d AND tenant_id = $%d
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_id, tenant_id, submission_id
-	`, strings.Join(updates, ", "), argCount)
+	`, strings.Join(updates, ", "), argCount, argCount+1)
 
 	return query, args, true
 }
@@ -355,24 +387,41 @@ func (r *FeedbackRecordsRepository) Update(
 ) (*models.FeedbackRecord, error) {
 	query, args, hasUpdates := buildUpdateQuery(req, id, time.Now())
 	if !hasUpdates {
+		// No write happens, so no tenant write lock is needed.
 		return r.GetByID(ctx, id)
 	}
 
 	var record models.FeedbackRecord
 
-	err := r.db.QueryRow(ctx, query, args...).Scan(
-		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
+	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+		tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, id)
+		if err != nil {
+			return err
 		}
 
-		return nil, fmt.Errorf("failed to update feedback record: %w", err)
+		if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
+			return err
+		}
+
+		err = dbTx.QueryRow(ctx, query, append(args, tenantID)...).Scan(
+			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+			&record.SourceType, &record.SourceID, &record.SourceName,
+			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
+			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+			}
+
+			return fmt.Errorf("failed to update feedback record: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &record, nil
@@ -380,29 +429,108 @@ func (r *FeedbackRecordsRepository) Update(
 
 // Delete removes a feedback record.
 func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM feedback_records WHERE id = $1`
+	return withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+		tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, id)
+		if err != nil {
+			return err
+		}
 
-	result, err := r.db.Exec(ctx, query, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete feedback record: %w", err)
-	}
+		if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
+			return err
+		}
 
-	if result.RowsAffected() == 0 {
-		return huberrors.NewNotFoundError("feedback record", "feedback record not found")
-	}
+		result, err := dbTx.Exec(ctx, `DELETE FROM feedback_records WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+		if err != nil {
+			return fmt.Errorf("failed to delete feedback record: %w", err)
+		}
 
-	return nil
+		if result.RowsAffected() == 0 {
+			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+		}
+
+		return nil
+	})
 }
 
 // DeleteByUser deletes all feedback records matching user_id.
-// When tenant_id is provided, deletion is restricted to that tenant; otherwise all user records are deleted.
+// When tenant_id is provided, deletion is restricted to that tenant; otherwise all user records
+// are deleted across tenants (documented GDPR/right-to-erasure exception).
+// Every spanned tenant's write lock is acquired before deleting; if any tenant is under purge
+// the whole request fails with a retryable conflict. The delete is scoped to the locked tenants,
+// so records appearing in new tenants mid-transaction are never touched without a lock (a retry
+// catches them).
 // It returns deleted IDs grouped by tenant so callers can publish tenant-scoped side effects.
 func (r *FeedbackRecordsRepository) DeleteByUser(
 	ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters,
 ) ([]models.DeletedFeedbackRecordsByTenant, error) {
-	query := `
-		DELETE FROM feedback_records
-		WHERE user_id = $1`
+	groups := make([]models.DeletedFeedbackRecordsByTenant, 0)
+
+	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+		tenantIDs, err := listUserFeedbackTenants(ctx, dbTx, filters)
+		if err != nil {
+			return err
+		}
+
+		if len(tenantIDs) == 0 {
+			// Nothing to delete; keep the endpoint idempotent without taking locks.
+			return nil
+		}
+
+		if err := tryLockTenantsShared(ctx, dbTx, tenantIDs); err != nil {
+			return err
+		}
+
+		rows, err := dbTx.Query(ctx, `
+			DELETE FROM feedback_records
+			WHERE user_id = $1 AND tenant_id = ANY($2)
+			RETURNING id, tenant_id`, filters.UserID, tenantIDs)
+		if err != nil {
+			return fmt.Errorf("failed to delete feedback records by user: %w", err)
+		}
+		defer rows.Close()
+
+		groupIndexByTenant := make(map[string]int)
+
+		for rows.Next() {
+			var (
+				id       uuid.UUID
+				tenantID string
+			)
+
+			if err := rows.Scan(&id, &tenantID); err != nil {
+				return fmt.Errorf("failed to scan deleted feedback record id: %w", err)
+			}
+
+			groupIndex, ok := groupIndexByTenant[tenantID]
+			if !ok {
+				groupIndex = len(groups)
+				groupIndexByTenant[tenantID] = groupIndex
+				groups = append(groups, models.DeletedFeedbackRecordsByTenant{TenantID: tenantID})
+			}
+
+			groups[groupIndex].IDs = append(groups[groupIndex].IDs, id)
+		}
+
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("error iterating delete feedback records by user result: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return groups, nil
+}
+
+// listUserFeedbackTenants returns the distinct tenant boundaries holding feedback
+// records for the user (optionally restricted to one tenant), so DeleteByUser can
+// lock each one before deleting.
+func listUserFeedbackTenants(
+	ctx context.Context, dbTx tenantWriteTx, filters *models.DeleteFeedbackRecordsByUserFilters,
+) ([]string, error) {
+	query := `SELECT DISTINCT tenant_id FROM feedback_records WHERE user_id = $1`
 	args := []any{filters.UserID}
 
 	if filters.TenantID != nil {
@@ -411,43 +539,30 @@ func (r *FeedbackRecordsRepository) DeleteByUser(
 		args = append(args, *filters.TenantID)
 	}
 
-	query += `
-		RETURNING id, tenant_id`
+	query += ` ORDER BY tenant_id`
 
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := dbTx.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to delete feedback records by user: %w", err)
+		return nil, fmt.Errorf("failed to list tenants for user feedback records: %w", err)
 	}
 	defer rows.Close()
 
-	groups := make([]models.DeletedFeedbackRecordsByTenant, 0)
-	groupIndexByTenant := make(map[string]int)
+	var tenantIDs []string
 
 	for rows.Next() {
-		var (
-			id       uuid.UUID
-			tenantID string
-		)
-
-		if err := rows.Scan(&id, &tenantID); err != nil {
-			return nil, fmt.Errorf("failed to scan deleted feedback record id: %w", err)
+		var tenantID string
+		if err := rows.Scan(&tenantID); err != nil {
+			return nil, fmt.Errorf("failed to scan tenant id: %w", err)
 		}
 
-		groupIndex, ok := groupIndexByTenant[tenantID]
-		if !ok {
-			groupIndex = len(groups)
-			groupIndexByTenant[tenantID] = groupIndex
-			groups = append(groups, models.DeletedFeedbackRecordsByTenant{TenantID: tenantID})
-		}
-
-		groups[groupIndex].IDs = append(groups[groupIndex].IDs, id)
+		tenantIDs = append(tenantIDs, tenantID)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating delete feedback records by user result: %w", err)
+		return nil, fmt.Errorf("error iterating tenants for user feedback records: %w", err)
 	}
 
-	return groups, nil
+	return tenantIDs, nil
 }
 
 // fetchFeedbackRecords executes the given query and scans rows into FeedbackRecord slices.

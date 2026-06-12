@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
@@ -175,7 +177,16 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			DisabledReason: &reason,
 			DisabledAt:     &now,
 		})
-		if updateErr != nil {
+
+		switch {
+		case updateErr == nil:
+		case errors.Is(updateErr, huberrors.ErrTenantWriteConflict):
+			// A tenant data purge is deleting this webhook; disabling it is moot.
+			slog.Warn("webhook dispatch: disable skipped, tenant purge in progress",
+				"webhook_id", webhook.ID,
+				"event_id", args.EventID,
+			)
+		default:
 			slog.Error("webhook dispatch: failed to disable webhook after max attempts",
 				"webhook_id", webhook.ID,
 				"event_id", args.EventID,

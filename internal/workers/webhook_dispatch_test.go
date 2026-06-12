@@ -10,14 +10,16 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/service"
 )
 
 type mockDispatchRepo struct {
-	webhook *models.Webhook
-	err     error
-	update  *models.UpdateWebhookRequest
+	webhook   *models.Webhook
+	err       error
+	update    *models.UpdateWebhookRequest
+	updateErr error
 }
 
 func (m *mockDispatchRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
@@ -26,6 +28,10 @@ func (m *mockDispatchRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webh
 
 func (m *mockDispatchRepo) Update(_ context.Context, _ uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	m.update = req
+
+	if m.updateErr != nil {
+		return nil, m.updateErr
+	}
 
 	return nil, nil
 }
@@ -327,6 +333,32 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 
 		if repo.update.DisabledAt == nil {
 			t.Error("DisabledAt should be set")
+		}
+	})
+
+	t.Run("swallows disable conflict during tenant purge and still returns send error", func(t *testing.T) {
+		repo := &mockDispatchRepo{
+			webhook:   &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+			updateErr: huberrors.NewTenantWriteConflictError(""),
+		}
+		sender := &mockSender{err: errors.New("final failure")}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		job := &river.Job[service.WebhookDispatchArgs]{
+			JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
+			Args:   args,
+		}
+
+		err := worker.Work(ctx, job)
+		if err == nil {
+			t.Error("Work() error = nil, want the send error")
+		}
+
+		if errors.Is(err, huberrors.ErrTenantWriteConflict) {
+			t.Errorf("Work() error = %v, want the send error, not the disable conflict", err)
+		}
+
+		if repo.update == nil {
+			t.Error("disable update should have been attempted")
 		}
 	})
 }
