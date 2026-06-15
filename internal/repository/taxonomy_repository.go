@@ -150,7 +150,7 @@ func (r *TaxonomyRepository) CreateRunIfAvailable(
 		created bool
 	)
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{params.TenantID}, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, []string{params.TenantID}, func(dbTx tenantWriteTx) error {
 		// Scope lock comes second, after the shared tenant write lock, per the
 		// tenant write lock-order convention (see tenant_write_lock.go). Scope
 		// waiters already hold the tenant lock in shared mode, so they never
@@ -233,7 +233,7 @@ func (r *TaxonomyRepository) MarkRunRunning(
 ) (*models.TaxonomyRun, error) {
 	var run *models.TaxonomyRun
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{tenantID}, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
 		updated, err := queryTaxonomyRun(ctx, dbTx, `
 			WITH taxonomy_runs AS (
 				UPDATE taxonomy_runs
@@ -272,7 +272,7 @@ func (r *TaxonomyRepository) MarkRunFailed(
 ) (*models.TaxonomyRun, error) {
 	var run *models.TaxonomyRun
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{tenantID}, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
 		updated, err := queryTaxonomyRun(ctx, dbTx, `
 			WITH taxonomy_runs AS (
 				UPDATE taxonomy_runs
@@ -462,7 +462,7 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 ) (*models.TaxonomyRun, error) {
 	var updated *models.TaxonomyRun
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{tenantID}, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
 		var err error
 
 		updated, err = storeResultAndActivateInTx(ctx, dbTx, runID, tenantID, req)
@@ -683,7 +683,7 @@ func (r *TaxonomyRepository) RenameNode(
 ) (*models.TaxonomyNode, error) {
 	var updated *models.TaxonomyNode
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{tenantID}, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
 		node, run, err := getNodeForUpdate(ctx, dbTx, nodeID, tenantID)
 		if err != nil {
 			return err
@@ -722,7 +722,7 @@ func (r *TaxonomyRepository) RemoveNode(
 ) (*models.TaxonomyNode, error) {
 	var updated *models.TaxonomyNode
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{tenantID}, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
 		_, run, err := getNodeForUpdate(ctx, dbTx, nodeID, tenantID)
 		if err != nil {
 			return err

@@ -33,6 +33,14 @@ import (
 // scope), then row locks. The purge takes only the tenant exclusive lock and
 // holds no row locks while waiting. No code path may block on an advisory
 // lock while holding row locks.
+//
+// Two write shapes:
+//   - Tenant known before the write (inserts): gate the write on the lock in a
+//     single autocommit statement via tenantWriteLockGate — one round trip, no
+//     explicit transaction.
+//   - Tenant resolved from the row being mutated (updates/deletes): use
+//     withTenantWriteTx / withTenantWritePoolTx, resolve the tenant inside the
+//     transaction, then tryLockTenantsShared before mutating.
 
 // tenantWriteLockSharedSQL acquires the tenant key in shared mode without waiting.
 const tenantWriteLockSharedSQL = `SELECT pg_try_advisory_xact_lock_shared(hashtextextended($1, 0))`
@@ -44,6 +52,20 @@ const tenantWriteLockExclusiveSQL = `SELECT pg_advisory_xact_lock(hashtextextend
 // lockNotAvailableSQLState is the SQLSTATE Postgres reports when lock_timeout
 // expires while waiting for a lock (55P03 lock_not_available).
 const lockNotAvailableSQLState = "55P03"
+
+// tenantWriteLockGate returns a SQL boolean expression that try-acquires the
+// shared tenant write lock, for gating a single-statement write
+// (INSERT ... SELECT ... WHERE <gate>) without an explicit transaction. Use it
+// only when the tenant is known before the write (no in-transaction resolve):
+// the advisory lock is transaction-scoped, and in autocommit the transaction is
+// the single statement, so the lock is held for exactly the duration of the
+// write — the same isolation as the explicit-transaction path, in one round
+// trip. The statement must pass TenantWriteLockKey(tenantID) as the $paramIndex
+// parameter, and the caller must treat zero affected rows (pgx.ErrNoRows) as a
+// tenant write conflict (the lock was refused: a purge is in progress).
+func tenantWriteLockGate(paramIndex int) string {
+	return fmt.Sprintf("pg_try_advisory_xact_lock_shared(hashtextextended($%d, 0))", paramIndex)
+}
 
 // TenantWriteLockKey returns the advisory lock key string that serializes
 // tenant-owned writes against tenant data purges for the given tenant.
@@ -72,7 +94,9 @@ type tenantWriteTxBeginner interface {
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (tenantWriteTx, error)
 }
 
-// tenantWritePool adapts *pgxpool.Pool to tenantWriteTxBeginner.
+// tenantWritePool adapts *pgxpool.Pool to tenantWriteTxBeginner. It is the
+// transaction source for every tenant-owned write path, including the tenant
+// data purge.
 type tenantWritePool struct {
 	db *pgxpool.Pool
 }
@@ -84,6 +108,14 @@ func (p tenantWritePool) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (
 	}
 
 	return dbTx, nil
+}
+
+// withTenantWritePoolTx is withTenantWriteTx for the common case of a
+// *pgxpool.Pool, so call sites do not repeat the tenantWritePool adapter.
+func withTenantWritePoolTx(
+	ctx context.Context, pool *pgxpool.Pool, tenantIDs []string, mutate func(dbTx tenantWriteTx) error,
+) error {
+	return withTenantWriteTx(ctx, tenantWritePool{db: pool}, tenantIDs, mutate)
 }
 
 // withTenantWriteTx runs mutate inside a transaction that holds shared tenant
@@ -122,27 +154,44 @@ func withTenantWriteTx(
 }
 
 // tryLockTenantsShared acquires the shared tenant write lock for every given
-// tenant ID (sorted, deduplicated) without waiting. It returns
-// *huberrors.TenantWriteConflictError when any lock is unavailable, which
-// means a tenant data purge for that tenant is running or waiting to run.
+// tenant ID without waiting. It returns *huberrors.TenantWriteConflictError
+// when any lock is unavailable, which means a tenant data purge for that tenant
+// is running or waiting to run.
 func tryLockTenantsShared(ctx context.Context, querier queryer, tenantIDs []string) error {
-	if len(tenantIDs) == 0 {
+	// Fast path for the common single-tenant write: skip the clone/sort/dedup
+	// allocation entirely.
+	switch len(tenantIDs) {
+	case 0:
 		return nil
+	case 1:
+		return tryLockTenantShared(ctx, querier, tenantIDs[0])
 	}
 
+	// Multiple tenants (GDPR erasure across tenants, webhook tenant-move):
+	// deduplicate so a repeated tenant_id does not cost a redundant lock round
+	// trip. Try-locks never wait, so the order is not needed for deadlock
+	// avoidance; sorting just keeps behavior deterministic.
 	sorted := slices.Clone(tenantIDs)
 	slices.Sort(sorted)
 	sorted = slices.Compact(sorted)
 
 	for _, tenantID := range sorted {
-		var locked bool
-		if err := querier.QueryRow(ctx, tenantWriteLockSharedSQL, TenantWriteLockKey(tenantID)).Scan(&locked); err != nil {
-			return fmt.Errorf("acquire shared tenant write lock: %w", err)
+		if err := tryLockTenantShared(ctx, querier, tenantID); err != nil {
+			return err
 		}
+	}
 
-		if !locked {
-			return huberrors.NewTenantWriteConflictError("tenant data purge in progress for this tenant; retry later")
-		}
+	return nil
+}
+
+func tryLockTenantShared(ctx context.Context, querier queryer, tenantID string) error {
+	var locked bool
+	if err := querier.QueryRow(ctx, tenantWriteLockSharedSQL, TenantWriteLockKey(tenantID)).Scan(&locked); err != nil {
+		return fmt.Errorf("acquire shared tenant write lock: %w", err)
+	}
+
+	if !locked {
+		return huberrors.NewTenantWriteConflictError("tenant data purge in progress for this tenant; retry later")
 	}
 
 	return nil
@@ -156,8 +205,11 @@ func tryLockTenantsShared(ctx context.Context, querier queryer, tenantIDs []stri
 func acquireTenantPurgeLock(
 	ctx context.Context, exec tenantDataExecutor, tenantID string, timeout time.Duration,
 ) error {
-	timeoutMs := strconv.FormatInt(timeout.Milliseconds(), 10)
-	if _, err := exec.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, timeoutMs); err != nil {
+	// Postgres treats lock_timeout = 0 as "wait forever"; floor a zero or
+	// sub-millisecond duration to 1ms so the purge always fails fast rather
+	// than blocking indefinitely on in-flight writers.
+	timeoutMs := max(timeout.Milliseconds(), 1)
+	if _, err := exec.Exec(ctx, `SELECT set_config('lock_timeout', $1, true)`, strconv.FormatInt(timeoutMs, 10)); err != nil {
 		return fmt.Errorf("set tenant purge lock timeout: %w", err)
 	}
 

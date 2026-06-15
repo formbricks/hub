@@ -51,20 +51,15 @@ func (r *EmbeddingsRepository) Upsert(
 	vec := pgvector.NewHalfVector(embedding)
 	now := time.Now()
 
-	return withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		// Embeddings derive their tenant boundary from the parent feedback
 		// record; resolve and lock it so embedding writes cannot race a tenant
 		// data purge. A missing parent means the record was deleted or purged.
-		tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, feedbackRecordID)
-		if err != nil {
+		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
 			return err
 		}
 
-		if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
-			return err
-		}
-
-		_, err = dbTx.Exec(ctx, `
+		_, err := dbTx.Exec(ctx, `
 			INSERT INTO embeddings (feedback_record_id, embedding, model, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (feedback_record_id, model)
@@ -83,17 +78,12 @@ func (r *EmbeddingsRepository) Upsert(
 func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string,
 ) error {
-	return withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
-		tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, feedbackRecordID)
-		if err != nil {
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
 			return err
 		}
 
-		if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
-			return err
-		}
-
-		_, err = dbTx.Exec(ctx,
+		_, err := dbTx.Exec(ctx,
 			`DELETE FROM embeddings WHERE feedback_record_id = $1 AND model = $2`,
 			feedbackRecordID, model,
 		)

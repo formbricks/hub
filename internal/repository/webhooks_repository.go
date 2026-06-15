@@ -49,11 +49,18 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 		}
 	}
 
+	// The tenant is known up front, so gate the insert on the shared tenant
+	// write lock in a single statement (held for this statement's implicit
+	// transaction): one round trip, same isolation against a tenant data purge.
+	// Zero rows means the lock was refused (purge in progress).
+	const lockKeyParam = 6 // $6, after the 5 inserted columns
+
 	query := `
 		INSERT INTO webhooks (
 			url, signing_key, enabled, tenant_id, event_types
 		)
-		VALUES ($1, $2, $3, $4, $5)
+		SELECT $1, $2, $3, $4, $5
+		WHERE ` + tenantWriteLockGate(lockKeyParam) + `
 		RETURNING id, url, signing_key, enabled, tenant_id, created_at, updated_at, event_types
 	`
 
@@ -62,21 +69,18 @@ func (r *WebhooksRepository) Create(ctx context.Context, req *models.CreateWebho
 		dbEventTypes []string
 	)
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{*req.TenantID}, func(dbTx tenantWriteTx) error {
-		err := dbTx.QueryRow(ctx, query,
-			req.URL, req.SigningKey, enabled, req.TenantID, eventTypes,
-		).Scan(
-			&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
-			&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create webhook: %w", err)
+	err := r.db.QueryRow(ctx, query,
+		req.URL, req.SigningKey, enabled, req.TenantID, eventTypes, TenantWriteLockKey(*req.TenantID),
+	).Scan(
+		&webhook.ID, &webhook.URL, &webhook.SigningKey, &webhook.Enabled,
+		&webhook.TenantID, &webhook.CreatedAt, &webhook.UpdatedAt, &dbEventTypes,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewTenantWriteConflictError("tenant data purge in progress for this tenant; retry later")
 		}
 
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create webhook: %w", err)
 	}
 
 	webhook.EventTypes, err = parseDBEventTypes(dbEventTypes)
@@ -349,7 +353,7 @@ func (r *WebhooksRepository) Update(ctx context.Context, id uuid.UUID, req *mode
 		dbEventTypes []string
 	)
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		currentTenantID, err := resolveWebhookTenant(ctx, dbTx, id)
 		if err != nil {
 			return err
@@ -408,7 +412,7 @@ func (r *WebhooksRepository) Delete(ctx context.Context, id uuid.UUID) (*models.
 
 	var webhook models.DeletedWebhook
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		currentTenantID, err := resolveWebhookTenant(ctx, dbTx, id)
 		if err != nil {
 			return err

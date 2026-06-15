@@ -14,36 +14,19 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+// tenantDataExecutor is the Exec-only statement surface the purge runs on
+// (DELETE statements and the advisory-lock SQL). The tenant write transaction
+// (tenantWriteTx) satisfies it.
 type tenantDataExecutor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
-type tenantDataTx interface {
-	tenantDataExecutor
-	Commit(ctx context.Context) error
-	Rollback(ctx context.Context) error
-}
-
-type tenantDataTxBeginner interface {
-	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (tenantDataTx, error)
-}
-
-type tenantDataPool struct {
-	db *pgxpool.Pool
-}
-
-func (p tenantDataPool) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (tenantDataTx, error) {
-	dbTx, err := p.db.BeginTx(ctx, txOptions)
-	if err != nil {
-		return nil, fmt.Errorf("begin tenant data transaction: %w", err)
-	}
-
-	return dbTx, nil
-}
-
 // TenantDataRepository handles tenant-scoped data purge operations.
 type TenantDataRepository struct {
-	db tenantDataTxBeginner
+	// db opens the purge transaction. It shares tenantWriteTxBeginner with every
+	// tenant-owned write path so the purge's exclusive lock and writers' shared
+	// locks coordinate on the same transaction machinery.
+	db tenantWriteTxBeginner
 	// purgeLockTimeout bounds how long a purge waits for in-flight tenant-owned
 	// writes (shared tenant write lock holders) to drain before returning a
 	// retryable conflict.
@@ -52,7 +35,7 @@ type TenantDataRepository struct {
 
 // NewTenantDataRepository creates a new tenant data repository.
 func NewTenantDataRepository(db *pgxpool.Pool, purgeLockTimeout time.Duration) *TenantDataRepository {
-	return &TenantDataRepository{db: tenantDataPool{db: db}, purgeLockTimeout: purgeLockTimeout}
+	return &TenantDataRepository{db: tenantWritePool{db: db}, purgeLockTimeout: purgeLockTimeout}
 }
 
 // DeleteByTenant deletes all Hub-owned data for a tenant and returns per-resource counts.

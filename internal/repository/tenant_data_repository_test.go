@@ -13,19 +13,9 @@ import (
 	"github.com/formbricks/hub/internal/huberrors"
 )
 
-type fakeTenantDataDB struct {
-	tx       *fakeTenantDataTx
-	beginErr error
-}
-
-func (f *fakeTenantDataDB) BeginTx(context.Context, pgx.TxOptions) (tenantDataTx, error) {
-	if f.beginErr != nil {
-		return nil, f.beginErr
-	}
-
-	return f.tx, nil
-}
-
+// fakeTenantDataExecutor is the shared Exec recorder embedded by
+// fakeTenantWriteTx (see tenant_write_lock_test.go); the purge tests below
+// drive that same fake transaction, which satisfies tenantWriteTxBeginner.
 type fakeTenantDataExecutor struct {
 	tags       []pgconn.CommandTag
 	errAtQuery int
@@ -56,27 +46,6 @@ func (f *fakeTenantDataExecutor) Exec(
 	return f.tags[tagIndex], nil
 }
 
-type fakeTenantDataTx struct {
-	fakeTenantDataExecutor
-
-	commitErr   error
-	rollbackErr error
-	committed   bool
-	rolledBack  bool
-}
-
-func (f *fakeTenantDataTx) Commit(context.Context) error {
-	f.committed = true
-
-	return f.commitErr
-}
-
-func (f *fakeTenantDataTx) Rollback(context.Context) error {
-	f.rolledBack = true
-
-	return f.rollbackErr
-}
-
 // purgeLockTags are the command tags for the three lock-related statements
 // (set_config, advisory lock, set_config reset) that precede the deletes.
 func purgeLockTags() []pgconn.CommandTag {
@@ -89,7 +58,7 @@ func purgeLockTags() []pgconn.CommandTag {
 
 func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 	t.Run("locks tenant exclusively, commits transaction, and returns counts", func(t *testing.T) {
-		transaction := &fakeTenantDataTx{
+		transaction := &fakeTenantWriteTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{
 				tags: append(purgeLockTags(),
 					pgconn.NewCommandTag("DELETE 2"),
@@ -100,7 +69,7 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 			},
 			rollbackErr: pgx.ErrTxClosed,
 		}
-		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}, purgeLockTimeout: 5 * time.Second}
+		repo := &TenantDataRepository{db: &fakeTenantWriteDB{tx: transaction}, purgeLockTimeout: 5 * time.Second}
 
 		counts, err := repo.DeleteByTenant(context.Background(), "org-123")
 		if err != nil {
@@ -134,13 +103,13 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 	})
 
 	t.Run("lock timeout returns tenant write conflict without deletes", func(t *testing.T) {
-		transaction := &fakeTenantDataTx{
+		transaction := &fakeTenantWriteTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{
 				errAtQuery: 2,
 				err:        &pgconn.PgError{Code: lockNotAvailableSQLState},
 			},
 		}
-		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}, purgeLockTimeout: time.Second}
+		repo := &TenantDataRepository{db: &fakeTenantWriteDB{tx: transaction}, purgeLockTimeout: time.Second}
 
 		counts, err := repo.DeleteByTenant(context.Background(), "org-123")
 		if !errors.Is(err, huberrors.ErrTenantWriteConflict) {
@@ -168,14 +137,14 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 
 	t.Run("rolls back and returns delete error", func(t *testing.T) {
 		rollbackErr := errors.New("rollback failed")
-		transaction := &fakeTenantDataTx{
+		transaction := &fakeTenantWriteTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{
 				tags:       purgeLockTags(),
 				errAtQuery: 5,
 			},
 			rollbackErr: rollbackErr,
 		}
-		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}}
+		repo := &TenantDataRepository{db: &fakeTenantWriteDB{tx: transaction}}
 
 		counts, err := repo.DeleteByTenant(context.Background(), "org-123")
 		if err == nil {
@@ -197,7 +166,7 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 
 	t.Run("returns begin transaction error", func(t *testing.T) {
 		beginErr := errors.New("begin failed")
-		repo := &TenantDataRepository{db: &fakeTenantDataDB{beginErr: beginErr}}
+		repo := &TenantDataRepository{db: &fakeTenantWriteDB{beginErr: beginErr}}
 
 		counts, err := repo.DeleteByTenant(context.Background(), "org-123")
 		if !errors.Is(err, beginErr) {
@@ -211,7 +180,7 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 
 	t.Run("returns commit error", func(t *testing.T) {
 		commitErr := errors.New("commit failed")
-		transaction := &fakeTenantDataTx{
+		transaction := &fakeTenantWriteTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{
 				tags: append(purgeLockTags(),
 					pgconn.NewCommandTag("DELETE 2"),
@@ -223,7 +192,7 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 			commitErr:   commitErr,
 			rollbackErr: pgx.ErrTxClosed,
 		}
-		repo := &TenantDataRepository{db: &fakeTenantDataDB{tx: transaction}}
+		repo := &TenantDataRepository{db: &fakeTenantWriteDB{tx: transaction}}
 
 		counts, err := repo.DeleteByTenant(context.Background(), "org-123")
 		if !errors.Is(err, commitErr) {

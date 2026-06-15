@@ -38,6 +38,12 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		collectedAt = *req.CollectedAt
 	}
 
+	// The tenant is known up front, so gate the insert on the shared tenant
+	// write lock in a single statement (held for this statement's implicit
+	// transaction): one round trip, same isolation against a tenant data purge.
+	// Zero rows means the lock was refused (purge in progress).
+	const lockKeyParam = 19 // $19, after the 18 inserted columns
+
 	query := `
 		INSERT INTO feedback_records (
 			collected_at, source_type, source_id, source_name,
@@ -45,7 +51,8 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 			value_text, value_number, value_boolean, value_date,
 			metadata, language, user_id, tenant_id, submission_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+		WHERE ` + tenantWriteLockGate(lockKeyParam) + `
 		RETURNING id, collected_at, created_at, updated_at,
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
@@ -55,32 +62,30 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 
 	var record models.FeedbackRecord
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, []string{req.TenantID}, func(dbTx tenantWriteTx) error {
-		err := dbTx.QueryRow(ctx, query,
-			collectedAt, req.SourceType, req.SourceID, req.SourceName,
-			req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
-			req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
-			req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID,
-		).Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-		)
-		if err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
-				return huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
-			}
-
-			return fmt.Errorf("failed to create feedback record: %w", err)
+	err := r.db.QueryRow(ctx, query,
+		collectedAt, req.SourceType, req.SourceID, req.SourceName,
+		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
+		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
+		req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID,
+		TenantWriteLockKey(req.TenantID),
+	).Scan(
+		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
+		&record.SourceType, &record.SourceID, &record.SourceName,
+		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
+		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
+		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
+			return nil, huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
 		}
 
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewTenantWriteConflictError("tenant data purge in progress for this tenant; retry later")
+		}
+
+		return nil, fmt.Errorf("failed to create feedback record: %w", err)
 	}
 
 	return &record, nil
@@ -100,6 +105,25 @@ func resolveFeedbackRecordTenant(ctx context.Context, querier queryer, id uuid.U
 		}
 
 		return "", fmt.Errorf("resolve feedback record tenant: %w", err)
+	}
+
+	return tenantID, nil
+}
+
+// lockFeedbackRecordTenantShared resolves a feedback record's tenant boundary
+// and acquires the shared tenant write lock for it, in that order, inside the
+// current transaction. It is the single entry point for mutating a feedback
+// record (or its derived rows, e.g. embeddings) by ID without racing a tenant
+// data purge. Returns NotFound if the record is gone and a tenant write
+// conflict if the tenant is under purge.
+func lockFeedbackRecordTenantShared(ctx context.Context, dbTx tenantWriteTx, id uuid.UUID) (string, error) {
+	tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, id)
+	if err != nil {
+		return "", err
+	}
+
+	if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
+		return "", err
 	}
 
 	return tenantID, nil
@@ -393,13 +417,9 @@ func (r *FeedbackRecordsRepository) Update(
 
 	var record models.FeedbackRecord
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
-		tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, id)
+	err := withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		tenantID, err := lockFeedbackRecordTenantShared(ctx, dbTx, id)
 		if err != nil {
-			return err
-		}
-
-		if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
 			return err
 		}
 
@@ -429,13 +449,9 @@ func (r *FeedbackRecordsRepository) Update(
 
 // Delete removes a feedback record.
 func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	return withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
-		tenantID, err := resolveFeedbackRecordTenant(ctx, dbTx, id)
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		tenantID, err := lockFeedbackRecordTenantShared(ctx, dbTx, id)
 		if err != nil {
-			return err
-		}
-
-		if err := tryLockTenantsShared(ctx, dbTx, []string{tenantID}); err != nil {
 			return err
 		}
 
@@ -465,7 +481,7 @@ func (r *FeedbackRecordsRepository) DeleteByUser(
 ) ([]models.DeletedFeedbackRecordsByTenant, error) {
 	groups := make([]models.DeletedFeedbackRecordsByTenant, 0)
 
-	err := withTenantWriteTx(ctx, tenantWritePool{db: r.db}, nil, func(dbTx tenantWriteTx) error {
+	err := withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		tenantIDs, err := listUserFeedbackTenants(ctx, dbTx, filters)
 		if err != nil {
 			return err
