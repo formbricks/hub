@@ -1,6 +1,16 @@
 -- +goose up
 -- Taxonomy generation artifacts are stored as run-scoped Hub data. Keep them
 -- separate from feedback_records so repeated generation never mutates source feedback.
+--
+-- Source scope and the "no source" bucket:
+--   feedback_records.source_id is nullable (see 001_initial_schema.sql), so feedback can
+--   exist with no attributed source. Taxonomy must still cover those records. Rather than
+--   making source_id nullable inside the composite PK/FK/UNIQUE constraints below (NULL is
+--   never equal to NULL, which breaks key matching), taxonomy canonicalizes "no source" to
+--   the empty string ''. The Go layer always sends a string, never NULL, so source_id stays
+--   NOT NULL here and '' is a valid, comparable key value. Repository queries that read
+--   feedback_records use null-safe matching (NULLIF(btrim(source_id), '') IS NOT DISTINCT
+--   FROM ...) so the '' taxonomy scope matches NULL/blank feedback rows.
 ALTER TABLE feedback_records
   ADD CONSTRAINT feedback_records_id_tenant_unique
   UNIQUE USING INDEX feedback_records_id_tenant_uidx;
@@ -45,7 +55,7 @@ CREATE TABLE taxonomy_runs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT taxonomy_runs_tenant_id_required CHECK (btrim(tenant_id) <> ''),
   CONSTRAINT taxonomy_runs_source_type_required CHECK (btrim(source_type) <> ''),
-  CONSTRAINT taxonomy_runs_source_id_required CHECK (btrim(source_id) <> ''),
+  -- source_id intentionally allows '' (the canonical "no source" bucket); see header note.
   CONSTRAINT taxonomy_runs_field_id_required CHECK (btrim(field_id) <> ''),
   CONSTRAINT taxonomy_runs_record_count_nonnegative CHECK (record_count >= 0),
   CONSTRAINT taxonomy_runs_embedding_count_nonnegative CHECK (embedding_count >= 0),
@@ -157,7 +167,7 @@ CREATE TABLE taxonomy_active_runs (
     ON DELETE CASCADE,
   CONSTRAINT taxonomy_active_runs_tenant_id_required CHECK (btrim(tenant_id) <> ''),
   CONSTRAINT taxonomy_active_runs_source_type_required CHECK (btrim(source_type) <> ''),
-  CONSTRAINT taxonomy_active_runs_source_id_required CHECK (btrim(source_id) <> ''),
+  -- source_id intentionally allows '' (the canonical "no source" bucket); see header note.
   CONSTRAINT taxonomy_active_runs_field_id_required CHECK (btrim(field_id) <> ''),
   UNIQUE (run_id)
 );
@@ -185,7 +195,7 @@ CREATE TABLE taxonomy_node_events (
   FOREIGN KEY (node_id, run_id) REFERENCES taxonomy_nodes(id, run_id) ON DELETE CASCADE,
   CONSTRAINT taxonomy_node_events_tenant_id_required CHECK (btrim(tenant_id) <> ''),
   CONSTRAINT taxonomy_node_events_source_type_required CHECK (btrim(source_type) <> ''),
-  CONSTRAINT taxonomy_node_events_source_id_required CHECK (btrim(source_id) <> ''),
+  -- source_id intentionally allows '' (the canonical "no source" bucket); see header note.
   CONSTRAINT taxonomy_node_events_field_id_required CHECK (btrim(field_id) <> ''),
   CONSTRAINT taxonomy_node_events_actor_id_required CHECK (btrim(actor_id) <> '')
 );

@@ -57,7 +57,7 @@ func (r *TaxonomyRepository) ListFieldOptions(
 		SELECT
 			fr.tenant_id,
 			fr.source_type,
-			fr.source_id,
+			COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
 			COALESCE(MAX(fr.source_name) FILTER (WHERE fr.source_name IS NOT NULL AND btrim(fr.source_name) <> ''), ''),
 			fr.field_id,
 			COALESCE(MAX(fr.field_label) FILTER (WHERE fr.field_label IS NOT NULL AND btrim(fr.field_label) <> ''), ''),
@@ -66,12 +66,10 @@ func (r *TaxonomyRepository) ListFieldOptions(
 		FROM feedback_records fr
 		LEFT JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $2
 		WHERE fr.tenant_id = $1
-		  AND fr.source_id IS NOT NULL
-		  AND btrim(fr.source_id) <> ''
 		  AND fr.value_text IS NOT NULL
 		  AND btrim(fr.value_text) <> ''
-		GROUP BY fr.tenant_id, fr.source_type, fr.source_id, fr.field_id
-		ORDER BY fr.source_type, fr.source_id, fr.field_id`,
+		GROUP BY fr.tenant_id, fr.source_type, COALESCE(NULLIF(btrim(fr.source_id), ''), ''), fr.field_id
+		ORDER BY fr.source_type, COALESCE(NULLIF(btrim(fr.source_id), ''), ''), fr.field_id`,
 		tenantID, embeddingModel,
 	)
 	if err != nil {
@@ -127,7 +125,7 @@ func (r *TaxonomyRepository) CountScopeInput(
 		LEFT JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $5
 		WHERE fr.tenant_id = $1
 		  AND fr.source_type = $2
-		  AND fr.source_id = $3
+		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
 		  AND fr.field_id = $4
 		  AND fr.value_text IS NOT NULL
 		  AND btrim(fr.value_text) <> ''`,
@@ -392,7 +390,7 @@ func (r *TaxonomyRepository) GetRunInput(
 		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
 		WHERE fr.tenant_id = $1
 		  AND fr.source_type = $2
-		  AND fr.source_id = $3
+		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
 		  AND fr.field_id = $4
 		  AND fr.value_text IS NOT NULL
 		  AND btrim(fr.value_text) <> ''
