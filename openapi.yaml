@@ -1067,9 +1067,9 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                 "409":
                     description: |
-                        Conflict – a tenant data purge is in progress for this webhook's current (or target)
-                        tenant, or the webhook was modified concurrently (code `tenant_write_conflict`);
-                        retry after the purge completes.
+                        Conflict (code `tenant_write_conflict`) – the update could not be serialized against
+                        a tenant data purge in progress for this webhook's current (or target) tenant, or the
+                        webhook was modified concurrently. The conflict is transient; retry the request.
                     content:
                         application/problem+json:
                             schema:
@@ -1112,9 +1112,9 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                 "409":
                     description: |
-                        Conflict – a tenant data purge is in progress for this webhook's tenant, or the
-                        webhook was modified concurrently (code `tenant_write_conflict`); retry after the
-                        purge completes.
+                        Conflict (code `tenant_write_conflict`) – the delete could not be serialized against
+                        a tenant data purge in progress for this webhook's tenant, or the webhook was modified
+                        concurrently. The conflict is transient; retry the request.
                     content:
                         application/problem+json:
                             schema:

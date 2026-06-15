@@ -282,6 +282,22 @@ func TestAcquireTenantPurgeLock(t *testing.T) {
 		}
 	})
 
+	t.Run("floors non-positive timeout to 1ms so lock_timeout is never disabled", func(t *testing.T) {
+		// lock_timeout = 0 means "wait forever" in Postgres; a zero or negative
+		// duration must never reach set_config as "0".
+		for _, timeout := range []time.Duration{0, -5 * time.Second, time.Microsecond} {
+			exec := &fakeTenantDataExecutor{}
+
+			if err := acquireTenantPurgeLock(context.Background(), exec, "org-123", timeout); err != nil {
+				t.Fatalf("acquireTenantPurgeLock(%v) error = %v", timeout, err)
+			}
+
+			if len(exec.args[0]) != 1 || exec.args[0][0] != "1" {
+				t.Fatalf("set_config args for timeout %v = %#v, want floored to \"1\"", timeout, exec.args[0])
+			}
+		}
+	})
+
 	t.Run("lock timeout maps to tenant write conflict", func(t *testing.T) {
 		exec := &fakeTenantDataExecutor{
 			errAtQuery: 2,

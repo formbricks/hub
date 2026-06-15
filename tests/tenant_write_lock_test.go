@@ -362,16 +362,23 @@ func TestTenantWritesFailFastWhilePurgeQueued(t *testing.T) {
 		purgeStatus <- resp.StatusCode
 	}()
 
-	// Wait until the purge's exclusive advisory lock request is queued.
+	// Wait until the purge's exclusive advisory lock request is queued, scoped to
+	// tenantA's key so an unrelated waiter can't satisfy this. For the single-arg
+	// advisory form, Postgres stores the int8 key as classid = high 32 bits and
+	// objid = low 32 bits, with objsubid = 1.
 	require.Eventually(t, func() bool {
 		var waiting int
 
-		err := db.QueryRow(ctx,
-			`SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`,
+		err := db.QueryRow(ctx, `
+			SELECT count(*) FROM pg_locks
+			WHERE locktype = 'advisory' AND NOT granted AND objsubid = 1
+			  AND classid::bigint = ((hashtextextended($1, 0) >> 32) & 4294967295)
+			  AND objid::bigint = (hashtextextended($1, 0) & 4294967295)`,
+			repository.TenantWriteLockKey(tenantA),
 		).Scan(&waiting)
 
 		return err == nil && waiting > 0
-	}, 5*time.Second, 20*time.Millisecond, "purge never queued for the advisory lock")
+	}, 5*time.Second, 20*time.Millisecond, "purge never queued for tenantA's advisory lock")
 
 	// A new same-tenant write must fail fast while the purge is queued.
 	status, body := doTenantLockRequest(
@@ -585,6 +592,59 @@ func TestRepositoryWritesConflictDuringPurge(t *testing.T) {
 
 		_, err := taxonomyRepo.MarkRunRunning(ctx, pendingRun.ID, tenantA)
 		require.NoError(t, err)
+	})
+
+	t.Run("transition on a non-pending run reports conflict without a second connection", func(t *testing.T) {
+		// The run is now 'running'; marking it running again misses the
+		// status='pending' filter and routes through transitionError, which must
+		// read the run state through the open transaction (not the pool) to build
+		// the conflict — exercising the no-second-connection fix.
+		_, err := taxonomyRepo.MarkRunRunning(ctx, pendingRun.ID, tenantA)
+		require.ErrorIs(t, err, huberrors.ErrConflict)
+	})
+
+	cleanupTenantDataBestEffort(ctx, client, server.URL, tenantA)
+}
+
+// TestTaxonomyNodeMutationsAreTenantScoped verifies getNodeForUpdate's tenant
+// predicate: a node may only be renamed/removed by its owning tenant, so a
+// caller can never lock or mutate another tenant's node row.
+func TestTaxonomyNodeMutationsAreTenantScoped(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	db := newTenantLockDB(ctx, t)
+	client := &http.Client{}
+	tenantA := "tenant-node-a-" + uuid.NewString()
+	tenantB := "tenant-node-b-" + uuid.NewString()
+
+	taxonomyRepo := repository.NewTaxonomyRepository(db)
+
+	record := createTenantDataFeedbackRecord(ctx, t, client, server.URL, tenantA, uuid.NewString(), "tenant-node-field")
+	runID := createTenantDataTaxonomyGraph(
+		ctx, t, db, tenantA, record.ID, "tenant-node-source-"+uuid.NewString(), record.FieldID,
+	)
+
+	var nodeID uuid.UUID
+	require.NoError(t, db.QueryRow(ctx,
+		`SELECT id FROM taxonomy_nodes WHERE run_id = $1 AND removed_at IS NULL ORDER BY level LIMIT 1`, runID,
+	).Scan(&nodeID))
+
+	t.Run("rename from another tenant is not found", func(t *testing.T) {
+		_, err := taxonomyRepo.RenameNode(ctx, nodeID, tenantB, "actor", "renamed-by-b")
+		require.ErrorIs(t, err, huberrors.ErrNotFound)
+	})
+
+	t.Run("remove from another tenant is not found", func(t *testing.T) {
+		_, err := taxonomyRepo.RemoveNode(ctx, nodeID, tenantB, "actor")
+		require.ErrorIs(t, err, huberrors.ErrNotFound)
+	})
+
+	t.Run("rename from the owning tenant succeeds", func(t *testing.T) {
+		node, err := taxonomyRepo.RenameNode(ctx, nodeID, tenantA, "actor", "renamed-by-a")
+		require.NoError(t, err)
+		assert.Equal(t, "renamed-by-a", node.Label)
 	})
 
 	cleanupTenantDataBestEffort(ctx, client, server.URL, tenantA)

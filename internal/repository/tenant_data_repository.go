@@ -46,7 +46,11 @@ func (r *TenantDataRepository) DeleteByTenant(ctx context.Context, tenantID stri
 	}
 
 	defer func() {
-		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		// A canceled request ctx (e.g. while waiting for the purge lock) can make
+		// pgx close the connection so Rollback can't send ROLLBACK; Postgres still
+		// aborts the tx and releases the advisory lock on session end. Skip logging
+		// when the ctx is already done — that rollback error is expected, not a fault.
+		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) && ctx.Err() == nil {
 			slog.Error(
 				"tenant data delete: rollback failed",
 				"tenant_id_present", tenantID != "",

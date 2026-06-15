@@ -473,8 +473,12 @@ func (r *FeedbackRecordsRepository) Delete(ctx context.Context, id uuid.UUID) er
 // are deleted across tenants (documented GDPR/right-to-erasure exception).
 // Every spanned tenant's write lock is acquired before deleting; if any tenant is under purge
 // the whole request fails with a retryable conflict. The delete is scoped to the locked tenants,
-// so records appearing in new tenants mid-transaction are never touched without a lock (a retry
-// catches them).
+// so records appearing in new tenants mid-transaction are never touched without a lock.
+// Because the tenant set is snapshotted before locking, a record could be written into a new
+// (unlocked) tenant for the same user after the snapshot; after deleting, the same transaction
+// re-checks for any in-scope record still present and, if found, returns a retryable conflict
+// (rolling the whole delete back) rather than reporting an incomplete erasure as success. Erasure
+// is idempotent, so the caller's retry converges once writes for the subject have stopped.
 // It returns deleted IDs grouped by tenant so callers can publish tenant-scoped side effects.
 func (r *FeedbackRecordsRepository) DeleteByUser(
 	ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters,
@@ -531,6 +535,16 @@ func (r *FeedbackRecordsRepository) DeleteByUser(
 			return fmt.Errorf("error iterating delete feedback records by user result: %w", err)
 		}
 
+		// Drift guard: a record for this user may have been written into a tenant
+		// not in the locked snapshot (a new tenant for the all-tenant erase, or a
+		// concurrent insert into an already-locked tenant). Re-check the in-scope
+		// set; if anything survives, fail with a retryable conflict so the whole
+		// erase rolls back and the caller retries, rather than reporting a
+		// partial erasure as complete.
+		if err := ensureNoResidualUserFeedback(ctx, dbTx, filters); err != nil {
+			return err
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -538,6 +552,34 @@ func (r *FeedbackRecordsRepository) DeleteByUser(
 	}
 
 	return groups, nil
+}
+
+// ensureNoResidualUserFeedback returns a retryable tenant write conflict if any
+// in-scope feedback record for the user still exists after DeleteByUser's delete.
+func ensureNoResidualUserFeedback(
+	ctx context.Context, dbTx tenantWriteTx, filters *models.DeleteFeedbackRecordsByUserFilters,
+) error {
+	query := `SELECT EXISTS (SELECT 1 FROM feedback_records WHERE user_id = $1`
+	args := []any{filters.UserID}
+
+	if filters.TenantID != nil {
+		query += ` AND tenant_id = $2`
+
+		args = append(args, *filters.TenantID)
+	}
+
+	query += `)`
+
+	var remaining bool
+	if err := dbTx.QueryRow(ctx, query, args...).Scan(&remaining); err != nil {
+		return fmt.Errorf("check residual feedback records for user: %w", err)
+	}
+
+	if remaining {
+		return huberrors.NewTenantWriteConflictError("feedback records for this user changed during deletion; retry")
+	}
+
+	return nil
 }
 
 // listUserFeedbackTenants returns the distinct tenant boundaries holding feedback

@@ -245,7 +245,7 @@ func (r *TaxonomyRepository) MarkRunRunning(
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return r.transitionError(ctx, runID, tenantID, models.TaxonomyRunStatusRunning)
+				return r.transitionError(ctx, dbTx, runID, tenantID, models.TaxonomyRunStatusRunning)
 			}
 
 			return fmt.Errorf("mark taxonomy run running: %w", err)
@@ -284,7 +284,7 @@ func (r *TaxonomyRepository) MarkRunFailed(
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return r.transitionError(ctx, runID, tenantID, models.TaxonomyRunStatusFailed)
+				return r.transitionError(ctx, dbTx, runID, tenantID, models.TaxonomyRunStatusFailed)
 			}
 
 			return fmt.Errorf("mark taxonomy run failed: %w", err)
@@ -841,15 +841,28 @@ func (r *TaxonomyRepository) listVisibleNodes(ctx context.Context, runID uuid.UU
 	return nodes, nil
 }
 
+// transitionError builds the conflict (or not-found) error for a run that could
+// not be transitioned. It reads through the caller's query handle (q) — which is
+// the open transaction for the in-tx callers — so it never checks out a second
+// pooled connection while a transaction connection is held.
 func (r *TaxonomyRepository) transitionError(
 	ctx context.Context,
+	q queryer,
 	runID uuid.UUID,
 	tenantID string,
 	target models.TaxonomyRunStatus,
 ) error {
-	run, err := r.GetRunForTenant(ctx, runID, tenantID)
+	run, err := queryTaxonomyRun(ctx, q, taxonomyRunSelect+`
+		FROM taxonomy_runs
+		WHERE id = $1 AND tenant_id = $2`,
+		runID, tenantID,
+	)
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
+		}
+
+		return fmt.Errorf("get taxonomy run: %w", err)
 	}
 
 	return taxonomyTransitionConflict(run, target)
@@ -982,9 +995,12 @@ func scanTaxonomyNode(row scanner) (*models.TaxonomyNode, error) {
 	return &node, nil
 }
 
+// getNodeForUpdate takes a tenantWriteTx (not the narrower queryer) so the
+// compiler enforces that the SELECT ... FOR UPDATE row lock is held for the
+// life of a transaction; outside one, the lock would release at statement end.
 func getNodeForUpdate(
 	ctx context.Context,
-	transaction queryer,
+	transaction tenantWriteTx,
 	nodeID uuid.UUID,
 	tenantID string,
 ) (*models.TaxonomyNode, *models.TaxonomyRun, error) {

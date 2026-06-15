@@ -133,7 +133,10 @@ func withTenantWriteTx(
 	}
 
 	defer func() {
-		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		// A canceled ctx can make pgx close the connection before Rollback runs;
+		// Postgres aborts the tx and releases the advisory lock on session end
+		// regardless, so skip logging an expected rollback error when ctx is done.
+		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) && ctx.Err() == nil {
 			slog.Error("tenant write tx: rollback failed", "error", err)
 		}
 	}()

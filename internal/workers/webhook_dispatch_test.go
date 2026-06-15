@@ -12,8 +12,34 @@ import (
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
+
+// countingWebhookMetrics records how often each webhook metric fired, for
+// asserting that "disabled" is signaled only when the disable write succeeds.
+type countingWebhookMetrics struct {
+	disabled  int
+	delivered map[string]int
+}
+
+func newCountingWebhookMetrics() *countingWebhookMetrics {
+	return &countingWebhookMetrics{delivered: map[string]int{}}
+}
+
+func (m *countingWebhookMetrics) RecordJobsEnqueued(context.Context, string, int64) {}
+func (m *countingWebhookMetrics) RecordProviderError(context.Context, string)       {}
+func (m *countingWebhookMetrics) RecordDelivery(_ context.Context, _, status string) {
+	m.delivered[status]++
+}
+func (m *countingWebhookMetrics) RecordWebhookDisabled(context.Context, string) { m.disabled++ }
+func (m *countingWebhookMetrics) RecordDispatchError(context.Context, string)   {}
+func (m *countingWebhookMetrics) RecordWebhookDeliveryDuration(
+	context.Context, time.Duration, string, string,
+) {
+}
+
+var _ observability.WebhookMetrics = (*countingWebhookMetrics)(nil)
 
 type mockDispatchRepo struct {
 	webhook   *models.Webhook
@@ -359,6 +385,52 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 
 		if repo.update == nil {
 			t.Error("disable update should have been attempted")
+		}
+	})
+
+	t.Run("records disabled only when the disable write succeeds", func(t *testing.T) {
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+		}
+		metrics := newCountingWebhookMetrics()
+		worker := NewWebhookDispatchWorker(repo, &mockSender{err: errors.New("final failure")}, 15*time.Second, metrics)
+		job := &river.Job[service.WebhookDispatchArgs]{
+			JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
+			Args:   args,
+		}
+
+		_ = worker.Work(ctx, job)
+
+		if metrics.disabled != 1 {
+			t.Errorf("RecordWebhookDisabled called %d times, want 1 (disable succeeded)", metrics.disabled)
+		}
+
+		if metrics.delivered["failed_final"] != 1 {
+			t.Errorf("failed_final delivery recorded %d times, want 1", metrics.delivered["failed_final"])
+		}
+	})
+
+	t.Run("does not record disabled when disable is skipped during purge", func(t *testing.T) {
+		repo := &mockDispatchRepo{
+			webhook:   &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+			updateErr: huberrors.NewTenantWriteConflictError(""),
+		}
+		metrics := newCountingWebhookMetrics()
+		worker := NewWebhookDispatchWorker(repo, &mockSender{err: errors.New("final failure")}, 15*time.Second, metrics)
+		job := &river.Job[service.WebhookDispatchArgs]{
+			JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
+			Args:   args,
+		}
+
+		_ = worker.Work(ctx, job)
+
+		if metrics.disabled != 0 {
+			t.Errorf("RecordWebhookDisabled called %d times, want 0 (disable skipped during purge)", metrics.disabled)
+		}
+
+		// The delivery still failed and must still be recorded.
+		if metrics.delivered["failed_final"] != 1 {
+			t.Errorf("failed_final delivery recorded %d times, want 1", metrics.delivered["failed_final"])
 		}
 	})
 }
