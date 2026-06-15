@@ -1047,6 +1047,7 @@ func buildTaxonomyTree(nodes []models.TaxonomyNode) *models.TaxonomyNode {
 	}
 
 	childrenByParent := make(map[uuid.UUID][]models.TaxonomyNode, len(nodes))
+
 	var root *models.TaxonomyNode
 
 	for _, node := range nodes {

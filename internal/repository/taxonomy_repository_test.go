@@ -84,9 +84,11 @@ func TestBuildTaxonomyTreePreservesDeepChildren(t *testing.T) {
 	if got := len(level3.Children); got != 2 {
 		t.Fatalf("level 3 child count = %d, want 2", got)
 	}
+
 	if level3.Children[0].ID != firstLeafID {
 		t.Fatalf("first leaf ID = %s, want %s", level3.Children[0].ID, firstLeafID)
 	}
+
 	if level3.Children[1].ID != secondLeafID {
 		t.Fatalf("second leaf ID = %s, want %s", level3.Children[1].ID, secondLeafID)
 	}
@@ -98,6 +100,7 @@ func onlyChild(t *testing.T, node *models.TaxonomyNode, label string) *models.Ta
 	if node.Label != label {
 		t.Fatalf("node label = %q, want %q", node.Label, label)
 	}
+
 	if got := len(node.Children); got != 1 {
 		t.Fatalf("%q child count = %d, want 1", label, got)
 	}
