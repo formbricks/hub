@@ -120,12 +120,17 @@ type CreateTaxonomyRunResponse struct {
 }
 
 // ListTaxonomyRunsFilters scopes taxonomy run history queries.
+//
+// SourceID is a tri-state filter: nil means "no source_id filter", while a non-nil
+// pointer (including a pointer to "") filters by that exact value. An empty string
+// scopes history to the canonical "no source" bucket — runs whose source_id is "" —
+// which a plain string filter cannot express (it cannot tell "unset" from "empty").
 type ListTaxonomyRunsFilters struct {
-	TenantID   string `form:"tenant_id"   validate:"required,no_null_bytes,min=1,max=255"`
-	SourceType string `form:"source_type" validate:"omitempty,no_null_bytes,min=1,max=255"`
-	SourceID   string `form:"source_id"   validate:"omitempty,no_null_bytes,min=1,max=255"`
-	FieldID    string `form:"field_id"    validate:"omitempty,no_null_bytes,min=1,max=255"`
-	Limit      int    `form:"limit"       validate:"omitempty,min=1,max=100"`
+	TenantID   string  `form:"tenant_id"   validate:"required,no_null_bytes,min=1,max=255"`
+	SourceType string  `form:"source_type" validate:"omitempty,no_null_bytes,min=1,max=255"`
+	SourceID   *string `form:"source_id"   validate:"omitempty,no_null_bytes,max=255"`
+	FieldID    string  `form:"field_id"    validate:"omitempty,no_null_bytes,min=1,max=255"`
+	Limit      int     `form:"limit"       validate:"omitempty,min=1,max=100"`
 }
 
 // ListTaxonomyRunsResponse contains taxonomy run history.

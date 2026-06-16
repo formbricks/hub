@@ -115,3 +115,54 @@ func TestTaxonomyNoSourceScope(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, createdAgain, "a second run for the same empty-source scope must reuse the in-progress run")
 }
+
+// TestTaxonomyListRunsSourceIDTriState verifies the tri-state source_id filter on run
+// history: nil returns every source, a pointer to "" scopes to the no-source bucket, and
+// a pointer to a concrete value scopes to that source.
+func TestTaxonomyListRunsSourceIDTriState(t *testing.T) {
+	ctx := context.Background()
+	db := setupTaxonomyNoSourceTestDB(t)
+	repo := repository.NewTaxonomyRepository(db)
+
+	tenantID := "taxonomy-listfilter-" + uuid.NewString()
+	sourceType := "formbricks"
+	fieldID := "feedback"
+	sourcedID := "survey-" + uuid.NewString()
+
+	t.Cleanup(func() {
+		_, _ = db.Exec(ctx, `DELETE FROM taxonomy_runs WHERE tenant_id = $1`, tenantID)
+	})
+
+	// One run with no source ("") and one with a concrete source.
+	for _, sourceID := range []string{"", sourcedID} {
+		_, created, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{
+			TaxonomyScope: models.TaxonomyScope{
+				TenantID:   tenantID,
+				SourceType: sourceType,
+				SourceID:   sourceID,
+				FieldID:    fieldID,
+			},
+		})
+		require.NoError(t, err)
+		require.True(t, created)
+	}
+
+	ptr := func(s string) *string { return &s }
+
+	// nil filter: both runs.
+	all, err := repo.ListRuns(ctx, models.ListTaxonomyRunsFilters{TenantID: tenantID})
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	// pointer to "": only the no-source run.
+	noSource, err := repo.ListRuns(ctx, models.ListTaxonomyRunsFilters{TenantID: tenantID, SourceID: ptr("")})
+	require.NoError(t, err)
+	require.Len(t, noSource, 1)
+	require.Empty(t, noSource[0].SourceID)
+
+	// pointer to a concrete value: only that sourced run.
+	sourced, err := repo.ListRuns(ctx, models.ListTaxonomyRunsFilters{TenantID: tenantID, SourceID: ptr(sourcedID)})
+	require.NoError(t, err)
+	require.Len(t, sourced, 1)
+	require.Equal(t, sourcedID, sourced[0].SourceID)
+}

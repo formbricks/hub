@@ -356,9 +356,21 @@ func (r *TaxonomyRepository) ListRuns(
 		query += fmt.Sprintf(" AND %s = $%d", column, len(args))
 	}
 
+	// addFilterPtr is the tri-state variant: nil skips the filter, while a non-nil
+	// pointer filters by the exact stored value, including "" for the canonical
+	// "no source" bucket (which addFilter would drop as an absent filter).
+	addFilterPtr := func(column string, value *string) {
+		if value == nil {
+			return
+		}
+
+		args = append(args, *value)
+		query += fmt.Sprintf(" AND %s = $%d", column, len(args))
+	}
+
 	addFilter("source_type", filters.SourceType)
-	addFilter("source_id", filters.SourceID)
 	addFilter("field_id", filters.FieldID)
+	addFilterPtr("source_id", filters.SourceID)
 
 	args = append(args, limit)
 	query += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
