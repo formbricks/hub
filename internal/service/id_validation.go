@@ -36,6 +36,22 @@ func normalizeRequiredIdentifier(fieldName, value string) (string, error) {
 		return "", huberrors.NewValidationError(fieldName, fieldName+" is required and cannot be empty")
 	}
 
+	return normalizeIdentifierValue(fieldName, normalized)
+}
+
+// normalizeOptionalIdentifier trims an identifier and validates it when present.
+// An empty (or blank) value is allowed and normalizes to "", which callers treat as the
+// canonical "no value" bucket (e.g. taxonomy's "no source" scope).
+func normalizeOptionalIdentifier(fieldName, value string) (string, error) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return "", nil
+	}
+
+	return normalizeIdentifierValue(fieldName, normalized)
+}
+
+func normalizeIdentifierValue(fieldName, normalized string) (string, error) {
 	if strings.ContainsRune(normalized, '\x00') {
 		return "", huberrors.NewValidationError(fieldName, fieldName+" must not contain NULL bytes")
 	}

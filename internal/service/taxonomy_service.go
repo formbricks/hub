@@ -453,7 +453,8 @@ func normalizeTaxonomyScope(scope models.TaxonomyScope) (models.TaxonomyScope, e
 		return models.TaxonomyScope{}, err
 	}
 
-	sourceID, err := normalizeRequiredIdentifier("source_id", scope.SourceID)
+	// source_id is optional: an empty value is the canonical "no source" scope.
+	sourceID, err := normalizeOptionalIdentifier("source_id", scope.SourceID)
 	if err != nil {
 		return models.TaxonomyScope{}, err
 	}
