@@ -98,7 +98,7 @@ func setupTestServerWithEventProviders(
 	// Initialize repository, service, and handler layers
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
-	tenantDataRepo := repository.NewTenantDataRepository(db)
+	tenantDataRepo := repository.NewTenantDataRepository(db, cfg.TenantData.PurgeLockTimeout.Duration())
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
 		embeddingsRepo,

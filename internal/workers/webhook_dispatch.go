@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
@@ -160,8 +162,8 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	// Send failed
 	isLastAttempt := job.Attempt >= job.MaxAttempts
 	if isLastAttempt {
+		// The delivery failed regardless of what happens to the webhook row.
 		if w.metrics != nil {
-			w.metrics.RecordWebhookDisabled(ctx, "max_attempts")
 			w.metrics.RecordDelivery(ctx, args.EventType, "failed_final")
 			w.metrics.RecordWebhookDeliveryDuration(ctx, time.Since(start), args.EventType, "failed_final")
 		}
@@ -175,19 +177,32 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 			DisabledReason: &reason,
 			DisabledAt:     &now,
 		})
-		if updateErr != nil {
+
+		// Only signal "disabled" when the webhook was actually disabled.
+		switch {
+		case updateErr == nil:
+			if w.metrics != nil {
+				w.metrics.RecordWebhookDisabled(ctx, "max_attempts")
+			}
+
+			slog.Error("webhook disabled after max delivery attempts",
+				"webhook_id", webhook.ID,
+				"event_id", args.EventID,
+				"error", err,
+			)
+		case errors.Is(updateErr, huberrors.ErrTenantWriteConflict):
+			// A tenant data purge is deleting this webhook; disabling it is moot.
+			slog.Warn("webhook dispatch: disable skipped, tenant purge in progress",
+				"webhook_id", webhook.ID,
+				"event_id", args.EventID,
+			)
+		default:
 			slog.Error("webhook dispatch: failed to disable webhook after max attempts",
 				"webhook_id", webhook.ID,
 				"event_id", args.EventID,
 				"error", updateErr,
 			)
 		}
-
-		slog.Error("webhook disabled after max delivery attempts",
-			"webhook_id", webhook.ID,
-			"event_id", args.EventID,
-			"error", err,
-		)
 
 		return fmt.Errorf("webhook send (final attempt): %w", err)
 	}

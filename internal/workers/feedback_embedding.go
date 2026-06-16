@@ -86,7 +86,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 	text := service.BuildEmbeddingInput(record.FieldLabel, record.ValueText, w.docPrefix)
 
 	if text == "" {
-		return w.handleEmptyText(ctx, args.FeedbackRecordID, args.Model, record, start)
+		return w.handleEmptyText(ctx, job, record, start)
 	}
 
 	embedding, err := w.embeddingClient.CreateEmbedding(ctx, text)
@@ -119,18 +119,9 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	err = w.embeddingService.SetEmbedding(ctx, args.FeedbackRecordID, args.Model, embedding)
 	if err != nil {
-		if w.metrics != nil {
-			w.metrics.RecordWorkerError(ctx, "update_failed")
-			w.metrics.RecordEmbeddingOutcome(ctx, "failed_final")
-			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
-		}
+		isLastAttempt := job.Attempt >= job.MaxAttempts
 
-		slog.Error("embedding: set embedding failed",
-			"feedback_record_id", args.FeedbackRecordID,
-			"error", err,
-		)
-
-		return fmt.Errorf("set feedback record embedding: %w", err)
+		return w.handleSetEmbeddingError(ctx, err, args.FeedbackRecordID, start, isLastAttempt, "set feedback record embedding")
 	}
 
 	slog.Info("embedding: stored",
@@ -145,29 +136,80 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 	return nil
 }
 
+// handleSetEmbeddingError maps embedding write failures to worker outcomes.
+// A missing record means it was deleted or its tenant purged between fetch and
+// write: the job completes (nothing left to embed). A tenant write conflict
+// means a tenant data purge is in progress: the job retries via River, and the
+// post-purge attempt finds the record gone and completes. Anything else fails
+// the job as before.
+func (w *FeedbackEmbeddingWorker) handleSetEmbeddingError(
+	ctx context.Context,
+	err error,
+	feedbackRecordID uuid.UUID,
+	start time.Time,
+	isLastAttempt bool,
+	action string,
+) error {
+	switch {
+	case errors.Is(err, huberrors.ErrNotFound):
+		if w.metrics != nil {
+			w.metrics.RecordEmbeddingOutcome(ctx, "skipped")
+			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "skipped")
+		}
+
+		slog.Info("embedding: record gone before write, skipping",
+			"feedback_record_id", feedbackRecordID,
+		)
+
+		return nil
+	case errors.Is(err, huberrors.ErrTenantWriteConflict):
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "tenant_write_conflict")
+			w.metrics.RecordEmbeddingOutcome(ctx, outcome)
+			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), outcome)
+		}
+
+		slog.Warn("embedding: tenant data purge in progress, deferring write",
+			"feedback_record_id", feedbackRecordID,
+		)
+
+		return fmt.Errorf("%s: %w", action, err)
+	default:
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "update_failed")
+			w.metrics.RecordEmbeddingOutcome(ctx, "failed_final")
+			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
+		}
+
+		slog.Error("embedding: "+action+" failed",
+			"feedback_record_id", feedbackRecordID,
+			"error", err,
+		)
+
+		return fmt.Errorf("%s: %w", action, err)
+	}
+}
+
 // handleEmptyText clears the embedding for text fields when value_text is empty, or records skip for non-text.
 func (w *FeedbackEmbeddingWorker) handleEmptyText(
 	ctx context.Context,
-	feedbackRecordID uuid.UUID,
-	model string,
+	job *river.Job[service.FeedbackEmbeddingArgs],
 	record *models.FeedbackRecord,
 	start time.Time,
 ) error {
+	feedbackRecordID := job.Args.FeedbackRecordID
+
 	if record.FieldType == models.FieldTypeText {
-		err := w.embeddingService.SetEmbedding(ctx, feedbackRecordID, model, nil)
+		err := w.embeddingService.SetEmbedding(ctx, feedbackRecordID, job.Args.Model, nil)
 		if err != nil {
-			if w.metrics != nil {
-				w.metrics.RecordWorkerError(ctx, "update_failed")
-				w.metrics.RecordEmbeddingOutcome(ctx, "failed_final")
-				w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
-			}
+			isLastAttempt := job.Attempt >= job.MaxAttempts
 
-			slog.Error("embedding: clear failed",
-				"feedback_record_id", feedbackRecordID,
-				"error", err,
-			)
-
-			return fmt.Errorf("clear feedback record embedding: %w", err)
+			return w.handleSetEmbeddingError(ctx, err, feedbackRecordID, start, isLastAttempt, "clear feedback record embedding")
 		}
 
 		if w.metrics != nil {

@@ -67,6 +67,15 @@ func TestRespondErrorMapping(t *testing.T) {
 			wantStatus: http.StatusConflict, wantCode: CodeConflict, wantType: ProblemTypeConflict,
 		},
 		{
+			name: "tenant write conflict", err: huberrors.NewTenantWriteConflictError("tenant data purge in progress; retry later"),
+			wantStatus: http.StatusConflict, wantCode: CodeTenantWriteConflict, wantType: ProblemTypeTenantWriteConflict,
+		},
+		{
+			name:       "wrapped tenant write conflict keeps dedicated code",
+			err:        fmt.Errorf("delete feedback record: %w", huberrors.NewTenantWriteConflictError("")),
+			wantStatus: http.StatusConflict, wantCode: CodeTenantWriteConflict, wantType: ProblemTypeTenantWriteConflict,
+		},
+		{
 			name: "limit exceeded", err: huberrors.NewLimitExceededError("webhook limit reached"),
 			wantStatus: http.StatusForbidden, wantCode: CodeForbidden, wantType: ProblemTypeForbidden,
 		},

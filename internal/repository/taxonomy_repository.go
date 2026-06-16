@@ -143,70 +143,74 @@ func (r *TaxonomyRepository) CreateRunIfAvailable(
 	ctx context.Context,
 	params CreateTaxonomyRunParams,
 ) (*models.TaxonomyRun, bool, error) {
-	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, false, fmt.Errorf("begin taxonomy run create tx: %w", err)
-	}
-
-	defer func() {
-		_ = transaction.Rollback(ctx)
-	}()
-
-	lockKey := taxonomyScopeLockKey(params.TaxonomyScope)
-	if _, err := transaction.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
-		return nil, false, fmt.Errorf("lock taxonomy run scope: %w", err)
-	}
-
-	existing, err := queryTaxonomyRun(ctx, transaction, taxonomyRunSelect+`
-		FROM taxonomy_runs
-		WHERE tenant_id = $1
-		  AND source_type = $2
-		  AND source_id = $3
-		  AND field_id = $4
-		  AND status IN ('pending', 'running')
-		ORDER BY created_at DESC, id DESC
-		LIMIT 1`,
-		params.TenantID, params.SourceType, params.SourceID, params.FieldID,
+	var (
+		run     *models.TaxonomyRun
+		created bool
 	)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, fmt.Errorf("find in-progress taxonomy run: %w", err)
-	}
 
-	if existing != nil {
-		if err := transaction.Commit(ctx); err != nil {
-			return nil, false, fmt.Errorf("commit existing taxonomy run tx: %w", err)
+	err := withTenantWritePoolTx(ctx, r.db, []string{params.TenantID}, func(dbTx tenantWriteTx) error {
+		// Scope lock comes second, after the shared tenant write lock, per the
+		// tenant write lock-order convention (see tenant_write_lock.go). Scope
+		// waiters already hold the tenant lock in shared mode, so they never
+		// block a same-tenant writer and always yield to a queued purge.
+		lockKey := taxonomyScopeLockKey(params.TaxonomyScope)
+		if _, err := dbTx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+			return fmt.Errorf("lock taxonomy run scope: %w", err)
 		}
 
-		return existing, false, nil
-	}
+		existing, err := queryTaxonomyRun(ctx, dbTx, taxonomyRunSelect+`
+			FROM taxonomy_runs
+			WHERE tenant_id = $1
+			  AND source_type = $2
+			  AND source_id = $3
+			  AND field_id = $4
+			  AND status IN ('pending', 'running')
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1`,
+			params.TenantID, params.SourceType, params.SourceID, params.FieldID,
+		)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("find in-progress taxonomy run: %w", err)
+		}
 
-	run, err := queryTaxonomyRun(ctx, transaction, `
-		WITH taxonomy_runs AS (
-			INSERT INTO taxonomy_runs (
-				tenant_id, source_type, source_id, field_id, field_label,
-				status, params, record_count, embedding_count
-			)
-			VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8)
-			RETURNING *
-		)`+taxonomyRunSelect+` FROM taxonomy_runs`,
-		params.TenantID,
-		params.SourceType,
-		params.SourceID,
-		params.FieldID,
-		params.FieldLabel,
-		rawOrDefault(params.Params, defaultJSONObj),
-		params.RecordCount,
-		params.EmbeddingCount,
-	)
+		if existing != nil {
+			run = existing
+
+			return nil
+		}
+
+		inserted, err := queryTaxonomyRun(ctx, dbTx, `
+			WITH taxonomy_runs AS (
+				INSERT INTO taxonomy_runs (
+					tenant_id, source_type, source_id, field_id, field_label,
+					status, params, record_count, embedding_count
+				)
+				VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8)
+				RETURNING *
+			)`+taxonomyRunSelect+` FROM taxonomy_runs`,
+			params.TenantID,
+			params.SourceType,
+			params.SourceID,
+			params.FieldID,
+			params.FieldLabel,
+			rawOrDefault(params.Params, defaultJSONObj),
+			params.RecordCount,
+			params.EmbeddingCount,
+		)
+		if err != nil {
+			return fmt.Errorf("insert taxonomy run: %w", err)
+		}
+
+		run = inserted
+		created = true
+
+		return nil
+	})
 	if err != nil {
-		return nil, false, fmt.Errorf("insert taxonomy run: %w", err)
+		return nil, false, err
 	}
 
-	if err := transaction.Commit(ctx); err != nil {
-		return nil, false, fmt.Errorf("commit taxonomy run create tx: %w", err)
-	}
-
-	return run, true, nil
+	return run, created, nil
 }
 
 func taxonomyScopeLockKey(scope models.TaxonomyScope) string {
@@ -225,21 +229,32 @@ func (r *TaxonomyRepository) MarkRunRunning(
 	runID uuid.UUID,
 	tenantID string,
 ) (*models.TaxonomyRun, error) {
-	run, err := queryTaxonomyRun(ctx, r.db, `
-		WITH taxonomy_runs AS (
-			UPDATE taxonomy_runs
-			SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
-			WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
-			RETURNING *
-		)`+taxonomyRunSelect+` FROM taxonomy_runs`,
-		runID, tenantID,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, r.transitionError(ctx, runID, tenantID, models.TaxonomyRunStatusRunning)
+	var run *models.TaxonomyRun
+
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		updated, err := queryTaxonomyRun(ctx, dbTx, `
+			WITH taxonomy_runs AS (
+				UPDATE taxonomy_runs
+				SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+				WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+				RETURNING *
+			)`+taxonomyRunSelect+` FROM taxonomy_runs`,
+			runID, tenantID,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return r.transitionError(ctx, dbTx, runID, tenantID, models.TaxonomyRunStatusRunning)
+			}
+
+			return fmt.Errorf("mark taxonomy run running: %w", err)
 		}
 
-		return nil, fmt.Errorf("mark taxonomy run running: %w", err)
+		run = updated
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return run, nil
@@ -253,21 +268,32 @@ func (r *TaxonomyRepository) MarkRunFailed(
 	message string,
 	errorCode models.TaxonomyRunFailureCode,
 ) (*models.TaxonomyRun, error) {
-	run, err := queryTaxonomyRun(ctx, r.db, `
-		WITH taxonomy_runs AS (
-			UPDATE taxonomy_runs
-			SET status = 'failed', error = $2, error_code = $3, finished_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND tenant_id = $4 AND status IN ('pending', 'running')
-			RETURNING *
-		)`+taxonomyRunSelect+` FROM taxonomy_runs`,
-		runID, message, nullableFailureCode(errorCode), tenantID,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, r.transitionError(ctx, runID, tenantID, models.TaxonomyRunStatusFailed)
+	var run *models.TaxonomyRun
+
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		updated, err := queryTaxonomyRun(ctx, dbTx, `
+			WITH taxonomy_runs AS (
+				UPDATE taxonomy_runs
+				SET status = 'failed', error = $2, error_code = $3, finished_at = NOW(), updated_at = NOW()
+				WHERE id = $1 AND tenant_id = $4 AND status IN ('pending', 'running')
+				RETURNING *
+			)`+taxonomyRunSelect+` FROM taxonomy_runs`,
+			runID, message, nullableFailureCode(errorCode), tenantID,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return r.transitionError(ctx, dbTx, runID, tenantID, models.TaxonomyRunStatusFailed)
+			}
+
+			return fmt.Errorf("mark taxonomy run failed: %w", err)
 		}
 
-		return nil, fmt.Errorf("mark taxonomy run failed: %w", err)
+		run = updated
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return run, nil
@@ -444,15 +470,29 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 	tenantID string,
 	req models.TaxonomyRunResultRequest,
 ) (*models.TaxonomyRun, error) {
-	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	var updated *models.TaxonomyRun
+
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		var err error
+
+		updated, err = storeResultAndActivateInTx(ctx, dbTx, runID, tenantID, req)
+
+		return err
+	})
 	if err != nil {
-		return nil, fmt.Errorf("begin taxonomy result tx: %w", err)
+		return nil, err
 	}
 
-	defer func() {
-		_ = transaction.Rollback(ctx)
-	}()
+	return updated, nil
+}
 
+func storeResultAndActivateInTx(
+	ctx context.Context,
+	transaction tenantWriteTx,
+	runID uuid.UUID,
+	tenantID string,
+	req models.TaxonomyRunResultRequest,
+) (*models.TaxonomyRun, error) {
 	run, err := queryTaxonomyRun(ctx, transaction, taxonomyRunSelect+`
 		FROM taxonomy_runs
 		WHERE id = $1 AND tenant_id = $2
@@ -619,10 +659,6 @@ func (r *TaxonomyRepository) StoreResultAndActivate(
 		return nil, fmt.Errorf("mark taxonomy run succeeded: %w", err)
 	}
 
-	if err := transaction.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit taxonomy result tx: %w", err)
-	}
-
 	return updated, nil
 }
 
@@ -655,41 +691,33 @@ func (r *TaxonomyRepository) RenameNode(
 	actorID string,
 	label string,
 ) (*models.TaxonomyNode, error) {
-	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("begin taxonomy node rename tx: %w", err)
-	}
+	var updated *models.TaxonomyNode
 
-	defer func() {
-		_ = transaction.Rollback(ctx)
-	}()
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		node, run, err := getNodeForUpdate(ctx, dbTx, nodeID, tenantID)
+		if err != nil {
+			return err
+		}
 
-	node, run, err := getNodeForUpdate(ctx, transaction, nodeID, tenantID)
+		updated, err = queryTaxonomyNode(ctx, dbTx, `
+			WITH taxonomy_nodes AS (
+				UPDATE taxonomy_nodes
+				SET label = $2, updated_at = NOW()
+				WHERE id = $1
+				RETURNING *
+			)`+taxonomyNodeSelect+` FROM taxonomy_nodes`,
+			nodeID, label,
+		)
+		if err != nil {
+			return fmt.Errorf("rename taxonomy node: %w", err)
+		}
+
+		return insertNodeEvent(ctx, dbTx, run, nodeID, "rename", actorID,
+			map[string]string{"label": node.Label},
+			map[string]string{"label": label})
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	updated, err := queryTaxonomyNode(ctx, transaction, `
-		WITH taxonomy_nodes AS (
-			UPDATE taxonomy_nodes
-			SET label = $2, updated_at = NOW()
-			WHERE id = $1
-			RETURNING *
-		)`+taxonomyNodeSelect+` FROM taxonomy_nodes`,
-		nodeID, label,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("rename taxonomy node: %w", err)
-	}
-
-	if err := insertNodeEvent(ctx, transaction, run, nodeID, "rename", actorID,
-		map[string]string{"label": node.Label},
-		map[string]string{"label": label}); err != nil {
-		return nil, err
-	}
-
-	if err := transaction.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit taxonomy node rename tx: %w", err)
 	}
 
 	return updated, nil
@@ -702,41 +730,33 @@ func (r *TaxonomyRepository) RemoveNode(
 	tenantID string,
 	actorID string,
 ) (*models.TaxonomyNode, error) {
-	transaction, err := r.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("begin taxonomy node remove tx: %w", err)
-	}
+	var updated *models.TaxonomyNode
 
-	defer func() {
-		_ = transaction.Rollback(ctx)
-	}()
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		_, run, err := getNodeForUpdate(ctx, dbTx, nodeID, tenantID)
+		if err != nil {
+			return err
+		}
 
-	_, run, err := getNodeForUpdate(ctx, transaction, nodeID, tenantID)
+		updated, err = queryTaxonomyNode(ctx, dbTx, `
+			WITH taxonomy_nodes AS (
+				UPDATE taxonomy_nodes
+				SET removed_at = NOW(), removed_by = $2, updated_at = NOW()
+				WHERE id = $1
+				RETURNING *
+			)`+taxonomyNodeSelect+` FROM taxonomy_nodes`,
+			nodeID, actorID,
+		)
+		if err != nil {
+			return fmt.Errorf("remove taxonomy node: %w", err)
+		}
+
+		return insertNodeEvent(ctx, dbTx, run, nodeID, "soft_remove", actorID,
+			map[string]any{"removed_at": nil},
+			map[string]string{"removed_by": actorID})
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	updated, err := queryTaxonomyNode(ctx, transaction, `
-		WITH taxonomy_nodes AS (
-			UPDATE taxonomy_nodes
-			SET removed_at = NOW(), removed_by = $2, updated_at = NOW()
-			WHERE id = $1
-			RETURNING *
-		)`+taxonomyNodeSelect+` FROM taxonomy_nodes`,
-		nodeID, actorID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("remove taxonomy node: %w", err)
-	}
-
-	if err := insertNodeEvent(ctx, transaction, run, nodeID, "soft_remove", actorID,
-		map[string]any{"removed_at": nil},
-		map[string]string{"removed_by": actorID}); err != nil {
-		return nil, err
-	}
-
-	if err := transaction.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit taxonomy node remove tx: %w", err)
 	}
 
 	return updated, nil
@@ -831,15 +851,28 @@ func (r *TaxonomyRepository) listVisibleNodes(ctx context.Context, runID uuid.UU
 	return nodes, nil
 }
 
+// transitionError builds the conflict (or not-found) error for a run that could
+// not be transitioned. It reads through the caller's query handle (q) — which is
+// the open transaction for the in-tx callers — so it never checks out a second
+// pooled connection while a transaction connection is held.
 func (r *TaxonomyRepository) transitionError(
 	ctx context.Context,
+	q queryer,
 	runID uuid.UUID,
 	tenantID string,
 	target models.TaxonomyRunStatus,
 ) error {
-	run, err := r.GetRunForTenant(ctx, runID, tenantID)
+	run, err := queryTaxonomyRun(ctx, q, taxonomyRunSelect+`
+		FROM taxonomy_runs
+		WHERE id = $1 AND tenant_id = $2`,
+		runID, tenantID,
+	)
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
+		}
+
+		return fmt.Errorf("get taxonomy run: %w", err)
 	}
 
 	return taxonomyTransitionConflict(run, target)
@@ -972,17 +1005,26 @@ func scanTaxonomyNode(row scanner) (*models.TaxonomyNode, error) {
 	return &node, nil
 }
 
+// getNodeForUpdate takes a tenantWriteTx (not the narrower queryer) so the
+// compiler enforces that the SELECT ... FOR UPDATE row lock is held for the
+// life of a transaction; outside one, the lock would release at statement end.
 func getNodeForUpdate(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction tenantWriteTx,
 	nodeID uuid.UUID,
 	tenantID string,
 ) (*models.TaxonomyNode, *models.TaxonomyRun, error) {
+	// The tenant predicate keeps the row lock tenant-scoped: a caller can never
+	// lock another tenant's node row, even transiently.
 	node, err := queryTaxonomyNode(ctx, transaction, taxonomyNodeSelect+`
 		FROM taxonomy_nodes
 		WHERE id = $1 AND removed_at IS NULL
+		  AND EXISTS (
+		    SELECT 1 FROM taxonomy_runs
+		    WHERE taxonomy_runs.id = taxonomy_nodes.run_id AND taxonomy_runs.tenant_id = $2
+		  )
 		FOR UPDATE`,
-		nodeID,
+		nodeID, tenantID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1010,7 +1052,7 @@ func getNodeForUpdate(
 
 func insertNodeEvent(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction tenantWriteTx,
 	run *models.TaxonomyRun,
 	nodeID uuid.UUID,
 	eventType string,

@@ -10,14 +10,42 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
 
+// countingWebhookMetrics records how often each webhook metric fired, for
+// asserting that "disabled" is signaled only when the disable write succeeds.
+type countingWebhookMetrics struct {
+	disabled  int
+	delivered map[string]int
+}
+
+func newCountingWebhookMetrics() *countingWebhookMetrics {
+	return &countingWebhookMetrics{delivered: map[string]int{}}
+}
+
+func (m *countingWebhookMetrics) RecordJobsEnqueued(context.Context, string, int64) {}
+func (m *countingWebhookMetrics) RecordProviderError(context.Context, string)       {}
+func (m *countingWebhookMetrics) RecordDelivery(_ context.Context, _, status string) {
+	m.delivered[status]++
+}
+func (m *countingWebhookMetrics) RecordWebhookDisabled(context.Context, string) { m.disabled++ }
+func (m *countingWebhookMetrics) RecordDispatchError(context.Context, string)   {}
+func (m *countingWebhookMetrics) RecordWebhookDeliveryDuration(
+	context.Context, time.Duration, string, string,
+) {
+}
+
+var _ observability.WebhookMetrics = (*countingWebhookMetrics)(nil)
+
 type mockDispatchRepo struct {
-	webhook *models.Webhook
-	err     error
-	update  *models.UpdateWebhookRequest
+	webhook   *models.Webhook
+	err       error
+	update    *models.UpdateWebhookRequest
+	updateErr error
 }
 
 func (m *mockDispatchRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webhook, error) {
@@ -26,6 +54,10 @@ func (m *mockDispatchRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.Webh
 
 func (m *mockDispatchRepo) Update(_ context.Context, _ uuid.UUID, req *models.UpdateWebhookRequest) (*models.Webhook, error) {
 	m.update = req
+
+	if m.updateErr != nil {
+		return nil, m.updateErr
+	}
 
 	return nil, nil
 }
@@ -327,6 +359,78 @@ func TestWebhookDispatchWorker_Work(t *testing.T) {
 
 		if repo.update.DisabledAt == nil {
 			t.Error("DisabledAt should be set")
+		}
+	})
+
+	t.Run("swallows disable conflict during tenant purge and still returns send error", func(t *testing.T) {
+		repo := &mockDispatchRepo{
+			webhook:   &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+			updateErr: huberrors.NewTenantWriteConflictError(""),
+		}
+		sender := &mockSender{err: errors.New("final failure")}
+		worker := NewWebhookDispatchWorker(repo, sender, 15*time.Second, nil)
+		job := &river.Job[service.WebhookDispatchArgs]{
+			JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
+			Args:   args,
+		}
+
+		err := worker.Work(ctx, job)
+		if err == nil {
+			t.Error("Work() error = nil, want the send error")
+		}
+
+		if errors.Is(err, huberrors.ErrTenantWriteConflict) {
+			t.Errorf("Work() error = %v, want the send error, not the disable conflict", err)
+		}
+
+		if repo.update == nil {
+			t.Error("disable update should have been attempted")
+		}
+	})
+
+	t.Run("records disabled only when the disable write succeeds", func(t *testing.T) {
+		repo := &mockDispatchRepo{
+			webhook: &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+		}
+		metrics := newCountingWebhookMetrics()
+		worker := NewWebhookDispatchWorker(repo, &mockSender{err: errors.New("final failure")}, 15*time.Second, metrics)
+		job := &river.Job[service.WebhookDispatchArgs]{
+			JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
+			Args:   args,
+		}
+
+		_ = worker.Work(ctx, job)
+
+		if metrics.disabled != 1 {
+			t.Errorf("RecordWebhookDisabled called %d times, want 1 (disable succeeded)", metrics.disabled)
+		}
+
+		if metrics.delivered["failed_final"] != 1 {
+			t.Errorf("failed_final delivery recorded %d times, want 1", metrics.delivered["failed_final"])
+		}
+	})
+
+	t.Run("does not record disabled when disable is skipped during purge", func(t *testing.T) {
+		repo := &mockDispatchRepo{
+			webhook:   &models.Webhook{ID: webhookID, Enabled: true, URL: "http://x", SigningKey: "sk", TenantID: &tenantID},
+			updateErr: huberrors.NewTenantWriteConflictError(""),
+		}
+		metrics := newCountingWebhookMetrics()
+		worker := NewWebhookDispatchWorker(repo, &mockSender{err: errors.New("final failure")}, 15*time.Second, metrics)
+		job := &river.Job[service.WebhookDispatchArgs]{
+			JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
+			Args:   args,
+		}
+
+		_ = worker.Work(ctx, job)
+
+		if metrics.disabled != 0 {
+			t.Errorf("RecordWebhookDisabled called %d times, want 0 (disable skipped during purge)", metrics.disabled)
+		}
+
+		// The delivery still failed and must still be recorded.
+		if metrics.delivered["failed_final"] != 1 {
+			t.Errorf("failed_final delivery recorded %d times, want 1", metrics.delivered["failed_final"])
 		}
 	})
 }

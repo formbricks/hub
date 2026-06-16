@@ -135,3 +135,37 @@ func (e *ConflictError) Is(target error) bool {
 
 	return ok
 }
+
+// ErrTenantWriteConflict is the sentinel for tenant write coordination conflicts:
+// a tenant-owned write rejected because a tenant data purge is in progress, or a
+// purge that could not acquire its lock while tenant-owned writes were in flight.
+// Both directions are retryable.
+var ErrTenantWriteConflict = &TenantWriteConflictError{}
+
+// TenantWriteConflictError is a sentinel error for tenant write coordination conflicts.
+// It is deliberately distinct from ConflictError so retryable lock conflicts are never
+// confused with terminal resource conflicts (e.g. duplicate submissions).
+type TenantWriteConflictError struct {
+	Message string
+}
+
+// NewTenantWriteConflictError creates a TenantWriteConflictError with a custom message.
+func NewTenantWriteConflictError(message string) *TenantWriteConflictError {
+	return &TenantWriteConflictError{Message: message}
+}
+
+// Error implements the error interface.
+func (e *TenantWriteConflictError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+
+	return "tenant write conflict"
+}
+
+// Is implements the error interface for error comparison.
+func (e *TenantWriteConflictError) Is(target error) bool {
+	_, ok := target.(*TenantWriteConflictError)
+
+	return ok
+}

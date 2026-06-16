@@ -371,7 +371,13 @@ func (s *WebhooksService) UpdateWebhook(ctx context.Context, id uuid.UUID, req *
 		return nil, fmt.Errorf("update webhook: %w", err)
 	}
 
-	s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, req.ChangedFields())
+	// A no-op update (no fields set) writes nothing — the repository returns the
+	// current row without taking the tenant write lock — so it must not publish
+	// an "updated" event either. Otherwise an empty PATCH would fire tenant-owned
+	// side effects, including while the tenant is under a data purge.
+	if changed := req.ChangedFields(); len(changed) > 0 {
+		s.publisher.PublishEventWithChangedFields(ctx, datatypes.WebhookUpdated, *webhook, changed)
+	}
 
 	return webhook, nil
 }
