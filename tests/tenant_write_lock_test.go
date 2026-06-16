@@ -649,3 +649,41 @@ func TestTaxonomyNodeMutationsAreTenantScoped(t *testing.T) {
 
 	cleanupTenantDataBestEffort(ctx, client, server.URL, tenantA)
 }
+
+// TestNoOpUpdatesDoNotPublishEvents verifies that an empty PATCH (no fields)
+// writes nothing and therefore publishes no "updated" event — so it cannot fire
+// tenant-owned side effects, including while the tenant is under a data purge
+// (the no-op path intentionally returns the current row without locking).
+func TestNoOpUpdatesDoNotPublishEvents(t *testing.T) {
+	eventRecorder := &tenantDataEventRecorder{}
+
+	server, cleanup := setupTestServerWithEventProviders(t, eventRecorder)
+	defer cleanup()
+
+	ctx := context.Background()
+	client := &http.Client{}
+	tenantA := "tenant-noop-" + uuid.NewString()
+
+	record := createTenantDataFeedbackRecord(ctx, t, client, server.URL, tenantA, uuid.NewString(), "tenant-noop-field")
+	webhook := createTenantDataWebhook(ctx, t, client, server.URL, tenantA, "tenant-noop")
+
+	// The two creates publish one event each; anchor the baseline once both land.
+	waitForEventCount(t, eventRecorder, 2)
+	baseline := eventRecorder.totalEventCount()
+
+	t.Run("empty feedback PATCH returns 200 and publishes no event", func(t *testing.T) {
+		status, body := doTenantLockRequest(
+			ctx, t, client, http.MethodPatch, server.URL+"/v1/feedback-records/"+record.ID.String(), map[string]any{})
+		require.Equal(t, http.StatusOK, status, "body: %s", string(body))
+		requireEventCountStays(t, eventRecorder, baseline)
+	})
+
+	t.Run("empty webhook PATCH returns 200 and publishes no event", func(t *testing.T) {
+		status, body := doTenantLockRequest(
+			ctx, t, client, http.MethodPatch, server.URL+"/v1/webhooks/"+webhook.ID.String(), map[string]any{})
+		require.Equal(t, http.StatusOK, status, "body: %s", string(body))
+		requireEventCountStays(t, eventRecorder, baseline)
+	})
+
+	cleanupTenantDataBestEffort(ctx, client, server.URL, tenantA)
+}

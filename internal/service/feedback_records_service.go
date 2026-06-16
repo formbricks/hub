@@ -184,8 +184,12 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
 
-	if s.publisher != nil {
-		s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, req.ChangedFields())
+	// A no-op update (no fields set) writes nothing — the repository returns the
+	// current row without taking the tenant write lock — so it must not publish
+	// an "updated" event either. Otherwise an empty PATCH would fire tenant-owned
+	// side effects, including while the tenant is under a data purge.
+	if changed := req.ChangedFields(); s.publisher != nil && len(changed) > 0 {
+		s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, changed)
 	}
 
 	return record, nil

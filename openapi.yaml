@@ -474,8 +474,10 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                 "409":
                     description: |
-                        Conflict – a tenant data purge is in progress for a tenant holding records for this user
-                        (code `tenant_write_conflict`). No records were deleted; retry after the purge completes.
+                        Conflict (code `tenant_write_conflict`) – the erasure could not be serialized: either a
+                        tenant data purge is in progress for a tenant holding records for this user, or the user's
+                        records changed mid-deletion (drift guard). No records were deleted. The conflict is
+                        transient; retry the request.
                     content:
                         application/problem+json:
                             schema:
