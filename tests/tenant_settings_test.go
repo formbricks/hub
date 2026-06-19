@@ -218,3 +218,20 @@ func TestTenantSettings_PurgeRemovesSettings(t *testing.T) {
 	require.NoError(t, getResp.Body.Close())
 	assert.Empty(t, got.Settings.TargetLanguage, "purge must remove the tenant's settings")
 }
+
+func TestTenantSettings_PutBodyTooLargeRejected(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// A body well over the 8 KiB cap is rejected with 413 before it is fully decoded.
+	oversized := `{"target_language":"` + strings.Repeat("a", 9000) + `"}`
+	resp := settingsRequest(t, server.URL, http.MethodPut, testTenantID("toobig"), oversized, true)
+	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+
+	var problem struct {
+		Code string `json:"code"`
+	}
+	require.NoError(t, decodeData(resp, &problem))
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, "content_too_large", problem.Code, "413 should carry a payload-too-large code, not generic bad_request")
+}

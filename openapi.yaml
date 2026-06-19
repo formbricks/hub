@@ -1315,6 +1315,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:
@@ -1654,6 +1660,7 @@ components:
                         - conflict
                         - tenant_write_conflict
                         - method_not_allowed
+                        - content_too_large
                         - service_unavailable
                         - internal_server_error
                     examples:

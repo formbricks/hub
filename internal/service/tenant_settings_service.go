@@ -18,7 +18,7 @@ type TenantSettingsRepository interface {
 }
 
 // TenantSettingsService reads and writes tenant-scoped enrichment settings. It is
-// the accessor enrichment workflows use to resolve a tenant's configuration.
+// the accessor enrichment workflows will use to resolve a tenant's configuration.
 type TenantSettingsService struct {
 	repo TenantSettingsRepository
 }
@@ -45,7 +45,8 @@ func (s *TenantSettingsService) GetSettings(ctx context.Context, tenantID string
 	}
 
 	if !found {
-		return &models.TenantSettings{TenantID: normalizedTenantID, Settings: models.EnrichmentSettings{}}, nil
+		// Unconfigured tenant: zero-value (empty) settings, never a not-found error.
+		return &models.TenantSettings{TenantID: normalizedTenantID}, nil
 	}
 
 	return settings, nil

@@ -3,12 +3,18 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/models"
 )
+
+// maxSettingsRequestBodyBytes caps the PUT request body. A settings payload is
+// tiny (a short locale string), so 8 KiB is generous; larger bodies are rejected
+// with 413 before being read into memory.
+const maxSettingsRequestBodyBytes = 8 << 10
 
 // TenantSettingsService defines the business logic for tenant-scoped settings.
 type TenantSettingsService interface {
@@ -49,12 +55,23 @@ func (h *TenantSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *TenantSettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenant_id")
 
+	// Cap the request body; the settings payload is tiny, so anything larger is
+	// rejected with 413 rather than read into memory.
+	r.Body = http.MaxBytesReader(w, r.Body, maxSettingsRequestBodyBytes)
+
 	var req models.UpdateTenantSettingsRequest
 
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
+
+			return
+		}
+
 		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
 
 		return

@@ -513,6 +513,8 @@ func TestNonUnauthorizedProblemHasNoWWWAuthenticate(t *testing.T) {
 
 func TestCodeAndTypeForStatusDefaults(t *testing.T) {
 	assert.Equal(t, CodeMethodNotAllowed, codeForStatus(http.StatusMethodNotAllowed))
+	assert.Equal(t, CodeContentTooLarge, codeForStatus(http.StatusRequestEntityTooLarge))
+	assert.Equal(t, ProblemTypeContentTooLarge, problemTypeForStatus(http.StatusRequestEntityTooLarge))
 	// Unlisted client error falls back to bad_request / client-error type.
 	assert.Equal(t, CodeBadRequest, codeForStatus(http.StatusTeapot))
 	assert.Equal(t, ProblemTypeClientError, problemTypeForStatus(http.StatusTeapot))
