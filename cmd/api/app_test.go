@@ -374,6 +374,7 @@ func newTestHTTPServerWithConfig(t *testing.T, publicBaseURL string, taxonomy co
 		handlers.NewFeedbackRecordsHandler(nil),
 		handlers.NewWebhooksHandler(nil),
 		handlers.NewTenantDataHandler(nil),
+		handlers.NewTenantSettingsHandler(nil),
 		handlers.NewSearchHandler(nil),
 		handlers.NewTaxonomyHandler(nil),
 		handlers.NewTaxonomyInternalHandler(),

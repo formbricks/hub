@@ -31,4 +31,8 @@ func CleanupTestData(t *testing.T) {
 	// Be careful with this in production!
 	_, err = db.Exec(ctx, "DELETE FROM feedback_records WHERE source_type = 'formbricks'")
 	require.NoError(t, err)
+
+	// Remove tenant settings created by tests (test tenants use a "test-" prefix).
+	_, err = db.Exec(ctx, "DELETE FROM tenant_settings WHERE tenant_id LIKE 'test-%'")
+	require.NoError(t, err)
 }

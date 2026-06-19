@@ -120,6 +120,14 @@ func deleteTenantDataInTx(
 		return nil, fmt.Errorf("delete tenant webhooks: %w", err)
 	}
 
+	// tenant_settings is tenant-owned, so a purge must remove it too. The count is
+	// not surfaced (at most one row per tenant), mirroring the taxonomy_runs delete.
+	if _, err = exec.Exec(ctx, `
+		DELETE FROM tenant_settings
+		WHERE tenant_id = $1`, tenantID); err != nil {
+		return nil, fmt.Errorf("delete tenant settings: %w", err)
+	}
+
 	return &models.TenantDataDeleteCounts{
 		DeletedFeedbackRecords: feedbackRecordsTag.RowsAffected(),
 		DeletedEmbeddings:      embeddingTag.RowsAffected(),

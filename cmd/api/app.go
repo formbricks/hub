@@ -321,6 +321,10 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 
+	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
+	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
+	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
+
 	taxonomyRepo := repository.NewTaxonomyRepository(db)
 
 	var taxonomyStarter service.TaxonomyRunStarter
@@ -358,7 +362,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	server := newHTTPServer(
-		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler, searchHandler,
+		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler,
+		tenantSettingsHandler, searchHandler,
 		taxonomyHandler, taxonomyInternalHandler,
 		meterProvider, tracerProvider,
 	)
@@ -385,6 +390,7 @@ func newHTTPServer(
 	feedback *handlers.FeedbackRecordsHandler,
 	webhooks *handlers.WebhooksHandler,
 	tenantData *handlers.TenantDataHandler,
+	tenantSettings *handlers.TenantSettingsHandler,
 	search *handlers.SearchHandler,
 	taxonomy *handlers.TaxonomyHandler,
 	taxonomyInternal *handlers.TaxonomyInternalHandler,
@@ -410,6 +416,8 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
 	protected.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantData.Delete)
+	protected.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettings.Get)
+	protected.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettings.Update)
 
 	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)

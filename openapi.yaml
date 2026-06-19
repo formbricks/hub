@@ -50,6 +50,8 @@ tags:
       description: Webhook subscription management
     - name: Tenant Data
       description: Tenant-scoped data purge operations
+    - name: Tenant Settings
+      description: Tenant-scoped enrichment settings
 security:
     - ApiKeyAuth: []
 paths:
@@ -1196,6 +1198,129 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/tenants/{tenant_id}/settings:
+        get:
+            tags:
+                - Tenant Settings
+            summary: Get tenant settings
+            description: |
+                Returns the enrichment settings for the specified tenant_id. A tenant that has not configured any
+                settings yet returns HTTP 200 with default (unset) values rather than 404; consumers decide the
+                fallback behavior for unset values. Settings are tenant-scoped and never shared across tenants.
+            operationId: get-tenant-settings
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  description: Tenant ID whose settings should be returned. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: Tenant settings
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TenantSettingsOutputBody'
+                            examples:
+                                configured:
+                                    summary: Tenant with a configured target language
+                                    value:
+                                        tenant_id: "org-123"
+                                        settings:
+                                            target_language: "en-US"
+                                unset:
+                                    summary: Tenant with no settings yet (defaults)
+                                    value:
+                                        tenant_id: "org-123"
+                                        settings: {}
+                "400":
+                    description: Bad Request (e.g. missing or invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        put:
+            tags:
+                - Tenant Settings
+            summary: Update tenant settings
+            description: |
+                Creates or replaces the enrichment settings for the specified tenant_id (full replace of the
+                settings object). The tenant_id is taken from the path, so a request can only ever modify its own
+                tenant's settings. target_language is normalized to a canonical BCP-47 locale (e.g. "en-us" becomes
+                "en-US"); send an empty string to clear it. While a tenant data purge runs for the same tenant_id,
+                this write is rejected with HTTP 409 (code `tenant_write_conflict`) and may be retried.
+            operationId: update-tenant-settings
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  description: Tenant ID whose settings should be updated. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpdateTenantSettingsInputBody'
+                        examples:
+                            set:
+                                summary: Set the target language
+                                value:
+                                    target_language: "de-DE"
+                            clear:
+                                summary: Clear the target language
+                                value:
+                                    target_language: ""
+            responses:
+                "200":
+                    description: Updated tenant settings
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TenantSettingsOutputBody'
+                            examples:
+                                success:
+                                    summary: Settings after update
+                                    value:
+                                        tenant_id: "org-123"
+                                        settings:
+                                            target_language: "de-DE"
+                "400":
+                    description: Bad Request (e.g. invalid tenant_id or target_language)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "409":
+                    description: |
+                        Conflict – a tenant data purge for the same tenant_id is in progress
+                        (code `tenant_write_conflict`). No settings were written; retry later.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
 components:
     securitySchemes:
         ApiKeyAuth:
@@ -1250,6 +1375,46 @@ components:
                 - deleted_embeddings
                 - deleted_webhooks
                 - message
+        EnrichmentSettings:
+            type: object
+            additionalProperties: false
+            description: Tenant-scoped enrichment configuration. Fields are optional; absent fields use server defaults.
+            properties:
+                target_language:
+                    type: string
+                    description: |
+                        Normalized BCP-47 locale (e.g. "en-US") that language enrichment translates feedback
+                        records and topic labels into. Absent or empty means not configured.
+                    maxLength: 35
+                    example: "en-US"
+        TenantSettingsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                tenant_id:
+                    type: string
+                    description: Tenant ID the settings belong to
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                settings:
+                    $ref: '#/components/schemas/EnrichmentSettings'
+            required:
+                - tenant_id
+                - settings
+        UpdateTenantSettingsInputBody:
+            type: object
+            additionalProperties: false
+            description: Full replacement of a tenant's enrichment settings.
+            properties:
+                target_language:
+                    type: string
+                    description: |
+                        Target BCP-47 locale to translate into; normalized to a canonical form (e.g. "en-us"
+                        becomes "en-US"). Send an empty string to clear it.
+                    maxLength: 35
+                    example: "de-DE"
         SemanticSearchInputBody:
             type: object
             additionalProperties: false
