@@ -67,42 +67,55 @@ func (r *TenantSettingsRepository) Upsert(
 	return r.writeSettings(ctx, tenantID, query, payload)
 }
 
-// Patch merges a partial settings object into the tenant's existing settings: keys
-// present in patch overwrite, keys absent are left untouched (a top-level JSONB
-// merge via `||`). For a tenant with no row yet, the patch becomes the initial
-// settings. patch is marshaled with omitempty so only provided fields are sent.
+// Patch applies an RFC 7396 JSON Merge Patch to the tenant's settings: keys in
+// set are written (a top-level JSONB `||`), keys in removeKeys are deleted
+// (`- text[]`), and keys mentioned in neither are left untouched. For a tenant
+// with no row yet the set object becomes the initial settings. set and removeKeys
+// are disjoint, so the merge-then-remove order does not matter.
 func (r *TenantSettingsRepository) Patch(
-	ctx context.Context, tenantID string, patch *models.PatchTenantSettingsRequest,
+	ctx context.Context, tenantID string, set models.EnrichmentSettings, removeKeys []string,
 ) (*models.TenantSettings, error) {
-	payload, err := json.Marshal(patch)
+	payload, err := json.Marshal(set)
 	if err != nil {
 		return nil, fmt.Errorf("marshal tenant settings patch: %w", err)
 	}
 
-	// `||` merges top-level keys, so settings the patch does not mention survive.
+	// A nil slice binds as SQL NULL and `jsonb - NULL` is NULL (which would blank
+	// the column); an empty, non-nil slice binds as an empty text[] and
+	// `jsonb - '{}'` is a no-op. So never pass nil to the `- $3` removal.
+	if removeKeys == nil {
+		removeKeys = []string{}
+	}
+
+	// `||` merges the provided keys (settings the patch does not mention survive);
+	// `- $3` then deletes the keys the merge patch set to null.
 	const query = `
 		INSERT INTO tenant_settings (tenant_id, settings)
 		VALUES ($1, $2)
 		ON CONFLICT (tenant_id) DO UPDATE
-			SET settings = tenant_settings.settings || EXCLUDED.settings, updated_at = NOW()
+			SET settings = (tenant_settings.settings || EXCLUDED.settings) - $3::text[], updated_at = NOW()
 		RETURNING tenant_id, settings`
 
-	return r.writeSettings(ctx, tenantID, query, payload)
+	return r.writeSettings(ctx, tenantID, query, payload, removeKeys)
 }
 
 // writeSettings runs a settings write (an INSERT ... ON CONFLICT ... RETURNING with
-// $1 = tenant_id and $2 = the settings JSONB) inside the shared tenant write lock
-// for that tenant. The lock serializes the write against a tenant data purge (a
-// purge in progress yields a retryable *huberrors.TenantWriteConflictError before
-// any write happens), and the tenant-scoped statement only ever touches this
-// tenant's row, so a write can never affect another tenant's settings.
+// $1 = tenant_id, $2 = the settings JSONB, and any extraArgs as $3, $4, …) inside
+// the shared tenant write lock for that tenant. The lock serializes the write
+// against a tenant data purge (a purge in progress yields a retryable
+// *huberrors.TenantWriteConflictError before any write happens), and the
+// tenant-scoped statement only ever touches this tenant's row, so a write can
+// never affect another tenant's settings.
 func (r *TenantSettingsRepository) writeSettings(
-	ctx context.Context, tenantID, query string, payload []byte,
+	ctx context.Context, tenantID, query string, payload []byte, extraArgs ...any,
 ) (*models.TenantSettings, error) {
 	var result *models.TenantSettings
 
+	// $1 = tenant_id, $2 = settings JSONB; any extraArgs follow as $3, $4, …
+	args := append([]any{tenantID, json.RawMessage(payload)}, extraArgs...)
+
 	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
-		stored, scanErr := scanTenantSettings(dbTx.QueryRow(ctx, query, tenantID, json.RawMessage(payload)))
+		stored, scanErr := scanTenantSettings(dbTx.QueryRow(ctx, query, args...))
 		if scanErr != nil {
 			return fmt.Errorf("write tenant settings: %w", scanErr)
 		}

@@ -28,11 +28,11 @@ type UpdateTenantSettingsRequest struct {
 }
 
 // PatchTenantSettingsRequest is the body for PATCH /v1/tenants/{tenant_id}/settings.
-// Unlike PUT (full replace), PATCH is a partial update: only the fields present in
-// the body change; omitted fields are left untouched. Pointer fields distinguish
-// "absent" (nil — leave unchanged) from "present" (set, including an empty string,
-// which clears the field). tenant_id comes from the path, never the body. The
-// omitempty tags keep absent fields out of the JSONB merge patch.
+// PATCH is an RFC 7396 JSON Merge Patch, not a full replace: for each member, a
+// concrete value sets that setting, an explicit JSON null removes it, and an
+// omitted member is left unchanged. Optional captures those three states (a plain
+// pointer cannot tell absent from null). Values are validated and normalized by
+// the service. tenant_id comes from the path, never the body.
 type PatchTenantSettingsRequest struct {
-	TargetLanguage *string `json:"target_language,omitempty" validate:"omitempty,no_null_bytes,max=35"`
+	TargetLanguage Optional[string] `json:"target_language"`
 }

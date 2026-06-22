@@ -11,9 +11,9 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
-// maxSettingsRequestBodyBytes caps the PUT request body. A settings payload is
-// tiny (a short locale string), so 8 KiB is generous; larger bodies are rejected
-// with 413 before being read into memory.
+// maxSettingsRequestBodyBytes caps the PUT and PATCH request bodies. A settings
+// payload is tiny (a short locale string), so 8 KiB is generous; larger bodies are
+// rejected with 413 before being read into memory.
 const maxSettingsRequestBodyBytes = 8 << 10
 
 // TenantSettingsService defines the business logic for tenant-scoped settings.
@@ -73,10 +73,11 @@ func (h *TenantSettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, settings)
 }
 
-// Patch handles PATCH /v1/tenants/{tenant_id}/settings. It applies a partial
-// update: only the fields present in the body change; omitted fields are left
-// untouched (send an empty string to clear a field). tenant_id is taken from the
-// path, so a request can only ever modify its own tenant's settings.
+// Patch handles PATCH /v1/tenants/{tenant_id}/settings. The body is an RFC 7396
+// JSON Merge Patch (Content-Type application/merge-patch+json): a member with a
+// value sets that setting, a member with JSON null removes it, and an omitted
+// member is left unchanged. tenant_id is taken from the path, so a request can
+// only ever modify its own tenant's settings.
 func (h *TenantSettingsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenant_id")
 

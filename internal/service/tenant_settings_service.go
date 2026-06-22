@@ -15,8 +15,17 @@ import (
 type TenantSettingsRepository interface {
 	Get(ctx context.Context, tenantID string) (*models.TenantSettings, bool, error)
 	Upsert(ctx context.Context, tenantID string, settings models.EnrichmentSettings) (*models.TenantSettings, error)
-	Patch(ctx context.Context, tenantID string, patch *models.PatchTenantSettingsRequest) (*models.TenantSettings, error)
+	// Patch merges set into the tenant's settings and removes removeKeys (an RFC
+	// 7396 merge patch: set + delete); the two are disjoint.
+	Patch(
+		ctx context.Context, tenantID string, set models.EnrichmentSettings, removeKeys []string,
+	) (*models.TenantSettings, error)
 }
+
+// settingKeyTargetLanguage is the JSONB key for the target language. It must match
+// the json tag on models.EnrichmentSettings.TargetLanguage; it is the key removed
+// when a PATCH sends target_language as null.
+const settingKeyTargetLanguage = "target_language"
 
 // TenantSettingsService reads and writes tenant-scoped enrichment settings. It is
 // the accessor enrichment workflows will use to resolve a tenant's configuration.
@@ -77,10 +86,12 @@ func (s *TenantSettingsService) UpdateSettings(
 	return settings, nil
 }
 
-// PatchSettings applies a partial update: only the fields present in req change;
-// omitted fields (nil pointers) are left untouched. Provided fields are validated
-// and normalized before the merge; an empty target_language clears it. The
-// tenant_id comes from the request path and scopes the write to that tenant alone.
+// PatchSettings applies an RFC 7396 JSON Merge Patch: a member present with a
+// value sets that setting (validated and normalized), a member present with JSON
+// null removes it, and an omitted member is left unchanged. It translates the
+// typed request into the keys to set and the keys to remove, which are disjoint.
+// The tenant_id comes from the request path and scopes the write to that tenant
+// alone.
 func (s *TenantSettingsService) PatchSettings(
 	ctx context.Context, tenantID string, req *models.PatchTenantSettingsRequest,
 ) (*models.TenantSettings, error) {
@@ -89,18 +100,26 @@ func (s *TenantSettingsService) PatchSettings(
 		return nil, err
 	}
 
-	var patch models.PatchTenantSettingsRequest
+	var (
+		set        models.EnrichmentSettings
+		removeKeys []string
+	)
 
-	if req.TargetLanguage != nil {
-		normalized, normErr := normalizeTargetLanguage(*req.TargetLanguage)
-		if normErr != nil {
-			return nil, normErr
+	if req.TargetLanguage.Present {
+		if req.TargetLanguage.Value == nil {
+			// Explicit null: remove the setting (RFC 7396).
+			removeKeys = append(removeKeys, settingKeyTargetLanguage)
+		} else {
+			normalized, normErr := normalizeProvidedTargetLanguage(*req.TargetLanguage.Value)
+			if normErr != nil {
+				return nil, normErr
+			}
+
+			set.TargetLanguage = normalized
 		}
-
-		patch.TargetLanguage = &normalized
 	}
 
-	settings, err := s.repo.Patch(ctx, normalizedTenantID, &patch)
+	settings, err := s.repo.Patch(ctx, normalizedTenantID, set, removeKeys)
 	if err != nil {
 		return nil, fmt.Errorf("patch tenant settings: %w", err)
 	}
@@ -110,7 +129,8 @@ func (s *TenantSettingsService) PatchSettings(
 
 // normalizeTargetLanguage trims and canonicalizes a BCP-47 locale (e.g. "en-us"
 // -> "en-US"). An empty value is allowed and normalizes to "" (target language
-// not configured). A malformed locale is rejected with a validation error.
+// not configured) — this is the PUT full-replace semantics, where omitting the
+// field clears it. A malformed locale is rejected with a validation error.
 func normalizeTargetLanguage(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -124,4 +144,18 @@ func normalizeTargetLanguage(raw string) (string, error) {
 	}
 
 	return tag.String(), nil
+}
+
+// normalizeProvidedTargetLanguage validates a non-null target_language supplied in
+// a PATCH. Unlike PUT, an empty value is rejected: under RFC 7396 the way to
+// remove a setting is JSON null, so an explicit "" is a malformed locale rather
+// than a clear.
+func normalizeProvidedTargetLanguage(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", huberrors.NewValidationError(
+			"target_language",
+			"target_language must be a valid BCP-47 locale (e.g. en-US); send null to remove it")
+	}
+
+	return normalizeTargetLanguage(raw)
 }

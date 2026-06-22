@@ -10,20 +10,21 @@ import (
 )
 
 type mockTenantSettingsRepo struct {
-	getResult      *models.TenantSettings
-	getFound       bool
-	getErr         error
-	getCalled      bool
-	getTenantID    string
-	upsertResult   *models.TenantSettings
-	upsertErr      error
-	upsertCalled   bool
-	upsertTenantID string
-	upsertSettings models.EnrichmentSettings
-	patchErr       error
-	patchCalled    bool
-	patchTenantID  string
-	patchArg       *models.PatchTenantSettingsRequest
+	getResult       *models.TenantSettings
+	getFound        bool
+	getErr          error
+	getCalled       bool
+	getTenantID     string
+	upsertResult    *models.TenantSettings
+	upsertErr       error
+	upsertCalled    bool
+	upsertTenantID  string
+	upsertSettings  models.EnrichmentSettings
+	patchErr        error
+	patchCalled     bool
+	patchTenantID   string
+	patchSet        models.EnrichmentSettings
+	patchRemoveKeys []string
 }
 
 func (m *mockTenantSettingsRepo) Get(_ context.Context, tenantID string) (*models.TenantSettings, bool, error) {
@@ -52,19 +53,24 @@ func (m *mockTenantSettingsRepo) Upsert(
 }
 
 func (m *mockTenantSettingsRepo) Patch(
-	_ context.Context, tenantID string, patch *models.PatchTenantSettingsRequest,
+	_ context.Context, tenantID string, set models.EnrichmentSettings, removeKeys []string,
 ) (*models.TenantSettings, error) {
 	m.patchCalled = true
 	m.patchTenantID = tenantID
-	m.patchArg = patch
+	m.patchSet = set
+	m.patchRemoveKeys = removeKeys
 
 	if m.patchErr != nil {
 		return nil, m.patchErr
 	}
 
-	settings := models.EnrichmentSettings{}
-	if patch.TargetLanguage != nil {
-		settings.TargetLanguage = *patch.TargetLanguage
+	// Echo a plausible stored result: the set value, cleared if it was removed.
+	settings := models.EnrichmentSettings{TargetLanguage: set.TargetLanguage}
+
+	for _, key := range removeKeys {
+		if key == "target_language" {
+			settings.TargetLanguage = ""
+		}
 	}
 
 	return &models.TenantSettings{TenantID: tenantID, Settings: settings}, nil
@@ -267,15 +273,18 @@ func TestNormalizeTargetLanguage(t *testing.T) {
 	}
 }
 
+// patchValue builds a merge-patch request that sets target_language to v.
+func patchValue(v string) *models.PatchTenantSettingsRequest {
+	return &models.PatchTenantSettingsRequest{
+		TargetLanguage: models.Optional[string]{Present: true, Value: &v},
+	}
+}
+
 func TestTenantSettingsService_PatchSettings_NormalizesProvidedField(t *testing.T) {
 	repo := &mockTenantSettingsRepo{}
 	svc := NewTenantSettingsService(repo)
-	lang := "en-us"
 
-	settings, err := svc.PatchSettings(
-		context.Background(), " org-123 ",
-		&models.PatchTenantSettingsRequest{TargetLanguage: &lang},
-	)
+	settings, err := svc.PatchSettings(context.Background(), " org-123 ", patchValue("en-us"))
 	if err != nil {
 		t.Fatalf("PatchSettings() error = %v", err)
 	}
@@ -284,8 +293,12 @@ func TestTenantSettingsService_PatchSettings_NormalizesProvidedField(t *testing.
 		t.Fatalf("repo.Patch tenant = %q, want org-123", repo.patchTenantID)
 	}
 
-	if repo.patchArg.TargetLanguage == nil || *repo.patchArg.TargetLanguage != "en-US" {
-		t.Fatalf("repo.Patch target_language = %v, want en-US", repo.patchArg.TargetLanguage)
+	if repo.patchSet.TargetLanguage != "en-US" {
+		t.Fatalf("repo.Patch set target_language = %q, want en-US", repo.patchSet.TargetLanguage)
+	}
+
+	if len(repo.patchRemoveKeys) != 0 {
+		t.Fatalf("repo.Patch removeKeys = %v, want none for a value set", repo.patchRemoveKeys)
 	}
 
 	if settings.Settings.TargetLanguage != "en-US" {
@@ -293,13 +306,13 @@ func TestTenantSettingsService_PatchSettings_NormalizesProvidedField(t *testing.
 	}
 }
 
-func TestTenantSettingsService_PatchSettings_OmittedFieldNotInPatch(t *testing.T) {
+func TestTenantSettingsService_PatchSettings_OmittedFieldIsNoop(t *testing.T) {
 	repo := &mockTenantSettingsRepo{}
 	svc := NewTenantSettingsService(repo)
 
+	// Absent member (Present false): nothing set, nothing removed.
 	if _, err := svc.PatchSettings(
-		context.Background(), "org-123",
-		&models.PatchTenantSettingsRequest{},
+		context.Background(), "org-123", &models.PatchTenantSettingsRequest{},
 	); err != nil {
 		t.Fatalf("PatchSettings() error = %v", err)
 	}
@@ -308,37 +321,54 @@ func TestTenantSettingsService_PatchSettings_OmittedFieldNotInPatch(t *testing.T
 		t.Fatal("repo.Patch not called")
 	}
 
-	if repo.patchArg.TargetLanguage != nil {
-		t.Fatalf("patch TargetLanguage = %q, want nil (omitted)", *repo.patchArg.TargetLanguage)
+	if repo.patchSet.TargetLanguage != "" || len(repo.patchRemoveKeys) != 0 {
+		t.Fatalf("omitted field: set=%q remove=%v, want empty set and no removals",
+			repo.patchSet.TargetLanguage, repo.patchRemoveKeys)
 	}
 }
 
-func TestTenantSettingsService_PatchSettings_EmptyStringClears(t *testing.T) {
+func TestTenantSettingsService_PatchSettings_NullRemovesField(t *testing.T) {
 	repo := &mockTenantSettingsRepo{}
 	svc := NewTenantSettingsService(repo)
 
-	empty := ""
-	if _, err := svc.PatchSettings(
-		context.Background(), "org-123",
-		&models.PatchTenantSettingsRequest{TargetLanguage: &empty},
-	); err != nil {
+	// Present with a nil Value is an explicit JSON null: remove the setting.
+	req := &models.PatchTenantSettingsRequest{
+		TargetLanguage: models.Optional[string]{Present: true, Value: nil},
+	}
+	if _, err := svc.PatchSettings(context.Background(), "org-123", req); err != nil {
 		t.Fatalf("PatchSettings() error = %v", err)
 	}
 
-	if repo.patchArg.TargetLanguage == nil || *repo.patchArg.TargetLanguage != "" {
-		t.Fatalf("patch TargetLanguage = %v, want non-nil empty (clear)", repo.patchArg.TargetLanguage)
+	if repo.patchSet.TargetLanguage != "" {
+		t.Fatalf("repo.Patch set target_language = %q, want empty (removal, not a set)", repo.patchSet.TargetLanguage)
+	}
+
+	if len(repo.patchRemoveKeys) != 1 || repo.patchRemoveKeys[0] != "target_language" {
+		t.Fatalf("repo.Patch removeKeys = %v, want [target_language]", repo.patchRemoveKeys)
+	}
+}
+
+func TestTenantSettingsService_PatchSettings_EmptyStringRejected(t *testing.T) {
+	repo := &mockTenantSettingsRepo{}
+	svc := NewTenantSettingsService(repo)
+
+	// Under RFC 7396 an empty string is a value, not a removal — and "" is not a
+	// valid locale, so it must be rejected (callers clear via null).
+	_, err := svc.PatchSettings(context.Background(), "org-123", patchValue(""))
+	if !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("PatchSettings() error = %v, want validation error for empty string", err)
+	}
+
+	if repo.patchCalled {
+		t.Fatal("repo.Patch called despite empty-string value")
 	}
 }
 
 func TestTenantSettingsService_PatchSettings_InvalidLanguageRejected(t *testing.T) {
 	repo := &mockTenantSettingsRepo{}
 	svc := NewTenantSettingsService(repo)
-	bad := "not a locale"
 
-	_, err := svc.PatchSettings(
-		context.Background(), "org-123",
-		&models.PatchTenantSettingsRequest{TargetLanguage: &bad},
-	)
+	_, err := svc.PatchSettings(context.Background(), "org-123", patchValue("not a locale"))
 	if !errors.Is(err, huberrors.ErrValidation) {
 		t.Fatalf("PatchSettings() error = %v, want validation error", err)
 	}
@@ -351,12 +381,8 @@ func TestTenantSettingsService_PatchSettings_InvalidLanguageRejected(t *testing.
 func TestTenantSettingsService_PatchSettings_BlankTenantRejected(t *testing.T) {
 	repo := &mockTenantSettingsRepo{}
 	svc := NewTenantSettingsService(repo)
-	lang := "en-US"
 
-	_, err := svc.PatchSettings(
-		context.Background(), "  ",
-		&models.PatchTenantSettingsRequest{TargetLanguage: &lang},
-	)
+	_, err := svc.PatchSettings(context.Background(), "  ", patchValue("en-US"))
 	if !errors.Is(err, huberrors.ErrValidation) {
 		t.Fatalf("PatchSettings() error = %v, want validation error", err)
 	}
@@ -369,12 +395,8 @@ func TestTenantSettingsService_PatchSettings_BlankTenantRejected(t *testing.T) {
 func TestTenantSettingsService_PatchSettings_RepoErrorPropagates(t *testing.T) {
 	repo := &mockTenantSettingsRepo{patchErr: huberrors.NewTenantWriteConflictError("purge in progress")}
 	svc := NewTenantSettingsService(repo)
-	lang := "en-US"
 
-	_, err := svc.PatchSettings(
-		context.Background(), "org-123",
-		&models.PatchTenantSettingsRequest{TargetLanguage: &lang},
-	)
+	_, err := svc.PatchSettings(context.Background(), "org-123", patchValue("en-US"))
 	if !errors.Is(err, huberrors.ErrTenantWriteConflict) {
 		t.Fatalf("PatchSettings() error = %v, want tenant write conflict", err)
 	}

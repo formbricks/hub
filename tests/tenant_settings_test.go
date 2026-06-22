@@ -290,23 +290,60 @@ func TestTenantSettings_PatchOmittedFieldLeavesUnchanged(t *testing.T) {
 	assert.Equal(t, "en-US", got.Settings.TargetLanguage, "an empty PATCH must not change existing settings")
 }
 
-func TestTenantSettings_PatchEmptyStringClears(t *testing.T) {
+// TestTenantSettings_PatchNullRemovesField proves the RFC 7396 semantics: a member
+// sent as JSON null removes that key from the JSONB (not merely sets it empty),
+// while keys the patch does not mention survive.
+func TestTenantSettings_PatchNullRemovesField(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	tenantID := testTenantID("patch-clear")
+	ctx := context.Background()
+	tenantID := testTenantID("patch-null")
 
-	put := settingsRequest(t, server.URL, http.MethodPut, tenantID, `{"target_language":"en-US"}`, true)
-	require.Equal(t, http.StatusOK, put.StatusCode)
-	require.NoError(t, put.Body.Close())
+	cfg, err := config.Load()
+	require.NoError(t, err)
 
-	patch := settingsRequest(t, server.URL, http.MethodPatch, tenantID, `{"target_language":""}`, true)
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	// Seed target_language plus an extra key the typed API never writes.
+	_, err = db.Exec(ctx,
+		`INSERT INTO tenant_settings (tenant_id, settings) VALUES ($1, $2::jsonb)`,
+		tenantID, `{"target_language":"en-US","experimental":"keep-me"}`)
+	require.NoError(t, err)
+
+	patch := settingsRequest(t, server.URL, http.MethodPatch, tenantID, `{"target_language":null}`, true)
 	require.Equal(t, http.StatusOK, patch.StatusCode)
 
 	var got models.TenantSettings
 	require.NoError(t, decodeData(patch, &got))
 	require.NoError(t, patch.Body.Close())
-	assert.Empty(t, got.Settings.TargetLanguage, "PATCH with an empty string should clear the field")
+	assert.Empty(t, got.Settings.TargetLanguage, "PATCH null should remove target_language")
+
+	var rawBytes []byte
+	require.NoError(t, db.QueryRow(ctx,
+		`SELECT settings FROM tenant_settings WHERE tenant_id = $1`, tenantID).Scan(&rawBytes))
+
+	stored := map[string]string{}
+	require.NoError(t, json.Unmarshal(rawBytes, &stored))
+
+	_, hasTarget := stored["target_language"]
+	assert.False(t, hasTarget, "PATCH null must delete the key, not store an empty value")
+	assert.Equal(t, "keep-me", stored["experimental"], "PATCH null must preserve keys it did not mention")
+}
+
+// TestTenantSettings_PatchEmptyStringRejected: under RFC 7396 an empty string is a
+// value (not a removal), and "" is not a valid locale, so it is rejected — callers
+// clear via null.
+func TestTenantSettings_PatchEmptyStringRejected(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp := settingsRequest(t, server.URL, http.MethodPatch, testTenantID("patch-empty"), `{"target_language":""}`, true)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 // TestTenantSettings_PatchMergePreservesOtherKeys proves PATCH does a JSONB merge
