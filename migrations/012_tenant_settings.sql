@@ -1,4 +1,4 @@
--- +goose Up
+-- +goose up
 -- Tenant-scoped settings for Hub enrichment configuration. One row per tenant,
 -- keyed by the natural tenant_id (there is no tenants table, so it is an
 -- unconstrained VARCHAR like every other tenant-owned table). The open-ended
@@ -13,5 +13,5 @@ CREATE TABLE tenant_settings (
   CONSTRAINT tenant_settings_settings_object CHECK (jsonb_typeof(settings) = 'object')
 );
 
--- +goose Down
+-- +goose down
 DROP TABLE IF EXISTS tenant_settings;
