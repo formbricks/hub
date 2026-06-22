@@ -31,6 +31,18 @@ func NewFeedbackRecordsRepository(db *pgxpool.Pool) *FeedbackRecordsRepository {
 	return &FeedbackRecordsRepository{db: db}
 }
 
+// feedbackRecordColumns is the canonical SELECT/RETURNING column list for a
+// FeedbackRecord, in the exact order scanFeedbackRecord reads it. Together they are
+// the single source of truth for materializing a FeedbackRecord, so column order
+// and scan order cannot drift across the Create/Get/List/Update read paths (a
+// silent runtime scan error otherwise). It excludes derived rows like embeddings.
+const feedbackRecordColumns = `id, collected_at, created_at, updated_at,
+	source_type, source_id, source_name,
+	field_id, field_label, field_type, field_group_id, field_group_label,
+	value_text, value_number, value_boolean, value_date,
+	metadata, language, user_id, tenant_id, submission_id,
+	value_text_translated, translation_lang_key`
+
 // Create inserts a new feedback record.
 func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
 	collectedAt := time.Now()
@@ -53,30 +65,15 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		)
 		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 		WHERE ` + tenantWriteLockGate(lockKeyParam) + `
-		RETURNING id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id,
-			value_text_translated, translation_lang_key
-	`
+		RETURNING ` + feedbackRecordColumns
 
-	var record models.FeedbackRecord
-
-	err := r.db.QueryRow(ctx, query,
+	record, err := scanFeedbackRecord(r.db.QueryRow(ctx, query,
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
 		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
 		req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID,
 		TenantWriteLockKey(req.TenantID),
-	).Scan(
-		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-		&record.ValueTextTranslated, &record.TranslationLangKey,
-	)
+	))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
@@ -90,7 +87,7 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		return nil, fmt.Errorf("failed to create feedback record: %w", err)
 	}
 
-	return &record, nil
+	return record, nil
 }
 
 // resolveFeedbackRecordTenant reads the tenant boundary of a feedback record
@@ -133,27 +130,11 @@ func lockFeedbackRecordTenantShared(ctx context.Context, dbTx tenantWriteTx, id 
 
 // GetByID retrieves a single feedback record by ID. Embedding is not selected (API/worker reads stay lean).
 func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
-	query := `
-		SELECT id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id,
-			value_text_translated, translation_lang_key
+	query := `SELECT ` + feedbackRecordColumns + `
 		FROM feedback_records
-		WHERE id = $1
-	`
+		WHERE id = $1`
 
-	var record models.FeedbackRecord
-
-	err := r.db.QueryRow(ctx, query, id).Scan(
-		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-		&record.ValueTextTranslated, &record.TranslationLangKey,
-	)
+	record, err := scanFeedbackRecord(r.db.QueryRow(ctx, query, id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
@@ -162,7 +143,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
 	}
 
-	return &record, nil
+	return record, nil
 }
 
 // SetTranslation stores the translated text and the target locale it was produced in
@@ -268,13 +249,7 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 	return whereClause, args
 }
 
-const feedbackRecordsListSelect = `
-		SELECT id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id,
-			value_text_translated, translation_lang_key
+const feedbackRecordsListSelect = `SELECT ` + feedbackRecordColumns + `
 		FROM feedback_records
 	`
 
@@ -429,13 +404,8 @@ func buildUpdateQuery(
 		UPDATE feedback_records
 		SET %s
 		WHERE id = $%d AND tenant_id = $%d
-		RETURNING id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id,
-			value_text_translated, translation_lang_key
-	`, strings.Join(updates, ", "), argCount, argCount+1)
+		RETURNING `+feedbackRecordColumns,
+		strings.Join(updates, ", "), argCount, argCount+1)
 
 	return query, args, true
 }
@@ -451,7 +421,7 @@ func (r *FeedbackRecordsRepository) Update(
 		return r.GetByID(ctx, id)
 	}
 
-	var record models.FeedbackRecord
+	var record *models.FeedbackRecord
 
 	err := withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		tenantID, err := lockFeedbackRecordTenantShared(ctx, dbTx, id)
@@ -459,14 +429,7 @@ func (r *FeedbackRecordsRepository) Update(
 			return err
 		}
 
-		err = dbTx.QueryRow(ctx, query, append(args, tenantID)...).Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-			&record.ValueTextTranslated, &record.TranslationLangKey,
-		)
+		scanned, err := scanFeedbackRecord(dbTx.QueryRow(ctx, query, append(args, tenantID)...))
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return huberrors.NewNotFoundError("feedback record", "feedback record not found")
@@ -475,13 +438,15 @@ func (r *FeedbackRecordsRepository) Update(
 			return fmt.Errorf("failed to update feedback record: %w", err)
 		}
 
+		record = scanned
+
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &record, nil
+	return record, nil
 }
 
 // Delete removes a feedback record.
@@ -674,21 +639,12 @@ func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
 	records := []models.FeedbackRecord{}
 
 	for rows.Next() {
-		var record models.FeedbackRecord
-
-		err := rows.Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-			&record.ValueTextTranslated, &record.TranslationLangKey,
-		)
+		record, err := scanFeedbackRecord(rows)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
 		}
 
-		records = append(records, record)
+		records = append(records, *record)
 	}
 
 	if err := rows.Err(); err != nil {

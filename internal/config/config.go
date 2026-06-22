@@ -327,6 +327,15 @@ func applyDefaults(cfg *Config) {
 		cfg.TenantSettingsCache.Size = 2048
 	}
 
+	// Mirror the other nested DurationSec defaults: re-assert in applyDefaults
+	// because cleanenv does not reliably apply env-default to nested-struct fields,
+	// and a zero TTL would silently disable the cache rather than use 60s. To
+	// disable the cache, set TENANT_SETTINGS_CACHE_SIZE=0.
+	const defaultTenantSettingsCacheTTLSec = 60
+	if cfg.TenantSettingsCache.TTL.Duration() <= 0 {
+		cfg.TenantSettingsCache.TTL = DurationSec(time.Duration(defaultTenantSettingsCacheTTLSec) * time.Second)
+	}
+
 	if cfg.Taxonomy.MinimumEmbeddedRecords <= 0 {
 		cfg.Taxonomy.MinimumEmbeddedRecords = 20
 	}

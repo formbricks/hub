@@ -788,7 +788,8 @@ func (r *TaxonomyRepository) ListNodeRecords(
 			fr.source_type, fr.source_id, fr.source_name,
 			fr.field_id, fr.field_label, fr.field_type, fr.field_group_id, fr.field_group_label,
 			fr.value_text, fr.value_number, fr.value_boolean, fr.value_date,
-			fr.metadata, fr.language, fr.user_id, fr.tenant_id, fr.submission_id
+			fr.metadata, fr.language, fr.user_id, fr.tenant_id, fr.submission_id,
+			fr.value_text_translated, fr.translation_lang_key
 		FROM visible_nodes vn
 		INNER JOIN taxonomy_runs tr ON tr.id = vn.run_id
 		INNER JOIN taxonomy_cluster_memberships tcm ON tcm.run_id = vn.run_id AND tcm.cluster_id = vn.cluster_id
@@ -1184,6 +1185,8 @@ func scanFeedbackRecord(row scanner) (*models.FeedbackRecord, error) {
 		&record.UserID,
 		&record.TenantID,
 		&record.SubmissionID,
+		&record.ValueTextTranslated,
+		&record.TranslationLangKey,
 	); err != nil {
 		return nil, fmt.Errorf("scan feedback record: %w", err)
 	}
