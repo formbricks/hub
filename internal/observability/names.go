@@ -117,6 +117,7 @@ func AllowedDispatchReason(reason string) bool { return allowedDispatchReasons[r
 // allowedCacheNames for hub_cache_hits_total / hub_cache_misses_total (bounded cardinality).
 var allowedCacheNames = map[string]bool{
 	"search_query_embedding": true,
+	"tenant_settings":        true,
 }
 
 // AllowedCacheName returns true if name is an allowed cache name for metrics.
