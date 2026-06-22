@@ -1334,8 +1334,9 @@ paths:
             description: |
                 Partially updates the enrichment settings for the specified tenant_id using RFC 7396 JSON Merge
                 Patch semantics (media type application/merge-patch+json; application/json is also accepted). For
-                each member: a value sets that setting, JSON null removes it, and an omitted member is left
-                unchanged. The tenant_id is taken from the path, so a request can only ever modify its own
+                each member: a value sets that setting, JSON null removes it (e.g. `{"target_language": null}`
+                clears the target language), and an omitted member is left unchanged. The tenant_id is taken
+                from the path, so a request can only ever modify its own
                 tenant's settings. target_language is normalized to a canonical BCP-47 locale (e.g. "en-us"
                 becomes "en-US"); an empty string is rejected (send null to remove it). While a tenant data purge
                 runs for the same tenant_id, this write is rejected with HTTP 409 (code `tenant_write_conflict`)
@@ -1363,10 +1364,6 @@ paths:
                                 summary: Set the target language (other settings untouched)
                                 value:
                                     target_language: "de-DE"
-                            remove:
-                                summary: Remove the target language (RFC 7396 null)
-                                value:
-                                    target_language: null
                     application/json:
                         schema:
                             $ref: '#/components/schemas/PatchTenantSettingsInputBody'
