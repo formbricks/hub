@@ -15,6 +15,7 @@ import (
 type TenantSettingsRepository interface {
 	Get(ctx context.Context, tenantID string) (*models.TenantSettings, bool, error)
 	Upsert(ctx context.Context, tenantID string, settings models.EnrichmentSettings) (*models.TenantSettings, error)
+	Patch(ctx context.Context, tenantID string, patch *models.PatchTenantSettingsRequest) (*models.TenantSettings, error)
 }
 
 // TenantSettingsService reads and writes tenant-scoped enrichment settings. It is
@@ -71,6 +72,37 @@ func (s *TenantSettingsService) UpdateSettings(
 	settings, err := s.repo.Upsert(ctx, normalizedTenantID, models.EnrichmentSettings{TargetLanguage: targetLanguage})
 	if err != nil {
 		return nil, fmt.Errorf("update tenant settings: %w", err)
+	}
+
+	return settings, nil
+}
+
+// PatchSettings applies a partial update: only the fields present in req change;
+// omitted fields (nil pointers) are left untouched. Provided fields are validated
+// and normalized before the merge; an empty target_language clears it. The
+// tenant_id comes from the request path and scopes the write to that tenant alone.
+func (s *TenantSettingsService) PatchSettings(
+	ctx context.Context, tenantID string, req *models.PatchTenantSettingsRequest,
+) (*models.TenantSettings, error) {
+	normalizedTenantID, err := normalizeRequiredTenantIDValue(tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	var patch models.PatchTenantSettingsRequest
+
+	if req.TargetLanguage != nil {
+		normalized, normErr := normalizeTargetLanguage(*req.TargetLanguage)
+		if normErr != nil {
+			return nil, normErr
+		}
+
+		patch.TargetLanguage = &normalized
+	}
+
+	settings, err := s.repo.Patch(ctx, normalizedTenantID, &patch)
+	if err != nil {
+		return nil, fmt.Errorf("patch tenant settings: %w", err)
 	}
 
 	return settings, nil

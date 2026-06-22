@@ -22,6 +22,9 @@ type TenantSettingsService interface {
 	UpdateSettings(
 		ctx context.Context, tenantID string, req *models.UpdateTenantSettingsRequest,
 	) (*models.TenantSettings, error)
+	PatchSettings(
+		ctx context.Context, tenantID string, req *models.PatchTenantSettingsRequest,
+	) (*models.TenantSettings, error)
 }
 
 // TenantSettingsHandler handles HTTP requests for tenant settings.
@@ -55,31 +58,8 @@ func (h *TenantSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *TenantSettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenant_id")
 
-	// Cap the request body; the settings payload is tiny, so anything larger is
-	// rejected with 413 rather than read into memory.
-	r.Body = http.MaxBytesReader(w, r.Body, maxSettingsRequestBodyBytes)
-
 	var req models.UpdateTenantSettingsRequest
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
-
-			return
-		}
-
-		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
-
-		return
-	}
-
-	if err := validation.ValidateStruct(&req); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeSettingsBody(w, r, &req) {
 		return
 	}
 
@@ -91,4 +71,60 @@ func (h *TenantSettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.RespondJSON(w, http.StatusOK, settings)
+}
+
+// Patch handles PATCH /v1/tenants/{tenant_id}/settings. It applies a partial
+// update: only the fields present in the body change; omitted fields are left
+// untouched (send an empty string to clear a field). tenant_id is taken from the
+// path, so a request can only ever modify its own tenant's settings.
+func (h *TenantSettingsHandler) Patch(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenant_id")
+
+	var req models.PatchTenantSettingsRequest
+	if !decodeSettingsBody(w, r, &req) {
+		return
+	}
+
+	settings, err := h.service.PatchSettings(r.Context(), tenantID, &req)
+	if err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
+	response.RespondJSON(w, http.StatusOK, settings)
+}
+
+// decodeSettingsBody caps the request body, decodes it as JSON (rejecting unknown
+// fields), and validates the struct. It writes the matching problem response — 413
+// for an oversized body, 400 for malformed JSON, unknown fields, or invalid values
+// — and returns false when it has already responded, so callers just `return`.
+func decodeSettingsBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	// The settings payload is tiny, so anything larger than the cap is rejected
+	// with 413 rather than read into memory.
+	r.Body = http.MaxBytesReader(w, r.Body, maxSettingsRequestBodyBytes)
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(dst); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
+
+			return false
+		}
+
+		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
+
+		return false
+	}
+
+	if err := validation.ValidateStruct(dst); err != nil {
+		response.RespondError(w, r, err)
+
+		return false
+	}
+
+	return true
 }

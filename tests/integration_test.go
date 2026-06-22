@@ -138,6 +138,7 @@ func setupTestServerWithEventProviders(
 	protectedMux.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantDataHandler.Delete)
 	protectedMux.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettingsHandler.Get)
 	protectedMux.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettingsHandler.Update)
+	protectedMux.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettingsHandler.Patch)
 
 	var protectedHandler http.Handler = protectedMux
 

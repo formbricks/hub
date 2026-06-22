@@ -45,13 +45,8 @@ func (r *TenantSettingsRepository) Get(
 	return settings, true, nil
 }
 
-// Upsert creates or replaces the tenant's settings and returns the stored row.
-// Because the tenant_id is known up front, the write runs inside a transaction
-// that first acquires the shared tenant write lock for that tenant, serializing
-// it against a tenant data purge (a purge in progress yields a retryable
-// *huberrors.TenantWriteConflictError before any write happens). The
-// INSERT ... ON CONFLICT (tenant_id) only ever touches the row for this tenant,
-// so a write can never affect another tenant's settings.
+// Upsert creates or replaces (full replace) the tenant's settings and returns the
+// stored row.
 func (r *TenantSettingsRepository) Upsert(
 	ctx context.Context, tenantID string, settings models.EnrichmentSettings,
 ) (*models.TenantSettings, error) {
@@ -60,21 +55,56 @@ func (r *TenantSettingsRepository) Upsert(
 		return nil, fmt.Errorf("marshal tenant settings: %w", err)
 	}
 
+	// created_at/updated_at fall back to their column DEFAULT NOW() on insert; only
+	// the conflict path bumps updated_at. EXCLUDED.settings replaces the whole object.
+	const query = `
+		INSERT INTO tenant_settings (tenant_id, settings)
+		VALUES ($1, $2)
+		ON CONFLICT (tenant_id) DO UPDATE
+			SET settings = EXCLUDED.settings, updated_at = NOW()
+		RETURNING tenant_id, settings`
+
+	return r.writeSettings(ctx, tenantID, query, payload)
+}
+
+// Patch merges a partial settings object into the tenant's existing settings: keys
+// present in patch overwrite, keys absent are left untouched (a top-level JSONB
+// merge via `||`). For a tenant with no row yet, the patch becomes the initial
+// settings. patch is marshaled with omitempty so only provided fields are sent.
+func (r *TenantSettingsRepository) Patch(
+	ctx context.Context, tenantID string, patch *models.PatchTenantSettingsRequest,
+) (*models.TenantSettings, error) {
+	payload, err := json.Marshal(patch)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tenant settings patch: %w", err)
+	}
+
+	// `||` merges top-level keys, so settings the patch does not mention survive.
+	const query = `
+		INSERT INTO tenant_settings (tenant_id, settings)
+		VALUES ($1, $2)
+		ON CONFLICT (tenant_id) DO UPDATE
+			SET settings = tenant_settings.settings || EXCLUDED.settings, updated_at = NOW()
+		RETURNING tenant_id, settings`
+
+	return r.writeSettings(ctx, tenantID, query, payload)
+}
+
+// writeSettings runs a settings write (an INSERT ... ON CONFLICT ... RETURNING with
+// $1 = tenant_id and $2 = the settings JSONB) inside the shared tenant write lock
+// for that tenant. The lock serializes the write against a tenant data purge (a
+// purge in progress yields a retryable *huberrors.TenantWriteConflictError before
+// any write happens), and the tenant-scoped statement only ever touches this
+// tenant's row, so a write can never affect another tenant's settings.
+func (r *TenantSettingsRepository) writeSettings(
+	ctx context.Context, tenantID, query string, payload []byte,
+) (*models.TenantSettings, error) {
 	var result *models.TenantSettings
 
-	err = withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
-		// created_at/updated_at fall back to their column DEFAULT NOW() on insert;
-		// only the conflict path needs to bump updated_at explicitly.
-		const query = `
-			INSERT INTO tenant_settings (tenant_id, settings)
-			VALUES ($1, $2)
-			ON CONFLICT (tenant_id) DO UPDATE
-				SET settings = EXCLUDED.settings, updated_at = NOW()
-			RETURNING tenant_id, settings`
-
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
 		stored, scanErr := scanTenantSettings(dbTx.QueryRow(ctx, query, tenantID, json.RawMessage(payload)))
 		if scanErr != nil {
-			return fmt.Errorf("upsert tenant settings: %w", scanErr)
+			return fmt.Errorf("write tenant settings: %w", scanErr)
 		}
 
 		result = stored

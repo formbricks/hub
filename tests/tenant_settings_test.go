@@ -3,6 +3,7 @@ package tests
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,7 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/database"
 )
 
 // settingsRequest issues a request to the tenant settings API. When body is empty
@@ -234,4 +237,113 @@ func TestTenantSettings_PutBodyTooLargeRejected(t *testing.T) {
 	require.NoError(t, decodeData(resp, &problem))
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, "content_too_large", problem.Code, "413 should carry a payload-too-large code, not generic bad_request")
+}
+
+func TestTenantSettings_PatchUpdatesField(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	tenantID := testTenantID("patch-update")
+
+	put := settingsRequest(t, server.URL, http.MethodPut, tenantID, `{"target_language":"en-US"}`, true)
+	require.Equal(t, http.StatusOK, put.StatusCode)
+	require.NoError(t, put.Body.Close())
+
+	patch := settingsRequest(t, server.URL, http.MethodPatch, tenantID, `{"target_language":"de-de"}`, true)
+	require.Equal(t, http.StatusOK, patch.StatusCode)
+
+	var got models.TenantSettings
+	require.NoError(t, decodeData(patch, &got))
+	require.NoError(t, patch.Body.Close())
+	assert.Equal(t, "de-DE", got.Settings.TargetLanguage, "PATCH should update and normalize the field")
+}
+
+func TestTenantSettings_PatchOmittedFieldLeavesUnchanged(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	tenantID := testTenantID("patch-omit")
+
+	put := settingsRequest(t, server.URL, http.MethodPut, tenantID, `{"target_language":"en-US"}`, true)
+	require.Equal(t, http.StatusOK, put.StatusCode)
+	require.NoError(t, put.Body.Close())
+
+	// Empty patch: nothing provided, so nothing changes.
+	patch := settingsRequest(t, server.URL, http.MethodPatch, tenantID, `{}`, true)
+	require.Equal(t, http.StatusOK, patch.StatusCode)
+	require.NoError(t, patch.Body.Close())
+
+	get := settingsRequest(t, server.URL, http.MethodGet, tenantID, "", true)
+	require.Equal(t, http.StatusOK, get.StatusCode)
+
+	var got models.TenantSettings
+	require.NoError(t, decodeData(get, &got))
+	require.NoError(t, get.Body.Close())
+	assert.Equal(t, "en-US", got.Settings.TargetLanguage, "an empty PATCH must not change existing settings")
+}
+
+func TestTenantSettings_PatchEmptyStringClears(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	tenantID := testTenantID("patch-clear")
+
+	put := settingsRequest(t, server.URL, http.MethodPut, tenantID, `{"target_language":"en-US"}`, true)
+	require.Equal(t, http.StatusOK, put.StatusCode)
+	require.NoError(t, put.Body.Close())
+
+	patch := settingsRequest(t, server.URL, http.MethodPatch, tenantID, `{"target_language":""}`, true)
+	require.Equal(t, http.StatusOK, patch.StatusCode)
+
+	var got models.TenantSettings
+	require.NoError(t, decodeData(patch, &got))
+	require.NoError(t, patch.Body.Close())
+	assert.Empty(t, got.Settings.TargetLanguage, "PATCH with an empty string should clear the field")
+}
+
+// TestTenantSettings_PatchMergePreservesOtherKeys proves PATCH does a JSONB merge
+// (||), not a full replace: a key the typed model does not know about survives.
+func TestTenantSettings_PatchMergePreservesOtherKeys(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	tenantID := testTenantID("patch-merge")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	// Seed a row with an extra key the typed API never writes.
+	_, err = db.Exec(ctx,
+		`INSERT INTO tenant_settings (tenant_id, settings) VALUES ($1, $2::jsonb)`,
+		tenantID, `{"target_language":"en-US","experimental":"keep-me"}`)
+	require.NoError(t, err)
+
+	patch := settingsRequest(t, server.URL, http.MethodPatch, tenantID, `{"target_language":"de-DE"}`, true)
+	require.Equal(t, http.StatusOK, patch.StatusCode)
+	require.NoError(t, patch.Body.Close())
+
+	var rawBytes []byte
+	require.NoError(t, db.QueryRow(ctx,
+		`SELECT settings FROM tenant_settings WHERE tenant_id = $1`, tenantID).Scan(&rawBytes))
+
+	stored := map[string]string{}
+	require.NoError(t, json.Unmarshal(rawBytes, &stored))
+	assert.Equal(t, "de-DE", stored["target_language"], "PATCH should update the targeted key")
+	assert.Equal(t, "keep-me", stored["experimental"], "PATCH must preserve keys it did not touch (merge, not replace)")
+}
+
+func TestTenantSettings_PatchBodyTooLargeRejected(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	oversized := `{"target_language":"` + strings.Repeat("a", 9000) + `"}`
+	resp := settingsRequest(t, server.URL, http.MethodPatch, testTenantID("patch-toobig"), oversized, true)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
 }

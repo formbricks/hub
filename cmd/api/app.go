@@ -418,6 +418,7 @@ func newHTTPServer(
 	protected.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantData.Delete)
 	protected.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettings.Get)
 	protected.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettings.Update)
+	protected.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettings.Patch)
 
 	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
