@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/formbricks/hub/internal/huberrors"
@@ -399,5 +401,50 @@ func TestTenantSettingsService_PatchSettings_RepoErrorPropagates(t *testing.T) {
 	_, err := svc.PatchSettings(context.Background(), "org-123", patchValue("en-US"))
 	if !errors.Is(err, huberrors.ErrTenantWriteConflict) {
 		t.Fatalf("PatchSettings() error = %v, want tenant write conflict", err)
+	}
+}
+
+func TestTenantSettingsService_PatchSettings_OversizedRejected(t *testing.T) {
+	repo := &mockTenantSettingsRepo{}
+	svc := NewTenantSettingsService(repo)
+
+	// Parity with PUT's max=35: a provided value longer than the bound is rejected
+	// before it reaches the repo (Optional[string] can't carry the struct tag).
+	_, err := svc.PatchSettings(context.Background(), "org-123", patchValue(strings.Repeat("a", maxTargetLanguageLen+1)))
+	if !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("PatchSettings() error = %v, want validation error for an oversized value", err)
+	}
+
+	if repo.patchCalled {
+		t.Fatal("repo.Patch called despite oversized value")
+	}
+}
+
+func TestTenantSettingsService_PatchSettings_NullByteRejected(t *testing.T) {
+	repo := &mockTenantSettingsRepo{}
+	svc := NewTenantSettingsService(repo)
+
+	_, err := svc.PatchSettings(context.Background(), "org-123", patchValue("en\x00US"))
+	if !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("PatchSettings() error = %v, want validation error for a null byte", err)
+	}
+
+	if repo.patchCalled {
+		t.Fatal("repo.Patch called despite null byte")
+	}
+}
+
+// TestSettingKeyMatchesModelTag pins settingKeyTargetLanguage to the json tag on
+// EnrichmentSettings.TargetLanguage, so a tag rename can't silently break PATCH
+// null-removal (which deletes by that key string).
+func TestSettingKeyMatchesModelTag(t *testing.T) {
+	raw, err := json.Marshal(models.EnrichmentSettings{TargetLanguage: "en-US"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if want := `"` + settingKeyTargetLanguage + `":`; !strings.Contains(string(raw), want) {
+		t.Fatalf("settingKeyTargetLanguage %q is not the json key in %s — const and tag have drifted",
+			settingKeyTargetLanguage, raw)
 	}
 }

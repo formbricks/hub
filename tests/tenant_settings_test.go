@@ -346,6 +346,19 @@ func TestTenantSettings_PatchEmptyStringRejected(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+// TestTenantSettings_PatchRejectsOversizedLanguage mirrors the PUT bound: a value
+// over the 35-char limit is rejected (the limit lives in the service for PATCH,
+// since Optional[string] cannot carry the struct tag PUT uses).
+func TestTenantSettings_PatchRejectsOversizedLanguage(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	body := `{"target_language":"` + strings.Repeat("a", 40) + `"}`
+	resp := settingsRequest(t, server.URL, http.MethodPatch, testTenantID("patch-oversized"), body, true)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
 // TestTenantSettings_PatchMergePreservesOtherKeys proves PATCH does a JSONB merge
 // (||), not a full replace: a key the typed model does not know about survives.
 func TestTenantSettings_PatchMergePreservesOtherKeys(t *testing.T) {

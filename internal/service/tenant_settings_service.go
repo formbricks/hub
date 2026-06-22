@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/language"
 
@@ -24,8 +25,14 @@ type TenantSettingsRepository interface {
 
 // settingKeyTargetLanguage is the JSONB key for the target language. It must match
 // the json tag on models.EnrichmentSettings.TargetLanguage; it is the key removed
-// when a PATCH sends target_language as null.
+// when a PATCH sends target_language as null. TestSettingKeyMatchesModelTag pins
+// this to the tag so a rename can't silently break null-removal.
 const settingKeyTargetLanguage = "target_language"
+
+// maxTargetLanguageLen bounds a provided target_language value. It mirrors the
+// `max=35` struct tag on UpdateTenantSettingsRequest (the PUT path) and the
+// OpenAPI maxLength, so PUT and PATCH enforce the same limit.
+const maxTargetLanguageLen = 35
 
 // TenantSettingsService reads and writes tenant-scoped enrichment settings. It is
 // the accessor enrichment workflows will use to resolve a tenant's configuration.
@@ -149,12 +156,24 @@ func normalizeTargetLanguage(raw string) (string, error) {
 // normalizeProvidedTargetLanguage validates a non-null target_language supplied in
 // a PATCH. Unlike PUT, an empty value is rejected: under RFC 7396 the way to
 // remove a setting is JSON null, so an explicit "" is a malformed locale rather
-// than a clear.
+// than a clear. It also enforces the same null-byte and length bounds the PUT path
+// gets from struct tags, which the Optional[string] field cannot carry.
 func normalizeProvidedTargetLanguage(raw string) (string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", huberrors.NewValidationError(
 			"target_language",
 			"target_language must be a valid BCP-47 locale (e.g. en-US); send null to remove it")
+	}
+
+	if strings.ContainsRune(raw, '\x00') {
+		return "", huberrors.NewValidationError(
+			"target_language", "target_language must not contain null bytes")
+	}
+
+	if utf8.RuneCountInString(raw) > maxTargetLanguageLen {
+		return "", huberrors.NewValidationError(
+			"target_language",
+			fmt.Sprintf("target_language must be at most %d characters", maxTargetLanguageLen))
 	}
 
 	return normalizeTargetLanguage(raw)
