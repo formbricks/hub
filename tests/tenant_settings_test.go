@@ -107,9 +107,17 @@ func TestTenantSettings_InvalidLocaleRejected(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	resp := settingsRequest(t, server.URL, http.MethodPut, testTenantID("invalid"), `{"target_language":"not a locale"}`, true)
-	require.NoError(t, resp.Body.Close())
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	// Both verbs normalize target_language through the same path, so an invalid
+	// locale must be rejected with 400 on each (PUT full replace and PATCH merge).
+	for _, method := range []string{http.MethodPut, http.MethodPatch} {
+		t.Run(method, func(t *testing.T) {
+			tenantID := testTenantID("invalid-" + strings.ToLower(method))
+
+			resp := settingsRequest(t, server.URL, method, tenantID, `{"target_language":"not a locale"}`, true)
+			require.NoError(t, resp.Body.Close())
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		})
+	}
 }
 
 func TestTenantSettings_PutRejectsOversizedLanguage(t *testing.T) {
