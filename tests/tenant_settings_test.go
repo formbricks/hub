@@ -347,3 +347,28 @@ func TestTenantSettings_PatchBodyTooLargeRejected(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
 }
+
+// TestTenantSettings_PatchCreatesRowForNewTenant exercises the INSERT branch: a
+// PATCH for a tenant with no settings row yet creates it with the patched field.
+func TestTenantSettings_PatchCreatesRowForNewTenant(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	tenantID := testTenantID("patch-create")
+
+	patch := settingsRequest(t, server.URL, http.MethodPatch, tenantID, `{"target_language":"fr-FR"}`, true)
+	require.Equal(t, http.StatusOK, patch.StatusCode)
+
+	var created models.TenantSettings
+	require.NoError(t, decodeData(patch, &created))
+	require.NoError(t, patch.Body.Close())
+	assert.Equal(t, "fr-FR", created.Settings.TargetLanguage)
+
+	get := settingsRequest(t, server.URL, http.MethodGet, tenantID, "", true)
+	require.Equal(t, http.StatusOK, get.StatusCode)
+
+	var got models.TenantSettings
+	require.NoError(t, decodeData(get, &got))
+	require.NoError(t, get.Body.Close())
+	assert.Equal(t, "fr-FR", got.Settings.TargetLanguage, "PATCH on a tenant with no row should create it")
+}
