@@ -352,8 +352,14 @@ func TestTenantSettings_PatchBodyTooLargeRejected(t *testing.T) {
 
 	oversized := `{"target_language":"` + strings.Repeat("a", 9000) + `"}`
 	resp := settingsRequest(t, server.URL, http.MethodPatch, testTenantID("patch-toobig"), oversized, true)
+	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+
+	var problem struct {
+		Code string `json:"code"`
+	}
+	require.NoError(t, decodeData(resp, &problem))
 	require.NoError(t, resp.Body.Close())
-	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+	assert.Equal(t, "content_too_large", problem.Code, "PATCH 413 should carry the payload-too-large code, like PUT")
 }
 
 // TestTenantSettings_PatchCreatesRowForNewTenant exercises the INSERT branch: a
