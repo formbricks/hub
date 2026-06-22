@@ -57,7 +57,8 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id,
+			value_text_translated, translation_lang_key
 	`
 
 	var record models.FeedbackRecord
@@ -74,6 +75,7 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
+		&record.ValueTextTranslated, &record.TranslationLangKey,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -136,7 +138,8 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id,
+			value_text_translated, translation_lang_key
 		FROM feedback_records
 		WHERE id = $1
 	`
@@ -149,6 +152,7 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
+		&record.ValueTextTranslated, &record.TranslationLangKey,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -159,6 +163,36 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	}
 
 	return &record, nil
+}
+
+// SetTranslation stores the translated text and the target locale it was produced in
+// for a feedback record. The write is scoped to the record's tenant via the shared
+// tenant write lock (so it cannot race a tenant data purge) and does NOT publish a
+// domain event: translation is a derived enrichment, not a record edit, and
+// re-publishing would loop the enrichment pipeline. A missing record (deleted or
+// purged between read and write) returns NotFound. translated may be nil.
+func (r *FeedbackRecordsRepository) SetTranslation(
+	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string,
+) error {
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		// Translation rides the feedback record's tenant boundary; resolve and lock
+		// it so the write cannot race a tenant data purge.
+		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		_, err := dbTx.Exec(ctx, `
+			UPDATE feedback_records
+			SET value_text_translated = $2, translation_lang_key = $3, updated_at = NOW()
+			WHERE id = $1`,
+			feedbackRecordID, translated, langKey,
+		)
+		if err != nil {
+			return fmt.Errorf("set feedback record translation: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // buildFilterConditions builds WHERE clause conditions and arguments from filters.
@@ -239,7 +273,8 @@ const feedbackRecordsListSelect = `
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id,
+			value_text_translated, translation_lang_key
 		FROM feedback_records
 	`
 
@@ -398,7 +433,8 @@ func buildUpdateQuery(
 			source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id,
+			value_text_translated, translation_lang_key
 	`, strings.Join(updates, ", "), argCount, argCount+1)
 
 	return query, args, true
@@ -429,6 +465,7 @@ func (r *FeedbackRecordsRepository) Update(
 			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
+			&record.ValueTextTranslated, &record.TranslationLangKey,
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -645,6 +682,7 @@ func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
 			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
 			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
 			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
+			&record.ValueTextTranslated, &record.TranslationLangKey,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)

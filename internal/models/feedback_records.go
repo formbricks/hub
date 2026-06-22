@@ -153,6 +153,10 @@ type FeedbackRecord struct {
 	UserID          *string         `json:"user_id,omitempty"`
 	TenantID        string          `json:"tenant_id"`
 	SubmissionID    string          `json:"submission_id"` // mandatory; never null
+	// Language-enrichment outputs (ENG-1255): server-generated, read-only. NULL until
+	// the record is translated into the tenant's configured target language.
+	ValueTextTranslated *string `json:"value_text_translated,omitempty"`
+	TranslationLangKey  *string `json:"translation_lang_key,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.
