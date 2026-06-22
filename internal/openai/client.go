@@ -24,6 +24,8 @@ var (
 	ErrNoEmbeddingInResponse = errors.New("openai: no embedding in response")
 	// ErrDimensionMismatch is returned when the response embedding length does not match configured dimensions.
 	ErrDimensionMismatch = errors.New("openai: embedding dimension mismatch")
+	// ErrNoCompletionInResponse is returned when a chat completion response contains no usable text.
+	ErrNoCompletionInResponse = errors.New("openai: no completion in response")
 )
 
 // Client calls the OpenAI embeddings API via the official SDK.
@@ -142,4 +144,38 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 // task type; this delegates to CreateEmbedding for compatibility with EmbeddingClient.
 func (c *Client) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
 	return c.CreateEmbedding(ctx, input)
+}
+
+// Translate sends a chat completion with the given system prompt and user text at
+// temperature 0 (deterministic) using the configured model, returning the trimmed
+// assistant text. It is the low-level call behind the translation enrichment; the
+// service layer builds the prompt.
+func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (string, error) {
+	userText = strings.TrimSpace(userText)
+	if userText == "" {
+		return "", ErrEmptyInput
+	}
+
+	resp, err := c.sdk.Chat.Completions.New(ctx, openaisdk.ChatCompletionNewParams{
+		Model:       c.model,
+		Temperature: param.NewOpt(0.0),
+		Messages: []openaisdk.ChatCompletionMessageParamUnion{
+			openaisdk.SystemMessage(systemPrompt),
+			openaisdk.UserMessage(userText),
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("openai chat completion: %w", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		return "", ErrNoCompletionInResponse
+	}
+
+	out := strings.TrimSpace(resp.Choices[0].Message.Content)
+	if out == "" {
+		return "", ErrNoCompletionInResponse
+	}
+
+	return out, nil
 }
