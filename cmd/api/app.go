@@ -277,6 +277,31 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
 
+	// Translation enrichment runs the same worker in this process (combined deployments),
+	// gated on TRANSLATION_PROVIDER+MODEL like embeddings. The enqueue provider is
+	// registered below, after the River client and tenant-settings service exist.
+	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+		translationCfg := service.TranslationClientConfig{
+			Provider:            cfg.Translation.Provider,
+			ProviderAPIKey:      cfg.Translation.ProviderAPIKey,
+			Model:               cfg.Translation.Model,
+			BaseURL:             cfg.Translation.BaseURL,
+			GoogleCloudProject:  cfg.Translation.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Translation.GoogleCloudLocation,
+		}
+
+		translationClient, translationErr := service.NewTranslationClient(context.Background(), translationCfg)
+		if translationErr != nil {
+			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
+
+			return nil, fmt.Errorf("translation config: %w", translationErr)
+		}
+
+		river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient))
+
+		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: 1}
+	}
+
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues:  queues,
 		Workers: riverWorkers,
@@ -324,6 +349,24 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
+
+	// Translation enqueue provider: on a feedback-record create/update it resolves the
+	// tenant's target language (through a short-TTL cache over tenant settings) and
+	// enqueues a translation job. Gated on TRANSLATION_PROVIDER+MODEL.
+	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+		var translationCacheMetrics observability.CacheMetrics
+		if metrics != nil {
+			translationCacheMetrics = metrics.Cache
+		}
+
+		translationCache := service.NewCachedTenantSettings(
+			tenantSettingsService,
+			cfg.TenantSettingsCache.Size, cfg.TenantSettingsCache.TTL.Duration(),
+			translationCacheMetrics,
+		)
+		messageManager.RegisterProvider(service.NewTranslationProvider(
+			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts))
+	}
 
 	taxonomyRepo := repository.NewTaxonomyRepository(db)
 
