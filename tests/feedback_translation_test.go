@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -12,6 +14,8 @@ import (
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
+	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/internal/workers"
 	"github.com/formbricks/hub/pkg/database"
 )
 
@@ -142,4 +146,109 @@ func TestFeedbackRecords_ListTranslationBackfillTargets(t *testing.T) {
 
 	_, noTargetPresent := byID[noTarget.ID]
 	assert.False(t, noTargetPresent, "record whose tenant has no target must be excluded")
+}
+
+type fakeTranslationClient struct {
+	out   string
+	calls int
+}
+
+func (f *fakeTranslationClient) Translate(_ context.Context, _ service.TranslateRequest) (string, error) {
+	f.calls++
+
+	return f.out, nil
+}
+
+func translationWorkerJob(recordID uuid.UUID, targetLang string) *river.Job[service.FeedbackTranslationArgs] {
+	return &river.Job[service.FeedbackTranslationArgs]{
+		JobRow: &rivertype.JobRow{Attempt: 1, MaxAttempts: 3},
+		Args: service.FeedbackTranslationArgs{
+			FeedbackRecordID: recordID,
+			TargetLang:       targetLang,
+			ValueTextHash:    "h",
+		},
+	}
+}
+
+// TestFeedbackTranslation_WorkerPipeline drives FeedbackTranslationWorker end to end
+// against Postgres (with a fake translation client): it translates and persists,
+// copies verbatim when the source already matches the target (no provider call), and
+// clears a stale translation when value_text is empty.
+func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+
+	createText := func(valueText, sourceLang string) *models.FeedbackRecord {
+		req := &models.CreateFeedbackRecordRequest{
+			SourceType:   "formbricks",
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			ValueText:    &valueText,
+			TenantID:     testTenantID("worker-pipeline"),
+			SubmissionID: testTenantID("sub"),
+		}
+		if sourceLang != "" {
+			req.Language = &sourceLang
+		}
+
+		rec, createErr := repo.Create(ctx, req)
+		require.NoError(t, createErr)
+
+		return rec
+	}
+
+	t.Run("translates and persists", func(t *testing.T) {
+		rec := createText("Bonjour le monde", "fr")
+		fake := &fakeTranslationClient{out: "Hello world"}
+		worker := workers.NewFeedbackTranslationWorker(svc, fake)
+
+		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
+
+		got, getErr := repo.GetByID(ctx, rec.ID)
+		require.NoError(t, getErr)
+		require.NotNil(t, got.ValueTextTranslated)
+		assert.Equal(t, "Hello world", *got.ValueTextTranslated)
+		require.NotNil(t, got.TranslationLangKey)
+		assert.Equal(t, "en-US", *got.TranslationLangKey)
+		assert.Equal(t, 1, fake.calls)
+		require.NotNil(t, got.ValueText)
+		assert.Equal(t, "Bonjour le monde", *got.ValueText, "source value_text preserved")
+	})
+
+	t.Run("copies when source matches target without calling the provider", func(t *testing.T) {
+		rec := createText("Hello world", "en-US")
+		fake := &fakeTranslationClient{out: "should-not-be-used"}
+		worker := workers.NewFeedbackTranslationWorker(svc, fake)
+
+		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-GB")))
+
+		got, getErr := repo.GetByID(ctx, rec.ID)
+		require.NoError(t, getErr)
+		require.NotNil(t, got.ValueTextTranslated)
+		assert.Equal(t, "Hello world", *got.ValueTextTranslated, "source copied verbatim")
+		assert.Equal(t, 0, fake.calls, "no provider call when source base+script == target")
+	})
+
+	t.Run("clears a stale translation when value_text is empty", func(t *testing.T) {
+		rec := createText("", "fr")
+		stale := "stale translation"
+		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &stale, "en-US"))
+
+		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"})
+		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
+
+		got, getErr := repo.GetByID(ctx, rec.ID)
+		require.NoError(t, getErr)
+		assert.Nil(t, got.ValueTextTranslated, "stale translation cleared when value_text is empty")
+	})
 }

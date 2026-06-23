@@ -277,9 +277,11 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
 
-	// Translation enrichment runs the same worker in this process (combined deployments),
-	// gated on TRANSLATION_PROVIDER+MODEL like embeddings. The enqueue provider is
-	// registered below, after the River client and tenant-settings service exist.
+	// Register the translation worker and declare its queue so the River client can
+	// enqueue translation jobs (River requires the job kind registered and the queue
+	// declared at insert time); the jobs are processed by hub-worker, not in this
+	// process. Gated on TRANSLATION_PROVIDER+MODEL like embeddings; the enqueue
+	// provider is registered below, after the River client and tenant settings exist.
 	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
 		translationCfg := service.TranslationClientConfig{
 			Provider:            cfg.Translation.Provider,
