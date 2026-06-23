@@ -129,6 +129,21 @@ func TestFeedbackTranslationWorker_ClearsWhenValueTextEmpty(t *testing.T) {
 	}
 }
 
+func TestFeedbackTranslationWorker_UndeterminedSourceTranslates(t *testing.T) {
+	// "und" (undetermined) must not be treated as matching the target — translate, not copy.
+	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "und")}
+	client := &stubTranslationClient{out: "Hello"}
+	worker := NewFeedbackTranslationWorker(svc, client)
+
+	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
+		t.Fatalf("Work() error = %v", err)
+	}
+
+	if len(client.calls) != 1 {
+		t.Fatalf("client called %d times, want 1 (und source must translate, not copy)", len(client.calls))
+	}
+}
+
 func TestFeedbackTranslationWorker_DifferentScriptTranslates(t *testing.T) {
 	// zh-Hans and zh-Hant share a base language but not a script: must translate, not copy.
 	svc := &mockTranslationWorkerService{record: translationRecord("simplified content", "zh-Hans")}

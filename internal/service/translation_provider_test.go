@@ -117,6 +117,36 @@ func TestTranslationProvider_UpdateToEmptyEnqueuesForClear(t *testing.T) {
 	}
 }
 
+func TestTranslationProvider_LanguageChangeEnqueues(t *testing.T) {
+	inserter := &mockTranslationInserter{}
+	provider := newTestTranslationProvider(inserter, "en-US", nil)
+
+	// Correcting the source language (value_text unchanged) must re-enqueue: the
+	// translation depends on the source language.
+	provider.PublishEvent(context.Background(), Event{
+		Type:          datatypes.FeedbackRecordUpdated,
+		Data:          textRecord("Bonjour"),
+		ChangedFields: []string{"language"},
+	})
+
+	if len(inserter.calls) != 1 {
+		t.Fatalf("enqueued %d jobs, want 1 (a language change re-enqueues)", len(inserter.calls))
+	}
+}
+
+func TestTranslationContentHash_VariesBySourceLanguage(t *testing.T) {
+	text := "Bonjour"
+
+	if translationContentHash(&text, "fr") == translationContentHash(&text, "en") {
+		t.Fatal("content hash must differ by source language so a language change re-translates")
+	}
+
+	empty := ""
+	if got := translationContentHash(&empty, "fr"); got != "empty" {
+		t.Fatalf("blank value_text hash = %q, want \"empty\"", got)
+	}
+}
+
 func TestTranslationProvider_Skips(t *testing.T) {
 	tests := []struct {
 		name       string

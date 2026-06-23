@@ -19,7 +19,8 @@ type FeedbackTranslationArgs struct {
 	FeedbackRecordID uuid.UUID `json:"feedback_record_id" river:"unique"`
 	// TargetLang is the tenant's configured target language (BCP-47) at enqueue time.
 	TargetLang string `json:"target_lang" river:"unique"`
-	// ValueTextHash is a hash of the trimmed, NFC-normalized value_text (or "empty"/"backfill").
+	// ValueTextHash is a hash of the inputs that determine the translation — the
+	// normalized value_text and the source language — or "empty" when value_text is blank.
 	ValueTextHash string `json:"value_text_hash" river:"unique"`
 }
 

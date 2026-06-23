@@ -172,6 +172,12 @@ func sameLanguageAndScript(source, target string) bool {
 		return false
 	}
 
+	// "und" (and similar) coerce to a guessed base via likely-subtags; never treat an
+	// undetermined source or target as a match — translate instead of copying.
+	if sourceTag == language.Und || targetTag == language.Und {
+		return false
+	}
+
 	sourceBase, _ := sourceTag.Base()
 	targetBase, _ := targetTag.Base()
 

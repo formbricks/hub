@@ -51,7 +51,9 @@ func NewTranslationProvider(
 // Failures are logged and swallowed so they never block ingestion.
 func (p *TranslationProvider) PublishEvent(ctx context.Context, event Event) {
 	if event.Type == datatypes.FeedbackRecordUpdated {
-		if !contains(event.ChangedFields, "value_text") {
+		// Re-translate when the text or its source language changes: translation
+		// output depends on both (unlike embeddings, which ignore source language).
+		if !contains(event.ChangedFields, "value_text") && !contains(event.ChangedFields, "language") {
 			return
 		}
 	} else if event.Type != datatypes.FeedbackRecordCreated {
@@ -103,10 +105,15 @@ func (p *TranslationProvider) PublishEvent(ctx context.Context, event Event) {
 		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: uniqueByPeriodTranslation},
 	}
 
+	sourceLang := ""
+	if record.Language != nil {
+		sourceLang = *record.Language
+	}
+
 	_, err = p.inserter.Insert(ctx, FeedbackTranslationArgs{
 		FeedbackRecordID: record.ID,
 		TargetLang:       targetLang,
-		ValueTextHash:    translationValueTextHash(record.ValueText),
+		ValueTextHash:    translationContentHash(record.ValueText, sourceLang),
 	}, opts)
 	if err != nil {
 		slog.Error("translation: enqueue failed",
@@ -119,9 +126,11 @@ func (p *TranslationProvider) PublishEvent(ctx context.Context, event Event) {
 		"event_id", event.ID, "feedback_record_id", record.ID, "target_lang", targetLang)
 }
 
-// translationValueTextHash hashes the trimmed, NFC-normalized value_text for dedupe;
-// empty/nil returns "empty".
-func translationValueTextHash(valueText *string) string {
+// translationContentHash hashes the inputs that determine the translation — the
+// trimmed, NFC-normalized value_text and the source language — for dedupe, so a
+// source-language correction re-enqueues. Empty/nil value_text returns "empty" (a
+// clear), independent of source language.
+func translationContentHash(valueText *string, sourceLang string) string {
 	if valueText == nil {
 		return "empty"
 	}
@@ -131,7 +140,7 @@ func translationValueTextHash(valueText *string) string {
 		return "empty"
 	}
 
-	sum := sha256.Sum256([]byte(norm.NFC.String(trimmed)))
+	sum := sha256.Sum256([]byte(norm.NFC.String(trimmed) + "\x00" + strings.TrimSpace(sourceLang)))
 
 	return hex.EncodeToString(sum[:])
 }
