@@ -181,6 +181,13 @@ type CreateFeedbackRecordRequest struct {
 	SubmissionID    string          `json:"submission_id"               validate:"required,no_null_bytes,min=1,max=255"`
 }
 
+// TranslationBackfillTarget is a feedback record that needs (re)translation to its
+// tenant's currently-configured target language, returned by the backfill query.
+type TranslationBackfillTarget struct {
+	FeedbackRecordID uuid.UUID
+	TargetLang       string
+}
+
 // UpdateFeedbackRecordRequest represents the request to update a feedback record
 // Only value fields, metadata, language, and user_id can be updated.
 type UpdateFeedbackRecordRequest struct {

@@ -37,6 +37,7 @@ type FeedbackRecordsRepository interface {
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string) error
+	ListTranslationBackfillTargets(ctx context.Context) ([]models.TranslationBackfillTarget, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	DeleteByUser(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) ([]models.DeletedFeedbackRecordsByTenant, error)
 }
@@ -336,6 +337,44 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model s
 		}, opts)
 		if err != nil {
 			return enqueued, fmt.Errorf("enqueue embedding job for %s: %w", id, err)
+		}
+
+		enqueued++
+	}
+
+	return enqueued, nil
+}
+
+// BackfillTranslations enqueues a translation job for every feedback record that needs
+// (re)translation to its tenant's configured target language (text records with non-empty
+// value_text whose translation is missing or stale). The worker re-resolves the record at
+// run time; the "backfill" hash marks these jobs distinct from event-driven ones. The
+// inserter, queue, and max attempts come from the caller (a one-off command), so the shared
+// service holds no backfill-only dependency. Returns the number of jobs enqueued.
+func (s *FeedbackRecordsService) BackfillTranslations(
+	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int,
+) (int, error) {
+	targets, err := s.repo.ListTranslationBackfillTargets(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list translation backfill targets: %w", err)
+	}
+
+	opts := &river.InsertOpts{
+		Queue:       queueName,
+		MaxAttempts: maxAttempts,
+		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: uniqueByPeriodTranslation},
+	}
+
+	enqueued := 0
+
+	for _, target := range targets {
+		_, err := inserter.Insert(ctx, FeedbackTranslationArgs{
+			FeedbackRecordID: target.FeedbackRecordID,
+			TargetLang:       target.TargetLang,
+			ValueTextHash:    "backfill",
+		}, opts)
+		if err != nil {
+			return enqueued, fmt.Errorf("enqueue translation job for %s: %w", target.FeedbackRecordID, err)
 		}
 
 		enqueued++

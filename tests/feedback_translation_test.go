@@ -76,3 +76,70 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, huberrors.ErrNotFound, "a missing record returns NotFound")
 }
+
+// TestFeedbackRecords_ListTranslationBackfillTargets verifies the backfill query: it
+// returns text records whose tenant has a target language and whose stored
+// translation_lang_key differs from it (never translated, or stale), and excludes
+// records already current and tenants with no target.
+func TestFeedbackRecords_ListTranslationBackfillTargets(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+	settingsRepo := repository.NewTenantSettingsRepository(db)
+
+	tenantWithTarget := testTenantID("backfill-target")
+	tenantNoTarget := testTenantID("backfill-notarget")
+
+	_, err = settingsRepo.Upsert(ctx, tenantWithTarget, models.EnrichmentSettings{TargetLanguage: "de-DE"})
+	require.NoError(t, err)
+
+	makeTextRecord := func(tenantID, valueText string) *models.FeedbackRecord {
+		rec, createErr := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+			SourceType:   "formbricks",
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			ValueText:    &valueText,
+			TenantID:     tenantID,
+			SubmissionID: testTenantID("sub"),
+		})
+		require.NoError(t, createErr)
+
+		return rec
+	}
+
+	untranslated := makeTextRecord(tenantWithTarget, "needs translation")
+	stale := makeTextRecord(tenantWithTarget, "stale translation")
+	current := makeTextRecord(tenantWithTarget, "already current")
+	noTarget := makeTextRecord(tenantNoTarget, "tenant has no target")
+
+	altTranslation := "alt"
+	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &altTranslation, "fr-FR")) // stale: target is de-DE
+
+	currentTranslation := "Hallo"
+	require.NoError(t, repo.SetTranslation(ctx, current.ID, &currentTranslation, "de-DE")) // matches target
+
+	targets, err := repo.ListTranslationBackfillTargets(ctx)
+	require.NoError(t, err)
+
+	byID := make(map[uuid.UUID]string, len(targets))
+	for _, target := range targets {
+		byID[target.FeedbackRecordID] = target.TargetLang
+	}
+
+	assert.Equal(t, "de-DE", byID[untranslated.ID], "untranslated record is a backfill target for de-DE")
+	assert.Equal(t, "de-DE", byID[stale.ID], "stale translation (fr-FR != de-DE) is a backfill target")
+
+	_, currentPresent := byID[current.ID]
+	assert.False(t, currentPresent, "record already translated to the current target must be excluded")
+
+	_, noTargetPresent := byID[noTarget.ID]
+	assert.False(t, noTargetPresent, "record whose tenant has no target must be excluded")
+}

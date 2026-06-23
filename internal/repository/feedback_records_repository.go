@@ -183,6 +183,47 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 	})
 }
 
+// ListTranslationBackfillTargets returns feedback records that need (re)translation:
+// text fields with non-empty value_text whose tenant has a target language configured
+// and whose stored translation_lang_key differs from that target (never translated, or
+// translated to a now-stale target). It joins tenant_settings for the per-tenant target.
+func (r *FeedbackRecordsRepository) ListTranslationBackfillTargets(
+	ctx context.Context,
+) ([]models.TranslationBackfillTarget, error) {
+	const query = `
+		SELECT fr.id, ts.settings->>'target_language'
+		FROM feedback_records fr
+		JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+		WHERE fr.field_type = 'text'
+			AND fr.value_text IS NOT NULL AND btrim(fr.value_text) <> ''
+			AND COALESCE(ts.settings->>'target_language', '') <> ''
+			AND fr.translation_lang_key IS DISTINCT FROM ts.settings->>'target_language'
+		ORDER BY fr.id`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query translation backfill targets: %w", err)
+	}
+	defer rows.Close()
+
+	var targets []models.TranslationBackfillTarget
+
+	for rows.Next() {
+		var target models.TranslationBackfillTarget
+		if err := rows.Scan(&target.FeedbackRecordID, &target.TargetLang); err != nil {
+			return nil, fmt.Errorf("scan translation backfill target: %w", err)
+		}
+
+		targets = append(targets, target)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate translation backfill targets: %w", err)
+	}
+
+	return targets, nil
+}
+
 // buildFilterConditions builds WHERE clause conditions and arguments from filters.
 // Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice.
 func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereClause string, args []any) {
