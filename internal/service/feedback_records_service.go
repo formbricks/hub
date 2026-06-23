@@ -36,6 +36,7 @@ type FeedbackRecordsRepository interface {
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	DeleteByUser(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) ([]models.DeletedFeedbackRecordsByTenant, error)
 }
@@ -121,6 +122,19 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 	}
 
 	return record, nil
+}
+
+// SetTranslation persists the translated value_text and the target locale key for a
+// feedback record. It is the accessor the translation worker uses; the write is
+// tenant-write-locked in the repository and publishes no event (no enrichment loop).
+func (s *FeedbackRecordsService) SetTranslation(
+	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string,
+) error {
+	if err := s.repo.SetTranslation(ctx, feedbackRecordID, translated, langKey); err != nil {
+		return fmt.Errorf("set feedback record translation: %w", err)
+	}
+
+	return nil
 }
 
 // ListFeedbackRecords retrieves a list of feedback records with optional filters.

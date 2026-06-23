@@ -24,6 +24,10 @@ type RiverDeps struct {
 	EmbeddingClient    service.EmbeddingClient
 	EmbeddingDocPrefix string
 	EmbeddingMetrics   observability.EmbeddingMetrics
+
+	// Translation worker (optional; if TranslationClient is nil, translation worker is not registered)
+	TranslationService translationWorkerService
+	TranslationClient  service.TranslationClient
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
@@ -39,10 +43,12 @@ func NewRiverWorkersAndQueues(
 
 	maxDefault := cfg.Webhook.DeliveryMaxConcurrent
 	maxEmbedding := cfg.Embedding.MaxConcurrent
+	maxTranslation := cfg.Translation.MaxConcurrent
 
 	if placeholderMaxWorkers > 0 {
 		maxDefault = placeholderMaxWorkers
 		maxEmbedding = placeholderMaxWorkers
+		maxTranslation = placeholderMaxWorkers
 	}
 
 	queues := map[string]river.QueueConfig{
@@ -54,6 +60,13 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, embeddingWorker)
 
 		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: maxEmbedding}
+	}
+
+	if deps.TranslationClient != nil {
+		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient)
+		river.AddWorker(workers, translationWorker)
+
+		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
 	}
 
 	return workers, queues

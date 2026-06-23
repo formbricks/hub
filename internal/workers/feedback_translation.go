@@ -1,0 +1,168 @@
+package workers
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"golang.org/x/text/language"
+
+	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/service"
+)
+
+// FeedbackTranslationWorker translates a feedback record's value_text into the tenant's
+// target language and stores it, mirroring the embedding worker's error handling.
+type FeedbackTranslationWorker struct {
+	river.WorkerDefaults[service.FeedbackTranslationArgs]
+
+	service translationWorkerService
+	client  service.TranslationClient
+}
+
+// translationWorkerService is the minimal interface the worker needs.
+type translationWorkerService interface {
+	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
+	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string) error
+}
+
+// NewFeedbackTranslationWorker creates a worker that fetches the record, translates its
+// value_text, and stores the result.
+func NewFeedbackTranslationWorker(
+	svc translationWorkerService, client service.TranslationClient,
+) *FeedbackTranslationWorker {
+	return &FeedbackTranslationWorker{service: svc, client: client}
+}
+
+const feedbackTranslationTimeout = 30 * time.Second
+
+// Timeout limits how long a single translation job can run.
+func (w *FeedbackTranslationWorker) Timeout(*river.Job[service.FeedbackTranslationArgs]) time.Duration {
+	return feedbackTranslationTimeout
+}
+
+// Work loads the record, translates value_text into the target language (or copies it
+// when the source already matches), and persists the result.
+func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[service.FeedbackTranslationArgs]) error {
+	args := job.Args
+
+	record, err := w.service.GetFeedbackRecord(ctx, args.FeedbackRecordID)
+	if err != nil {
+		slog.Error("translation: get record failed", "feedback_record_id", args.FeedbackRecordID, "error", err)
+
+		// Not-found means the record was deleted or its tenant purged; nothing to do.
+		if errors.Is(err, huberrors.ErrNotFound) {
+			return nil
+		}
+
+		return fmt.Errorf("get feedback record: %w", err)
+	}
+
+	// Re-validate eligibility at run time: value_text may have changed since enqueue.
+	if record.FieldType != models.FieldTypeText || record.ValueText == nil ||
+		strings.TrimSpace(*record.ValueText) == "" {
+		slog.Info("translation: skipped, no eligible value_text", "feedback_record_id", args.FeedbackRecordID)
+
+		return nil
+	}
+
+	translated, err := w.translate(ctx, record, args.TargetLang)
+	if err != nil {
+		if job.Attempt >= job.MaxAttempts {
+			slog.Error("translation: provider failed (final attempt)",
+				"feedback_record_id", args.FeedbackRecordID, "error", err)
+
+			return fmt.Errorf("translate (final attempt): %w", err)
+		}
+
+		return fmt.Errorf("translate: %w", err)
+	}
+
+	if err := w.service.SetTranslation(ctx, args.FeedbackRecordID, &translated, args.TargetLang); err != nil {
+		return handleSetTranslationError(err, args.FeedbackRecordID, job.Attempt >= job.MaxAttempts)
+	}
+
+	slog.Info("translation: stored",
+		"feedback_record_id", args.FeedbackRecordID, "target_lang", args.TargetLang)
+
+	return nil
+}
+
+// translate returns the translated value_text, short-circuiting (copying the original)
+// when the record's source language already matches the target language.
+func (w *FeedbackTranslationWorker) translate(
+	ctx context.Context, record *models.FeedbackRecord, targetLang string,
+) (string, error) {
+	sourceLang := ""
+	if record.Language != nil {
+		sourceLang = *record.Language
+	}
+
+	if sameBaseLanguage(sourceLang, targetLang) {
+		slog.Info("translation: source already in target language, copying value_text",
+			"feedback_record_id", record.ID)
+
+		return *record.ValueText, nil
+	}
+
+	translated, err := w.client.Translate(ctx, service.TranslateRequest{
+		Text:       *record.ValueText,
+		SourceLang: sourceLang,
+		TargetLang: targetLang,
+	})
+	if err != nil {
+		return "", fmt.Errorf("translation client: %w", err)
+	}
+
+	return translated, nil
+}
+
+// handleSetTranslationError maps a translation write failure to a worker outcome,
+// mirroring the embedding worker: a missing record completes the job (nothing to
+// write), a tenant write conflict retries (the post-purge attempt finds the record
+// gone), and anything else fails the job.
+func handleSetTranslationError(err error, feedbackRecordID uuid.UUID, isLastAttempt bool) error {
+	switch {
+	case errors.Is(err, huberrors.ErrNotFound):
+		slog.Info("translation: record gone before write, skipping", "feedback_record_id", feedbackRecordID)
+
+		return nil
+	case errors.Is(err, huberrors.ErrTenantWriteConflict):
+		slog.Warn("translation: tenant data purge in progress, deferring write",
+			"feedback_record_id", feedbackRecordID, "final_attempt", isLastAttempt)
+
+		return fmt.Errorf("set feedback record translation: %w", err)
+	default:
+		slog.Error("translation: set translation failed",
+			"feedback_record_id", feedbackRecordID, "error", err)
+
+		return fmt.Errorf("set feedback record translation: %w", err)
+	}
+}
+
+// sameBaseLanguage reports whether two BCP-47 tags share a base language (e.g. en-US
+// and en-GB). An empty or unparseable tag is treated as not matching, so an unknown
+// source language always translates.
+func sameBaseLanguage(source, target string) bool {
+	if strings.TrimSpace(source) == "" || strings.TrimSpace(target) == "" {
+		return false
+	}
+
+	sourceTag, errSource := language.Parse(source)
+	targetTag, errTarget := language.Parse(target)
+
+	if errSource != nil || errTarget != nil {
+		return false
+	}
+
+	sourceBase, _ := sourceTag.Base()
+	targetBase, _ := targetTag.Base()
+
+	return sourceBase == targetBase
+}

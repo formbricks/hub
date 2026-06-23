@@ -57,6 +57,12 @@ func (m *mockFeedbackRecordsRepo) Update(
 	return nil, errors.New("not implemented")
 }
 
+func (m *mockFeedbackRecordsRepo) SetTranslation(
+	_ context.Context, _ uuid.UUID, _ *string, _ string,
+) error {
+	return nil
+}
+
 func (m *mockFeedbackRecordsRepo) Delete(_ context.Context, id uuid.UUID) error {
 	m.deletedID = id
 
