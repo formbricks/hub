@@ -183,27 +183,60 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 	})
 }
 
-// ListTranslationBackfillTargets returns feedback records that need (re)translation:
-// text fields with non-empty value_text whose tenant has a target language configured
-// and whose stored translation_lang_key differs from that target (never translated, or
-// translated to a now-stale target). It joins tenant_settings for the per-tenant target.
+// translationBackfillSelectSQL selects feedback records that need (re)translation: text
+// fields with non-empty value_text whose tenant has a target language configured and whose
+// stored translation_lang_key differs from that target (never translated, or translated to
+// a now-stale target). It joins tenant_settings for the per-tenant target. Callers append
+// ordering / keyset / limit clauses.
+const translationBackfillSelectSQL = `
+	SELECT fr.id, ts.settings->>'target_language'
+	FROM feedback_records fr
+	JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+	WHERE fr.field_type = 'text'
+		AND fr.value_text IS NOT NULL AND btrim(fr.value_text) <> ''
+		AND COALESCE(ts.settings->>'target_language', '') <> ''
+		AND fr.translation_lang_key IS DISTINCT FROM ts.settings->>'target_language'`
+
+// ListTranslationBackfillTargets returns every feedback record (across all tenants) that
+// needs (re)translation. Used by the one-off backfill command.
 func (r *FeedbackRecordsRepository) ListTranslationBackfillTargets(
 	ctx context.Context,
 ) ([]models.TranslationBackfillTarget, error) {
-	const query = `
-		SELECT fr.id, ts.settings->>'target_language'
-		FROM feedback_records fr
-		JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
-		WHERE fr.field_type = 'text'
-			AND fr.value_text IS NOT NULL AND btrim(fr.value_text) <> ''
-			AND COALESCE(ts.settings->>'target_language', '') <> ''
-			AND fr.translation_lang_key IS DISTINCT FROM ts.settings->>'target_language'
+	const query = translationBackfillSelectSQL + `
 		ORDER BY fr.id`
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query translation backfill targets: %w", err)
 	}
+
+	return scanTranslationBackfillTargets(rows)
+}
+
+// ListTranslationBackfillTargetsForTenant returns one keyset page (fr.id > afterID, ordered
+// by id, at most limit rows) of a single tenant's records that need (re)translation. The
+// tenant filter + pagination let the settings-triggered backfill worker stream a large
+// tenant without materializing every target at once. Pass uuid.Nil as afterID for the
+// first page (every UUIDv7 id sorts after it).
+func (r *FeedbackRecordsRepository) ListTranslationBackfillTargetsForTenant(
+	ctx context.Context, tenantID string, afterID uuid.UUID, limit int,
+) ([]models.TranslationBackfillTarget, error) {
+	const query = translationBackfillSelectSQL + `
+			AND fr.tenant_id = $1
+			AND fr.id > $2
+		ORDER BY fr.id
+		LIMIT $3`
+
+	rows, err := r.db.Query(ctx, query, tenantID, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query translation backfill targets for tenant: %w", err)
+	}
+
+	return scanTranslationBackfillTargets(rows)
+}
+
+// scanTranslationBackfillTargets collects (id, target_language) rows and closes rows.
+func scanTranslationBackfillTargets(rows pgx.Rows) ([]models.TranslationBackfillTarget, error) {
 	defer rows.Close()
 
 	var targets []models.TranslationBackfillTarget

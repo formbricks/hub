@@ -158,6 +158,8 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.TranslationService = translationRecordsService
 		deps.TranslationClient = translationClient
 		deps.TranslationMetrics = translationMetrics
+		deps.TranslationBackfillService = translationRecordsService
+		deps.TranslationMaxAttempts = cfg.Translation.MaxAttempts
 	}
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)

@@ -29,6 +29,9 @@ type RiverDeps struct {
 	TranslationService translationWorkerService
 	TranslationClient  service.TranslationClient
 	TranslationMetrics observability.TranslationMetrics
+	// Per-tenant translation backfill worker (registered alongside the translation worker).
+	TranslationBackfillService tenantTranslationBackfillService
+	TranslationMaxAttempts     int
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
@@ -68,6 +71,11 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, translationWorker)
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
+
+		backfillWorker := NewTenantTranslationBackfillWorker(deps.TranslationBackfillService, deps.TranslationMaxAttempts)
+		river.AddWorker(workers, backfillWorker)
+
+		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
 	}
 
 	return workers, queues

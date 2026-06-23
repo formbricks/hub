@@ -37,12 +37,21 @@ const maxTargetLanguageLen = 35
 // TenantSettingsService reads and writes tenant-scoped enrichment settings. It is
 // the accessor enrichment workflows will use to resolve a tenant's configuration.
 type TenantSettingsService struct {
-	repo TenantSettingsRepository
+	repo     TenantSettingsRepository
+	listener SettingsChangeListener // optional; set via SetSettingsChangeListener
 }
 
 // NewTenantSettingsService creates a new tenant settings service.
 func NewTenantSettingsService(repo TenantSettingsRepository) *TenantSettingsService {
 	return &TenantSettingsService{repo: repo}
+}
+
+// SetSettingsChangeListener registers a listener notified after a successful settings write,
+// used to trigger enrichment side-effects (e.g. a re-translation backfill on a
+// target_language change). Optional; mirrors the post-construction injection of
+// SetEmbeddingInserter. Nil means no side-effects fire.
+func (s *TenantSettingsService) SetSettingsChangeListener(listener SettingsChangeListener) {
+	s.listener = listener
 }
 
 // GetSettings returns the tenant's enrichment settings. When the tenant has no
@@ -90,6 +99,9 @@ func (s *TenantSettingsService) UpdateSettings(
 		return nil, fmt.Errorf("update tenant settings: %w", err)
 	}
 
+	// PUT is a full replace, so every settable key is (re)written.
+	s.notifyChanged(ctx, normalizedTenantID, []string{settingKeyTargetLanguage})
+
 	return settings, nil
 }
 
@@ -108,11 +120,14 @@ func (s *TenantSettingsService) PatchSettings(
 	}
 
 	var (
-		set        models.EnrichmentSettings
-		removeKeys []string
+		set         models.EnrichmentSettings
+		removeKeys  []string
+		changedKeys []string
 	)
 
 	if req.TargetLanguage.Present {
+		changedKeys = append(changedKeys, settingKeyTargetLanguage)
+
 		if req.TargetLanguage.Value == nil {
 			// Explicit null: remove the setting (RFC 7396).
 			removeKeys = append(removeKeys, settingKeyTargetLanguage)
@@ -131,7 +146,20 @@ func (s *TenantSettingsService) PatchSettings(
 		return nil, fmt.Errorf("patch tenant settings: %w", err)
 	}
 
+	// Fire only for keys the patch actually touched (an omitted member does not trigger).
+	s.notifyChanged(ctx, normalizedTenantID, changedKeys)
+
 	return settings, nil
+}
+
+// notifyChanged tells the registered listener which setting keys a write touched. No-op when
+// no listener is set or nothing changed.
+func (s *TenantSettingsService) notifyChanged(ctx context.Context, tenantID string, changedKeys []string) {
+	if s.listener == nil || len(changedKeys) == 0 {
+		return
+	}
+
+	s.listener.OnSettingsChanged(ctx, tenantID, changedKeys)
 }
 
 // normalizeTargetLanguage trims and canonicalizes a BCP-47 locale (e.g. "en-us"

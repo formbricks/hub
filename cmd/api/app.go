@@ -304,6 +304,13 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, translationMetrics))
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: 1}
+
+		// Per-tenant re-translation backfill, enqueued by the settings-change listener
+		// below. Registered here only so the River client can validate the kind and queue
+		// at insert time; the fan-out is processed by hub-worker.
+		river.AddWorker(riverWorkers, workers.NewTenantTranslationBackfillWorker(feedbackRecordsService, cfg.Translation.MaxAttempts))
+
+		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
@@ -370,6 +377,11 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		)
 		messageManager.RegisterProvider(service.NewTranslationProvider(
 			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts, translationMetrics))
+
+		// On a target_language change, enqueue a per-tenant re-translation backfill so
+		// existing records pick up the new target (not only newly ingested ones).
+		tenantSettingsService.SetSettingsChangeListener(service.NewTranslationSettingsListener(
+			riverClient, service.TranslationBackfillsQueueName, cfg.Translation.MaxAttempts))
 	}
 
 	taxonomyRepo := repository.NewTaxonomyRepository(db)

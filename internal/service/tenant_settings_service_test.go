@@ -78,6 +78,117 @@ func (m *mockTenantSettingsRepo) Patch(
 	return &models.TenantSettings{TenantID: tenantID, Settings: settings}, nil
 }
 
+type mockSettingsChangeListener struct {
+	tenantIDs []string
+	calls     [][]string // changedKeys per call
+}
+
+func (m *mockSettingsChangeListener) OnSettingsChanged(_ context.Context, tenantID string, changedKeys []string) {
+	m.tenantIDs = append(m.tenantIDs, tenantID)
+	m.calls = append(m.calls, changedKeys)
+}
+
+func assertListenerFiredOnce(t *testing.T, listener *mockSettingsChangeListener, wantTenant, wantKey string) {
+	t.Helper()
+
+	if len(listener.calls) != 1 {
+		t.Fatalf("listener fired %d times, want 1", len(listener.calls))
+	}
+
+	if listener.tenantIDs[0] != wantTenant {
+		t.Fatalf("listener tenant = %q, want %q", listener.tenantIDs[0], wantTenant)
+	}
+
+	if len(listener.calls[0]) != 1 || listener.calls[0][0] != wantKey {
+		t.Fatalf("listener changedKeys = %v, want [%s]", listener.calls[0], wantKey)
+	}
+}
+
+func TestTenantSettingsService_NotifiesListenerOnChange(t *testing.T) {
+	t.Run("PUT fires target_language", func(t *testing.T) {
+		repo := &mockTenantSettingsRepo{}
+		listener := &mockSettingsChangeListener{}
+		svc := NewTenantSettingsService(repo)
+		svc.SetSettingsChangeListener(listener)
+
+		_, err := svc.UpdateSettings(context.Background(), "org-1", &models.UpdateTenantSettingsRequest{TargetLanguage: "de-DE"})
+		if err != nil {
+			t.Fatalf("UpdateSettings() error = %v", err)
+		}
+
+		assertListenerFiredOnce(t, listener, "org-1", "target_language")
+	})
+
+	t.Run("PATCH with a value fires", func(t *testing.T) {
+		repo := &mockTenantSettingsRepo{}
+		listener := &mockSettingsChangeListener{}
+		svc := NewTenantSettingsService(repo)
+		svc.SetSettingsChangeListener(listener)
+
+		if _, err := svc.PatchSettings(context.Background(), "org-1", patchValue("fr-FR")); err != nil {
+			t.Fatalf("PatchSettings() error = %v", err)
+		}
+
+		assertListenerFiredOnce(t, listener, "org-1", "target_language")
+	})
+
+	t.Run("PATCH null (removal) fires", func(t *testing.T) {
+		repo := &mockTenantSettingsRepo{}
+		listener := &mockSettingsChangeListener{}
+		svc := NewTenantSettingsService(repo)
+		svc.SetSettingsChangeListener(listener)
+
+		req := &models.PatchTenantSettingsRequest{TargetLanguage: models.Optional[string]{Present: true, Value: nil}}
+		if _, err := svc.PatchSettings(context.Background(), "org-1", req); err != nil {
+			t.Fatalf("PatchSettings() error = %v", err)
+		}
+
+		assertListenerFiredOnce(t, listener, "org-1", "target_language")
+	})
+
+	t.Run("PATCH omitted does not fire", func(t *testing.T) {
+		repo := &mockTenantSettingsRepo{}
+		listener := &mockSettingsChangeListener{}
+		svc := NewTenantSettingsService(repo)
+		svc.SetSettingsChangeListener(listener)
+
+		if _, err := svc.PatchSettings(context.Background(), "org-1", &models.PatchTenantSettingsRequest{}); err != nil {
+			t.Fatalf("PatchSettings() error = %v", err)
+		}
+
+		if len(listener.calls) != 0 {
+			t.Fatalf("listener fired %d times for a no-op PATCH, want 0", len(listener.calls))
+		}
+	})
+
+	t.Run("does not fire when the write fails", func(t *testing.T) {
+		repo := &mockTenantSettingsRepo{upsertErr: errors.New("boom")}
+		listener := &mockSettingsChangeListener{}
+		svc := NewTenantSettingsService(repo)
+		svc.SetSettingsChangeListener(listener)
+
+		if _, err := svc.UpdateSettings(
+			context.Background(), "org-1", &models.UpdateTenantSettingsRequest{TargetLanguage: "de-DE"},
+		); err == nil {
+			t.Fatal("UpdateSettings() = nil error, want repo error")
+		}
+
+		if len(listener.calls) != 0 {
+			t.Fatalf("listener fired %d times despite a failed write, want 0", len(listener.calls))
+		}
+	})
+
+	t.Run("no listener configured is safe", func(t *testing.T) {
+		svc := NewTenantSettingsService(&mockTenantSettingsRepo{})
+
+		if _, err := svc.UpdateSettings(
+			context.Background(), "org-1", &models.UpdateTenantSettingsRequest{TargetLanguage: "de-DE"},
+		); err != nil {
+			t.Fatalf("UpdateSettings() error = %v", err)
+		}
+	})
+}
+
 func TestTenantSettingsService_GetSettings_NoRowReturnsDefaults(t *testing.T) {
 	repo := &mockTenantSettingsRepo{getResult: nil}
 	svc := NewTenantSettingsService(repo)
