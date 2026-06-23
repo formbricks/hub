@@ -21,7 +21,7 @@ import (
 // when the event is FeedbackRecordCreated (with non-empty value_text) or FeedbackRecordUpdated
 // (with value_text in ChangedFields, including when value_text is now empty so the worker can clear).
 type EmbeddingProvider struct {
-	inserter    FeedbackEmbeddingInserter
+	inserter    RiverJobInserter
 	apiKey      string
 	model       string
 	queueName   string
@@ -35,7 +35,7 @@ type EmbeddingProvider struct {
 // docPrefix is the prefix for document text (from EmbeddingPrefixForProvider); use "" for OpenAI/Google.
 // metrics may be nil when metrics are disabled.
 func NewEmbeddingProvider(
-	inserter FeedbackEmbeddingInserter,
+	inserter RiverJobInserter,
 	apiKey string,
 	model string,
 	queueName string,

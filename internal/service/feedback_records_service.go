@@ -53,7 +53,7 @@ type FeedbackRecordsService struct {
 	embeddingsRepo       EmbeddingsRepository
 	embeddingModel       string
 	publisher            MessagePublisher
-	embeddingInserter    FeedbackEmbeddingInserter
+	embeddingInserter    RiverJobInserter
 	embeddingQueueName   string
 	embeddingMaxAttempts int
 }
@@ -68,7 +68,7 @@ func NewFeedbackRecordsService(
 	embeddingsRepo EmbeddingsRepository,
 	embeddingModel string,
 	publisher MessagePublisher,
-	embeddingInserter FeedbackEmbeddingInserter,
+	embeddingInserter RiverJobInserter,
 	embeddingQueueName string,
 	embeddingMaxAttempts int,
 ) *FeedbackRecordsService {
@@ -85,7 +85,7 @@ func NewFeedbackRecordsService(
 
 // SetEmbeddingInserter sets the River inserter for embedding jobs (e.g. after River client is created).
 // This allows a single service instance to be used by both handlers and the embedding worker.
-func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter FeedbackEmbeddingInserter) {
+func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter RiverJobInserter) {
 	s.embeddingInserter = inserter
 }
 
