@@ -6,12 +6,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/pkg/embeddings"
 )
@@ -166,7 +170,14 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("openai chat completion: %w", err)
+		wrapped := fmt.Errorf("openai chat completion: %w", err)
+
+		var apiErr *openaisdk.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
+			return "", huberrors.NewRateLimitError(openaiRetryAfter(apiErr), wrapped)
+		}
+
+		return "", wrapped
 	}
 
 	if len(resp.Choices) == 0 {
@@ -179,4 +190,19 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 	}
 
 	return out, nil
+}
+
+// openaiRetryAfter reads the Retry-After header (delta-seconds) from a 429 response, or 0
+// when absent or not an integer-seconds value.
+func openaiRetryAfter(apiErr *openaisdk.Error) time.Duration {
+	if apiErr == nil || apiErr.Response == nil {
+		return 0
+	}
+
+	secs, err := strconv.Atoi(apiErr.Response.Header.Get("Retry-After"))
+	if err != nil || secs < 0 {
+		return 0
+	}
+
+	return time.Duration(secs) * time.Second
 }

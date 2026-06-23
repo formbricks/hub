@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
+	"time"
 
 	"google.golang.org/genai"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/pkg/embeddings"
 )
@@ -146,7 +149,14 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
 	})
 	if err != nil {
-		return "", fmt.Errorf("gemini generate content: %w", err)
+		wrapped := fmt.Errorf("gemini generate content: %w", err)
+
+		var apiErr genai.APIError
+		if errors.As(err, &apiErr) && (apiErr.Code == http.StatusTooManyRequests || apiErr.Status == "RESOURCE_EXHAUSTED") {
+			return "", huberrors.NewRateLimitError(genaiRetryAfter(apiErr), wrapped)
+		}
+
+		return "", wrapped
 	}
 
 	out := strings.TrimSpace(resp.Text())
@@ -155,6 +165,25 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 	}
 
 	return out, nil
+}
+
+// genaiRetryAfter extracts the RetryInfo retryDelay from a RESOURCE_EXHAUSTED error's
+// details, or 0 when absent or unparseable.
+func genaiRetryAfter(apiErr genai.APIError) time.Duration {
+	for _, detail := range apiErr.Details {
+		typeName, _ := detail["@type"].(string)
+		if !strings.Contains(typeName, "RetryInfo") {
+			continue
+		}
+
+		if delay, ok := detail["retryDelay"].(string); ok {
+			if dur, parseErr := time.ParseDuration(delay); parseErr == nil {
+				return dur
+			}
+		}
+	}
+
+	return 0
 }
 
 // embedWithTaskType calls the Gemini API with the given task type (e.g. RETRIEVAL_DOCUMENT, RETRIEVAL_QUERY).

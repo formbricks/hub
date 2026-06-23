@@ -18,7 +18,10 @@ func TestTranslationAllowedReasonsAndStatuses(t *testing.T) {
 		assert.Equal(t, reason, NormalizeReason(reason, AllowedTranslationProviderReason))
 	}
 
-	for _, reason := range []string{"translation_api_failed", "get_record_failed", "update_failed", "tenant_write_conflict"} {
+	workerReasons := []string{
+		"translation_api_failed", "get_record_failed", "update_failed", "tenant_write_conflict", "rate_limited",
+	}
+	for _, reason := range workerReasons {
 		assert.True(t, AllowedTranslationWorkerReason(reason), reason)
 		assert.Equal(t, reason, NormalizeReason(reason, AllowedTranslationWorkerReason))
 	}

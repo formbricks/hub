@@ -129,6 +129,7 @@ var allowedTranslationWorkerReasons = map[string]bool{
 	"get_record_failed":      true,
 	"update_failed":          true,
 	"tenant_write_conflict":  true,
+	"rate_limited":           true,
 }
 
 // AllowedTranslationProviderReason returns true if reason is allowed for translation provider errors.

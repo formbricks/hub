@@ -391,3 +391,112 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 		}
 	})
 }
+
+func TestFeedbackTranslationWorker_RateLimitSnoozes(t *testing.T) {
+	metrics := newCountingTranslationMetrics()
+	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "fr")}
+	client := &stubTranslationClient{err: huberrors.NewRateLimitError(45*time.Second, errors.New("429"))}
+	worker := NewFeedbackTranslationWorker(svc, client, metrics)
+
+	err := worker.Work(context.Background(), translationJob("en-US", 1))
+
+	var snooze *river.JobSnoozeError
+	if !errors.As(err, &snooze) {
+		t.Fatalf("Work() error = %v, want a river snooze error", err)
+	}
+
+	if snooze.Duration != 45*time.Second {
+		t.Fatalf("snooze duration = %v, want 45s (provider retry-after)", snooze.Duration)
+	}
+
+	if len(svc.setCalls) != 0 {
+		t.Fatalf("set called %d times on rate limit, want 0 (work deferred, not written)", len(svc.setCalls))
+	}
+
+	// A snooze defers, it does not fail: record the rate_limited worker error and a retry
+	// outcome, never failed_final (which would trip failure alerts).
+	if metrics.workerErr["rate_limited"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("rate_limited=%d retry=%d failed_final=%d, want 1/1/0",
+			metrics.workerErr["rate_limited"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+	}
+}
+
+func TestFeedbackTranslationWorker_RateLimitSnoozesOnLastAttempt(t *testing.T) {
+	// A rate limit must snooze even when River's retry attempts are exhausted: snoozing does
+	// not consume an attempt, so a 429 defers work instead of being dropped as failed_final.
+	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "fr")}
+	client := &stubTranslationClient{err: huberrors.NewRateLimitError(0, errors.New("429"))}
+	worker := NewFeedbackTranslationWorker(svc, client, nil)
+
+	err := worker.Work(context.Background(), translationJob("en-US", 3))
+
+	var snooze *river.JobSnoozeError
+	if !errors.As(err, &snooze) {
+		t.Fatalf("Work() error = %v, want a river snooze error on the last attempt", err)
+	}
+
+	if snooze.Duration != defaultRateLimitSnooze {
+		t.Fatalf("snooze duration = %v, want the default %v (no provider hint)", snooze.Duration, defaultRateLimitSnooze)
+	}
+}
+
+func TestRateLimitSnooze(t *testing.T) {
+	worker := NewFeedbackTranslationWorker(&mockTranslationWorkerService{}, &stubTranslationClient{}, nil)
+
+	tests := []struct {
+		name      string
+		err       error
+		createdAt time.Time
+		wantDelay time.Duration
+		wantOK    bool
+	}{
+		{name: "not a rate-limit error", err: errors.New("boom"), wantOK: false},
+		{
+			name:      "provider hint honored",
+			err:       huberrors.NewRateLimitError(45*time.Second, nil),
+			wantDelay: 45 * time.Second,
+			wantOK:    true,
+		},
+		{
+			name:      "no hint uses default",
+			err:       huberrors.NewRateLimitError(0, nil),
+			wantDelay: defaultRateLimitSnooze,
+			wantOK:    true,
+		},
+		{
+			name:      "tiny hint clamped up to min",
+			err:       huberrors.NewRateLimitError(time.Second, nil),
+			wantDelay: minRateLimitSnooze,
+			wantOK:    true,
+		},
+		{
+			name:      "huge hint clamped down to max",
+			err:       huberrors.NewRateLimitError(time.Hour, nil),
+			wantDelay: maxRateLimitSnooze,
+			wantOK:    true,
+		},
+		{
+			name:      "past the snooze window fails normally",
+			err:       huberrors.NewRateLimitError(30*time.Second, nil),
+			createdAt: time.Now().Add(-2 * maxRateLimitSnoozeWindow),
+			wantOK:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := &river.Job[service.FeedbackTranslationArgs]{
+				JobRow: &rivertype.JobRow{Attempt: 1, MaxAttempts: 3, CreatedAt: tt.createdAt},
+			}
+
+			delay, ok := worker.rateLimitSnooze(tt.err, job)
+			if ok != tt.wantOK {
+				t.Fatalf("rateLimitSnooze ok = %v, want %v", ok, tt.wantOK)
+			}
+
+			if tt.wantOK && delay != tt.wantDelay {
+				t.Fatalf("rateLimitSnooze delay = %v, want %v", delay, tt.wantDelay)
+			}
+		})
+	}
+}
