@@ -97,6 +97,26 @@ func TestTranslationProvider_UpdateWithValueTextChangeEnqueues(t *testing.T) {
 	}
 }
 
+func TestTranslationProvider_UpdateToEmptyEnqueuesForClear(t *testing.T) {
+	inserter := &mockTranslationInserter{}
+	provider := newTestTranslationProvider(inserter, "de-DE", nil)
+
+	// value_text cleared by an edit: enqueue so the worker can clear a stale translation.
+	provider.PublishEvent(context.Background(), Event{
+		Type:          datatypes.FeedbackRecordUpdated,
+		Data:          textRecord(""),
+		ChangedFields: []string{"value_text"},
+	})
+
+	if len(inserter.calls) != 1 {
+		t.Fatalf("enqueued %d jobs, want 1 (update-to-empty enqueues a clear)", len(inserter.calls))
+	}
+
+	if inserter.calls[0].ValueTextHash != "empty" {
+		t.Fatalf("ValueTextHash = %q, want \"empty\"", inserter.calls[0].ValueTextHash)
+	}
+}
+
 func TestTranslationProvider_Skips(t *testing.T) {
 	tests := []struct {
 		name       string

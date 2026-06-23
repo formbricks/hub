@@ -111,7 +111,7 @@ func TestFeedbackTranslationWorker_SourceEqualsTargetCopies(t *testing.T) {
 	}
 }
 
-func TestFeedbackTranslationWorker_SkipsWhenValueTextEmpty(t *testing.T) {
+func TestFeedbackTranslationWorker_ClearsWhenValueTextEmpty(t *testing.T) {
 	svc := &mockTranslationWorkerService{record: translationRecord("   ", "fr")}
 	client := &stubTranslationClient{out: "x"}
 	worker := NewFeedbackTranslationWorker(svc, client)
@@ -120,8 +120,27 @@ func TestFeedbackTranslationWorker_SkipsWhenValueTextEmpty(t *testing.T) {
 		t.Fatalf("Work() error = %v", err)
 	}
 
-	if len(client.calls) != 0 || len(svc.setCalls) != 0 {
-		t.Fatal("expected no translate/set for empty value_text")
+	if len(client.calls) != 0 {
+		t.Fatalf("client called %d times, want 0 (no translation of empty value_text)", len(client.calls))
+	}
+
+	if len(svc.setCalls) != 1 || svc.setCalls[0].translated != nil {
+		t.Fatalf("set calls = %+v, want one clear (nil translated)", svc.setCalls)
+	}
+}
+
+func TestFeedbackTranslationWorker_DifferentScriptTranslates(t *testing.T) {
+	// zh-Hans and zh-Hant share a base language but not a script: must translate, not copy.
+	svc := &mockTranslationWorkerService{record: translationRecord("simplified content", "zh-Hans")}
+	client := &stubTranslationClient{out: "translated"}
+	worker := NewFeedbackTranslationWorker(svc, client)
+
+	if err := worker.Work(context.Background(), translationJob("zh-Hant", 1)); err != nil {
+		t.Fatalf("Work() error = %v", err)
+	}
+
+	if len(client.calls) != 1 {
+		t.Fatalf("client called %d times, want 1 (zh-Hans != zh-Hant must translate)", len(client.calls))
 	}
 }
 

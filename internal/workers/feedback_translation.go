@@ -64,10 +64,20 @@ func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[ser
 		return fmt.Errorf("get feedback record: %w", err)
 	}
 
-	// Re-validate eligibility at run time: value_text may have changed since enqueue.
-	if record.FieldType != models.FieldTypeText || record.ValueText == nil ||
-		strings.TrimSpace(*record.ValueText) == "" {
-		slog.Info("translation: skipped, no eligible value_text", "feedback_record_id", args.FeedbackRecordID)
+	if record.FieldType != models.FieldTypeText {
+		slog.Info("translation: skipped, not a text field", "feedback_record_id", args.FeedbackRecordID)
+
+		return nil
+	}
+
+	// value_text became empty since enqueue (e.g. an edit cleared it): clear any stale
+	// translation rather than translate empty text (mirrors the embedding worker).
+	if record.ValueText == nil || strings.TrimSpace(*record.ValueText) == "" {
+		if err := w.service.SetTranslation(ctx, args.FeedbackRecordID, nil, ""); err != nil {
+			return handleSetTranslationError(err, args.FeedbackRecordID, job.Attempt >= job.MaxAttempts)
+		}
+
+		slog.Info("translation: cleared (empty value_text)", "feedback_record_id", args.FeedbackRecordID)
 
 		return nil
 	}
@@ -104,7 +114,7 @@ func (w *FeedbackTranslationWorker) translate(
 		sourceLang = *record.Language
 	}
 
-	if sameBaseLanguage(sourceLang, targetLang) {
+	if sameLanguageAndScript(sourceLang, targetLang) {
 		slog.Info("translation: source already in target language, copying value_text",
 			"feedback_record_id", record.ID)
 
@@ -146,10 +156,11 @@ func handleSetTranslationError(err error, feedbackRecordID uuid.UUID, isLastAtte
 	}
 }
 
-// sameBaseLanguage reports whether two BCP-47 tags share a base language (e.g. en-US
-// and en-GB). An empty or unparseable tag is treated as not matching, so an unknown
-// source language always translates.
-func sameBaseLanguage(source, target string) bool {
+// sameLanguageAndScript reports whether two BCP-47 tags share both base language and
+// script, so en-US and en-GB match (copying the source is safe) but zh-Hans and
+// zh-Hant do not (mutually unintelligible scripts must be translated). An empty or
+// unparseable tag is treated as not matching, so an unknown source always translates.
+func sameLanguageAndScript(source, target string) bool {
 	if strings.TrimSpace(source) == "" || strings.TrimSpace(target) == "" {
 		return false
 	}
@@ -164,5 +175,12 @@ func sameBaseLanguage(source, target string) bool {
 	sourceBase, _ := sourceTag.Base()
 	targetBase, _ := targetTag.Base()
 
-	return sourceBase == targetBase
+	if sourceBase != targetBase {
+		return false
+	}
+
+	sourceScript, _ := sourceTag.Script()
+	targetScript, _ := targetTag.Script()
+
+	return sourceScript == targetScript
 }

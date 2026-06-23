@@ -1,4 +1,5 @@
-// Package openai provides a thin wrapper around the official OpenAI Go SDK for embeddings.
+// Package openai provides a thin wrapper around the official OpenAI Go SDK for
+// embeddings and chat completions (used for translation).
 package openai
 
 import (

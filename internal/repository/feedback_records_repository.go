@@ -162,11 +162,18 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 			return err
 		}
 
+		// Clearing (translated == nil) nulls both columns: a lang key has no meaning
+		// without a translation.
+		var langKeyArg any
+		if translated != nil {
+			langKeyArg = langKey
+		}
+
 		_, err := dbTx.Exec(ctx, `
 			UPDATE feedback_records
 			SET value_text_translated = $2, translation_lang_key = $3, updated_at = NOW()
 			WHERE id = $1`,
-			feedbackRecordID, translated, langKey,
+			feedbackRecordID, translated, langKeyArg,
 		)
 		if err != nil {
 			return fmt.Errorf("set feedback record translation: %w", err)

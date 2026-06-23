@@ -65,10 +65,19 @@ func (p *TranslationProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
-	// Only open-text answers are translated.
-	if record.FieldType != models.FieldTypeText || record.ValueText == nil ||
-		strings.TrimSpace(*record.ValueText) == "" {
-		slog.Debug("translation: skip, not an eligible non-empty text record", "feedback_record_id", record.ID)
+	// Only text fields are translated.
+	if record.FieldType != models.FieldTypeText {
+		slog.Debug("translation: skip, not a text field", "feedback_record_id", record.ID)
+
+		return
+	}
+
+	// On create, only enqueue when there is text to translate. On update, enqueue even
+	// when value_text is now empty so the worker can clear a stale translation
+	// (mirrors the embedding provider).
+	if event.Type == datatypes.FeedbackRecordCreated &&
+		(record.ValueText == nil || strings.TrimSpace(*record.ValueText) == "") {
+		slog.Debug("translation: skip, no value_text on create", "feedback_record_id", record.ID)
 
 		return
 	}
