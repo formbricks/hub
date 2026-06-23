@@ -68,13 +68,15 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	webhooksRepo := repository.NewWebhooksRepository(db)
 
 	var (
-		webhookMetrics   observability.WebhookMetrics
-		embeddingMetrics observability.EmbeddingMetrics
+		webhookMetrics     observability.WebhookMetrics
+		embeddingMetrics   observability.EmbeddingMetrics
+		translationMetrics observability.TranslationMetrics
 	)
 
 	if metrics != nil {
 		webhookMetrics = metrics.Webhooks
 		embeddingMetrics = metrics.Embeddings
+		translationMetrics = metrics.Translation
 	}
 
 	webhookSender := service.NewWebhookSenderImpl(
@@ -155,6 +157,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 		deps.TranslationService = translationRecordsService
 		deps.TranslationClient = translationClient
+		deps.TranslationMetrics = translationMetrics
 	}
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)

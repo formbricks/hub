@@ -174,14 +174,16 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	var (
-		eventMetrics     observability.EventMetrics
-		webhookMetrics   observability.WebhookMetrics
-		embeddingMetrics observability.EmbeddingMetrics
+		eventMetrics       observability.EventMetrics
+		webhookMetrics     observability.WebhookMetrics
+		embeddingMetrics   observability.EmbeddingMetrics
+		translationMetrics observability.TranslationMetrics
 	)
 	if metrics != nil {
 		eventMetrics = metrics.Events
 		webhookMetrics = metrics.Webhooks
 		embeddingMetrics = metrics.Embeddings
+		translationMetrics = metrics.Translation
 	}
 
 	var tracerProvider *sdktrace.TracerProvider
@@ -299,7 +301,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			return nil, fmt.Errorf("translation config: %w", translationErr)
 		}
 
-		river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient))
+		river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, translationMetrics))
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
@@ -367,7 +369,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			translationCacheMetrics,
 		)
 		messageManager.RegisterProvider(service.NewTranslationProvider(
-			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts))
+			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts, translationMetrics))
 	}
 
 	taxonomyRepo := repository.NewTaxonomyRepository(db)

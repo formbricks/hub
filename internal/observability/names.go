@@ -25,6 +25,13 @@ const (
 	MetricNameEmbeddingWorkerErrors   = "hub_embedding_worker_errors_total"
 	MetricNameEmbeddingDuration       = "hub_embedding_duration_seconds"
 
+	// MetricNameTranslationJobsEnqueued and related translation pipeline metrics.
+	MetricNameTranslationJobsEnqueued   = "hub_translation_jobs_enqueued_total"
+	MetricNameTranslationProviderErrors = "hub_translation_provider_errors_total"
+	MetricNameTranslationOutcomes       = "hub_translation_outcomes_total"
+	MetricNameTranslationWorkerErrors   = "hub_translation_worker_errors_total"
+	MetricNameTranslationDuration       = "hub_translation_duration_seconds"
+
 	MetricNameCacheHits   = "hub_cache_hits_total"
 	MetricNameCacheMisses = "hub_cache_misses_total"
 )
@@ -101,6 +108,43 @@ func AllowedEmbeddingOutcomeStatus(status string) bool {
 
 // AllowedEmbeddingWorkerReason returns true if reason is allowed for embedding worker errors.
 func AllowedEmbeddingWorkerReason(reason string) bool { return allowedEmbeddingWorkerReasons[reason] }
+
+// allowedTranslationProviderReasons for hub_translation_provider_errors_total.
+var allowedTranslationProviderReasons = map[string]bool{
+	"settings_read_failed": true,
+	"enqueue_failed":       true,
+}
+
+// allowedTranslationOutcomeStatuses for hub_translation_outcomes_total and hub_translation_duration_seconds.
+var allowedTranslationOutcomeStatuses = map[string]bool{
+	"success":      true,
+	"retry":        true,
+	"failed_final": true,
+	"skipped":      true,
+}
+
+// allowedTranslationWorkerReasons for hub_translation_worker_errors_total.
+var allowedTranslationWorkerReasons = map[string]bool{
+	"translation_api_failed": true,
+	"get_record_failed":      true,
+	"update_failed":          true,
+	"tenant_write_conflict":  true,
+}
+
+// AllowedTranslationProviderReason returns true if reason is allowed for translation provider errors.
+func AllowedTranslationProviderReason(reason string) bool {
+	return allowedTranslationProviderReasons[reason]
+}
+
+// AllowedTranslationOutcomeStatus returns true if status is allowed for translation outcomes.
+func AllowedTranslationOutcomeStatus(status string) bool {
+	return allowedTranslationOutcomeStatuses[status]
+}
+
+// AllowedTranslationWorkerReason returns true if reason is allowed for translation worker errors.
+func AllowedTranslationWorkerReason(reason string) bool {
+	return allowedTranslationWorkerReasons[reason]
+}
 
 // AllowedProviderReason returns true if reason is an allowed provider error reason.
 func AllowedProviderReason(reason string) bool { return allowedProviderReasons[reason] }

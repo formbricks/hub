@@ -14,6 +14,7 @@ import (
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
 
@@ -24,6 +25,7 @@ type FeedbackTranslationWorker struct {
 
 	service translationWorkerService
 	client  service.TranslationClient
+	metrics observability.TranslationMetrics
 }
 
 // translationWorkerService is the minimal interface the worker needs.
@@ -33,11 +35,11 @@ type translationWorkerService interface {
 }
 
 // NewFeedbackTranslationWorker creates a worker that fetches the record, translates its
-// value_text, and stores the result.
+// value_text, and stores the result. metrics may be nil when metrics are disabled.
 func NewFeedbackTranslationWorker(
-	svc translationWorkerService, client service.TranslationClient,
+	svc translationWorkerService, client service.TranslationClient, metrics observability.TranslationMetrics,
 ) *FeedbackTranslationWorker {
-	return &FeedbackTranslationWorker{service: svc, client: client}
+	return &FeedbackTranslationWorker{service: svc, client: client, metrics: metrics}
 }
 
 const feedbackTranslationTimeout = 30 * time.Second
@@ -51,9 +53,16 @@ func (w *FeedbackTranslationWorker) Timeout(*river.Job[service.FeedbackTranslati
 // when the source already matches), and persists the result.
 func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[service.FeedbackTranslationArgs]) error {
 	args := job.Args
+	start := time.Now()
 
 	record, err := w.service.GetFeedbackRecord(ctx, args.FeedbackRecordID)
 	if err != nil {
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "get_record_failed")
+			w.metrics.RecordTranslationOutcome(ctx, "failed_final")
+			w.metrics.RecordTranslationDuration(ctx, time.Since(start), "failed_final")
+		}
+
 		slog.Error("translation: get record failed", "feedback_record_id", args.FeedbackRecordID, "error", err)
 
 		// Not-found means the record was deleted or its tenant purged; nothing to do.
@@ -65,6 +74,11 @@ func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[ser
 	}
 
 	if record.FieldType != models.FieldTypeText {
+		if w.metrics != nil {
+			w.metrics.RecordTranslationOutcome(ctx, "skipped")
+			w.metrics.RecordTranslationDuration(ctx, time.Since(start), "skipped")
+		}
+
 		slog.Info("translation: skipped, not a text field", "feedback_record_id", args.FeedbackRecordID)
 
 		return nil
@@ -74,7 +88,12 @@ func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[ser
 	// translation rather than translate empty text (mirrors the embedding worker).
 	if record.ValueText == nil || strings.TrimSpace(*record.ValueText) == "" {
 		if err := w.service.SetTranslation(ctx, args.FeedbackRecordID, nil, ""); err != nil {
-			return handleSetTranslationError(err, args.FeedbackRecordID, job.Attempt >= job.MaxAttempts)
+			return w.handleSetTranslationError(ctx, err, args.FeedbackRecordID, start, job.Attempt >= job.MaxAttempts)
+		}
+
+		if w.metrics != nil {
+			w.metrics.RecordTranslationOutcome(ctx, "success")
+			w.metrics.RecordTranslationDuration(ctx, time.Since(start), "success")
 		}
 
 		slog.Info("translation: cleared (empty value_text)", "feedback_record_id", args.FeedbackRecordID)
@@ -84,7 +103,21 @@ func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[ser
 
 	translated, err := w.translate(ctx, record, args.TargetLang)
 	if err != nil {
-		if job.Attempt >= job.MaxAttempts {
+		isLastAttempt := job.Attempt >= job.MaxAttempts
+
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "translation_api_failed")
+
+			if isLastAttempt {
+				w.metrics.RecordTranslationOutcome(ctx, "failed_final")
+				w.metrics.RecordTranslationDuration(ctx, time.Since(start), "failed_final")
+			} else {
+				w.metrics.RecordTranslationOutcome(ctx, "retry")
+				w.metrics.RecordTranslationDuration(ctx, time.Since(start), "retry")
+			}
+		}
+
+		if isLastAttempt {
 			slog.Error("translation: provider failed (final attempt)",
 				"feedback_record_id", args.FeedbackRecordID, "error", err)
 
@@ -95,7 +128,12 @@ func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[ser
 	}
 
 	if err := w.service.SetTranslation(ctx, args.FeedbackRecordID, &translated, args.TargetLang); err != nil {
-		return handleSetTranslationError(err, args.FeedbackRecordID, job.Attempt >= job.MaxAttempts)
+		return w.handleSetTranslationError(ctx, err, args.FeedbackRecordID, start, job.Attempt >= job.MaxAttempts)
+	}
+
+	if w.metrics != nil {
+		w.metrics.RecordTranslationOutcome(ctx, "success")
+		w.metrics.RecordTranslationDuration(ctx, time.Since(start), "success")
 	}
 
 	slog.Info("translation: stored",
@@ -137,18 +175,42 @@ func (w *FeedbackTranslationWorker) translate(
 // mirroring the embedding worker: a missing record completes the job (nothing to
 // write), a tenant write conflict retries (the post-purge attempt finds the record
 // gone), and anything else fails the job.
-func handleSetTranslationError(err error, feedbackRecordID uuid.UUID, isLastAttempt bool) error {
+func (w *FeedbackTranslationWorker) handleSetTranslationError(
+	ctx context.Context, err error, feedbackRecordID uuid.UUID, start time.Time, isLastAttempt bool,
+) error {
 	switch {
 	case errors.Is(err, huberrors.ErrNotFound):
+		if w.metrics != nil {
+			w.metrics.RecordTranslationOutcome(ctx, "skipped")
+			w.metrics.RecordTranslationDuration(ctx, time.Since(start), "skipped")
+		}
+
 		slog.Info("translation: record gone before write, skipping", "feedback_record_id", feedbackRecordID)
 
 		return nil
 	case errors.Is(err, huberrors.ErrTenantWriteConflict):
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "tenant_write_conflict")
+			w.metrics.RecordTranslationOutcome(ctx, outcome)
+			w.metrics.RecordTranslationDuration(ctx, time.Since(start), outcome)
+		}
+
 		slog.Warn("translation: tenant data purge in progress, deferring write",
 			"feedback_record_id", feedbackRecordID, "final_attempt", isLastAttempt)
 
 		return fmt.Errorf("set feedback record translation: %w", err)
 	default:
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "update_failed")
+			w.metrics.RecordTranslationOutcome(ctx, "failed_final")
+			w.metrics.RecordTranslationDuration(ctx, time.Since(start), "failed_final")
+		}
+
 		slog.Error("translation: set translation failed",
 			"feedback_record_id", feedbackRecordID, "error", err)
 

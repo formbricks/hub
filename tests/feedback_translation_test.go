@@ -210,7 +210,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("translates and persists", func(t *testing.T) {
 		rec := createText("Bonjour le monde", "fr")
 		fake := &fakeTranslationClient{out: "Hello world"}
-		worker := workers.NewFeedbackTranslationWorker(svc, fake)
+		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil)
 
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
 
@@ -228,7 +228,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("copies when source matches target without calling the provider", func(t *testing.T) {
 		rec := createText("Hello world", "en-US")
 		fake := &fakeTranslationClient{out: "should-not-be-used"}
-		worker := workers.NewFeedbackTranslationWorker(svc, fake)
+		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil)
 
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-GB")))
 
@@ -244,7 +244,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 		stale := "stale translation"
 		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &stale, "en-US"))
 
-		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"})
+		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"}, nil)
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
 
 		got, getErr := repo.GetByID(ctx, rec.ID)

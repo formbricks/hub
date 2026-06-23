@@ -28,6 +28,7 @@ type RiverDeps struct {
 	// Translation worker (optional; if TranslationClient is nil, translation worker is not registered)
 	TranslationService translationWorkerService
 	TranslationClient  service.TranslationClient
+	TranslationMetrics observability.TranslationMetrics
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
@@ -63,7 +64,7 @@ func NewRiverWorkersAndQueues(
 	}
 
 	if deps.TranslationClient != nil {
-		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient)
+		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient, deps.TranslationMetrics)
 		river.AddWorker(workers, translationWorker)
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}

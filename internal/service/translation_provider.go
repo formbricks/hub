@@ -13,6 +13,7 @@ import (
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // uniqueByPeriodTranslation dedupes identical translation jobs (same record, target,
@@ -30,20 +31,24 @@ type TranslationProvider struct {
 	resolver    TenantSettingsReader
 	queueName   string
 	maxAttempts int
+	metrics     observability.TranslationMetrics
 }
 
 // NewTranslationProvider creates a provider that enqueues feedback_translation jobs.
+// metrics may be nil when metrics are disabled.
 func NewTranslationProvider(
 	inserter RiverJobInserter,
 	resolver TenantSettingsReader,
 	queueName string,
 	maxAttempts int,
+	metrics observability.TranslationMetrics,
 ) *TranslationProvider {
 	return &TranslationProvider{
 		inserter:    inserter,
 		resolver:    resolver,
 		queueName:   queueName,
 		maxAttempts: maxAttempts,
+		metrics:     metrics,
 	}
 }
 
@@ -86,6 +91,10 @@ func (p *TranslationProvider) PublishEvent(ctx context.Context, event Event) {
 
 	settings, err := p.resolver.GetSettings(ctx, record.TenantID)
 	if err != nil {
+		if p.metrics != nil {
+			p.metrics.RecordProviderError(ctx, "settings_read_failed")
+		}
+
 		slog.Error("translation: resolve target language failed",
 			"event_id", event.ID, "feedback_record_id", record.ID, "error", err)
 
@@ -116,6 +125,10 @@ func (p *TranslationProvider) PublishEvent(ctx context.Context, event Event) {
 		ValueTextHash:    translationContentHash(record.ValueText, sourceLang),
 	}, opts)
 	if err != nil {
+		if p.metrics != nil {
+			p.metrics.RecordProviderError(ctx, "enqueue_failed")
+		}
+
 		slog.Error("translation: enqueue failed",
 			"event_id", event.ID, "feedback_record_id", record.ID, "error", err)
 
@@ -124,6 +137,10 @@ func (p *TranslationProvider) PublishEvent(ctx context.Context, event Event) {
 
 	slog.Info("translation: job enqueued",
 		"event_id", event.ID, "feedback_record_id", record.ID, "target_lang", targetLang)
+
+	if p.metrics != nil {
+		p.metrics.RecordJobsEnqueued(ctx, 1)
+	}
 }
 
 // translationContentHash hashes the inputs that determine the translation — the

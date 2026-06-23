@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -11,7 +12,49 @@ import (
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 )
+
+// countingTranslationMetrics is an in-memory observability.TranslationMetrics for asserting
+// which metrics fired (and with which reason/status labels).
+type countingTranslationMetrics struct {
+	enqueued    int64
+	providerErr map[string]int
+	outcomes    map[string]int
+	workerErr   map[string]int
+	durations   map[string]int
+}
+
+func newCountingTranslationMetrics() *countingTranslationMetrics {
+	return &countingTranslationMetrics{
+		providerErr: map[string]int{},
+		outcomes:    map[string]int{},
+		workerErr:   map[string]int{},
+		durations:   map[string]int{},
+	}
+}
+
+func (m *countingTranslationMetrics) RecordJobsEnqueued(_ context.Context, count int64) {
+	m.enqueued += count
+}
+
+func (m *countingTranslationMetrics) RecordProviderError(_ context.Context, reason string) {
+	m.providerErr[reason]++
+}
+
+func (m *countingTranslationMetrics) RecordTranslationOutcome(_ context.Context, status string) {
+	m.outcomes[status]++
+}
+
+func (m *countingTranslationMetrics) RecordWorkerError(_ context.Context, reason string) {
+	m.workerErr[reason]++
+}
+
+func (m *countingTranslationMetrics) RecordTranslationDuration(_ context.Context, _ time.Duration, status string) {
+	m.durations[status]++
+}
+
+var _ observability.TranslationMetrics = (*countingTranslationMetrics)(nil)
 
 type mockTranslationInserter struct {
 	calls []FeedbackTranslationArgs
@@ -58,7 +101,7 @@ func newTestTranslationProvider(
 ) *TranslationProvider {
 	resolver := &mockTargetResolver{target: target, err: resolveErr}
 
-	return NewTranslationProvider(inserter, resolver, TranslationsQueueName, 3)
+	return NewTranslationProvider(inserter, resolver, TranslationsQueueName, 3, nil)
 }
 
 func TestTranslationProvider_CreateWithTextEnqueues(t *testing.T) {
@@ -145,6 +188,50 @@ func TestTranslationContentHash_VariesBySourceLanguage(t *testing.T) {
 	if got := translationContentHash(&empty, "fr"); got != "empty" {
 		t.Fatalf("blank value_text hash = %q, want \"empty\"", got)
 	}
+}
+
+func TestTranslationProvider_RecordsMetrics(t *testing.T) {
+	t.Run("enqueue success increments jobs", func(t *testing.T) {
+		metrics := newCountingTranslationMetrics()
+		inserter := &mockTranslationInserter{}
+		provider := NewTranslationProvider(
+			inserter, &mockTargetResolver{target: "de-DE"}, TranslationsQueueName, 3, metrics)
+
+		provider.PublishEvent(context.Background(), Event{Type: datatypes.FeedbackRecordCreated, Data: textRecord("hello")})
+
+		if metrics.enqueued != 1 {
+			t.Fatalf("enqueued = %d, want 1", metrics.enqueued)
+		}
+	})
+
+	t.Run("settings read failure records provider error", func(t *testing.T) {
+		metrics := newCountingTranslationMetrics()
+		resolver := &mockTargetResolver{target: "de-DE", err: errors.New("boom")}
+		provider := NewTranslationProvider(&mockTranslationInserter{}, resolver, TranslationsQueueName, 3, metrics)
+
+		provider.PublishEvent(context.Background(), Event{Type: datatypes.FeedbackRecordCreated, Data: textRecord("hello")})
+
+		if metrics.providerErr["settings_read_failed"] != 1 {
+			t.Fatalf("settings_read_failed = %d, want 1", metrics.providerErr["settings_read_failed"])
+		}
+	})
+
+	t.Run("enqueue failure records provider error and no enqueue", func(t *testing.T) {
+		metrics := newCountingTranslationMetrics()
+		inserter := &mockTranslationInserter{err: errors.New("insert failed")}
+		provider := NewTranslationProvider(
+			inserter, &mockTargetResolver{target: "de-DE"}, TranslationsQueueName, 3, metrics)
+
+		provider.PublishEvent(context.Background(), Event{Type: datatypes.FeedbackRecordCreated, Data: textRecord("hello")})
+
+		if metrics.providerErr["enqueue_failed"] != 1 {
+			t.Fatalf("enqueue_failed = %d, want 1", metrics.providerErr["enqueue_failed"])
+		}
+
+		if metrics.enqueued != 0 {
+			t.Fatalf("enqueued = %d, want 0 on insert failure", metrics.enqueued)
+		}
+	})
 }
 
 func TestTranslationProvider_Skips(t *testing.T) {
