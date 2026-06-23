@@ -42,7 +42,9 @@ type FeedbackRecordsRepository interface {
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string) error
-	ListTranslationBackfillTargets(ctx context.Context) ([]models.TranslationBackfillTarget, error)
+	ListTranslationBackfillTargets(
+		ctx context.Context, afterID uuid.UUID, limit int,
+	) ([]models.TranslationBackfillTarget, error)
 	ListTranslationBackfillTargetsForTenant(
 		ctx context.Context, tenantID string, afterID uuid.UUID, limit int,
 	) ([]models.TranslationBackfillTarget, error)
@@ -365,38 +367,63 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model s
 // run time; the "backfill" hash marks these jobs distinct from event-driven ones. The
 // inserter, queue, and max attempts come from the caller (a one-off command), so the shared
 // service holds no backfill-only dependency. Returns the number of jobs enqueued.
+// translationBackfillPageSize bounds how many stale records a backfill lists and enqueues
+// per keyset page, so neither the global nor the per-tenant backfill materializes the full
+// result set in memory.
+const translationBackfillPageSize = 500
+
+// BackfillTranslations enqueues a translation job for every feedback record (across all
+// tenants) that needs (re)translation, streaming the targets in keyset pages. Used by the
+// one-off global backfill command. Returns the number of jobs enqueued.
 func (s *FeedbackRecordsService) BackfillTranslations(
 	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int,
 ) (int, error) {
-	targets, err := s.repo.ListTranslationBackfillTargets(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("list translation backfill targets: %w", err)
-	}
+	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts),
+		func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error) {
+			targets, err := s.repo.ListTranslationBackfillTargets(ctx, afterID, translationBackfillPageSize)
+			if err != nil {
+				return nil, fmt.Errorf("list translation backfill targets: %w", err)
+			}
 
-	return enqueueTranslationBackfillJobs(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts), targets)
+			return targets, nil
+		})
 }
 
-// translationBackfillPageSize bounds how many of a tenant's stale records the
-// settings-triggered backfill lists and enqueues per keyset page.
-const translationBackfillPageSize = 500
-
 // BackfillTranslationsForTenant enqueues a translation job for every record of a single
-// tenant that needs (re)translation, streaming the tenant's stale records in keyset pages
-// so a large tenant is never fully materialized in memory. It is the bulk work behind a
-// settings-change re-translation (TenantTranslationBackfillArgs); the per-record jobs and
-// their dedup are identical to the global backfill. Returns the number of jobs enqueued.
+// tenant that needs (re)translation, streaming in keyset pages so a large tenant is never
+// fully materialized. It is the bulk work behind a settings-change re-translation
+// (TenantTranslationBackfillArgs). Returns the number of jobs enqueued.
 func (s *FeedbackRecordsService) BackfillTranslationsForTenant(
 	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int, tenantID string,
 ) (int, error) {
-	opts := translationBackfillInsertOpts(queueName, maxAttempts)
+	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts),
+		func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error) {
+			targets, err := s.repo.ListTranslationBackfillTargetsForTenant(ctx, tenantID, afterID, translationBackfillPageSize)
+			if err != nil {
+				return nil, fmt.Errorf("list translation backfill targets for tenant %s: %w", tenantID, err)
+			}
 
+			return targets, nil
+		})
+}
+
+// backfillTranslationsPaged enqueues a translation job for every target produced by
+// fetchPage, streaming in keyset pages (so the full set is never materialized) and stopping
+// on the first short page. Advancing the cursor by the last id seen means even a
+// fully-deduped page cannot livelock the loop.
+func (s *FeedbackRecordsService) backfillTranslationsPaged(
+	ctx context.Context,
+	inserter RiverJobInserter,
+	opts *river.InsertOpts,
+	fetchPage func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error),
+) (int, error) {
 	enqueued := 0
 	afterID := uuid.Nil
 
 	for {
-		targets, err := s.repo.ListTranslationBackfillTargetsForTenant(ctx, tenantID, afterID, translationBackfillPageSize)
+		targets, err := fetchPage(afterID)
 		if err != nil {
-			return enqueued, fmt.Errorf("list translation backfill targets for tenant %s: %w", tenantID, err)
+			return enqueued, err
 		}
 
 		if len(targets) == 0 {
@@ -410,8 +437,6 @@ func (s *FeedbackRecordsService) BackfillTranslationsForTenant(
 			return enqueued, err
 		}
 
-		// Advance the keyset cursor past the last id seen; even a fully-deduped page moves
-		// it forward, so the loop cannot livelock.
 		afterID = targets[len(targets)-1].FeedbackRecordID
 
 		if len(targets) < translationBackfillPageSize {

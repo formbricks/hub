@@ -131,7 +131,7 @@ func TestFeedbackRecords_ListTranslationBackfillTargets(t *testing.T) {
 	currentTranslation := "Hallo"
 	require.NoError(t, repo.SetTranslation(ctx, current.ID, &currentTranslation, "de-DE")) // matches target
 
-	targets, err := repo.ListTranslationBackfillTargets(ctx)
+	targets, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, 100)
 	require.NoError(t, err)
 
 	byID := make(map[uuid.UUID]string, len(targets))

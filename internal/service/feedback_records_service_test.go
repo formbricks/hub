@@ -68,9 +68,18 @@ func (m *mockFeedbackRecordsRepo) SetTranslation(
 }
 
 func (m *mockFeedbackRecordsRepo) ListTranslationBackfillTargets(
-	_ context.Context,
+	_ context.Context, afterID uuid.UUID, _ int,
 ) ([]models.TranslationBackfillTarget, error) {
-	return m.translationBackfillTargets, m.translationBackfillErr
+	if m.translationBackfillErr != nil {
+		return nil, m.translationBackfillErr
+	}
+
+	// First page (afterID == Nil) returns the configured set; later pages are empty.
+	if afterID != uuid.Nil {
+		return nil, nil
+	}
+
+	return m.translationBackfillTargets, nil
 }
 
 func (m *mockFeedbackRecordsRepo) ListTranslationBackfillTargetsForTenant(

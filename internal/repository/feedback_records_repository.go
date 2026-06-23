@@ -197,15 +197,18 @@ const translationBackfillSelectSQL = `
 		AND COALESCE(ts.settings->>'target_language', '') <> ''
 		AND fr.translation_lang_key IS DISTINCT FROM ts.settings->>'target_language'`
 
-// ListTranslationBackfillTargets returns every feedback record (across all tenants) that
-// needs (re)translation. Used by the one-off backfill command.
+// ListTranslationBackfillTargets returns one keyset page (fr.id > afterID, ordered by id, at
+// most limit rows) of feedback records across all tenants that need (re)translation. Used by
+// the one-off global backfill command. Pass uuid.Nil as afterID for the first page.
 func (r *FeedbackRecordsRepository) ListTranslationBackfillTargets(
-	ctx context.Context,
+	ctx context.Context, afterID uuid.UUID, limit int,
 ) ([]models.TranslationBackfillTarget, error) {
 	const query = translationBackfillSelectSQL + `
-		ORDER BY fr.id`
+			AND fr.id > $1
+		ORDER BY fr.id
+		LIMIT $2`
 
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query translation backfill targets: %w", err)
 	}
