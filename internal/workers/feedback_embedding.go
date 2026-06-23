@@ -64,6 +64,22 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	record, err := w.embeddingService.GetFeedbackRecord(ctx, args.FeedbackRecordID)
 	if err != nil {
+		// Not-found means the record was deleted or its tenant purged between enqueue and
+		// now: a benign race, not a terminal failure. Record it as skipped (consistent with
+		// the not-found-on-write path) so it does not trip failure alerts.
+		if errors.Is(err, huberrors.ErrNotFound) {
+			if w.metrics != nil {
+				w.metrics.RecordEmbeddingOutcome(ctx, "skipped")
+				w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "skipped")
+			}
+
+			slog.Info("embedding: record gone before embed, skipping",
+				"feedback_record_id", args.FeedbackRecordID,
+			)
+
+			return nil
+		}
+
 		if w.metrics != nil {
 			w.metrics.RecordWorkerError(ctx, "get_record_failed")
 			w.metrics.RecordEmbeddingOutcome(ctx, "failed_final")
@@ -74,11 +90,6 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 			"feedback_record_id", args.FeedbackRecordID,
 			"error", err,
 		)
-
-		// Only suppress retries for not-found; transient DB/network errors should retry.
-		if errors.Is(err, huberrors.ErrNotFound) {
-			return nil
-		}
 
 		return fmt.Errorf("get feedback record: %w", err)
 	}
