@@ -292,6 +292,21 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RequiresUserID(t *te
 	}
 }
 
+func TestFeedbackRecordsService_SetTranslation_RequiresLangKey(t *testing.T) {
+	svc := NewFeedbackRecordsService(&mockFeedbackRecordsRepo{}, nil, "", nil, nil, "", 0)
+	translated := "Hallo"
+
+	// A translation with a blank lang key is rejected before reaching the repo.
+	if err := svc.SetTranslation(context.Background(), uuid.New(), &translated, "  "); !errors.Is(err, ErrTranslationLangKeyRequired) {
+		t.Fatalf("err = %v, want ErrTranslationLangKeyRequired", err)
+	}
+
+	// Clearing (nil translation) with an empty key is allowed.
+	if err := svc.SetTranslation(context.Background(), uuid.New(), nil, ""); err != nil {
+		t.Fatalf("clear err = %v, want nil", err)
+	}
+}
+
 func TestFeedbackRecordsService_BackfillTranslations(t *testing.T) {
 	id1 := uuid.Must(uuid.NewV7())
 	id2 := uuid.Must(uuid.NewV7())

@@ -24,6 +24,11 @@ var ErrUserIDRequired = huberrors.NewValidationError("user_id", "user_id is requ
 // ErrEmbeddingBackfillNotConfigured is returned when BackfillEmbeddings is called without embedding inserter/queue.
 var ErrEmbeddingBackfillNotConfigured = errors.New("embedding backfill not configured")
 
+// ErrTranslationLangKeyRequired is returned when a translation is set without a target
+// locale key: a translation must record the locale it was produced in (clearing, where
+// translated is nil, intentionally passes an empty key to null both columns).
+var ErrTranslationLangKeyRequired = errors.New("translation lang key is required when translated text is set")
+
 const uniqueByPeriodEmbedding = 24 * time.Hour
 
 // FeedbackRecordsRepository defines the interface for feedback records data access.
@@ -131,6 +136,12 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 func (s *FeedbackRecordsService) SetTranslation(
 	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string,
 ) error {
+	// A translation must carry the locale it was produced in; reject an inconsistent
+	// (translated, "") pair. Clearing (translated == nil) intentionally passes "".
+	if translated != nil && strings.TrimSpace(langKey) == "" {
+		return ErrTranslationLangKeyRequired
+	}
+
 	if err := s.repo.SetTranslation(ctx, feedbackRecordID, translated, langKey); err != nil {
 		return fmt.Errorf("set feedback record translation: %w", err)
 	}

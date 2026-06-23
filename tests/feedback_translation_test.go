@@ -74,6 +74,7 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 	cleared, err := repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
 	assert.Nil(t, cleared.ValueTextTranslated, "nil translation clears value_text_translated")
+	assert.Nil(t, cleared.TranslationLangKey, "clearing also nulls translation_lang_key")
 
 	// Missing record: NotFound (resolved via the shared tenant write lock).
 	err = repo.SetTranslation(ctx, uuid.New(), &translated, "de-DE")
@@ -250,5 +251,6 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 		got, getErr := repo.GetByID(ctx, rec.ID)
 		require.NoError(t, getErr)
 		assert.Nil(t, got.ValueTextTranslated, "stale translation cleared when value_text is empty")
+		assert.Nil(t, got.TranslationLangKey, "clearing path must also null translation_lang_key")
 	})
 }

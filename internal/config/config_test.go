@@ -194,6 +194,36 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 	})
 }
 
+func TestLoad_TenantSettingsCacheSize(t *testing.T) {
+	t.Run("explicit 0 disables and is not reset to the default", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+		t.Setenv("TENANT_SETTINGS_CACHE_SIZE", "0")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.TenantSettingsCache.Size != 0 {
+			t.Fatalf("Size = %d, want 0 (explicit 0 disables the cache, must not default to 2048)",
+				cfg.TenantSettingsCache.Size)
+		}
+	})
+
+	t.Run("unset applies the default", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.TenantSettingsCache.Size != 2048 {
+			t.Fatalf("Size = %d, want 2048 (default when unset)", cfg.TenantSettingsCache.Size)
+		}
+	})
+}
+
 func TestLoad_EmbeddingGoogleCloudProject(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
 	t.Setenv("EMBEDDING_GOOGLE_CLOUD_PROJECT", "my-google-cloud-project")

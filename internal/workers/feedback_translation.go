@@ -57,6 +57,21 @@ func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[ser
 
 	record, err := w.service.GetFeedbackRecord(ctx, args.FeedbackRecordID)
 	if err != nil {
+		// Not-found means the record was deleted or its tenant purged between enqueue and
+		// now: a benign race, not a failure. Record it as skipped (consistent with the
+		// not-found-on-write path) so it does not trip failure alerts.
+		if errors.Is(err, huberrors.ErrNotFound) {
+			if w.metrics != nil {
+				w.metrics.RecordTranslationOutcome(ctx, "skipped")
+				w.metrics.RecordTranslationDuration(ctx, time.Since(start), "skipped")
+			}
+
+			slog.Info("translation: record gone before translate, skipping",
+				"feedback_record_id", args.FeedbackRecordID)
+
+			return nil
+		}
+
 		if w.metrics != nil {
 			w.metrics.RecordWorkerError(ctx, "get_record_failed")
 			w.metrics.RecordTranslationOutcome(ctx, "failed_final")
@@ -64,11 +79,6 @@ func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[ser
 		}
 
 		slog.Error("translation: get record failed", "feedback_record_id", args.FeedbackRecordID, "error", err)
-
-		// Not-found means the record was deleted or its tenant purged; nothing to do.
-		if errors.Is(err, huberrors.ErrNotFound) {
-			return nil
-		}
 
 		return fmt.Errorf("get feedback record: %w", err)
 	}

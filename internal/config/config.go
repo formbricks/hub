@@ -323,14 +323,18 @@ func applyDefaults(cfg *Config) {
 		cfg.Translation.MaxAttempts = 3
 	}
 
-	if cfg.TenantSettingsCache.Size <= 0 {
-		cfg.TenantSettingsCache.Size = 2048
+	// Default the cache size only when the operator did not set it. An explicit 0 (or
+	// negative) disables the cache: NewCachedTenantSettings treats size <= 0 as "no
+	// caching". cleanenv does not reliably apply env-default to nested-struct fields, so
+	// we cannot distinguish "unset" from an explicit "0" without consulting the env.
+	const defaultTenantSettingsCacheSize = 2048
+	if _, ok := os.LookupEnv("TENANT_SETTINGS_CACHE_SIZE"); !ok {
+		cfg.TenantSettingsCache.Size = defaultTenantSettingsCacheSize
 	}
 
-	// Mirror the other nested DurationSec defaults: re-assert in applyDefaults
-	// because cleanenv does not reliably apply env-default to nested-struct fields,
-	// and a zero TTL would silently disable the cache rather than use 60s. To
-	// disable the cache, set TENANT_SETTINGS_CACHE_SIZE=0.
+	// Mirror the other nested DurationSec defaults: re-assert in applyDefaults because
+	// cleanenv does not reliably apply env-default to nested-struct fields, and a zero TTL
+	// would silently disable the cache rather than use 60s.
 	const defaultTenantSettingsCacheTTLSec = 60
 	if cfg.TenantSettingsCache.TTL.Duration() <= 0 {
 		cfg.TenantSettingsCache.TTL = DurationSec(time.Duration(defaultTenantSettingsCacheTTLSec) * time.Second)

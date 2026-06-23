@@ -203,11 +203,22 @@ func TestFeedbackTranslationWorker_DifferentScriptTranslates(t *testing.T) {
 }
 
 func TestFeedbackTranslationWorker_NotFoundCompletes(t *testing.T) {
+	metrics := newCountingTranslationMetrics()
 	svc := &mockTranslationWorkerService{getErr: huberrors.NewNotFoundError("feedback record", "gone")}
-	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, nil)
+	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, metrics)
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 		t.Fatalf("Work() error = %v, want nil (not-found completes)", err)
+	}
+
+	// A not-found GET is a benign delete/purge race: record it as skipped, never
+	// failed_final (which would trip failure alerts) and not as a worker error.
+	if metrics.outcomes["skipped"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("skipped=%d failed_final=%d, want 1/0", metrics.outcomes["skipped"], metrics.outcomes["failed_final"])
+	}
+
+	if metrics.workerErr["get_record_failed"] != 0 {
+		t.Fatalf("get_record_failed=%d, want 0 (not-found is not a worker error)", metrics.workerErr["get_record_failed"])
 	}
 }
 

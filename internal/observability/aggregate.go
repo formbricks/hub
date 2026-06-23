@@ -18,7 +18,7 @@ type Metrics struct {
 	Cache       CacheMetrics
 }
 
-// NewMetrics creates EventMetrics, WebhookMetrics, EmbeddingMetrics, and TranslationMetrics from the given meter.
+// NewMetrics creates EventMetrics, WebhookMetrics, EmbeddingMetrics, TranslationMetrics, and CacheMetrics from the given meter.
 // Returns (nil, nil) when meter is nil (metrics disabled).
 func NewMetrics(meter metric.Meter) (*Metrics, error) {
 	if meter == nil {
