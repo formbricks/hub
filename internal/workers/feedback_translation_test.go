@@ -264,6 +264,30 @@ func TestFeedbackTranslationWorker_RecordGoneOnWriteCompletes(t *testing.T) {
 	}
 }
 
+func TestFeedbackTranslationWorker_SupersededWriteSkips(t *testing.T) {
+	metrics := newCountingTranslationMetrics()
+	svc := &mockTranslationWorkerService{
+		record: translationRecord("Bonjour le monde", "fr"),
+		setErr: huberrors.ErrTranslationSuperseded,
+	}
+	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hello world"}, metrics)
+
+	// A stale-target write (the tenant's target changed before this job's write landed) is a
+	// benign no-op: the worker completes the job and records it as skipped, not failed.
+	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
+		t.Fatalf("Work() error = %v, want nil (superseded write is a benign skip)", err)
+	}
+
+	if metrics.outcomes["skipped"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("skipped=%d failed_final=%d, want 1/0",
+			metrics.outcomes["skipped"], metrics.outcomes["failed_final"])
+	}
+
+	if metrics.workerErr["superseded"] != 1 {
+		t.Fatalf("workerErr[superseded] = %d, want 1", metrics.workerErr["superseded"])
+	}
+}
+
 func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 	t.Run("success records outcome and duration", func(t *testing.T) {
 		metrics := newCountingTranslationMetrics()

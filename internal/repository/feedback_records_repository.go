@@ -152,6 +152,12 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 // domain event: translation is a derived enrichment, not a record edit, and
 // re-publishing would loop the enrichment pipeline. A missing record (deleted or
 // purged between read and write) returns NotFound. translated may be nil.
+//
+// Setting a translation (translated != nil) is conditional: it lands only while the tenant's
+// current target_language still equals langKey, otherwise it returns
+// huberrors.ErrTranslationSuperseded. This makes the write atomic w.r.t. a concurrent target
+// change and immune to a stale settings-cache read, so an out-of-order stale-target job cannot
+// clobber a newer translation. Clearing (translated == nil) is unconditional.
 func (r *FeedbackRecordsRepository) SetTranslation(
 	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string,
 ) error {
@@ -162,21 +168,44 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 			return err
 		}
 
-		// Clearing (translated == nil) nulls both columns: a lang key has no meaning
-		// without a translation.
-		var langKeyArg any
-		if translated != nil {
-			langKeyArg = langKey
+		// Clearing (translated == nil) nulls both columns unconditionally: an emptied
+		// value_text must drop any stale translation regardless of the tenant's target,
+		// and a lang key has no meaning without a translation.
+		if translated == nil {
+			if _, err := dbTx.Exec(ctx, `
+				UPDATE feedback_records
+				SET value_text_translated = NULL, translation_lang_key = NULL, updated_at = NOW()
+				WHERE id = $1`,
+				feedbackRecordID,
+			); err != nil {
+				return fmt.Errorf("clear feedback record translation: %w", err)
+			}
+
+			return nil
 		}
 
-		_, err := dbTx.Exec(ctx, `
-			UPDATE feedback_records
+		// Setting a translation persists only while the tenant's CURRENT target_language still
+		// equals the locale this translation was produced for. Joining tenant_settings in the
+		// write keeps it atomic against a concurrent target change and a stale settings-cache
+		// read at enqueue: a stale-target job (an older target finishing after a newer-target
+		// job or backfill) matches no row and no-ops instead of clobbering the current value.
+		tag, err := dbTx.Exec(ctx, `
+			UPDATE feedback_records fr
 			SET value_text_translated = $2, translation_lang_key = $3, updated_at = NOW()
-			WHERE id = $1`,
-			feedbackRecordID, translated, langKeyArg,
+			FROM tenant_settings ts
+			WHERE fr.id = $1
+				AND ts.tenant_id = fr.tenant_id
+				AND ts.settings->>'target_language' = $3`,
+			feedbackRecordID, *translated, langKey,
 		)
 		if err != nil {
 			return fmt.Errorf("set feedback record translation: %w", err)
+		}
+
+		// The record exists (locked above), so zero rows means the tenant's current target no
+		// longer equals langKey: a newer-target write owns the row. Signal a benign skip.
+		if tag.RowsAffected() == 0 {
+			return huberrors.ErrTranslationSuperseded
 		}
 
 		return nil

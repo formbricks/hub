@@ -256,6 +256,20 @@ func (w *FeedbackTranslationWorker) handleSetTranslationError(
 	ctx context.Context, err error, feedbackRecordID uuid.UUID, start time.Time, isLastAttempt bool,
 ) error {
 	switch {
+	case errors.Is(err, huberrors.ErrTranslationSuperseded):
+		// The tenant's target language changed (or this job was enqueued from a stale
+		// settings cache) before the write landed: a newer-target job owns the row, so this
+		// stale-target write was a no-op. Benign — record as skipped, with a distinct worker
+		// label so target churn / cache staleness stays observable; do not retry or fail.
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "superseded")
+			w.metrics.RecordTranslationOutcome(ctx, "skipped")
+			w.metrics.RecordTranslationDuration(ctx, time.Since(start), "skipped")
+		}
+
+		slog.Info("translation: superseded by newer target, skipping write", "feedback_record_id", feedbackRecordID)
+
+		return nil
 	case errors.Is(err, huberrors.ErrNotFound):
 		if w.metrics != nil {
 			w.metrics.RecordTranslationOutcome(ctx, "skipped")
