@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -11,8 +12,34 @@ import (
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
+
+// countingEmbeddingMetrics records outcome/worker-error counts for assertions.
+type countingEmbeddingMetrics struct {
+	outcomes  map[string]int
+	workerErr map[string]int
+}
+
+func newCountingEmbeddingMetrics() *countingEmbeddingMetrics {
+	return &countingEmbeddingMetrics{outcomes: map[string]int{}, workerErr: map[string]int{}}
+}
+
+func (m *countingEmbeddingMetrics) RecordJobsEnqueued(context.Context, int64)   {}
+func (m *countingEmbeddingMetrics) RecordProviderError(context.Context, string) {}
+
+func (m *countingEmbeddingMetrics) RecordEmbeddingOutcome(_ context.Context, status string) {
+	m.outcomes[status]++
+}
+
+func (m *countingEmbeddingMetrics) RecordWorkerError(_ context.Context, reason string) {
+	m.workerErr[reason]++
+}
+
+func (m *countingEmbeddingMetrics) RecordEmbeddingDuration(context.Context, time.Duration, string) {}
+
+var _ observability.EmbeddingMetrics = (*countingEmbeddingMetrics)(nil)
 
 type mockEmbeddingService struct {
 	record          *models.FeedbackRecord
@@ -67,6 +94,26 @@ func textRecord(valueText string) *models.FeedbackRecord {
 	}
 
 	return record
+}
+
+func TestFeedbackEmbeddingWorker_GetNotFoundRecordsSkipped(t *testing.T) {
+	metrics := newCountingEmbeddingMetrics()
+	svc := &mockEmbeddingService{getErr: huberrors.NewNotFoundError("feedback record", "gone")}
+	worker := NewFeedbackEmbeddingWorker(svc, &mockEmbeddingClient{}, "", metrics)
+
+	if err := worker.Work(context.Background(), embeddingJob()); err != nil {
+		t.Fatalf("Work() error = %v, want nil (not-found completes)", err)
+	}
+
+	// A not-found GET is a benign delete/purge race: record it as skipped, never
+	// failed_final (which would trip failure alerts) and not as a worker error.
+	if metrics.outcomes["skipped"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("skipped=%d failed_final=%d, want 1/0", metrics.outcomes["skipped"], metrics.outcomes["failed_final"])
+	}
+
+	if metrics.workerErr["get_record_failed"] != 0 {
+		t.Fatalf("get_record_failed=%d, want 0 (not-found is not a worker error)", metrics.workerErr["get_record_failed"])
+	}
 }
 
 func TestFeedbackEmbeddingWorker_Work_SetEmbeddingConflict(t *testing.T) {
