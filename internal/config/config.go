@@ -28,6 +28,7 @@ var (
 	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
 	ErrInvalidPublicBaseURL            = errors.New("PUBLIC_BASE_URL must be an absolute http(s) URL without query or fragment")
 	ErrInvalidEmbeddingBaseURL         = errors.New("EMBEDDING_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidTranslationBaseURL       = errors.New("TRANSLATION_BASE_URL must be an absolute http(s) URL without query or fragment")
 	ErrInvalidTaxonomyServiceURL       = errors.New("TAXONOMY_SERVICE_URL must be an absolute http(s) URL without query or fragment")
 )
 
@@ -39,15 +40,17 @@ const DefaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?
 
 // Config holds all application configuration in nested groups.
 type Config struct {
-	Server           ServerConfig
-	Database         DatabaseConfig
-	River            RiverConfig
-	Webhook          WebhookConfig
-	MessagePublisher MessagePublisherConfig
-	Embedding        EmbeddingConfig
-	Taxonomy         TaxonomyConfig
-	TenantData       TenantDataConfig
-	Observability    ObservabilityConfig
+	Server              ServerConfig
+	Database            DatabaseConfig
+	River               RiverConfig
+	Webhook             WebhookConfig
+	MessagePublisher    MessagePublisherConfig
+	Embedding           EmbeddingConfig
+	Translation         TranslationConfig
+	TenantSettingsCache TenantSettingsCacheConfig
+	Taxonomy            TaxonomyConfig
+	TenantData          TenantDataConfig
+	Observability       ObservabilityConfig
 }
 
 // ServerConfig holds HTTP server and process settings.
@@ -125,6 +128,29 @@ type EmbeddingConfig struct {
 	Normalize           bool   `env:"EMBEDDING_NORMALIZE"             env-default:"false"`
 	GoogleCloudProject  string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
 	GoogleCloudLocation string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
+}
+
+// TranslationConfig holds the feedback open-text translation enrichment settings
+// (ENG-1255). Translation is disabled unless Provider and Model are both set.
+type TranslationConfig struct {
+	ProviderAPIKey      string `env:"TRANSLATION_PROVIDER_API_KEY"`
+	Provider            string `env:"TRANSLATION_PROVIDER"`
+	Model               string `env:"TRANSLATION_MODEL"`
+	BaseURL             string `env:"TRANSLATION_BASE_URL"`
+	MaxConcurrent       int    `env:"TRANSLATION_MAX_CONCURRENT"        env-default:"5"`
+	MaxAttempts         int    `env:"TRANSLATION_MAX_ATTEMPTS"          env-default:"3"`
+	GoogleCloudProject  string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
+}
+
+// TenantSettingsCacheConfig configures the per-process tenant-settings cache that
+// the translation enqueue gate and worker use to resolve a tenant's target
+// language without hitting the database on every feedback event. A short TTL
+// bounds cross-replica staleness; the worker records the target it actually used,
+// so a changed target self-corrects on the next write.
+type TenantSettingsCacheConfig struct {
+	Size int         `env:"TENANT_SETTINGS_CACHE_SIZE"        env-default:"2048"`
+	TTL  DurationSec `env:"TENANT_SETTINGS_CACHE_TTL_SECONDS" env-default:"60"`
 }
 
 // TaxonomyConfig holds Hub-to-taxonomy service settings.
@@ -289,6 +315,31 @@ func applyDefaults(cfg *Config) {
 		cfg.Embedding.MaxAttempts = 3
 	}
 
+	if cfg.Translation.MaxConcurrent <= 0 {
+		cfg.Translation.MaxConcurrent = 5
+	}
+
+	if cfg.Translation.MaxAttempts <= 0 {
+		cfg.Translation.MaxAttempts = 3
+	}
+
+	// Default the cache size only when the operator did not set it. An explicit 0 (or
+	// negative) disables the cache: NewCachedTenantSettings treats size <= 0 as "no
+	// caching". cleanenv does not reliably apply env-default to nested-struct fields, so
+	// we cannot distinguish "unset" from an explicit "0" without consulting the env.
+	const defaultTenantSettingsCacheSize = 2048
+	if _, ok := os.LookupEnv("TENANT_SETTINGS_CACHE_SIZE"); !ok {
+		cfg.TenantSettingsCache.Size = defaultTenantSettingsCacheSize
+	}
+
+	// Mirror the other nested DurationSec defaults: re-assert in applyDefaults because
+	// cleanenv does not reliably apply env-default to nested-struct fields, and a zero TTL
+	// would silently disable the cache rather than use 60s.
+	const defaultTenantSettingsCacheTTLSec = 60
+	if cfg.TenantSettingsCache.TTL.Duration() <= 0 {
+		cfg.TenantSettingsCache.TTL = DurationSec(time.Duration(defaultTenantSettingsCacheTTLSec) * time.Second)
+	}
+
 	if cfg.Taxonomy.MinimumEmbeddedRecords <= 0 {
 		cfg.Taxonomy.MinimumEmbeddedRecords = 20
 	}
@@ -357,6 +408,15 @@ func validate(cfg *Config) error {
 		}
 
 		cfg.Embedding.BaseURL = normalized
+	}
+
+	if cfg.Translation.BaseURL != "" {
+		normalized, err := normalizeHTTPBaseURL(cfg.Translation.BaseURL, ErrInvalidTranslationBaseURL)
+		if err != nil {
+			return err
+		}
+
+		cfg.Translation.BaseURL = normalized
 	}
 
 	if cfg.Taxonomy.ServiceURL != "" {

@@ -68,13 +68,15 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	webhooksRepo := repository.NewWebhooksRepository(db)
 
 	var (
-		webhookMetrics   observability.WebhookMetrics
-		embeddingMetrics observability.EmbeddingMetrics
+		webhookMetrics     observability.WebhookMetrics
+		embeddingMetrics   observability.EmbeddingMetrics
+		translationMetrics observability.TranslationMetrics
 	)
 
 	if metrics != nil {
 		webhookMetrics = metrics.Webhooks
 		embeddingMetrics = metrics.Embeddings
+		translationMetrics = metrics.Translation
 	}
 
 	webhookSender := service.NewWebhookSenderImpl(
@@ -128,6 +130,36 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.EmbeddingClient = embeddingClient
 		deps.EmbeddingDocPrefix = docPrefix
 		deps.EmbeddingMetrics = embeddingMetrics
+	}
+
+	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+		translationCfg := service.TranslationClientConfig{
+			Provider:            cfg.Translation.Provider,
+			ProviderAPIKey:      cfg.Translation.ProviderAPIKey,
+			Model:               cfg.Translation.Model,
+			BaseURL:             cfg.Translation.BaseURL,
+			GoogleCloudProject:  cfg.Translation.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Translation.GoogleCloudLocation,
+		}
+
+		translationClient, err := service.NewTranslationClient(context.Background(), translationCfg)
+		if err != nil {
+			shutdownObservability(context.Background(), meterProvider, tracerProvider)
+
+			return nil, fmt.Errorf("translation config: %w", err)
+		}
+
+		// The translation worker only reads the record and writes the translation, so
+		// the embedding-specific service params are unused here.
+		translationRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+		translationRecordsService := service.NewFeedbackRecordsService(
+			translationRecordsRepo, nil, "", nil, nil, "", 0)
+
+		deps.TranslationService = translationRecordsService
+		deps.TranslationClient = translationClient
+		deps.TranslationMetrics = translationMetrics
+		deps.TranslationBackfillService = translationRecordsService
+		deps.TranslationMaxAttempts = cfg.Translation.MaxAttempts
 	}
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)

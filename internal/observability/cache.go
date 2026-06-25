@@ -28,7 +28,7 @@ func NewCacheMetrics(meter metric.Meter) (CacheMetrics, error) {
 	}
 
 	hitDesc := "Number of cache lookups that returned a cached value. " +
-		"Label cache: search_query_embedding. " +
+		"Labels cache: search_query_embedding, tenant_settings. " +
 		"Hit ratio = rate(hits) / (rate(hits) + rate(misses)) per cache."
 
 	hits, err := meter.Int64Counter(
@@ -39,7 +39,7 @@ func NewCacheMetrics(meter metric.Meter) (CacheMetrics, error) {
 	}
 
 	missDesc := "Number of cache lookups that missed and triggered a load from the backing store. " +
-		"Label cache: search_query_embedding."
+		"Labels cache: search_query_embedding, tenant_settings."
 
 	misses, err := meter.Int64Counter(
 		MetricNameCacheMisses, metric.WithDescription(missDesc), metric.WithUnit("1"),

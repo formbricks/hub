@@ -136,6 +136,36 @@ func (e *ConflictError) Is(target error) bool {
 	return ok
 }
 
+// ErrTranslationSuperseded is the sentinel for a feedback-record translation write skipped
+// because the tenant's current target_language no longer matches the target the job was
+// enqueued for — e.g. the target changed, or the job was enqueued from a stale tenant-settings
+// cache read. The newer-target write owns the row; the stale write is a benign no-op, not a
+// failure, so callers should record it as skipped rather than retry or fail.
+var ErrTranslationSuperseded = &TranslationSupersededError{}
+
+// TranslationSupersededError is a sentinel for a stale-target translation write. It is
+// deliberately distinct from NotFoundError (the record still exists) and ConflictError
+// (nothing is wrong with the data) so an out-of-order translation is treated as a skip.
+type TranslationSupersededError struct {
+	Message string
+}
+
+// Error implements the error interface.
+func (e *TranslationSupersededError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+
+	return "translation superseded by a newer target language"
+}
+
+// Is implements the error interface for error comparison.
+func (e *TranslationSupersededError) Is(target error) bool {
+	_, ok := target.(*TranslationSupersededError)
+
+	return ok
+}
+
 // ErrTenantWriteConflict is the sentinel for tenant write coordination conflicts:
 // a tenant-owned write rejected because a tenant data purge is in progress, or a
 // purge that could not acquire its lock while tenant-owned writes were in flight.

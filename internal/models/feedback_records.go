@@ -153,6 +153,10 @@ type FeedbackRecord struct {
 	UserID          *string         `json:"user_id,omitempty"`
 	TenantID        string          `json:"tenant_id"`
 	SubmissionID    string          `json:"submission_id"` // mandatory; never null
+	// Language-enrichment outputs (ENG-1255): server-generated, read-only. NULL until
+	// the record is translated into the tenant's configured target language.
+	ValueTextTranslated *string `json:"value_text_translated,omitempty"`
+	TranslationLangKey  *string `json:"translation_lang_key,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.
@@ -175,6 +179,13 @@ type CreateFeedbackRecordRequest struct {
 	UserID          *string         `json:"user_id,omitempty"`
 	TenantID        string          `json:"tenant_id"                   validate:"required,no_null_bytes,max=255"`
 	SubmissionID    string          `json:"submission_id"               validate:"required,no_null_bytes,min=1,max=255"`
+}
+
+// TranslationBackfillTarget is a feedback record that needs (re)translation to its
+// tenant's currently-configured target language, returned by the backfill query.
+type TranslationBackfillTarget struct {
+	FeedbackRecordID uuid.UUID
+	TargetLang       string
 }
 
 // UpdateFeedbackRecordRequest represents the request to update a feedback record

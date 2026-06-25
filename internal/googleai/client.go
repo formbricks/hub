@@ -1,4 +1,5 @@
-// Package googleai provides a thin wrapper around the Google Gen AI SDK for embeddings.
+// Package googleai provides a thin wrapper around the Google Gen AI SDK for
+// embeddings and content generation (used for translation).
 package googleai
 
 import (
@@ -6,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
+	"time"
 
 	"google.golang.org/genai"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/pkg/embeddings"
 )
@@ -27,6 +31,8 @@ var (
 	ErrGoogleGeminiProjectRequired = errors.New("googleai google-gemini client: project is required")
 	// ErrGoogleGeminiLocationRequired is returned when NewGoogleGeminiClient is called with empty location.
 	ErrGoogleGeminiLocationRequired = errors.New("googleai google-gemini client: location is required")
+	// ErrNoCompletionInResponse is returned when a generate-content response contains no usable text.
+	ErrNoCompletionInResponse = errors.New("googleai: no completion in response")
 )
 
 // Client calls the Gemini embeddings API via the Google Gen AI SDK.
@@ -124,6 +130,60 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 // which optimizes the vector for asymmetric retrieval against documents embedded with RETRIEVAL_DOCUMENT.
 func (c *Client) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
 	return c.embedWithTaskType(ctx, input, "RETRIEVAL_QUERY")
+}
+
+// Translate generates content with the given system instruction and user text at
+// temperature 0 (deterministic) using the configured model, returning the trimmed
+// response text. It is the low-level call behind the translation enrichment; the
+// service layer builds the prompt.
+func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (string, error) {
+	userText = strings.TrimSpace(userText)
+	if userText == "" {
+		return "", ErrEmptyInput
+	}
+
+	temperature := float32(0)
+
+	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), &genai.GenerateContentConfig{
+		Temperature:       &temperature,
+		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
+	})
+	if err != nil {
+		wrapped := fmt.Errorf("gemini generate content: %w", err)
+
+		var apiErr genai.APIError
+		if errors.As(err, &apiErr) && (apiErr.Code == http.StatusTooManyRequests || apiErr.Status == "RESOURCE_EXHAUSTED") {
+			return "", huberrors.NewRateLimitError(genaiRetryAfter(apiErr), wrapped)
+		}
+
+		return "", wrapped
+	}
+
+	out := strings.TrimSpace(resp.Text())
+	if out == "" {
+		return "", ErrNoCompletionInResponse
+	}
+
+	return out, nil
+}
+
+// genaiRetryAfter extracts the RetryInfo retryDelay from a RESOURCE_EXHAUSTED error's
+// details, or 0 when absent or unparseable.
+func genaiRetryAfter(apiErr genai.APIError) time.Duration {
+	for _, detail := range apiErr.Details {
+		typeName, _ := detail["@type"].(string)
+		if !strings.Contains(typeName, "RetryInfo") {
+			continue
+		}
+
+		if delay, ok := detail["retryDelay"].(string); ok {
+			if dur, parseErr := time.ParseDuration(delay); parseErr == nil {
+				return dur
+			}
+		}
+	}
+
+	return 0
 }
 
 // embedWithTaskType calls the Gemini API with the given task type (e.g. RETRIEVAL_DOCUMENT, RETRIEVAL_QUERY).

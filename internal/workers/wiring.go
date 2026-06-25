@@ -24,6 +24,14 @@ type RiverDeps struct {
 	EmbeddingClient    service.EmbeddingClient
 	EmbeddingDocPrefix string
 	EmbeddingMetrics   observability.EmbeddingMetrics
+
+	// Translation worker (optional; if TranslationClient is nil, translation worker is not registered)
+	TranslationService translationWorkerService
+	TranslationClient  service.TranslationClient
+	TranslationMetrics observability.TranslationMetrics
+	// Per-tenant translation backfill worker (registered alongside the translation worker).
+	TranslationBackfillService tenantTranslationBackfillService
+	TranslationMaxAttempts     int
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
@@ -39,10 +47,12 @@ func NewRiverWorkersAndQueues(
 
 	maxDefault := cfg.Webhook.DeliveryMaxConcurrent
 	maxEmbedding := cfg.Embedding.MaxConcurrent
+	maxTranslation := cfg.Translation.MaxConcurrent
 
 	if placeholderMaxWorkers > 0 {
 		maxDefault = placeholderMaxWorkers
 		maxEmbedding = placeholderMaxWorkers
+		maxTranslation = placeholderMaxWorkers
 	}
 
 	queues := map[string]river.QueueConfig{
@@ -54,6 +64,18 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, embeddingWorker)
 
 		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: maxEmbedding}
+	}
+
+	if deps.TranslationClient != nil {
+		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient, deps.TranslationMetrics)
+		river.AddWorker(workers, translationWorker)
+
+		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
+
+		backfillWorker := NewTenantTranslationBackfillWorker(deps.TranslationBackfillService, deps.TranslationMaxAttempts)
+		river.AddWorker(workers, backfillWorker)
+
+		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
 	}
 
 	return workers, queues

@@ -174,14 +174,16 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	var (
-		eventMetrics     observability.EventMetrics
-		webhookMetrics   observability.WebhookMetrics
-		embeddingMetrics observability.EmbeddingMetrics
+		eventMetrics       observability.EventMetrics
+		webhookMetrics     observability.WebhookMetrics
+		embeddingMetrics   observability.EmbeddingMetrics
+		translationMetrics observability.TranslationMetrics
 	)
 	if metrics != nil {
 		eventMetrics = metrics.Events
 		webhookMetrics = metrics.Webhooks
 		embeddingMetrics = metrics.Embeddings
+		translationMetrics = metrics.Translation
 	}
 
 	var tracerProvider *sdktrace.TracerProvider
@@ -277,6 +279,40 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
 
+	// Register the translation worker and declare its queue so the River client can
+	// enqueue translation jobs (River requires the job kind registered and the queue
+	// declared at insert time); the jobs are processed by hub-worker, not in this
+	// process. Gated on TRANSLATION_PROVIDER+MODEL like embeddings; the enqueue
+	// provider is registered below, after the River client and tenant settings exist.
+	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+		translationCfg := service.TranslationClientConfig{
+			Provider:            cfg.Translation.Provider,
+			ProviderAPIKey:      cfg.Translation.ProviderAPIKey,
+			Model:               cfg.Translation.Model,
+			BaseURL:             cfg.Translation.BaseURL,
+			GoogleCloudProject:  cfg.Translation.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Translation.GoogleCloudLocation,
+		}
+
+		translationClient, translationErr := service.NewTranslationClient(context.Background(), translationCfg)
+		if translationErr != nil {
+			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
+
+			return nil, fmt.Errorf("translation config: %w", translationErr)
+		}
+
+		river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, translationMetrics))
+
+		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: 1}
+
+		// Per-tenant re-translation backfill, enqueued by the settings-change listener
+		// below. Registered here only so the River client can validate the kind and queue
+		// at insert time; the fan-out is processed by hub-worker.
+		river.AddWorker(riverWorkers, workers.NewTenantTranslationBackfillWorker(feedbackRecordsService, cfg.Translation.MaxAttempts))
+
+		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: 1}
+	}
+
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues:  queues,
 		Workers: riverWorkers,
@@ -324,6 +360,29 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
+
+	// Translation enqueue provider: on a feedback-record create/update it resolves the
+	// tenant's target language (through a short-TTL cache over tenant settings) and
+	// enqueues a translation job. Gated on TRANSLATION_PROVIDER+MODEL.
+	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+		var translationCacheMetrics observability.CacheMetrics
+		if metrics != nil {
+			translationCacheMetrics = metrics.Cache
+		}
+
+		translationCache := service.NewCachedTenantSettings(
+			tenantSettingsService,
+			cfg.TenantSettingsCache.Size, cfg.TenantSettingsCache.TTL.Duration(),
+			translationCacheMetrics,
+		)
+		messageManager.RegisterProvider(service.NewTranslationProvider(
+			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts, translationMetrics))
+
+		// On a target_language change, enqueue a per-tenant re-translation backfill so
+		// existing records pick up the new target (not only newly ingested ones).
+		tenantSettingsService.SetSettingsChangeListener(service.NewTranslationSettingsListener(
+			riverClient, service.TranslationBackfillsQueueName, cfg.Translation.MaxAttempts))
+	}
 
 	taxonomyRepo := repository.NewTaxonomyRepository(db)
 

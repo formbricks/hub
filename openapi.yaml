@@ -1868,6 +1868,10 @@ components:
                     type: string
                     description: Tenant/organization identifier. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                translation_lang_key:
+                    type: string
+                    description: BCP-47 target locale that value_text_translated was produced in (language enrichment). Read-only; absent until the record is enriched.
+                    maxLength: 35
                 updated_at:
                     type: string
                     description: When this record was last updated
@@ -1889,6 +1893,10 @@ components:
                 value_text:
                     type: string
                     description: Text response. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                value_text_translated:
+                    type: string
+                    description: value_text translated into the tenant's configured target language (language enrichment). Read-only; absent until the record is enriched.
                     pattern: '^[^\x00]*$'
             required:
                 - id
