@@ -56,7 +56,9 @@ type FeedbackRecordsRepository interface {
 type EmbeddingsRepository interface {
 	Upsert(ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32) error
 	DeleteByFeedbackRecordAndModel(ctx context.Context, feedbackRecordID uuid.UUID, model string) error
-	ListFeedbackRecordIDsForBackfill(ctx context.Context, model string) ([]uuid.UUID, error)
+	ListFeedbackRecordIDsForBackfill(
+		ctx context.Context, model string, afterID uuid.UUID, limit int,
+	) ([]uuid.UUID, error)
 }
 
 // FeedbackRecordsService handles business logic for feedback records.
@@ -330,17 +332,17 @@ func (s *FeedbackRecordsService) SetEmbedding(
 	return nil
 }
 
+// embeddingBackfillPageSize bounds how many record ids the embedding backfill lists and
+// enqueues per keyset page, so a large deployment is never fully materialized in memory.
+const embeddingBackfillPageSize = 500
+
 // BackfillEmbeddings enqueues embedding jobs for the given model for all feedback records that have
 // non-empty value_text and no embedding row for that model (existing rows are replaced by upsert when the job runs).
-// Returns the number of jobs enqueued. Requires embeddingInserter and embeddingQueueName to be set.
+// It streams the records in keyset pages. Returns the number of jobs enqueued. Requires embeddingInserter
+// and embeddingQueueName to be set.
 func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model string) (int, error) {
 	if s.embeddingInserter == nil || s.embeddingQueueName == "" {
 		return 0, ErrEmbeddingBackfillNotConfigured
-	}
-
-	ids, err := s.embeddingsRepo.ListFeedbackRecordIDsForBackfill(ctx, model)
-	if err != nil {
-		return 0, fmt.Errorf("list ids for embedding backfill: %w", err)
 	}
 
 	opts := &river.InsertOpts{
@@ -350,18 +352,38 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model s
 	}
 
 	enqueued := 0
+	afterID := uuid.Nil
 
-	for _, id := range ids {
-		_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
-			FeedbackRecordID: id,
-			Model:            model,
-			ValueTextHash:    "backfill",
-		}, opts)
+	for {
+		ids, err := s.embeddingsRepo.ListFeedbackRecordIDsForBackfill(ctx, model, afterID, embeddingBackfillPageSize)
 		if err != nil {
-			return enqueued, fmt.Errorf("enqueue embedding job for %s: %w", id, err)
+			return enqueued, fmt.Errorf("list ids for embedding backfill: %w", err)
 		}
 
-		enqueued++
+		if len(ids) == 0 {
+			break
+		}
+
+		for _, id := range ids {
+			_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
+				FeedbackRecordID: id,
+				Model:            model,
+				ValueTextHash:    "backfill",
+			}, opts)
+			if err != nil {
+				return enqueued, fmt.Errorf("enqueue embedding job for %s: %w", id, err)
+			}
+
+			enqueued++
+		}
+
+		// Advance the keyset cursor past the last id seen; the query excludes
+		// already-embedded records, so the cursor always moves forward.
+		afterID = ids[len(ids)-1]
+
+		if len(ids) < embeddingBackfillPageSize {
+			break
+		}
 	}
 
 	return enqueued, nil
