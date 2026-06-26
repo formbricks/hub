@@ -63,7 +63,7 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 
 	// Success: translated text + target locale persist and round-trip via GetByID.
 	translated := "Hallo, Welt"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE"))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE", ""))
 
 	got, err := repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 	assert.Equal(t, "Hello, world", *got.ValueText, "source value_text must be preserved")
 
 	// Clearing: a nil translation nulls the column.
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, nil, "de-DE"))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, nil, "de-DE", ""))
 
 	cleared, err := repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 	assert.Nil(t, cleared.TranslationLangKey, "clearing also nulls translation_lang_key")
 
 	// Missing record: NotFound (resolved via the shared tenant write lock).
-	err = repo.SetTranslation(ctx, uuid.New(), &translated, "de-DE")
+	err = repo.SetTranslation(ctx, uuid.New(), &translated, "de-DE", "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, huberrors.ErrNotFound, "a missing record returns NotFound")
 }
@@ -125,7 +125,7 @@ func TestFeedbackRecords_SetTranslation_StaleTargetIsNoOp(t *testing.T) {
 
 	// A stale-target write (fr-FR — an older job or a stale-cache enqueue) must not land.
 	stale := "Bonjour le monde"
-	err = repo.SetTranslation(ctx, created.ID, &stale, "fr-FR")
+	err = repo.SetTranslation(ctx, created.ID, &stale, "fr-FR", "")
 	require.ErrorIs(t, err, huberrors.ErrTranslationSuperseded, "stale-target write is superseded")
 
 	got, err := repo.GetByID(ctx, created.ID)
@@ -135,7 +135,7 @@ func TestFeedbackRecords_SetTranslation_StaleTargetIsNoOp(t *testing.T) {
 
 	// A current-target write (de-DE) lands normally.
 	current := "Hallo, Welt"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &current, "de-DE"))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &current, "de-DE", ""))
 
 	got, err = repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestFeedbackRecords_SetTranslation_StaleTargetIsNoOp(t *testing.T) {
 	_, err = settingsRepo.Upsert(ctx, tenantID, models.EnrichmentSettings{TargetLanguage: "fr-FR"})
 	require.NoError(t, err)
 
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &stale, "fr-FR"))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &stale, "fr-FR", ""))
 
 	got, err = repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestFeedbackRecords_SetTranslation_PersistsForDefaultLanguageTenant(t *test
 	// A default-resolved write (langKey = the deployment default) must land for a tenant with no
 	// stored target — exactly the case the stale-target guard must NOT reject.
 	translated := "Hello, world"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "en-US"))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "en-US", "en-US"))
 
 	got, err := repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -202,6 +202,64 @@ func TestFeedbackRecords_SetTranslation_PersistsForDefaultLanguageTenant(t *test
 	assert.Equal(t, "Hello, world", *got.ValueTextTranslated)
 	require.NotNil(t, got.TranslationLangKey)
 	assert.Equal(t, "en-US", *got.TranslationLangKey)
+}
+
+// TestFeedbackRecords_SetTranslation_StaleExplicitTargetUnderDefaultIsSuperseded locks the
+// default-aware write guard: a tenant with no target_language of its own is on the deployment
+// default (en-US), so an in-flight job still carrying a former EXPLICIT target (de-DE) must be
+// superseded — its langKey no longer equals the effective target. Only a write matching the
+// default lands. (Without threading the default into the guard, the de-DE write would wrongly
+// persist because no stored target exists.)
+func TestFeedbackRecords_SetTranslation_StaleExplicitTargetUnderDefaultIsSuperseded(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+
+	// Tenant has no target_language of its own → it inherits the deployment default (en-US).
+	tenantID := testTenantID("clear-then-stale")
+	valueText := "Hallo Welt"
+	created, err := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		FieldID:      "q1",
+		FieldType:    models.FieldTypeText,
+		ValueText:    &valueText,
+		TenantID:     tenantID,
+		SubmissionID: testTenantID("submission"),
+	})
+	require.NoError(t, err)
+
+	const defaultLang = "en-US"
+
+	// An old job still carrying the tenant's former explicit target (de-DE) must not land: the
+	// effective target is now the default (en-US), so de-DE no longer matches.
+	stale := "stale German"
+	err = repo.SetTranslation(ctx, created.ID, &stale, "de-DE", defaultLang)
+	require.ErrorIs(t, err, huberrors.ErrTranslationSuperseded,
+		"a former-explicit-target write must not land once the tenant is on the default")
+
+	got, err := repo.GetByID(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.ValueTextTranslated, "stale explicit-target write must not persist")
+	assert.Nil(t, got.TranslationLangKey)
+
+	// A write matching the effective (default) target lands.
+	translated := "Hello world"
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, defaultLang, defaultLang))
+
+	got, err = repo.GetByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.ValueTextTranslated)
+	assert.Equal(t, "Hello world", *got.ValueTextTranslated)
+	require.NotNil(t, got.TranslationLangKey)
+	assert.Equal(t, defaultLang, *got.TranslationLangKey)
 }
 
 // TestFeedbackRecords_ListTranslationBackfillTargets verifies the backfill query: it
@@ -253,12 +311,12 @@ func TestFeedbackRecords_ListTranslationBackfillTargets(t *testing.T) {
 	altTranslation := "alt"
 	_, err = settingsRepo.Upsert(ctx, tenantWithTarget, models.EnrichmentSettings{TargetLanguage: "fr-FR"})
 	require.NoError(t, err)
-	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &altTranslation, "fr-FR"))
+	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &altTranslation, "fr-FR", ""))
 	_, err = settingsRepo.Upsert(ctx, tenantWithTarget, models.EnrichmentSettings{TargetLanguage: "de-DE"})
 	require.NoError(t, err)
 
 	currentTranslation := "Hallo"
-	require.NoError(t, repo.SetTranslation(ctx, current.ID, &currentTranslation, "de-DE")) // matches target
+	require.NoError(t, repo.SetTranslation(ctx, current.ID, &currentTranslation, "de-DE", "")) // matches target
 
 	targets, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, 100, "")
 	require.NoError(t, err)
@@ -317,7 +375,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 
 	repo := repository.NewFeedbackRecordsRepository(db)
 	settingsRepo := repository.NewTenantSettingsRepository(db)
-	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
 	// Each record gets a fresh tenant; seed that tenant's target so the translation write
 	// (which now only lands while it matches the current target) succeeds.
@@ -380,7 +438,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("clears a stale translation when value_text is empty", func(t *testing.T) {
 		rec := createText("", "fr", "en-US")
 		stale := "stale translation"
-		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &stale, "en-US"))
+		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &stale, "en-US", ""))
 
 		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"}, nil)
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
@@ -444,7 +502,7 @@ func TestFeedbackRecords_UpdateClearsTranslationOnlyOnContentChange(t *testing.T
 	require.NoError(t, err)
 
 	translated := "Hallo, Welt"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE"))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE", ""))
 
 	// Re-sending the SAME value_text must NOT clear the translation — otherwise a deduped
 	// re-translation (identical content hash) would strand the record with no translation.

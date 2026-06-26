@@ -153,13 +153,14 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 // re-publishing would loop the enrichment pipeline. A missing record (deleted or
 // purged between read and write) returns NotFound. translated may be nil.
 //
-// Setting a translation (translated != nil) is conditional: it lands only while the tenant's
-// current target_language still equals langKey, otherwise it returns
+// Setting a translation (translated != nil) is conditional: it lands only while langKey still
+// equals the tenant's current EFFECTIVE target — its own target_language, or defaultLang
+// (TRANSLATION_DEFAULT_LANGUAGE) when it has none — otherwise it returns
 // huberrors.ErrTranslationSuperseded. This makes the write atomic w.r.t. a concurrent target
 // change and immune to a stale settings-cache read, so an out-of-order stale-target job cannot
 // clobber a newer translation. Clearing (translated == nil) is unconditional.
 func (r *FeedbackRecordsRepository) SetTranslation(
-	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string,
+	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
 ) error {
 	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		// Translation rides the feedback record's tenant boundary; resolve and lock
@@ -184,15 +185,14 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 			return nil
 		}
 
-		// Setting a translation persists only while it is still consistent with the tenant's
-		// current target: either the tenant's own target_language equals the locale we produced
-		// ($3), or the tenant has no target of its own (stored target NULL/empty) and is on the
-		// deployment default — in which case any default-resolved write is accepted. This keeps
-		// the write atomic against a concurrent target change: a stale-target job (an older
-		// explicit target finishing after the tenant switched) matches no row and no-ops rather
-		// than clobbering the current value, while a tenant relying on TRANSLATION_DEFAULT_LANGUAGE
-		// (which never stores a target) can still be written. The LEFT JOIN in the subquery keeps
-		// a tenant with no settings row writable under the default.
+		// Setting a translation persists only while langKey still equals the tenant's current
+		// EFFECTIVE target — COALESCE(its own target_language, defaultLang $4). This keeps the
+		// write atomic against a concurrent target change: a stale-target job (an older target
+		// finishing after the tenant switched — including switching to the default by clearing
+		// its own target) resolves a different effective target, matches no row, and no-ops
+		// instead of clobbering the current value. The LEFT JOIN keeps a tenant with no settings
+		// row writable under the default; NULLIF($4,'') makes an empty default never match, so
+		// with no default configured a tenant with no target of its own is not written.
 		tag, err := dbTx.Exec(ctx, `
 			UPDATE feedback_records fr
 			SET value_text_translated = $2, translation_lang_key = $3, updated_at = NOW()
@@ -203,15 +203,16 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 				WHERE r.id = $1
 			) eff
 			WHERE fr.id = $1
-				AND (eff.stored_target = $3 OR eff.stored_target IS NULL)`,
-			feedbackRecordID, *translated, langKey,
+				AND COALESCE(eff.stored_target, NULLIF($4, '')) = $3`,
+			feedbackRecordID, *translated, langKey, defaultLang,
 		)
 		if err != nil {
 			return fmt.Errorf("set feedback record translation: %w", err)
 		}
 
-		// The record exists (locked above), so zero rows means the tenant now has a DIFFERENT
-		// explicit target: a newer-target write owns the row. Signal a benign skip.
+		// The record exists (locked above), so zero rows means the tenant's effective target no
+		// longer equals langKey (it changed its own target, or cleared it and the default
+		// differs): a newer-target write owns the row. Signal a benign skip.
 		if tag.RowsAffected() == 0 {
 			return huberrors.ErrTranslationSuperseded
 		}
@@ -263,7 +264,7 @@ func (r *FeedbackRecordsRepository) ListTranslationBackfillTargets(
 // tenant without materializing every target at once. Pass uuid.Nil as afterID for the
 // first page (every UUIDv7 id sorts after it).
 func (r *FeedbackRecordsRepository) ListTranslationBackfillTargetsForTenant(
-	ctx context.Context, tenantID string, afterID uuid.UUID, limit int,
+	ctx context.Context, tenantID string, afterID uuid.UUID, limit int, defaultLang string,
 ) ([]models.TranslationBackfillTarget, error) {
 	const query = translationBackfillSelectSQL + `
 			AND fr.tenant_id = $2
@@ -271,10 +272,11 @@ func (r *FeedbackRecordsRepository) ListTranslationBackfillTargetsForTenant(
 		ORDER BY fr.id
 		LIMIT $4`
 
-	// Empty default ($1): a settings-change backfill re-translates to the tenant's OWN target
-	// (which it has — changing it is what triggered this). The global default fallback is
-	// applied only by the cross-tenant ListTranslationBackfillTargets.
-	rows, err := r.db.Query(ctx, query, "", tenantID, afterID, limit)
+	// defaultLang ($1) is the deployment fallback target: a tenant that cleared its own
+	// target_language inherits it, so a settings-change backfill re-translates that tenant's
+	// records to the default instead of no-opping. A tenant that set a new explicit target has
+	// it stored, so the COALESCE in translationBackfillSelectSQL resolves to that target either way.
+	rows, err := r.db.Query(ctx, query, defaultLang, tenantID, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query translation backfill targets for tenant: %w", err)
 	}

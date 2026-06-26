@@ -243,6 +243,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		nil, // riverClient set below after creation
 		service.EmbeddingsQueueName,
 		cfg.Embedding.MaxAttempts,
+		cfg.Translation.DefaultLanguage,
 	)
 
 	// Shared worker/queue registration first (webhook + optional embedding added below).

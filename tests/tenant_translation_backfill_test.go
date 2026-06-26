@@ -95,20 +95,20 @@ func TestListTranslationBackfillTargetsForTenant(t *testing.T) {
 	// Tenant A: one already translated to the current target (de-DE) → must be excluded.
 	recCurrent := makeText(tenantA, "current")
 	currentTranslation := "Aktuell"
-	require.NoError(t, repo.SetTranslation(ctx, recCurrent.ID, &currentTranslation, "de-DE"))
+	require.NoError(t, repo.SetTranslation(ctx, recCurrent.ID, &currentTranslation, "de-DE", ""))
 
 	// Tenant B: one untranslated record → must never appear for tenant A.
 	recB := makeText(tenantB, "bee")
 
-	page1, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenantA, uuid.Nil, 2)
+	page1, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenantA, uuid.Nil, 2, "")
 	require.NoError(t, err)
 	require.Len(t, page1, 2, "first keyset page should be full")
 
-	page2, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenantA, page1[1].FeedbackRecordID, 2)
+	page2, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenantA, page1[1].FeedbackRecordID, 2, "")
 	require.NoError(t, err)
 	require.Len(t, page2, 1, "second page holds the remaining stale record")
 
-	page3, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenantA, page2[0].FeedbackRecordID, 2)
+	page3, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenantA, page2[0].FeedbackRecordID, 2, "")
 	require.NoError(t, err)
 	assert.Empty(t, page3, "no more pages")
 
@@ -127,6 +127,67 @@ func TestListTranslationBackfillTargetsForTenant(t *testing.T) {
 
 	assert.NotContains(t, got, recCurrent.ID, "record already at the current target is excluded (idempotency)")
 	assert.NotContains(t, got, recB.ID, "another tenant's record never appears (tenant isolation)")
+}
+
+// TestListTranslationBackfillTargetsForTenant_UsesDefaultLanguage locks the default-aware
+// per-tenant backfill: a tenant with no target_language of its own inherits the deployment
+// default, so its stale/untranslated records become backfill targets under that default (this is
+// what lets clearing a target re-translate existing rows to the default instead of no-opping).
+func TestListTranslationBackfillTargetsForTenant_UsesDefaultLanguage(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+
+	// A tenant with NO settings row → no target_language of its own (relies on the default).
+	tenant := testTenantID("bf-no-target")
+	makeText := func(valueText string) *models.FeedbackRecord {
+		rec, err := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+			SourceType:   "formbricks",
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			ValueText:    &valueText,
+			TenantID:     tenant,
+			SubmissionID: testTenantID("sub"),
+		})
+		require.NoError(t, err)
+
+		return rec
+	}
+
+	// One record was translated to a now-former target (de-DE), another never translated.
+	stale := makeText("eins")
+	never := makeText("zwei")
+
+	// Seed the stale record's translation to its former target — de-DE is the effective target
+	// for this write because we pass de-DE as the default.
+	oldTranslation := "Eins (alt)"
+	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &oldTranslation, "de-DE", "de-DE"))
+
+	// With no default configured, a tenant with no target has no effective target → no targets.
+	none, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenant, uuid.Nil, 100, "")
+	require.NoError(t, err)
+	assert.Empty(t, none, "without a default, a no-target tenant yields no backfill targets")
+
+	// With a default (en-US), both the stale (de-DE != en-US) and the never-translated record
+	// must be (re)translated to the default.
+	targets, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenant, uuid.Nil, 100, "en-US")
+	require.NoError(t, err)
+
+	got := map[uuid.UUID]string{}
+	for _, target := range targets {
+		got[target.FeedbackRecordID] = target.TargetLang
+	}
+
+	assert.Equal(t, map[uuid.UUID]string{stale.ID: "en-US", never.ID: "en-US"}, got,
+		"under the default, the stale-target and untranslated records both target the default")
 }
 
 // TestBackfillTranslationsForTenant_Isolation drives the service against the real DB with a
@@ -155,7 +216,7 @@ func TestBackfillTranslationsForTenant_Isolation(t *testing.T) {
 	makeText(tenantB, "bee") // other tenant, must be untouched
 
 	inserter := &countingTranslationInserter{}
-	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
 	enqueued, err := svc.BackfillTranslationsForTenant(ctx, inserter, service.TranslationsQueueName, 3, tenantA)
 	require.NoError(t, err)
@@ -201,7 +262,7 @@ func TestTenantTranslationBackfillWorker_Work(t *testing.T) {
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
 	require.NoError(t, err)
 
-	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 	worker := workers.NewTenantTranslationBackfillWorker(svc, 3)
 
 	job := &river.Job[service.TenantTranslationBackfillArgs]{

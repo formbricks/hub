@@ -41,12 +41,12 @@ type FeedbackRecordsRepository interface {
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
-	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string) error
+	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string) error
 	ListTranslationBackfillTargets(
 		ctx context.Context, afterID uuid.UUID, limit int, defaultLang string,
 	) ([]models.TranslationBackfillTarget, error)
 	ListTranslationBackfillTargetsForTenant(
-		ctx context.Context, tenantID string, afterID uuid.UUID, limit int,
+		ctx context.Context, tenantID string, afterID uuid.UUID, limit int, defaultLang string,
 	) ([]models.TranslationBackfillTarget, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	DeleteByUser(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) ([]models.DeletedFeedbackRecordsByTenant, error)
@@ -61,13 +61,14 @@ type EmbeddingsRepository interface {
 
 // FeedbackRecordsService handles business logic for feedback records.
 type FeedbackRecordsService struct {
-	repo                 FeedbackRecordsRepository
-	embeddingsRepo       EmbeddingsRepository
-	embeddingModel       string
-	publisher            MessagePublisher
-	embeddingInserter    RiverJobInserter
-	embeddingQueueName   string
-	embeddingMaxAttempts int
+	repo                   FeedbackRecordsRepository
+	embeddingsRepo         EmbeddingsRepository
+	embeddingModel         string
+	publisher              MessagePublisher
+	embeddingInserter      RiverJobInserter
+	embeddingQueueName     string
+	embeddingMaxAttempts   int
+	translationDefaultLang string
 }
 
 // NewFeedbackRecordsService creates a new feedback records service.
@@ -75,6 +76,9 @@ type FeedbackRecordsService struct {
 // embeddingInserter and embeddingQueueName are optional (for backfill); when nil/empty, BackfillEmbeddings returns an error.
 // Call SetEmbeddingInserter after the River client is created to enable backfill without building the service twice.
 // embeddingsRepo and embeddingModel are required for SetEmbedding and BackfillEmbeddings (from EMBEDDING_PROVIDER and EMBEDDING_MODEL).
+// translationDefaultLang (TRANSLATION_DEFAULT_LANGUAGE) is the fallback target for tenants with no
+// target_language of their own; "" disables the fallback. It governs the SetTranslation write-guard
+// and both translation backfills, so pass it wherever translation work runs.
 func NewFeedbackRecordsService(
 	repo FeedbackRecordsRepository,
 	embeddingsRepo EmbeddingsRepository,
@@ -83,15 +87,17 @@ func NewFeedbackRecordsService(
 	embeddingInserter RiverJobInserter,
 	embeddingQueueName string,
 	embeddingMaxAttempts int,
+	translationDefaultLang string,
 ) *FeedbackRecordsService {
 	return &FeedbackRecordsService{
-		repo:                 repo,
-		embeddingsRepo:       embeddingsRepo,
-		embeddingModel:       embeddingModel,
-		publisher:            publisher,
-		embeddingInserter:    embeddingInserter,
-		embeddingQueueName:   embeddingQueueName,
-		embeddingMaxAttempts: embeddingMaxAttempts,
+		repo:                   repo,
+		embeddingsRepo:         embeddingsRepo,
+		embeddingModel:         embeddingModel,
+		publisher:              publisher,
+		embeddingInserter:      embeddingInserter,
+		embeddingQueueName:     embeddingQueueName,
+		embeddingMaxAttempts:   embeddingMaxAttempts,
+		translationDefaultLang: translationDefaultLang,
 	}
 }
 
@@ -147,7 +153,7 @@ func (s *FeedbackRecordsService) SetTranslation(
 		return ErrTranslationLangKeyRequired
 	}
 
-	if err := s.repo.SetTranslation(ctx, feedbackRecordID, translated, langKey); err != nil {
+	if err := s.repo.SetTranslation(ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang); err != nil {
 		return fmt.Errorf("set feedback record translation: %w", err)
 	}
 
@@ -376,11 +382,12 @@ const translationBackfillPageSize = 500
 // tenants) that needs (re)translation, streaming the targets in keyset pages. Used by the
 // one-off global backfill command. Returns the number of jobs enqueued.
 func (s *FeedbackRecordsService) BackfillTranslations(
-	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int, defaultLang string,
+	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int,
 ) (int, error) {
 	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts),
 		func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error) {
-			targets, err := s.repo.ListTranslationBackfillTargets(ctx, afterID, translationBackfillPageSize, defaultLang)
+			targets, err := s.repo.ListTranslationBackfillTargets(
+				ctx, afterID, translationBackfillPageSize, s.translationDefaultLang)
 			if err != nil {
 				return nil, fmt.Errorf("list translation backfill targets: %w", err)
 			}
@@ -398,7 +405,8 @@ func (s *FeedbackRecordsService) BackfillTranslationsForTenant(
 ) (int, error) {
 	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts),
 		func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error) {
-			targets, err := s.repo.ListTranslationBackfillTargetsForTenant(ctx, tenantID, afterID, translationBackfillPageSize)
+			targets, err := s.repo.ListTranslationBackfillTargetsForTenant(
+				ctx, tenantID, afterID, translationBackfillPageSize, s.translationDefaultLang)
 			if err != nil {
 				return nil, fmt.Errorf("list translation backfill targets for tenant %s: %w", tenantID, err)
 			}

@@ -96,7 +96,7 @@ func run() int {
 	}
 
 	repo := repository.NewFeedbackRecordsRepository(db)
-	feedbackRecordsService := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+	feedbackRecordsService := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, cfg.Translation.DefaultLanguage)
 
 	// Producer-only: we only enqueue jobs; workers run in hub-worker (or the API process).
 	// River requires the job kind registered (worker added) and MaxWorkers > 0 for a declared queue.
@@ -116,7 +116,7 @@ func run() int {
 	}
 
 	enqueued, err := feedbackRecordsService.BackfillTranslations(
-		ctx, riverClient, service.TranslationsQueueName, maxAttempts, cfg.Translation.DefaultLanguage)
+		ctx, riverClient, service.TranslationsQueueName, maxAttempts)
 	if err != nil {
 		slog.Error("Backfill failed", "error", err)
 

@@ -107,6 +107,7 @@ func setupTestServerWithEventProviders(
 		nil,
 		"",
 		0,
+		"",
 	)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)

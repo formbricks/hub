@@ -62,7 +62,7 @@ func (m *mockFeedbackRecordsRepo) Update(
 }
 
 func (m *mockFeedbackRecordsRepo) SetTranslation(
-	_ context.Context, _ uuid.UUID, _ *string, _ string,
+	_ context.Context, _ uuid.UUID, _ *string, _, _ string,
 ) error {
 	return nil
 }
@@ -83,7 +83,7 @@ func (m *mockFeedbackRecordsRepo) ListTranslationBackfillTargets(
 }
 
 func (m *mockFeedbackRecordsRepo) ListTranslationBackfillTargetsForTenant(
-	_ context.Context, _ string, afterID uuid.UUID, _ int,
+	_ context.Context, _ string, afterID uuid.UUID, _ int, _ string,
 ) ([]models.TranslationBackfillTarget, error) {
 	if m.tenantBackfillErr != nil {
 		return nil, m.tenantBackfillErr
@@ -118,7 +118,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecord_PublishesTenantAwareDeleted
 	tenantID := "org-123"
 	repo := &mockFeedbackRecordsRepo{record: &models.FeedbackRecord{ID: recordID, TenantID: tenantID}}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	err := svc.DeleteFeedbackRecord(ctx, recordID)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestFeedbackRecordsService_CreateFeedbackRecord_NormalizesTenantID(t *testi
 	inputTenantID := " org-123 "
 	repo := &mockFeedbackRecordsRepo{}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	record, err := svc.CreateFeedbackRecord(ctx, &models.CreateFeedbackRecordRequest{
 		SourceType:   "formbricks",
@@ -180,7 +180,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_PublishesTenantAware
 		},
 	}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{UserID: " user-123 "})
 	if err != nil {
@@ -217,7 +217,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_NormalizesTenantFilt
 		},
 	}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{
 		UserID:   "user-123",
@@ -247,7 +247,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RejectsOverlengthTen
 	tenantID := strings.Repeat("a", maxTenantIDLength+1)
 	repo := &mockFeedbackRecordsRepo{}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{
 		UserID:   "user-123",
@@ -275,7 +275,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RejectsOverlengthUse
 	userID := strings.Repeat("a", maxUserIDLength+1)
 	repo := &mockFeedbackRecordsRepo{}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{UserID: userID})
 	if !errors.Is(err, huberrors.ErrValidation) {
@@ -303,7 +303,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RequiresUserID(t *te
 		},
 	}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{})
 	if !errors.Is(err, ErrUserIDRequired) {
@@ -320,7 +320,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RequiresUserID(t *te
 }
 
 func TestFeedbackRecordsService_SetTranslation_RequiresLangKey(t *testing.T) {
-	svc := NewFeedbackRecordsService(&mockFeedbackRecordsRepo{}, nil, "", nil, nil, "", 0)
+	svc := NewFeedbackRecordsService(&mockFeedbackRecordsRepo{}, nil, "", nil, nil, "", 0, "")
 	translated := "Hallo"
 
 	// A translation with a blank lang key is rejected before reaching the repo.
@@ -344,7 +344,7 @@ func TestFeedbackRecordsService_BackfillTranslationsForTenant(t *testing.T) {
 		},
 	}
 	inserter := &mockTranslationInserter{}
-	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
 	enqueued, err := svc.BackfillTranslationsForTenant(context.Background(), inserter, TranslationsQueueName, 3, "org-1")
 	if err != nil {
@@ -363,7 +363,7 @@ func TestFeedbackRecordsService_BackfillTranslationsForTenant(t *testing.T) {
 
 func TestFeedbackRecordsService_BackfillTranslationsForTenant_RepoError(t *testing.T) {
 	repo := &mockFeedbackRecordsRepo{tenantBackfillErr: errors.New("db down")}
-	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
 	_, err := svc.BackfillTranslationsForTenant(
 		context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3, "org-1")
@@ -381,10 +381,10 @@ func TestFeedbackRecordsService_BackfillTranslations(t *testing.T) {
 			{FeedbackRecordID: id2, TargetLang: "fr-FR"},
 		},
 	}
-	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 	inserter := &mockTranslationInserter{}
 
-	enqueued, err := svc.BackfillTranslations(context.Background(), inserter, TranslationsQueueName, 3, "")
+	enqueued, err := svc.BackfillTranslations(context.Background(), inserter, TranslationsQueueName, 3)
 	if err != nil {
 		t.Fatalf("BackfillTranslations() error = %v", err)
 	}
@@ -401,9 +401,9 @@ func TestFeedbackRecordsService_BackfillTranslations(t *testing.T) {
 
 func TestFeedbackRecordsService_BackfillTranslations_RepoError(t *testing.T) {
 	repo := &mockFeedbackRecordsRepo{translationBackfillErr: errors.New("boom")}
-	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
-	_, err := svc.BackfillTranslations(context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3, "")
+	_, err := svc.BackfillTranslations(context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3)
 	if err == nil {
 		t.Fatal("BackfillTranslations() = nil, want the repo error propagated")
 	}

@@ -123,6 +123,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			nil,
 			service.EmbeddingsQueueName,
 			cfg.Embedding.MaxAttempts,
+			"", // translation default unused: this service handles embeddings only
 		)
 		docPrefix := service.EmbeddingPrefixForProvider(providerName)
 
@@ -153,7 +154,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		// the embedding-specific service params are unused here.
 		translationRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 		translationRecordsService := service.NewFeedbackRecordsService(
-			translationRecordsRepo, nil, "", nil, nil, "", 0)
+			translationRecordsRepo, nil, "", nil, nil, "", 0, cfg.Translation.DefaultLanguage)
 
 		deps.TranslationService = translationRecordsService
 		deps.TranslationClient = translationClient
