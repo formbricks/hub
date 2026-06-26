@@ -80,3 +80,24 @@ func (c *CachedTenantSettings) GetSettings(
 
 	return settings, nil
 }
+
+// Invalidate evicts the tenant's cached settings so the next GetSettings reloads from the
+// delegate. Called after a settings write so a change (e.g. a newly enabled target language)
+// is visible immediately instead of only after TTL expiry — otherwise records created in the
+// staleness window are skipped by the translation enqueue gate. Eviction is per-process (it
+// refreshes the replica that handled the write); other replicas stay TTL-bounded. No-op when
+// caching is off.
+func (c *CachedTenantSettings) Invalidate(tenantID string) {
+	if c.cache != nil {
+		c.cache.Remove(tenantID)
+	}
+}
+
+// OnSettingsChanged implements SettingsChangeListener: any successful settings write for a
+// tenant evicts that tenant's cached entry. Registered alongside the enrichment backfill
+// listener so a settings change both triggers backfills and refreshes this read cache.
+func (c *CachedTenantSettings) OnSettingsChanged(_ context.Context, tenantID string, _ []string) {
+	c.Invalidate(tenantID)
+}
+
+var _ SettingsChangeListener = (*CachedTenantSettings)(nil)

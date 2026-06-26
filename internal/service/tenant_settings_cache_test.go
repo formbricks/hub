@@ -80,3 +80,25 @@ func TestCachedTenantSettings_DoesNotCacheErrors(t *testing.T) {
 		t.Fatalf("delegate calls = %d, want 2 (errors must not be cached)", reader.calls)
 	}
 }
+
+func TestCachedTenantSettings_OnSettingsChangedEvicts(t *testing.T) {
+	reader := &countingSettingsReader{settings: &models.TenantSettings{TenantID: "org-1"}}
+	cached := NewCachedTenantSettings(reader, 16, time.Minute, nil)
+
+	// Prime the cache (1 delegate call). A settings write then evicts the entry, so the next
+	// read reloads from the delegate (2nd call) instead of serving the stale value until TTL —
+	// without this, a freshly enabled target is missed by the enqueue gate during the window.
+	if _, err := cached.GetSettings(context.Background(), "org-1"); err != nil {
+		t.Fatalf("GetSettings() error = %v", err)
+	}
+
+	cached.OnSettingsChanged(context.Background(), "org-1", []string{"target_language"})
+
+	if _, err := cached.GetSettings(context.Background(), "org-1"); err != nil {
+		t.Fatalf("GetSettings() error = %v", err)
+	}
+
+	if reader.calls != 2 {
+		t.Fatalf("delegate calls = %d, want 2 (a settings change must evict the cached entry)", reader.calls)
+	}
+}

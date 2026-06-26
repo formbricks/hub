@@ -13,3 +13,23 @@ import "context"
 type SettingsChangeListener interface {
 	OnSettingsChanged(ctx context.Context, tenantID string, changedKeys []string)
 }
+
+// compositeSettingsChangeListener fans a settings change out to several listeners, in order.
+// It lets a single TenantSettingsService listener registration drive multiple independent
+// reactions — e.g. evict the read cache and enqueue a re-translation backfill.
+type compositeSettingsChangeListener struct {
+	listeners []SettingsChangeListener
+}
+
+// NewCompositeSettingsChangeListener combines listeners into one that notifies each in order.
+func NewCompositeSettingsChangeListener(listeners ...SettingsChangeListener) SettingsChangeListener {
+	return &compositeSettingsChangeListener{listeners: listeners}
+}
+
+func (c *compositeSettingsChangeListener) OnSettingsChanged(
+	ctx context.Context, tenantID string, changedKeys []string,
+) {
+	for _, l := range c.listeners {
+		l.OnSettingsChanged(ctx, tenantID, changedKeys)
+	}
+}

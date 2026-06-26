@@ -459,7 +459,12 @@ func buildUpdateQuery(
 
 	argCount := 1
 
+	// Placeholders for value_text / language, captured so the stale-translation clear below can
+	// compare the pre-update column to the new value (0 = the field is not in this update).
+	valueTextArg, languageArg := 0, 0
+
 	if req.ValueText != nil {
+		valueTextArg = argCount
 		updates = append(updates, fmt.Sprintf("value_text = $%d", argCount))
 		args = append(args, *req.ValueText)
 		argCount++
@@ -490,6 +495,7 @@ func buildUpdateQuery(
 	}
 
 	if req.Language != nil {
+		languageArg = argCount
 		updates = append(updates, fmt.Sprintf("language = $%d", argCount))
 		args = append(args, *req.Language)
 		argCount++
@@ -499,6 +505,32 @@ func buildUpdateQuery(
 		updates = append(updates, fmt.Sprintf("user_id = $%d", argCount))
 		args = append(args, *req.UserID)
 		argCount++
+	}
+
+	// Clear a now-stale translation, but only when value_text or language ACTUALLY changes:
+	// the bare column on the RHS of an UPDATE ... SET is the pre-update value, so this compares
+	// old vs new. Clearing only on a real change keeps "clear" aligned with a new content hash
+	// — so the re-translation the change triggers is not deduped against the prior job and
+	// actually repopulates — while a client re-sending an unchanged value leaves the valid
+	// translation intact. NULLing on a real change also makes the row a backfill target
+	// (translation_lang_key NULL IS DISTINCT FROM the tenant target), so a missed or
+	// finally-failed re-translation is still recovered by a later backfill. Reuses the existing
+	// value_text / language placeholders, so it consumes none of its own.
+	var staleConds []string
+	if valueTextArg != 0 {
+		staleConds = append(staleConds, fmt.Sprintf("value_text IS DISTINCT FROM $%d", valueTextArg))
+	}
+
+	if languageArg != 0 {
+		staleConds = append(staleConds, fmt.Sprintf("language IS DISTINCT FROM $%d", languageArg))
+	}
+
+	if len(staleConds) > 0 {
+		cond := strings.Join(staleConds, " OR ")
+		updates = append(updates,
+			fmt.Sprintf("value_text_translated = CASE WHEN %s THEN NULL ELSE value_text_translated END", cond),
+			fmt.Sprintf("translation_lang_key = CASE WHEN %s THEN NULL ELSE translation_lang_key END", cond),
+		)
 	}
 
 	if len(updates) == 0 {

@@ -378,10 +378,15 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		messageManager.RegisterProvider(service.NewTranslationProvider(
 			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts, translationMetrics))
 
-		// On a target_language change, enqueue a per-tenant re-translation backfill so
-		// existing records pick up the new target (not only newly ingested ones).
-		tenantSettingsService.SetSettingsChangeListener(service.NewTranslationSettingsListener(
-			riverClient, service.TranslationBackfillsQueueName, cfg.Translation.MaxAttempts))
+		// On a settings write: evict the tenant's cached settings (so a changed/enabled
+		// target is visible to the enqueue gate immediately, not after TTL expiry) and
+		// enqueue a per-tenant re-translation backfill (so existing records pick up a new
+		// target, not only newly ingested ones).
+		tenantSettingsService.SetSettingsChangeListener(service.NewCompositeSettingsChangeListener(
+			translationCache,
+			service.NewTranslationSettingsListener(
+				riverClient, service.TranslationBackfillsQueueName, cfg.Translation.MaxAttempts),
+		))
 	}
 
 	taxonomyRepo := repository.NewTaxonomyRepository(db)

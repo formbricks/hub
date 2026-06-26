@@ -362,3 +362,67 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 		assert.Nil(t, got.TranslationLangKey, "stale-target lang key must not be persisted")
 	})
 }
+
+// TestFeedbackRecords_UpdateClearsTranslationOnlyOnContentChange locks the update-clears-stale
+// behavior: re-sending the SAME value_text keeps the existing translation (so a deduped
+// re-translation can't strand the record), while an actual value_text change clears it so the
+// UI falls back to the original and the row becomes a backfill target.
+func TestFeedbackRecords_UpdateClearsTranslationOnlyOnContentChange(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+	settingsRepo := repository.NewTenantSettingsRepository(db)
+
+	tenantID := testTenantID("update-clears-translation")
+	original := "Hello, world"
+
+	// Tenant target de-DE so the translation write lands.
+	_, err = settingsRepo.Upsert(ctx, tenantID, models.EnrichmentSettings{TargetLanguage: "de-DE"})
+	require.NoError(t, err)
+
+	created, err := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		FieldID:      "q1",
+		FieldType:    models.FieldTypeText,
+		ValueText:    &original,
+		TenantID:     tenantID,
+		SubmissionID: testTenantID("submission"),
+	})
+	require.NoError(t, err)
+
+	translated := "Hallo, Welt"
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE"))
+
+	// Re-sending the SAME value_text must NOT clear the translation — otherwise a deduped
+	// re-translation (identical content hash) would strand the record with no translation.
+	same := original
+	if _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &same}); err != nil {
+		t.Fatalf("Update(same value_text) error = %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.ValueTextTranslated, "unchanged value_text must keep the translation")
+	assert.Equal(t, "Hallo, Welt", *got.ValueTextTranslated)
+	require.NotNil(t, got.TranslationLangKey)
+	assert.Equal(t, "de-DE", *got.TranslationLangKey)
+
+	// An actual value_text change clears the now-stale translation.
+	changed := "Goodbye, world"
+	if _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &changed}); err != nil {
+		t.Fatalf("Update(changed value_text) error = %v", err)
+	}
+
+	got, err = repo.GetByID(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.ValueTextTranslated, "changed value_text must clear the stale translation")
+	assert.Nil(t, got.TranslationLangKey, "changed value_text must clear the translation lang key")
+}
