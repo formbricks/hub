@@ -88,14 +88,15 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 			t.Fatal("deferred rollback was not called")
 		}
 
-		if len(transaction.queries) != 7 {
-			t.Fatalf("queries = %d, want 7 (3 lock statements + 4 deletes)", len(transaction.queries))
+		if len(transaction.queries) != 8 {
+			t.Fatalf("queries = %d, want 8 (3 lock statements + 5 deletes)", len(transaction.queries))
 		}
 
 		assertQueryContains(t, transaction.queries[0], "set_config('lock_timeout', $1, true)")
 		assertQueryContains(t, transaction.queries[1], "pg_advisory_xact_lock(hashtextextended($1, 0))")
 		assertQueryContains(t, transaction.queries[2], "set_config('lock_timeout', '0', true)")
 		assertQueryContains(t, transaction.queries[3], "DELETE FROM embeddings")
+		assertQueryContains(t, transaction.queries[7], "DELETE FROM tenant_settings")
 
 		if len(transaction.args[1]) != 1 || transaction.args[1][0] != TenantWriteLockKey("org-123") {
 			t.Fatalf("lock args = %#v, want tenant write lock key", transaction.args[1])
@@ -225,8 +226,8 @@ func TestDeleteTenantDataInTx(t *testing.T) {
 			t.Fatalf("counts = %+v, want embeddings=2 feedback=3 webhooks=1", counts)
 		}
 
-		if len(exec.queries) != 4 {
-			t.Fatalf("queries = %d, want 4", len(exec.queries))
+		if len(exec.queries) != 5 {
+			t.Fatalf("queries = %d, want 5", len(exec.queries))
 		}
 
 		assertQueryContains(t, exec.queries[0], "DELETE FROM embeddings")
@@ -234,6 +235,7 @@ func TestDeleteTenantDataInTx(t *testing.T) {
 		assertQueryContains(t, exec.queries[1], "DELETE FROM taxonomy_runs")
 		assertQueryContains(t, exec.queries[2], "DELETE FROM feedback_records")
 		assertQueryContains(t, exec.queries[3], "DELETE FROM webhooks")
+		assertQueryContains(t, exec.queries[4], "DELETE FROM tenant_settings")
 
 		for queryIndex, args := range exec.args {
 			if len(args) != 1 || args[0] != "org-123" {
@@ -302,6 +304,33 @@ func TestDeleteTenantDataInTx(t *testing.T) {
 		if len(exec.queries) != 3 {
 			t.Fatalf("queries = %d, want 3", len(exec.queries))
 		}
+	})
+
+	t.Run("stops after tenant settings delete error", func(t *testing.T) {
+		exec := &fakeTenantDataExecutor{
+			tags: []pgconn.CommandTag{
+				pgconn.NewCommandTag("DELETE 2"),
+				pgconn.NewCommandTag("DELETE 4"),
+				pgconn.NewCommandTag("DELETE 3"),
+				pgconn.NewCommandTag("DELETE 1"),
+			},
+			errAtQuery: 5,
+		}
+
+		counts, err := deleteTenantDataInTx(context.Background(), exec, "org-123")
+		if err == nil {
+			t.Fatal("deleteTenantDataInTx() error = nil, want error")
+		}
+
+		if counts != nil {
+			t.Fatalf("counts = %+v, want nil", counts)
+		}
+
+		if len(exec.queries) != 5 {
+			t.Fatalf("queries = %d, want 5", len(exec.queries))
+		}
+
+		assertQueryContains(t, exec.queries[4], "DELETE FROM tenant_settings")
 	})
 }
 

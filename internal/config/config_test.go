@@ -194,6 +194,36 @@ func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 	})
 }
 
+func TestLoad_TenantSettingsCacheSize(t *testing.T) {
+	t.Run("explicit 0 disables and is not reset to the default", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+		t.Setenv("TENANT_SETTINGS_CACHE_SIZE", "0")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.TenantSettingsCache.Size != 0 {
+			t.Fatalf("Size = %d, want 0 (explicit 0 disables the cache, must not default to 2048)",
+				cfg.TenantSettingsCache.Size)
+		}
+	})
+
+	t.Run("unset applies the default", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.TenantSettingsCache.Size != 2048 {
+			t.Fatalf("Size = %d, want 2048 (default when unset)", cfg.TenantSettingsCache.Size)
+		}
+	})
+}
+
 func TestLoad_EmbeddingGoogleCloudProject(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
 	t.Setenv("EMBEDDING_GOOGLE_CLOUD_PROJECT", "my-google-cloud-project")
@@ -320,6 +350,33 @@ func TestLoad_EmbeddingBaseURLValidation(t *testing.T) {
 				t.Fatalf("Load() error = %v, want %v", err, ErrInvalidEmbeddingBaseURL)
 			}
 		})
+	}
+}
+
+func TestLoad_TranslationDefaultLanguage(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("TRANSLATION_DEFAULT_LANGUAGE", "en-us")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Translation.DefaultLanguage != "en-US" {
+		t.Errorf("Translation.DefaultLanguage = %q, want en-US (canonicalized)", cfg.Translation.DefaultLanguage)
+	}
+}
+
+func TestLoad_TranslationDefaultLanguageValidation(t *testing.T) {
+	t.Setenv("TRANSLATION_DEFAULT_LANGUAGE", "!!!not-a-locale")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+
+	if !errors.Is(err, ErrInvalidTranslationDefaultLanguage) {
+		t.Fatalf("Load() error = %v, want %v", err, ErrInvalidTranslationDefaultLanguage)
 	}
 }
 

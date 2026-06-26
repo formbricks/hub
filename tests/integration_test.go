@@ -107,10 +107,14 @@ func setupTestServerWithEventProviders(
 		nil,
 		"",
 		0,
+		"",
 	)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
+	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
+	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
+	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Set up public endpoints
@@ -133,6 +137,9 @@ func setupTestServerWithEventProviders(
 	protectedMux.HandleFunc("PATCH /v1/webhooks/{id}", webhooksHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/webhooks/{id}", webhooksHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantDataHandler.Delete)
+	protectedMux.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettingsHandler.Get)
+	protectedMux.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettingsHandler.Update)
+	protectedMux.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettingsHandler.Patch)
 
 	var protectedHandler http.Handler = protectedMux
 

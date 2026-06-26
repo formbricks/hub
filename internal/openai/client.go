@@ -1,16 +1,21 @@
-// Package openai provides a thin wrapper around the official OpenAI Go SDK for embeddings.
+// Package openai provides a thin wrapper around the official OpenAI Go SDK for
+// embeddings and chat completions (used for translation).
 package openai
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/pkg/embeddings"
 )
@@ -24,6 +29,8 @@ var (
 	ErrNoEmbeddingInResponse = errors.New("openai: no embedding in response")
 	// ErrDimensionMismatch is returned when the response embedding length does not match configured dimensions.
 	ErrDimensionMismatch = errors.New("openai: embedding dimension mismatch")
+	// ErrNoCompletionInResponse is returned when a chat completion response contains no usable text.
+	ErrNoCompletionInResponse = errors.New("openai: no completion in response")
 )
 
 // Client calls the OpenAI embeddings API via the official SDK.
@@ -142,4 +149,60 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 // task type; this delegates to CreateEmbedding for compatibility with EmbeddingClient.
 func (c *Client) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
 	return c.CreateEmbedding(ctx, input)
+}
+
+// Translate sends a chat completion with the given system prompt and user text at
+// temperature 0 (deterministic) using the configured model, returning the trimmed
+// assistant text. It is the low-level call behind the translation enrichment; the
+// service layer builds the prompt.
+func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (string, error) {
+	userText = strings.TrimSpace(userText)
+	if userText == "" {
+		return "", ErrEmptyInput
+	}
+
+	resp, err := c.sdk.Chat.Completions.New(ctx, openaisdk.ChatCompletionNewParams{
+		Model:       c.model,
+		Temperature: param.NewOpt(0.0),
+		Messages: []openaisdk.ChatCompletionMessageParamUnion{
+			openaisdk.SystemMessage(systemPrompt),
+			openaisdk.UserMessage(userText),
+		},
+	})
+	if err != nil {
+		wrapped := fmt.Errorf("openai chat completion: %w", err)
+
+		var apiErr *openaisdk.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
+			return "", huberrors.NewRateLimitError(openaiRetryAfter(apiErr), wrapped)
+		}
+
+		return "", wrapped
+	}
+
+	if len(resp.Choices) == 0 {
+		return "", ErrNoCompletionInResponse
+	}
+
+	out := strings.TrimSpace(resp.Choices[0].Message.Content)
+	if out == "" {
+		return "", ErrNoCompletionInResponse
+	}
+
+	return out, nil
+}
+
+// openaiRetryAfter reads the Retry-After header (delta-seconds) from a 429 response, or 0
+// when absent or not an integer-seconds value.
+func openaiRetryAfter(apiErr *openaisdk.Error) time.Duration {
+	if apiErr == nil || apiErr.Response == nil {
+		return 0
+	}
+
+	secs, err := strconv.Atoi(apiErr.Response.Header.Get("Retry-After"))
+	if err != nil || secs < 0 {
+		return 0
+	}
+
+	return time.Duration(secs) * time.Second
 }

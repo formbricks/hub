@@ -145,7 +145,7 @@ func TestBackfillEmbeddings_StreamsAllEligible(t *testing.T) {
 	mine := []uuid.UUID{makeText("one"), makeText("two"), makeText("three")}
 
 	inserter := &countingEmbeddingInserter{}
-	svc := service.NewFeedbackRecordsService(feedbackRepo, embeddingsRepo, model, nil, inserter, "embeddings", 3)
+	svc := service.NewFeedbackRecordsService(feedbackRepo, embeddingsRepo, model, nil, inserter, "embeddings", 3, "")
 
 	enqueued, err := svc.BackfillEmbeddings(ctx, model)
 	require.NoError(t, err)

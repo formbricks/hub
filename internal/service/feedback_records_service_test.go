@@ -15,11 +15,15 @@ import (
 )
 
 type mockFeedbackRecordsRepo struct {
-	record              *models.FeedbackRecord
-	createReq           *models.CreateFeedbackRecordRequest
-	deleteByUserGroups  []models.DeletedFeedbackRecordsByTenant
-	deletedID           uuid.UUID
-	deleteByUserFilters *models.DeleteFeedbackRecordsByUserFilters
+	record                     *models.FeedbackRecord
+	createReq                  *models.CreateFeedbackRecordRequest
+	deleteByUserGroups         []models.DeletedFeedbackRecordsByTenant
+	deletedID                  uuid.UUID
+	deleteByUserFilters        *models.DeleteFeedbackRecordsByUserFilters
+	translationBackfillTargets []models.TranslationBackfillTarget
+	translationBackfillErr     error
+	tenantBackfillTargets      []models.TranslationBackfillTarget
+	tenantBackfillErr          error
 }
 
 func (m *mockFeedbackRecordsRepo) Create(
@@ -57,6 +61,43 @@ func (m *mockFeedbackRecordsRepo) Update(
 	return nil, errors.New("not implemented")
 }
 
+func (m *mockFeedbackRecordsRepo) SetTranslation(
+	_ context.Context, _ uuid.UUID, _ *string, _, _ string,
+) error {
+	return nil
+}
+
+func (m *mockFeedbackRecordsRepo) ListTranslationBackfillTargets(
+	_ context.Context, afterID uuid.UUID, _ int, _ string,
+) ([]models.TranslationBackfillTarget, error) {
+	if m.translationBackfillErr != nil {
+		return nil, m.translationBackfillErr
+	}
+
+	// First page (afterID == Nil) returns the configured set; later pages are empty.
+	if afterID != uuid.Nil {
+		return nil, nil
+	}
+
+	return m.translationBackfillTargets, nil
+}
+
+func (m *mockFeedbackRecordsRepo) ListTranslationBackfillTargetsForTenant(
+	_ context.Context, _ string, afterID uuid.UUID, _ int, _ string,
+) ([]models.TranslationBackfillTarget, error) {
+	if m.tenantBackfillErr != nil {
+		return nil, m.tenantBackfillErr
+	}
+
+	// First page (afterID == Nil) returns the configured set; later pages are empty, so
+	// the keyset loop terminates after one short page.
+	if afterID != uuid.Nil {
+		return nil, nil
+	}
+
+	return m.tenantBackfillTargets, nil
+}
+
 func (m *mockFeedbackRecordsRepo) Delete(_ context.Context, id uuid.UUID) error {
 	m.deletedID = id
 
@@ -77,7 +118,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecord_PublishesTenantAwareDeleted
 	tenantID := "org-123"
 	repo := &mockFeedbackRecordsRepo{record: &models.FeedbackRecord{ID: recordID, TenantID: tenantID}}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	err := svc.DeleteFeedbackRecord(ctx, recordID)
 	if err != nil {
@@ -96,7 +137,7 @@ func TestFeedbackRecordsService_CreateFeedbackRecord_NormalizesTenantID(t *testi
 	inputTenantID := " org-123 "
 	repo := &mockFeedbackRecordsRepo{}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	record, err := svc.CreateFeedbackRecord(ctx, &models.CreateFeedbackRecordRequest{
 		SourceType:   "formbricks",
@@ -139,7 +180,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_PublishesTenantAware
 		},
 	}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{UserID: " user-123 "})
 	if err != nil {
@@ -176,7 +217,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_NormalizesTenantFilt
 		},
 	}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{
 		UserID:   "user-123",
@@ -206,7 +247,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RejectsOverlengthTen
 	tenantID := strings.Repeat("a", maxTenantIDLength+1)
 	repo := &mockFeedbackRecordsRepo{}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{
 		UserID:   "user-123",
@@ -234,7 +275,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RejectsOverlengthUse
 	userID := strings.Repeat("a", maxUserIDLength+1)
 	repo := &mockFeedbackRecordsRepo{}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{UserID: userID})
 	if !errors.Is(err, huberrors.ErrValidation) {
@@ -262,7 +303,7 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RequiresUserID(t *te
 		},
 	}
 	publisher := &capturePublisher{}
-	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0)
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
 
 	count, err := svc.DeleteFeedbackRecordsByUser(ctx, &models.DeleteFeedbackRecordsByUserFilters{})
 	if !errors.Is(err, ErrUserIDRequired) {
@@ -275,6 +316,96 @@ func TestFeedbackRecordsService_DeleteFeedbackRecordsByUser_RequiresUserID(t *te
 
 	if publisher.callCount != 0 {
 		t.Fatalf("published %d events, want 0", publisher.callCount)
+	}
+}
+
+func TestFeedbackRecordsService_SetTranslation_RequiresLangKey(t *testing.T) {
+	svc := NewFeedbackRecordsService(&mockFeedbackRecordsRepo{}, nil, "", nil, nil, "", 0, "")
+	translated := "Hallo"
+
+	// A translation with a blank lang key is rejected before reaching the repo.
+	if err := svc.SetTranslation(context.Background(), uuid.New(), &translated, "  "); !errors.Is(err, ErrTranslationLangKeyRequired) {
+		t.Fatalf("err = %v, want ErrTranslationLangKeyRequired", err)
+	}
+
+	// Clearing (nil translation) with an empty key is allowed.
+	if err := svc.SetTranslation(context.Background(), uuid.New(), nil, ""); err != nil {
+		t.Fatalf("clear err = %v, want nil", err)
+	}
+}
+
+func TestFeedbackRecordsService_BackfillTranslationsForTenant(t *testing.T) {
+	firstID := uuid.New()
+	secondID := uuid.New()
+	repo := &mockFeedbackRecordsRepo{
+		tenantBackfillTargets: []models.TranslationBackfillTarget{
+			{FeedbackRecordID: firstID, TargetLang: "de-DE"},
+			{FeedbackRecordID: secondID, TargetLang: "de-DE"},
+		},
+	}
+	inserter := &mockTranslationInserter{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	enqueued, err := svc.BackfillTranslationsForTenant(context.Background(), inserter, TranslationsQueueName, 3, "org-1")
+	if err != nil {
+		t.Fatalf("BackfillTranslationsForTenant() error = %v", err)
+	}
+
+	if enqueued != 2 || len(inserter.calls) != 2 {
+		t.Fatalf("enqueued=%d calls=%d, want 2/2", enqueued, len(inserter.calls))
+	}
+
+	if inserter.calls[0].FeedbackRecordID != firstID ||
+		inserter.calls[0].TargetLang != "de-DE" || inserter.calls[0].ValueTextHash != "backfill" {
+		t.Fatalf("first job = %+v, want firstID/de-DE/backfill", inserter.calls[0])
+	}
+}
+
+func TestFeedbackRecordsService_BackfillTranslationsForTenant_RepoError(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{tenantBackfillErr: errors.New("db down")}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	_, err := svc.BackfillTranslationsForTenant(
+		context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3, "org-1")
+	if err == nil {
+		t.Fatal("BackfillTranslationsForTenant() = nil error, want repo error")
+	}
+}
+
+func TestFeedbackRecordsService_BackfillTranslations(t *testing.T) {
+	id1 := uuid.Must(uuid.NewV7())
+	id2 := uuid.Must(uuid.NewV7())
+	repo := &mockFeedbackRecordsRepo{
+		translationBackfillTargets: []models.TranslationBackfillTarget{
+			{FeedbackRecordID: id1, TargetLang: "de-DE"},
+			{FeedbackRecordID: id2, TargetLang: "fr-FR"},
+		},
+	}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+	inserter := &mockTranslationInserter{}
+
+	enqueued, err := svc.BackfillTranslations(context.Background(), inserter, TranslationsQueueName, 3)
+	if err != nil {
+		t.Fatalf("BackfillTranslations() error = %v", err)
+	}
+
+	if enqueued != 2 || len(inserter.calls) != 2 {
+		t.Fatalf("enqueued = %d, inserter calls = %d, want 2 and 2", enqueued, len(inserter.calls))
+	}
+
+	first := inserter.calls[0]
+	if first.FeedbackRecordID != id1 || first.TargetLang != "de-DE" || first.ValueTextHash != "backfill" {
+		t.Fatalf("first job = %+v, want {%s de-DE backfill}", first, id1)
+	}
+}
+
+func TestFeedbackRecordsService_BackfillTranslations_RepoError(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{translationBackfillErr: errors.New("boom")}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	_, err := svc.BackfillTranslations(context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3)
+	if err == nil {
+		t.Fatal("BackfillTranslations() = nil, want the repo error propagated")
 	}
 }
 

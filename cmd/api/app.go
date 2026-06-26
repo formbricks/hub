@@ -174,14 +174,16 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	var (
-		eventMetrics     observability.EventMetrics
-		webhookMetrics   observability.WebhookMetrics
-		embeddingMetrics observability.EmbeddingMetrics
+		eventMetrics       observability.EventMetrics
+		webhookMetrics     observability.WebhookMetrics
+		embeddingMetrics   observability.EmbeddingMetrics
+		translationMetrics observability.TranslationMetrics
 	)
 	if metrics != nil {
 		eventMetrics = metrics.Events
 		webhookMetrics = metrics.Webhooks
 		embeddingMetrics = metrics.Embeddings
+		translationMetrics = metrics.Translation
 	}
 
 	var tracerProvider *sdktrace.TracerProvider
@@ -241,6 +243,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		nil, // riverClient set below after creation
 		service.EmbeddingsQueueName,
 		cfg.Embedding.MaxAttempts,
+		cfg.Translation.DefaultLanguage,
 	)
 
 	// Shared worker/queue registration first (webhook + optional embedding added below).
@@ -275,6 +278,40 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	} else {
 		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
+	}
+
+	// Register the translation worker and declare its queue so the River client can
+	// enqueue translation jobs (River requires the job kind registered and the queue
+	// declared at insert time); the jobs are processed by hub-worker, not in this
+	// process. Gated on TRANSLATION_PROVIDER+MODEL like embeddings; the enqueue
+	// provider is registered below, after the River client and tenant settings exist.
+	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+		translationCfg := service.TranslationClientConfig{
+			Provider:            cfg.Translation.Provider,
+			ProviderAPIKey:      cfg.Translation.ProviderAPIKey,
+			Model:               cfg.Translation.Model,
+			BaseURL:             cfg.Translation.BaseURL,
+			GoogleCloudProject:  cfg.Translation.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Translation.GoogleCloudLocation,
+		}
+
+		translationClient, translationErr := service.NewTranslationClient(context.Background(), translationCfg)
+		if translationErr != nil {
+			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
+
+			return nil, fmt.Errorf("translation config: %w", translationErr)
+		}
+
+		river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, translationMetrics))
+
+		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: 1}
+
+		// Per-tenant re-translation backfill, enqueued by the settings-change listener
+		// below. Registered here only so the River client can validate the kind and queue
+		// at insert time; the fan-out is processed by hub-worker.
+		river.AddWorker(riverWorkers, workers.NewTenantTranslationBackfillWorker(feedbackRecordsService, cfg.Translation.MaxAttempts))
+
+		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
@@ -321,6 +358,39 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 
+	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
+	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
+	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
+
+	// Translation enqueue provider: on a feedback-record create/update it resolves the
+	// tenant's target language (through a short-TTL cache over tenant settings) and
+	// enqueues a translation job. Gated on TRANSLATION_PROVIDER+MODEL.
+	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+		var translationCacheMetrics observability.CacheMetrics
+		if metrics != nil {
+			translationCacheMetrics = metrics.Cache
+		}
+
+		translationCache := service.NewCachedTenantSettings(
+			tenantSettingsService,
+			cfg.TenantSettingsCache.Size, cfg.TenantSettingsCache.TTL.Duration(),
+			translationCacheMetrics,
+		)
+		messageManager.RegisterProvider(service.NewTranslationProvider(
+			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts,
+			cfg.Translation.DefaultLanguage, translationMetrics))
+
+		// On a settings write: evict the tenant's cached settings (so a changed/enabled
+		// target is visible to the enqueue gate immediately, not after TTL expiry) and
+		// enqueue a per-tenant re-translation backfill (so existing records pick up a new
+		// target, not only newly ingested ones).
+		tenantSettingsService.SetSettingsChangeListener(service.NewCompositeSettingsChangeListener(
+			translationCache,
+			service.NewTranslationSettingsListener(
+				riverClient, service.TranslationBackfillsQueueName, cfg.Translation.MaxAttempts),
+		))
+	}
+
 	taxonomyRepo := repository.NewTaxonomyRepository(db)
 
 	var taxonomyStarter service.TaxonomyRunStarter
@@ -358,7 +428,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	server := newHTTPServer(
-		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler, searchHandler,
+		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler,
+		tenantSettingsHandler, searchHandler,
 		taxonomyHandler, taxonomyInternalHandler,
 		meterProvider, tracerProvider,
 	)
@@ -385,6 +456,7 @@ func newHTTPServer(
 	feedback *handlers.FeedbackRecordsHandler,
 	webhooks *handlers.WebhooksHandler,
 	tenantData *handlers.TenantDataHandler,
+	tenantSettings *handlers.TenantSettingsHandler,
 	search *handlers.SearchHandler,
 	taxonomy *handlers.TaxonomyHandler,
 	taxonomyInternal *handlers.TaxonomyInternalHandler,
@@ -410,6 +482,9 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
 	protected.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantData.Delete)
+	protected.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettings.Get)
+	protected.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettings.Update)
+	protected.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettings.Patch)
 
 	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)

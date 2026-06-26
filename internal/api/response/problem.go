@@ -16,6 +16,7 @@ const (
 	ProblemTypeConflict            = "https://hub.formbricks.com/problems/conflict"
 	ProblemTypeTenantWriteConflict = "https://hub.formbricks.com/problems/tenant-write-conflict"
 	ProblemTypeMethodNotAllowed    = "https://hub.formbricks.com/problems/method-not-allowed"
+	ProblemTypeContentTooLarge     = "https://hub.formbricks.com/problems/content-too-large"
 	ProblemTypeServiceUnavailable  = "https://hub.formbricks.com/problems/service-unavailable"
 	ProblemTypeInternalServerError = "https://hub.formbricks.com/problems/internal-server-error"
 	ProblemTypeClientError         = "https://hub.formbricks.com/problems/client-error"
@@ -34,6 +35,7 @@ const (
 	CodeConflict            = "conflict"
 	CodeTenantWriteConflict = "tenant_write_conflict"
 	CodeMethodNotAllowed    = "method_not_allowed"
+	CodeContentTooLarge     = "content_too_large"
 	CodeServiceUnavailable  = "service_unavailable"
 	CodeInternalServerError = "internal_server_error"
 )
@@ -102,6 +104,8 @@ func codeForStatus(status int) string {
 		return CodeConflict
 	case http.StatusMethodNotAllowed:
 		return CodeMethodNotAllowed
+	case http.StatusRequestEntityTooLarge:
+		return CodeContentTooLarge
 	case http.StatusServiceUnavailable:
 		return CodeServiceUnavailable
 	case http.StatusInternalServerError:
@@ -130,6 +134,8 @@ func problemTypeForStatus(status int) string {
 		return ProblemTypeConflict
 	case http.StatusMethodNotAllowed:
 		return ProblemTypeMethodNotAllowed
+	case http.StatusRequestEntityTooLarge:
+		return ProblemTypeContentTooLarge
 	case http.StatusServiceUnavailable:
 		return ProblemTypeServiceUnavailable
 	case http.StatusInternalServerError:

@@ -110,6 +110,7 @@ func run() int {
 		nil, // inserter set below after River client is created
 		service.EmbeddingsQueueName,
 		maxAttempts,
+		"", // translation default unused: embeddings backfill only
 	)
 
 	embeddingClient, err := service.NewEmbeddingClient(ctx, embeddingCfg)

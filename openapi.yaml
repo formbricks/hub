@@ -50,6 +50,8 @@ tags:
       description: Webhook subscription management
     - name: Tenant Data
       description: Tenant-scoped data purge operations
+    - name: Tenant Settings
+      description: Tenant-scoped enrichment settings
 security:
     - ApiKeyAuth: []
 paths:
@@ -1196,6 +1198,215 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/tenants/{tenant_id}/settings:
+        get:
+            tags:
+                - Tenant Settings
+            summary: Get tenant settings
+            description: |
+                Returns the enrichment settings for the specified tenant_id. A tenant that has not configured any
+                settings yet returns HTTP 200 with default (unset) values rather than 404; consumers decide the
+                fallback behavior for unset values. Settings are tenant-scoped and never shared across tenants.
+            operationId: get-tenant-settings
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  description: Tenant ID whose settings should be returned. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: Tenant settings
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TenantSettingsOutputBody'
+                            examples:
+                                configured:
+                                    summary: Tenant with a configured target language
+                                    value:
+                                        tenant_id: "org-123"
+                                        settings:
+                                            target_language: "en-US"
+                                unset:
+                                    summary: Tenant with no settings yet (defaults)
+                                    value:
+                                        tenant_id: "org-123"
+                                        settings: {}
+                "400":
+                    description: Bad Request (e.g. missing or invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        put:
+            tags:
+                - Tenant Settings
+            summary: Update tenant settings
+            description: |
+                Creates or replaces the enrichment settings for the specified tenant_id (full replace of the
+                settings object). The tenant_id is taken from the path, so a request can only ever modify its own
+                tenant's settings. target_language is normalized to a canonical BCP-47 locale (e.g. "en-us" becomes
+                "en-US"); send an empty string to clear it. While a tenant data purge runs for the same tenant_id,
+                this write is rejected with HTTP 409 (code `tenant_write_conflict`) and may be retried.
+            operationId: update-tenant-settings
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  description: Tenant ID whose settings should be updated. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UpdateTenantSettingsInputBody'
+                        examples:
+                            set:
+                                summary: Set the target language
+                                value:
+                                    target_language: "de-DE"
+                            clear:
+                                summary: Clear the target language
+                                value:
+                                    target_language: ""
+            responses:
+                "200":
+                    description: Updated tenant settings
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TenantSettingsOutputBody'
+                            examples:
+                                success:
+                                    summary: Settings after update
+                                    value:
+                                        tenant_id: "org-123"
+                                        settings:
+                                            target_language: "de-DE"
+                "400":
+                    description: Bad Request (e.g. invalid tenant_id or target_language)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "409":
+                    description: |
+                        Conflict – a tenant data purge for the same tenant_id is in progress
+                        (code `tenant_write_conflict`). No settings were written; retry later.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        patch:
+            tags:
+                - Tenant Settings
+            summary: Partially update tenant settings
+            description: |
+                Partially updates the enrichment settings for the specified tenant_id using RFC 7396 JSON Merge
+                Patch semantics (media type application/merge-patch+json; application/json is also accepted). For
+                each member: a value sets that setting, JSON null removes it (e.g. `{"target_language": null}`
+                clears the target language), and an omitted member is left unchanged. The tenant_id is taken
+                from the path, so a request can only ever modify its own
+                tenant's settings. target_language is normalized to a canonical BCP-47 locale (e.g. "en-us"
+                becomes "en-US"); an empty string is rejected (send null to remove it). While a tenant data purge
+                runs for the same tenant_id, this write is rejected with HTTP 409 (code `tenant_write_conflict`)
+                and may be retried.
+            operationId: patch-tenant-settings
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  description: Tenant ID whose settings should be updated. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            requestBody:
+                required: true
+                content:
+                    application/merge-patch+json:
+                        schema:
+                            $ref: '#/components/schemas/PatchTenantSettingsInputBody'
+                        examples:
+                            set:
+                                summary: Set the target language (other settings untouched)
+                                value:
+                                    target_language: "de-DE"
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/PatchTenantSettingsInputBody'
+            responses:
+                "200":
+                    description: Updated tenant settings
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TenantSettingsOutputBody'
+                            examples:
+                                success:
+                                    summary: Settings after the partial update
+                                    value:
+                                        tenant_id: "org-123"
+                                        settings:
+                                            target_language: "de-DE"
+                "400":
+                    description: Bad Request (e.g. invalid tenant_id or target_language)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "409":
+                    description: |
+                        Conflict – a tenant data purge for the same tenant_id is in progress
+                        (code `tenant_write_conflict`). No settings were written; retry later.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
 components:
     securitySchemes:
         ApiKeyAuth:
@@ -1250,6 +1461,61 @@ components:
                 - deleted_embeddings
                 - deleted_webhooks
                 - message
+        EnrichmentSettings:
+            type: object
+            additionalProperties: false
+            description: Tenant-scoped enrichment configuration. Fields are optional; absent fields use server defaults.
+            properties:
+                target_language:
+                    type: string
+                    description: |
+                        Normalized BCP-47 locale (e.g. "en-US") that language enrichment translates feedback
+                        records and topic labels into. Absent or empty means not configured.
+                    maxLength: 35
+                    example: "en-US"
+        TenantSettingsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                tenant_id:
+                    type: string
+                    description: Tenant ID the settings belong to
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                settings:
+                    $ref: '#/components/schemas/EnrichmentSettings'
+            required:
+                - tenant_id
+                - settings
+        UpdateTenantSettingsInputBody:
+            type: object
+            additionalProperties: false
+            description: Full replacement of a tenant's enrichment settings.
+            properties:
+                target_language:
+                    type: string
+                    description: |
+                        Target BCP-47 locale to translate into; normalized to a canonical form (e.g. "en-us"
+                        becomes "en-US"). Send an empty string to clear it.
+                    maxLength: 35
+                    example: "de-DE"
+        PatchTenantSettingsInputBody:
+            type: object
+            additionalProperties: false
+            description: |
+                RFC 7396 JSON Merge Patch for a tenant's enrichment settings. For each member: a value sets the
+                setting, JSON null removes it, and an omitted member is left unchanged.
+            properties:
+                target_language:
+                    type: [string, "null"]
+                    description: |
+                        Target BCP-47 locale to translate into; normalized to a canonical form (e.g. "en-us"
+                        becomes "en-US"). Send null to remove it; omit to leave it unchanged. An empty string is
+                        rejected.
+                    maxLength: 35
+                    example: "de-DE"
         SemanticSearchInputBody:
             type: object
             additionalProperties: false
@@ -1489,6 +1755,7 @@ components:
                         - conflict
                         - tenant_write_conflict
                         - method_not_allowed
+                        - content_too_large
                         - service_unavailable
                         - internal_server_error
                     examples:
@@ -1601,6 +1868,10 @@ components:
                     type: string
                     description: Tenant/organization identifier. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                translation_lang_key:
+                    type: string
+                    description: BCP-47 target locale that value_text_translated was produced in (language enrichment). Read-only; absent until the record is enriched.
+                    maxLength: 35
                 updated_at:
                     type: string
                     description: When this record was last updated
@@ -1622,6 +1893,10 @@ components:
                 value_text:
                     type: string
                     description: Text response. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                value_text_translated:
+                    type: string
+                    description: value_text translated into the tenant's configured target language (language enrichment). Read-only; absent until the record is enriched.
                     pattern: '^[^\x00]*$'
             required:
                 - id

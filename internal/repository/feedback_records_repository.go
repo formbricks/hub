@@ -31,6 +31,18 @@ func NewFeedbackRecordsRepository(db *pgxpool.Pool) *FeedbackRecordsRepository {
 	return &FeedbackRecordsRepository{db: db}
 }
 
+// feedbackRecordColumns is the canonical SELECT/RETURNING column list for a
+// FeedbackRecord, in the exact order scanFeedbackRecord reads it. Together they are
+// the single source of truth for materializing a FeedbackRecord, so column order
+// and scan order cannot drift across the Create/Get/List/Update read paths (a
+// silent runtime scan error otherwise). It excludes derived rows like embeddings.
+const feedbackRecordColumns = `id, collected_at, created_at, updated_at,
+	source_type, source_id, source_name,
+	field_id, field_label, field_type, field_group_id, field_group_label,
+	value_text, value_number, value_boolean, value_date,
+	metadata, language, user_id, tenant_id, submission_id,
+	value_text_translated, translation_lang_key`
+
 // Create inserts a new feedback record.
 func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
 	collectedAt := time.Now()
@@ -53,28 +65,15 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		)
 		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 		WHERE ` + tenantWriteLockGate(lockKeyParam) + `
-		RETURNING id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
-	`
+		RETURNING ` + feedbackRecordColumns
 
-	var record models.FeedbackRecord
-
-	err := r.db.QueryRow(ctx, query,
+	record, err := scanFeedbackRecord(r.db.QueryRow(ctx, query,
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
 		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
 		req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID,
 		TenantWriteLockKey(req.TenantID),
-	).Scan(
-		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-	)
+	))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
@@ -88,7 +87,7 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		return nil, fmt.Errorf("failed to create feedback record: %w", err)
 	}
 
-	return &record, nil
+	return record, nil
 }
 
 // resolveFeedbackRecordTenant reads the tenant boundary of a feedback record
@@ -131,25 +130,11 @@ func lockFeedbackRecordTenantShared(ctx context.Context, dbTx tenantWriteTx, id 
 
 // GetByID retrieves a single feedback record by ID. Embedding is not selected (API/worker reads stay lean).
 func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
-	query := `
-		SELECT id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
+	query := `SELECT ` + feedbackRecordColumns + `
 		FROM feedback_records
-		WHERE id = $1
-	`
+		WHERE id = $1`
 
-	var record models.FeedbackRecord
-
-	err := r.db.QueryRow(ctx, query, id).Scan(
-		&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-		&record.SourceType, &record.SourceID, &record.SourceName,
-		&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-		&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-		&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-	)
+	record, err := scanFeedbackRecord(r.db.QueryRow(ctx, query, id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, huberrors.NewNotFoundError("feedback record", "feedback record not found")
@@ -158,7 +143,167 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		return nil, fmt.Errorf("failed to get feedback record: %w", err)
 	}
 
-	return &record, nil
+	return record, nil
+}
+
+// SetTranslation stores the translated text and the target locale it was produced in
+// for a feedback record. The write is scoped to the record's tenant via the shared
+// tenant write lock (so it cannot race a tenant data purge) and does NOT publish a
+// domain event: translation is a derived enrichment, not a record edit, and
+// re-publishing would loop the enrichment pipeline. A missing record (deleted or
+// purged between read and write) returns NotFound. translated may be nil.
+//
+// Setting a translation (translated != nil) is conditional: it lands only while langKey still
+// equals the tenant's current EFFECTIVE target — its own target_language, or defaultLang
+// (TRANSLATION_DEFAULT_LANGUAGE) when it has none — otherwise it returns
+// huberrors.ErrTranslationSuperseded. This makes the write atomic w.r.t. a concurrent target
+// change and immune to a stale settings-cache read, so an out-of-order stale-target job cannot
+// clobber a newer translation. Clearing (translated == nil) is unconditional.
+func (r *FeedbackRecordsRepository) SetTranslation(
+	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
+) error {
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		// Translation rides the feedback record's tenant boundary; resolve and lock
+		// it so the write cannot race a tenant data purge.
+		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		// Clearing (translated == nil) nulls both columns unconditionally: an emptied
+		// value_text must drop any stale translation regardless of the tenant's target,
+		// and a lang key has no meaning without a translation.
+		if translated == nil {
+			if _, err := dbTx.Exec(ctx, `
+				UPDATE feedback_records
+				SET value_text_translated = NULL, translation_lang_key = NULL, updated_at = NOW()
+				WHERE id = $1`,
+				feedbackRecordID,
+			); err != nil {
+				return fmt.Errorf("clear feedback record translation: %w", err)
+			}
+
+			return nil
+		}
+
+		// Setting a translation persists only while langKey still equals the tenant's current
+		// EFFECTIVE target — COALESCE(its own target_language, defaultLang $4). This keeps the
+		// write atomic against a concurrent target change: a stale-target job (an older target
+		// finishing after the tenant switched — including switching to the default by clearing
+		// its own target) resolves a different effective target, matches no row, and no-ops
+		// instead of clobbering the current value. The LEFT JOIN keeps a tenant with no settings
+		// row writable under the default; NULLIF($4,'') makes an empty default never match, so
+		// with no default configured a tenant with no target of its own is not written.
+		tag, err := dbTx.Exec(ctx, `
+			UPDATE feedback_records fr
+			SET value_text_translated = $2, translation_lang_key = $3, updated_at = NOW()
+			FROM (
+				SELECT NULLIF(ts.settings->>'target_language', '') AS stored_target
+				FROM feedback_records r
+				LEFT JOIN tenant_settings ts ON ts.tenant_id = r.tenant_id
+				WHERE r.id = $1
+			) eff
+			WHERE fr.id = $1
+				AND COALESCE(eff.stored_target, NULLIF($4, '')) = $3`,
+			feedbackRecordID, *translated, langKey, defaultLang,
+		)
+		if err != nil {
+			return fmt.Errorf("set feedback record translation: %w", err)
+		}
+
+		// The record exists (locked above), so zero rows means the tenant's effective target no
+		// longer equals langKey (it changed its own target, or cleared it and the default
+		// differs): a newer-target write owns the row. Signal a benign skip.
+		if tag.RowsAffected() == 0 {
+			return huberrors.ErrTranslationSuperseded
+		}
+
+		return nil
+	})
+}
+
+// translationBackfillSelectSQL selects feedback records that need (re)translation: text
+// fields with non-empty value_text whose EFFECTIVE target language differs from the stored
+// translation_lang_key (never translated, or now stale). The effective target is the tenant's
+// own target_language, falling back to $1 (the configured default) when the tenant has none;
+// an empty $1 disables the fallback, so only tenants with their own target qualify. The LEFT
+// JOIN keeps tenants with no settings row eligible under a non-empty default. Callers append
+// ordering / keyset / limit clauses (params $2+).
+const translationBackfillSelectSQL = `
+	SELECT fr.id, COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)
+	FROM feedback_records fr
+	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+	WHERE fr.field_type = 'text'
+		AND fr.value_text IS NOT NULL AND btrim(fr.value_text) <> ''
+		AND COALESCE(NULLIF(ts.settings->>'target_language', ''), $1) <> ''
+		AND fr.translation_lang_key IS DISTINCT FROM COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)`
+
+// ListTranslationBackfillTargets returns one keyset page (fr.id > afterID, ordered by id, at
+// most limit rows) of feedback records across all tenants that need (re)translation. Used by
+// the one-off global backfill command. defaultLang is the fallback target for tenants with no
+// target_language of their own ("" disables the fallback). Pass uuid.Nil as afterID for the
+// first page.
+func (r *FeedbackRecordsRepository) ListTranslationBackfillTargets(
+	ctx context.Context, afterID uuid.UUID, limit int, defaultLang string,
+) ([]models.TranslationBackfillTarget, error) {
+	const query = translationBackfillSelectSQL + `
+			AND fr.id > $2
+		ORDER BY fr.id
+		LIMIT $3`
+
+	rows, err := r.db.Query(ctx, query, defaultLang, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query translation backfill targets: %w", err)
+	}
+
+	return scanTranslationBackfillTargets(rows)
+}
+
+// ListTranslationBackfillTargetsForTenant returns one keyset page (fr.id > afterID, ordered
+// by id, at most limit rows) of a single tenant's records that need (re)translation. The
+// tenant filter + pagination let the settings-triggered backfill worker stream a large
+// tenant without materializing every target at once. Pass uuid.Nil as afterID for the
+// first page (every UUIDv7 id sorts after it).
+func (r *FeedbackRecordsRepository) ListTranslationBackfillTargetsForTenant(
+	ctx context.Context, tenantID string, afterID uuid.UUID, limit int, defaultLang string,
+) ([]models.TranslationBackfillTarget, error) {
+	const query = translationBackfillSelectSQL + `
+			AND fr.tenant_id = $2
+			AND fr.id > $3
+		ORDER BY fr.id
+		LIMIT $4`
+
+	// defaultLang ($1) is the deployment fallback target: a tenant that cleared its own
+	// target_language inherits it, so a settings-change backfill re-translates that tenant's
+	// records to the default instead of no-opping. A tenant that set a new explicit target has
+	// it stored, so the COALESCE in translationBackfillSelectSQL resolves to that target either way.
+	rows, err := r.db.Query(ctx, query, defaultLang, tenantID, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query translation backfill targets for tenant: %w", err)
+	}
+
+	return scanTranslationBackfillTargets(rows)
+}
+
+// scanTranslationBackfillTargets collects (id, target_language) rows and closes rows.
+func scanTranslationBackfillTargets(rows pgx.Rows) ([]models.TranslationBackfillTarget, error) {
+	defer rows.Close()
+
+	var targets []models.TranslationBackfillTarget
+
+	for rows.Next() {
+		var target models.TranslationBackfillTarget
+		if err := rows.Scan(&target.FeedbackRecordID, &target.TargetLang); err != nil {
+			return nil, fmt.Errorf("scan translation backfill target: %w", err)
+		}
+
+		targets = append(targets, target)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate translation backfill targets: %w", err)
+	}
+
+	return targets, nil
 }
 
 // buildFilterConditions builds WHERE clause conditions and arguments from filters.
@@ -234,12 +379,7 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 	return whereClause, args
 }
 
-const feedbackRecordsListSelect = `
-		SELECT id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
+const feedbackRecordsListSelect = `SELECT ` + feedbackRecordColumns + `
 		FROM feedback_records
 	`
 
@@ -336,7 +476,12 @@ func buildUpdateQuery(
 
 	argCount := 1
 
+	// Placeholders for value_text / language, captured so the stale-translation clear below can
+	// compare the pre-update column to the new value (0 = the field is not in this update).
+	valueTextArg, languageArg := 0, 0
+
 	if req.ValueText != nil {
+		valueTextArg = argCount
 		updates = append(updates, fmt.Sprintf("value_text = $%d", argCount))
 		args = append(args, *req.ValueText)
 		argCount++
@@ -367,6 +512,7 @@ func buildUpdateQuery(
 	}
 
 	if req.Language != nil {
+		languageArg = argCount
 		updates = append(updates, fmt.Sprintf("language = $%d", argCount))
 		args = append(args, *req.Language)
 		argCount++
@@ -376,6 +522,32 @@ func buildUpdateQuery(
 		updates = append(updates, fmt.Sprintf("user_id = $%d", argCount))
 		args = append(args, *req.UserID)
 		argCount++
+	}
+
+	// Clear a now-stale translation, but only when value_text or language ACTUALLY changes:
+	// the bare column on the RHS of an UPDATE ... SET is the pre-update value, so this compares
+	// old vs new. Clearing only on a real change keeps "clear" aligned with a new content hash
+	// — so the re-translation the change triggers is not deduped against the prior job and
+	// actually repopulates — while a client re-sending an unchanged value leaves the valid
+	// translation intact. NULLing on a real change also makes the row a backfill target
+	// (translation_lang_key NULL IS DISTINCT FROM the tenant target), so a missed or
+	// finally-failed re-translation is still recovered by a later backfill. Reuses the existing
+	// value_text / language placeholders, so it consumes none of its own.
+	var staleConds []string
+	if valueTextArg != 0 {
+		staleConds = append(staleConds, fmt.Sprintf("value_text IS DISTINCT FROM $%d", valueTextArg))
+	}
+
+	if languageArg != 0 {
+		staleConds = append(staleConds, fmt.Sprintf("language IS DISTINCT FROM $%d", languageArg))
+	}
+
+	if len(staleConds) > 0 {
+		cond := strings.Join(staleConds, " OR ")
+		updates = append(updates,
+			fmt.Sprintf("value_text_translated = CASE WHEN %s THEN NULL ELSE value_text_translated END", cond),
+			fmt.Sprintf("translation_lang_key = CASE WHEN %s THEN NULL ELSE translation_lang_key END", cond),
+		)
 	}
 
 	if len(updates) == 0 {
@@ -394,12 +566,8 @@ func buildUpdateQuery(
 		UPDATE feedback_records
 		SET %s
 		WHERE id = $%d AND tenant_id = $%d
-		RETURNING id, collected_at, created_at, updated_at,
-			source_type, source_id, source_name,
-			field_id, field_label, field_type, field_group_id, field_group_label,
-			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
-	`, strings.Join(updates, ", "), argCount, argCount+1)
+		RETURNING `+feedbackRecordColumns,
+		strings.Join(updates, ", "), argCount, argCount+1)
 
 	return query, args, true
 }
@@ -415,7 +583,7 @@ func (r *FeedbackRecordsRepository) Update(
 		return r.GetByID(ctx, id)
 	}
 
-	var record models.FeedbackRecord
+	var record *models.FeedbackRecord
 
 	err := withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		tenantID, err := lockFeedbackRecordTenantShared(ctx, dbTx, id)
@@ -423,13 +591,7 @@ func (r *FeedbackRecordsRepository) Update(
 			return err
 		}
 
-		err = dbTx.QueryRow(ctx, query, append(args, tenantID)...).Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-		)
+		scanned, err := scanFeedbackRecord(dbTx.QueryRow(ctx, query, append(args, tenantID)...))
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return huberrors.NewNotFoundError("feedback record", "feedback record not found")
@@ -438,13 +600,15 @@ func (r *FeedbackRecordsRepository) Update(
 			return fmt.Errorf("failed to update feedback record: %w", err)
 		}
 
+		record = scanned
+
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &record, nil
+	return record, nil
 }
 
 // Delete removes a feedback record.
@@ -637,20 +801,12 @@ func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
 	records := []models.FeedbackRecord{}
 
 	for rows.Next() {
-		var record models.FeedbackRecord
-
-		err := rows.Scan(
-			&record.ID, &record.CollectedAt, &record.CreatedAt, &record.UpdatedAt,
-			&record.SourceType, &record.SourceID, &record.SourceName,
-			&record.FieldID, &record.FieldLabel, &record.FieldType, &record.FieldGroupID, &record.FieldGroupLabel,
-			&record.ValueText, &record.ValueNumber, &record.ValueBoolean, &record.ValueDate,
-			&record.Metadata, &record.Language, &record.UserID, &record.TenantID, &record.SubmissionID,
-		)
+		record, err := scanFeedbackRecord(rows)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan feedback record: %w", err)
 		}
 
-		records = append(records, record)
+		records = append(records, *record)
 	}
 
 	if err := rows.Err(); err != nil {
