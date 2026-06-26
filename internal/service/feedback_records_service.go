@@ -43,7 +43,7 @@ type FeedbackRecordsRepository interface {
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string) error
 	ListTranslationBackfillTargets(
-		ctx context.Context, afterID uuid.UUID, limit int,
+		ctx context.Context, afterID uuid.UUID, limit int, defaultLang string,
 	) ([]models.TranslationBackfillTarget, error)
 	ListTranslationBackfillTargetsForTenant(
 		ctx context.Context, tenantID string, afterID uuid.UUID, limit int,
@@ -376,11 +376,11 @@ const translationBackfillPageSize = 500
 // tenants) that needs (re)translation, streaming the targets in keyset pages. Used by the
 // one-off global backfill command. Returns the number of jobs enqueued.
 func (s *FeedbackRecordsService) BackfillTranslations(
-	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int,
+	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int, defaultLang string,
 ) (int, error) {
 	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts),
 		func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error) {
-			targets, err := s.repo.ListTranslationBackfillTargets(ctx, afterID, translationBackfillPageSize)
+			targets, err := s.repo.ListTranslationBackfillTargets(ctx, afterID, translationBackfillPageSize, defaultLang)
 			if err != nil {
 				return nil, fmt.Errorf("list translation backfill targets: %w", err)
 			}

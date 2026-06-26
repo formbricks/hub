@@ -101,7 +101,7 @@ func newTestTranslationProvider(
 ) *TranslationProvider {
 	resolver := &mockTargetResolver{target: target, err: resolveErr}
 
-	return NewTranslationProvider(inserter, resolver, TranslationsQueueName, 3, nil)
+	return NewTranslationProvider(inserter, resolver, TranslationsQueueName, 3, "", nil)
 }
 
 func TestTranslationProvider_CreateWithTextEnqueues(t *testing.T) {
@@ -177,6 +177,36 @@ func TestTranslationProvider_LanguageChangeEnqueues(t *testing.T) {
 	}
 }
 
+func TestTranslationProvider_FallsBackToDefaultLanguage(t *testing.T) {
+	t.Run("tenant has no target uses the configured default", func(t *testing.T) {
+		inserter := &mockTranslationInserter{}
+		provider := NewTranslationProvider(
+			inserter, &mockTargetResolver{target: ""}, TranslationsQueueName, 3, "es-ES", nil)
+
+		provider.PublishEvent(context.Background(), Event{Type: datatypes.FeedbackRecordCreated, Data: textRecord("hola")})
+
+		if len(inserter.calls) != 1 {
+			t.Fatalf("enqueued %d jobs, want 1 (default language applies when tenant has none)", len(inserter.calls))
+		}
+
+		if got := inserter.calls[0].TargetLang; got != "es-ES" {
+			t.Fatalf("TargetLang = %q, want es-ES (default)", got)
+		}
+	})
+
+	t.Run("tenant target overrides the default", func(t *testing.T) {
+		inserter := &mockTranslationInserter{}
+		provider := NewTranslationProvider(
+			inserter, &mockTargetResolver{target: "de-DE"}, TranslationsQueueName, 3, "es-ES", nil)
+
+		provider.PublishEvent(context.Background(), Event{Type: datatypes.FeedbackRecordCreated, Data: textRecord("hello")})
+
+		if len(inserter.calls) != 1 || inserter.calls[0].TargetLang != "de-DE" {
+			t.Fatalf("calls = %+v, want one job with target de-DE (tenant overrides default)", inserter.calls)
+		}
+	})
+}
+
 func TestTranslationContentHash_VariesBySourceLanguage(t *testing.T) {
 	text := "Bonjour"
 
@@ -195,7 +225,7 @@ func TestTranslationProvider_RecordsMetrics(t *testing.T) {
 		metrics := newCountingTranslationMetrics()
 		inserter := &mockTranslationInserter{}
 		provider := NewTranslationProvider(
-			inserter, &mockTargetResolver{target: "de-DE"}, TranslationsQueueName, 3, metrics)
+			inserter, &mockTargetResolver{target: "de-DE"}, TranslationsQueueName, 3, "", metrics)
 
 		provider.PublishEvent(context.Background(), Event{Type: datatypes.FeedbackRecordCreated, Data: textRecord("hello")})
 
@@ -207,7 +237,7 @@ func TestTranslationProvider_RecordsMetrics(t *testing.T) {
 	t.Run("settings read failure records provider error", func(t *testing.T) {
 		metrics := newCountingTranslationMetrics()
 		resolver := &mockTargetResolver{target: "de-DE", err: errors.New("boom")}
-		provider := NewTranslationProvider(&mockTranslationInserter{}, resolver, TranslationsQueueName, 3, metrics)
+		provider := NewTranslationProvider(&mockTranslationInserter{}, resolver, TranslationsQueueName, 3, "", metrics)
 
 		provider.PublishEvent(context.Background(), Event{Type: datatypes.FeedbackRecordCreated, Data: textRecord("hello")})
 
@@ -220,7 +250,7 @@ func TestTranslationProvider_RecordsMetrics(t *testing.T) {
 		metrics := newCountingTranslationMetrics()
 		inserter := &mockTranslationInserter{err: errors.New("insert failed")}
 		provider := NewTranslationProvider(
-			inserter, &mockTargetResolver{target: "de-DE"}, TranslationsQueueName, 3, metrics)
+			inserter, &mockTargetResolver{target: "de-DE"}, TranslationsQueueName, 3, "", metrics)
 
 		provider.PublishEvent(context.Background(), Event{Type: datatypes.FeedbackRecordCreated, Data: textRecord("hello")})
 

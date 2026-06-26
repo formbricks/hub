@@ -116,7 +116,7 @@ func run() int {
 	}
 
 	enqueued, err := feedbackRecordsService.BackfillTranslations(
-		ctx, riverClient, service.TranslationsQueueName, maxAttempts)
+		ctx, riverClient, service.TranslationsQueueName, maxAttempts, cfg.Translation.DefaultLanguage)
 	if err != nil {
 		slog.Error("Backfill failed", "error", err)
 

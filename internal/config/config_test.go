@@ -353,6 +353,33 @@ func TestLoad_EmbeddingBaseURLValidation(t *testing.T) {
 	}
 }
 
+func TestLoad_TranslationDefaultLanguage(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("TRANSLATION_DEFAULT_LANGUAGE", "en-us")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Translation.DefaultLanguage != "en-US" {
+		t.Errorf("Translation.DefaultLanguage = %q, want en-US (canonicalized)", cfg.Translation.DefaultLanguage)
+	}
+}
+
+func TestLoad_TranslationDefaultLanguageValidation(t *testing.T) {
+	t.Setenv("TRANSLATION_DEFAULT_LANGUAGE", "!!!not-a-locale")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+
+	if !errors.Is(err, ErrInvalidTranslationDefaultLanguage) {
+		t.Fatalf("Load() error = %v, want %v", err, ErrInvalidTranslationDefaultLanguage)
+	}
+}
+
 func TestLoad_TaxonomyConfig(t *testing.T) {
 	t.Setenv("TAXONOMY_SERVICE_URL", "https://taxonomy.example.com/root/")
 	t.Setenv("TAXONOMY_SERVICE_TOKEN", "taxonomy-service-token")

@@ -184,26 +184,34 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 			return nil
 		}
 
-		// Setting a translation persists only while the tenant's CURRENT target_language still
-		// equals the locale this translation was produced for. Joining tenant_settings in the
-		// write keeps it atomic against a concurrent target change and a stale settings-cache
-		// read at enqueue: a stale-target job (an older target finishing after a newer-target
-		// job or backfill) matches no row and no-ops instead of clobbering the current value.
+		// Setting a translation persists only while it is still consistent with the tenant's
+		// current target: either the tenant's own target_language equals the locale we produced
+		// ($3), or the tenant has no target of its own (stored target NULL/empty) and is on the
+		// deployment default — in which case any default-resolved write is accepted. This keeps
+		// the write atomic against a concurrent target change: a stale-target job (an older
+		// explicit target finishing after the tenant switched) matches no row and no-ops rather
+		// than clobbering the current value, while a tenant relying on TRANSLATION_DEFAULT_LANGUAGE
+		// (which never stores a target) can still be written. The LEFT JOIN in the subquery keeps
+		// a tenant with no settings row writable under the default.
 		tag, err := dbTx.Exec(ctx, `
 			UPDATE feedback_records fr
 			SET value_text_translated = $2, translation_lang_key = $3, updated_at = NOW()
-			FROM tenant_settings ts
+			FROM (
+				SELECT NULLIF(ts.settings->>'target_language', '') AS stored_target
+				FROM feedback_records r
+				LEFT JOIN tenant_settings ts ON ts.tenant_id = r.tenant_id
+				WHERE r.id = $1
+			) eff
 			WHERE fr.id = $1
-				AND ts.tenant_id = fr.tenant_id
-				AND ts.settings->>'target_language' = $3`,
+				AND (eff.stored_target = $3 OR eff.stored_target IS NULL)`,
 			feedbackRecordID, *translated, langKey,
 		)
 		if err != nil {
 			return fmt.Errorf("set feedback record translation: %w", err)
 		}
 
-		// The record exists (locked above), so zero rows means the tenant's current target no
-		// longer equals langKey: a newer-target write owns the row. Signal a benign skip.
+		// The record exists (locked above), so zero rows means the tenant now has a DIFFERENT
+		// explicit target: a newer-target write owns the row. Signal a benign skip.
 		if tag.RowsAffected() == 0 {
 			return huberrors.ErrTranslationSuperseded
 		}
@@ -213,31 +221,35 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 }
 
 // translationBackfillSelectSQL selects feedback records that need (re)translation: text
-// fields with non-empty value_text whose tenant has a target language configured and whose
-// stored translation_lang_key differs from that target (never translated, or translated to
-// a now-stale target). It joins tenant_settings for the per-tenant target. Callers append
-// ordering / keyset / limit clauses.
+// fields with non-empty value_text whose EFFECTIVE target language differs from the stored
+// translation_lang_key (never translated, or now stale). The effective target is the tenant's
+// own target_language, falling back to $1 (the configured default) when the tenant has none;
+// an empty $1 disables the fallback, so only tenants with their own target qualify. The LEFT
+// JOIN keeps tenants with no settings row eligible under a non-empty default. Callers append
+// ordering / keyset / limit clauses (params $2+).
 const translationBackfillSelectSQL = `
-	SELECT fr.id, ts.settings->>'target_language'
+	SELECT fr.id, COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)
 	FROM feedback_records fr
-	JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
 	WHERE fr.field_type = 'text'
 		AND fr.value_text IS NOT NULL AND btrim(fr.value_text) <> ''
-		AND COALESCE(ts.settings->>'target_language', '') <> ''
-		AND fr.translation_lang_key IS DISTINCT FROM ts.settings->>'target_language'`
+		AND COALESCE(NULLIF(ts.settings->>'target_language', ''), $1) <> ''
+		AND fr.translation_lang_key IS DISTINCT FROM COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)`
 
 // ListTranslationBackfillTargets returns one keyset page (fr.id > afterID, ordered by id, at
 // most limit rows) of feedback records across all tenants that need (re)translation. Used by
-// the one-off global backfill command. Pass uuid.Nil as afterID for the first page.
+// the one-off global backfill command. defaultLang is the fallback target for tenants with no
+// target_language of their own ("" disables the fallback). Pass uuid.Nil as afterID for the
+// first page.
 func (r *FeedbackRecordsRepository) ListTranslationBackfillTargets(
-	ctx context.Context, afterID uuid.UUID, limit int,
+	ctx context.Context, afterID uuid.UUID, limit int, defaultLang string,
 ) ([]models.TranslationBackfillTarget, error) {
 	const query = translationBackfillSelectSQL + `
-			AND fr.id > $1
+			AND fr.id > $2
 		ORDER BY fr.id
-		LIMIT $2`
+		LIMIT $3`
 
-	rows, err := r.db.Query(ctx, query, afterID, limit)
+	rows, err := r.db.Query(ctx, query, defaultLang, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query translation backfill targets: %w", err)
 	}
@@ -254,12 +266,15 @@ func (r *FeedbackRecordsRepository) ListTranslationBackfillTargetsForTenant(
 	ctx context.Context, tenantID string, afterID uuid.UUID, limit int,
 ) ([]models.TranslationBackfillTarget, error) {
 	const query = translationBackfillSelectSQL + `
-			AND fr.tenant_id = $1
-			AND fr.id > $2
+			AND fr.tenant_id = $2
+			AND fr.id > $3
 		ORDER BY fr.id
-		LIMIT $3`
+		LIMIT $4`
 
-	rows, err := r.db.Query(ctx, query, tenantID, afterID, limit)
+	// Empty default ($1): a settings-change backfill re-translates to the tenant's OWN target
+	// (which it has — changing it is what triggered this). The global default fallback is
+	// applied only by the cross-tenant ListTranslationBackfillTargets.
+	rows, err := r.db.Query(ctx, query, "", tenantID, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query translation backfill targets for tenant: %w", err)
 	}

@@ -31,6 +31,7 @@ type TranslationProvider struct {
 	resolver    TenantSettingsReader
 	queueName   string
 	maxAttempts int
+	defaultLang string // fallback target language when a tenant has none; "" = per-tenant opt-in
 	metrics     observability.TranslationMetrics
 }
 
@@ -41,6 +42,7 @@ func NewTranslationProvider(
 	resolver TenantSettingsReader,
 	queueName string,
 	maxAttempts int,
+	defaultLang string,
 	metrics observability.TranslationMetrics,
 ) *TranslationProvider {
 	return &TranslationProvider{
@@ -48,6 +50,7 @@ func NewTranslationProvider(
 		resolver:    resolver,
 		queueName:   queueName,
 		maxAttempts: maxAttempts,
+		defaultLang: defaultLang,
 		metrics:     metrics,
 	}
 }
@@ -101,9 +104,17 @@ func (p *TranslationProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
+	// Resolve the target: the tenant's own target_language wins; otherwise fall back to the
+	// configured default (TRANSLATION_DEFAULT_LANGUAGE). An empty default keeps translation
+	// per-tenant opt-in, so a tenant with no target is simply skipped.
 	targetLang := settings.Settings.TargetLanguage
 	if targetLang == "" {
-		slog.Debug("translation: skip, tenant has no target language", "feedback_record_id", record.ID)
+		targetLang = p.defaultLang
+	}
+
+	if targetLang == "" {
+		slog.Debug("translation: skip, no target language (tenant unset and no default)",
+			"feedback_record_id", record.ID)
 
 		return
 	}

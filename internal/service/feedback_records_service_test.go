@@ -68,7 +68,7 @@ func (m *mockFeedbackRecordsRepo) SetTranslation(
 }
 
 func (m *mockFeedbackRecordsRepo) ListTranslationBackfillTargets(
-	_ context.Context, afterID uuid.UUID, _ int,
+	_ context.Context, afterID uuid.UUID, _ int, _ string,
 ) ([]models.TranslationBackfillTarget, error) {
 	if m.translationBackfillErr != nil {
 		return nil, m.translationBackfillErr
@@ -384,7 +384,7 @@ func TestFeedbackRecordsService_BackfillTranslations(t *testing.T) {
 	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
 	inserter := &mockTranslationInserter{}
 
-	enqueued, err := svc.BackfillTranslations(context.Background(), inserter, TranslationsQueueName, 3)
+	enqueued, err := svc.BackfillTranslations(context.Background(), inserter, TranslationsQueueName, 3, "")
 	if err != nil {
 		t.Fatalf("BackfillTranslations() error = %v", err)
 	}
@@ -403,7 +403,7 @@ func TestFeedbackRecordsService_BackfillTranslations_RepoError(t *testing.T) {
 	repo := &mockFeedbackRecordsRepo{translationBackfillErr: errors.New("boom")}
 	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0)
 
-	_, err := svc.BackfillTranslations(context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3)
+	_, err := svc.BackfillTranslations(context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3, "")
 	if err == nil {
 		t.Fatal("BackfillTranslations() = nil, want the repo error propagated")
 	}

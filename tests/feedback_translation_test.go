@@ -159,6 +159,51 @@ func TestFeedbackRecords_SetTranslation_StaleTargetIsNoOp(t *testing.T) {
 	assert.Equal(t, "Bonjour le monde", *got.ValueTextTranslated)
 }
 
+// TestFeedbackRecords_SetTranslation_PersistsForDefaultLanguageTenant locks the default-language
+// path: a tenant with no target_language of its own relies on TRANSLATION_DEFAULT_LANGUAGE, so a
+// write whose langKey is the resolved default (and which therefore matches no stored target) must
+// still persist — not be rejected as stale. Without this the enqueue/backfill would produce jobs
+// that the write guard silently drops, leaving default-language tenants untranslated.
+func TestFeedbackRecords_SetTranslation_PersistsForDefaultLanguageTenant(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+
+	// Tenant has NO settings row at all → no target_language of its own (default-language path).
+	tenantID := testTenantID("default-lang-write")
+	valueText := "Bonjour le monde"
+
+	created, err := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		FieldID:      "q1",
+		FieldType:    models.FieldTypeText,
+		ValueText:    &valueText,
+		TenantID:     tenantID,
+		SubmissionID: testTenantID("submission"),
+	})
+	require.NoError(t, err)
+
+	// A default-resolved write (langKey = the deployment default) must land for a tenant with no
+	// stored target — exactly the case the stale-target guard must NOT reject.
+	translated := "Hello, world"
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "en-US"))
+
+	got, err := repo.GetByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.ValueTextTranslated)
+	assert.Equal(t, "Hello, world", *got.ValueTextTranslated)
+	require.NotNil(t, got.TranslationLangKey)
+	assert.Equal(t, "en-US", *got.TranslationLangKey)
+}
+
 // TestFeedbackRecords_ListTranslationBackfillTargets verifies the backfill query: it
 // returns text records whose tenant has a target language and whose stored
 // translation_lang_key differs from it (never translated, or stale), and excludes
@@ -215,7 +260,7 @@ func TestFeedbackRecords_ListTranslationBackfillTargets(t *testing.T) {
 	currentTranslation := "Hallo"
 	require.NoError(t, repo.SetTranslation(ctx, current.ID, &currentTranslation, "de-DE")) // matches target
 
-	targets, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, 100)
+	targets, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, 100, "")
 	require.NoError(t, err)
 
 	byID := make(map[uuid.UUID]string, len(targets))
@@ -425,4 +470,63 @@ func TestFeedbackRecords_UpdateClearsTranslationOnlyOnContentChange(t *testing.T
 	require.NoError(t, err)
 	assert.Nil(t, got.ValueTextTranslated, "changed value_text must clear the stale translation")
 	assert.Nil(t, got.TranslationLangKey, "changed value_text must clear the translation lang key")
+}
+
+// TestFeedbackRecords_GlobalBackfillUsesDefaultLanguage verifies the global backfill honors the
+// configured default: a tenant with no target_language of its own is skipped when the default is
+// empty, but becomes a backfill target (to the default) once a non-empty default is supplied.
+func TestFeedbackRecords_GlobalBackfillUsesDefaultLanguage(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+
+	// A tenant with no settings row at all — it has no target_language of its own.
+	tenantID := testTenantID("default-lang-backfill")
+	valueText := "Hello, world"
+	created, err := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		FieldID:      "q1",
+		FieldType:    models.FieldTypeText,
+		ValueText:    &valueText,
+		TenantID:     tenantID,
+		SubmissionID: testTenantID("submission"),
+	})
+	require.NoError(t, err)
+
+	// A large limit so the record under test is never dropped by keyset paging regardless of
+	// how many other rows the shared test DB holds.
+	const allTargets = 100000
+
+	// No default: a tenant without its own target is not a backfill target.
+	noDefault, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, allTargets, "")
+	require.NoError(t, err)
+
+	noDefaultByID := make(map[uuid.UUID]string, len(noDefault))
+	for _, target := range noDefault {
+		noDefaultByID[target.FeedbackRecordID] = target.TargetLang
+	}
+
+	if _, present := noDefaultByID[created.ID]; present {
+		t.Fatal("a tenant with no target must not be a backfill target when the default is empty")
+	}
+
+	// With a default: the same record becomes a target, to the default language.
+	withDefault, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, allTargets, "en-US")
+	require.NoError(t, err)
+
+	withDefaultByID := make(map[uuid.UUID]string, len(withDefault))
+	for _, target := range withDefault {
+		withDefaultByID[target.FeedbackRecordID] = target.TargetLang
+	}
+
+	assert.Equal(t, "en-US", withDefaultByID[created.ID],
+		"a tenant with no target inherits the default language for backfill")
 }

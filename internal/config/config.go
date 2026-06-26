@@ -12,24 +12,26 @@ import (
 	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
+	"golang.org/x/text/language"
 
 	"github.com/formbricks/hub/pkg/database"
 )
 
 // Sentinel errors for configuration validation (err113).
 var (
-	ErrWebhookDeliveryMaxConcurrent    = errors.New("WEBHOOK_DELIVERY_MAX_CONCURRENT must be a positive integer")
-	ErrWebhookDeliveryMaxAttempts      = errors.New("WEBHOOK_DELIVERY_MAX_ATTEMPTS must be a positive integer")
-	ErrWebhookMaxFanOutPerEvent        = errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
-	ErrMessagePublisherQueueMaxSize    = errors.New("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE must be a positive integer")
-	ErrMessagePublisherPerEventTimeout = errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
-	ErrShutdownTimeoutSeconds          = errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
-	ErrWebhookMaxCount                 = errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
-	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
-	ErrInvalidPublicBaseURL            = errors.New("PUBLIC_BASE_URL must be an absolute http(s) URL without query or fragment")
-	ErrInvalidEmbeddingBaseURL         = errors.New("EMBEDDING_BASE_URL must be an absolute http(s) URL without query or fragment")
-	ErrInvalidTranslationBaseURL       = errors.New("TRANSLATION_BASE_URL must be an absolute http(s) URL without query or fragment")
-	ErrInvalidTaxonomyServiceURL       = errors.New("TAXONOMY_SERVICE_URL must be an absolute http(s) URL without query or fragment")
+	ErrWebhookDeliveryMaxConcurrent      = errors.New("WEBHOOK_DELIVERY_MAX_CONCURRENT must be a positive integer")
+	ErrWebhookDeliveryMaxAttempts        = errors.New("WEBHOOK_DELIVERY_MAX_ATTEMPTS must be a positive integer")
+	ErrWebhookMaxFanOutPerEvent          = errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
+	ErrMessagePublisherQueueMaxSize      = errors.New("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE must be a positive integer")
+	ErrMessagePublisherPerEventTimeout   = errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
+	ErrShutdownTimeoutSeconds            = errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
+	ErrWebhookMaxCount                   = errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
+	ErrDatabaseMinConnsExceedsMax        = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
+	ErrInvalidPublicBaseURL              = errors.New("PUBLIC_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidEmbeddingBaseURL           = errors.New("EMBEDDING_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidTranslationBaseURL         = errors.New("TRANSLATION_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidTranslationDefaultLanguage = errors.New("TRANSLATION_DEFAULT_LANGUAGE must be a valid BCP-47 locale (e.g. en-US)")
+	ErrInvalidTaxonomyServiceURL         = errors.New("TAXONOMY_SERVICE_URL must be an absolute http(s) URL without query or fragment")
 )
 
 // DefaultDatabaseURL is the default connection URL when DATABASE_URL is unset (local/test only).
@@ -133,10 +135,15 @@ type EmbeddingConfig struct {
 // TranslationConfig holds the feedback open-text translation enrichment settings
 // (ENG-1255). Translation is disabled unless Provider and Model are both set.
 type TranslationConfig struct {
-	ProviderAPIKey      string `env:"TRANSLATION_PROVIDER_API_KEY"`
-	Provider            string `env:"TRANSLATION_PROVIDER"`
-	Model               string `env:"TRANSLATION_MODEL"`
-	BaseURL             string `env:"TRANSLATION_BASE_URL"`
+	ProviderAPIKey string `env:"TRANSLATION_PROVIDER_API_KEY"`
+	Provider       string `env:"TRANSLATION_PROVIDER"`
+	Model          string `env:"TRANSLATION_MODEL"`
+	BaseURL        string `env:"TRANSLATION_BASE_URL"`
+	// DefaultLanguage is the fallback target language (BCP-47) applied when a tenant has no
+	// target_language of its own. Empty means no fallback — translation is then per-tenant
+	// opt-in (a tenant is translated only once it sets its own target). Normalized to
+	// canonical form at load.
+	DefaultLanguage     string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
 	MaxConcurrent       int    `env:"TRANSLATION_MAX_CONCURRENT"        env-default:"5"`
 	MaxAttempts         int    `env:"TRANSLATION_MAX_ATTEMPTS"          env-default:"3"`
 	GoogleCloudProject  string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
@@ -417,6 +424,17 @@ func validate(cfg *Config) error {
 		}
 
 		cfg.Translation.BaseURL = normalized
+	}
+
+	// Canonicalize the fallback target language so it compares equal to tenant targets (which
+	// the settings service normalizes on write). Empty is allowed (no fallback).
+	if cfg.Translation.DefaultLanguage != "" {
+		tag, err := language.Parse(strings.TrimSpace(cfg.Translation.DefaultLanguage))
+		if err != nil {
+			return ErrInvalidTranslationDefaultLanguage
+		}
+
+		cfg.Translation.DefaultLanguage = tag.String()
 	}
 
 	if cfg.Taxonomy.ServiceURL != "" {

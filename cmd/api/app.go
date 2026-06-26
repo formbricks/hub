@@ -376,7 +376,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			translationCacheMetrics,
 		)
 		messageManager.RegisterProvider(service.NewTranslationProvider(
-			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts, translationMetrics))
+			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts,
+			cfg.Translation.DefaultLanguage, translationMetrics))
 
 		// On a settings write: evict the tenant's cached settings (so a changed/enabled
 		// target is visible to the enqueue gate immediately, not after TTL expiry) and
