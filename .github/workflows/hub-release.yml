@@ -100,6 +100,7 @@ jobs:
     uses: ./.github/workflows/release-docker-ghcr.yml
     secrets: inherit
     with:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
       MAKE_LATEST: ${{ needs.check-release.outputs.is_latest == 'true' }}
 
   docker-build-ecr:
