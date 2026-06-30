@@ -37,7 +37,7 @@ func NewEmbeddingMetrics(meter metric.Meter) (EmbeddingMetrics, error) {
 		workerErrorsName:      MetricNameEmbeddingWorkerErrors,
 		durationName:          MetricNameEmbeddingDuration,
 		providerErrorsDesc:    "Total embedding provider errors (enqueue failures)",
-		workerErrorsDesc:      "Total embedding worker errors (get record, openai, update)",
+		workerErrorsDesc:      "Total embedding worker errors (get record, provider, update)",
 		allowedProviderReason: AllowedEmbeddingProviderReason,
 		allowedWorkerReason:   AllowedEmbeddingWorkerReason,
 		allowedOutcomeStatus:  AllowedEmbeddingOutcomeStatus,

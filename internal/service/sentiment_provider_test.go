@@ -60,6 +60,9 @@ func TestSentimentProvider_PublishEvent_Created_withText_enqueues(t *testing.T) 
 	assert.NotEqual(t, "empty", inserter.calls[0].args.ValueTextHash)
 	assert.Equal(t, SentimentsQueueName, inserter.calls[0].opts.Queue)
 	assert.Equal(t, 3, inserter.calls[0].opts.MaxAttempts)
+	// Dedupe contract: identical (record, value_text) within the window is one job.
+	assert.True(t, inserter.calls[0].opts.UniqueOpts.ByArgs, "dedupe by args")
+	assert.Equal(t, uniqueByPeriodSentiment, inserter.calls[0].opts.UniqueOpts.ByPeriod)
 }
 
 func TestSentimentProvider_PublishEvent_Created_skips(t *testing.T) {

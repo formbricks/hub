@@ -161,6 +161,17 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 		assert.Equal(t, 0, fake.calls, "empty text is not sent to the provider")
 	})
 
+	t.Run("worker skips a record gone before classify", func(t *testing.T) {
+		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1}}
+		worker := workers.NewFeedbackSentimentWorker(svc, fake, nil)
+
+		// A job for a nonexistent record: GetFeedbackRecord returns NotFound end to end
+		// (service -> repo -> DB), which the worker treats as a benign skip — no error, no
+		// classify call. This exercises the worker's not-found path through the real stack.
+		require.NoError(t, worker.Work(ctx, sentimentWorkerJob(uuid.Must(uuid.NewV7()))))
+		assert.Equal(t, 0, fake.calls, "a gone record is not classified")
+	})
+
 	t.Run("SetSentiment on a missing record returns NotFound", func(t *testing.T) {
 		err := repo.SetSentiment(ctx, uuid.Must(uuid.NewV7()), nil, nil)
 		require.ErrorIs(t, err, huberrors.ErrNotFound)
