@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -131,6 +132,36 @@ func TestSentimentResponseSchema_EnumDerivesFromModelLabels(t *testing.T) {
 	require.NotNil(t, sentiment, "the schema must have a sentiment property")
 	assert.Equal(t, sentimentLabelStrings(), sentiment.Enum, "the enum is the model label set, in order")
 	assert.Len(t, sentiment.Enum, len(models.SentimentValues))
+}
+
+// TestParseSentimentResult_ConsumesSchemaPropertyNames guards the implicit coupling between the
+// structured-output schema (the property names the model is told to return) and
+// sentimentResponse's json tags (the names the parser reads). It builds a response keyed by the
+// schema's own property names: a renamed schema property without a matching json tag would bind
+// to a zero value here — an empty label (rejected) or a 0 score (caught by the assertion).
+func TestParseSentimentResult_ConsumesSchemaPropertyNames(t *testing.T) {
+	values := make(map[string]any, len(sentimentResponseSchema.Properties))
+
+	for _, property := range sentimentResponseSchema.Properties {
+		switch property.Type {
+		case llm.TypeString:
+			values[property.Name] = string(models.SentimentPositive)
+		case llm.TypeNumber:
+			values[property.Name] = 1.5
+		case llm.TypeInteger, llm.TypeBoolean:
+			t.Fatalf("unexpected schema property type %q for %q", property.Type, property.Name)
+		default:
+			t.Fatalf("unhandled schema property type %q for %q", property.Type, property.Name)
+		}
+	}
+
+	raw, err := json.Marshal(values)
+	require.NoError(t, err)
+
+	result, err := parseSentimentResult(string(raw))
+	require.NoError(t, err)
+	assert.Equal(t, models.SentimentPositive, result.Label)
+	assert.InDelta(t, 1.5, result.Score, 1e-9)
 }
 
 func TestBuildSentimentPrompt_LanguageHint(t *testing.T) {

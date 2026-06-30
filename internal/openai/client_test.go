@@ -14,6 +14,7 @@ import (
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/llm"
+	"github.com/formbricks/hub/internal/llm/llmtest"
 )
 
 type embeddingRequest struct {
@@ -199,16 +200,6 @@ var sentimentTestSchema = llm.Schema{
 	},
 }
 
-// mustMap asserts v is a JSON object and returns it.
-func mustMap(t *testing.T, v any, name string) map[string]any {
-	t.Helper()
-
-	asMap, isMap := v.(map[string]any)
-	require.True(t, isMap, "%s must be a JSON object", name)
-
-	return asMap
-}
-
 func TestCompleteJSON_SendsStrictSchemaAndReturnsJSON(t *testing.T) {
 	var body map[string]any
 
@@ -238,14 +229,14 @@ func TestCompleteJSON_SendsStrictSchemaAndReturnsJSON(t *testing.T) {
 	assert.JSONEq(t, `{"label":"positive","score":1.5}`, out, "the JSON content is returned trimmed")
 
 	// The request carries response_format: a strict json_schema named after the schema.
-	responseFormat := mustMap(t, body["response_format"], "response_format")
+	responseFormat := llmtest.MustMap(t, body["response_format"], "response_format")
 	assert.Equal(t, "json_schema", responseFormat["type"])
 
-	jsonSchema := mustMap(t, responseFormat["json_schema"], "json_schema")
+	jsonSchema := llmtest.MustMap(t, responseFormat["json_schema"], "json_schema")
 	assert.Equal(t, "sentiment", jsonSchema["name"])
 	assert.Equal(t, true, jsonSchema["strict"])
 
-	schema := mustMap(t, jsonSchema["schema"], "schema")
+	schema := llmtest.MustMap(t, jsonSchema["schema"], "schema")
 	assert.Equal(t, "object", schema["type"])
 	assert.Equal(t, false, schema["additionalProperties"], "strict mode requires a closed object")
 	assert.ElementsMatch(t, []any{"label", "score"}, schema["required"], "every property is required")
@@ -281,13 +272,13 @@ func TestOpenAIResponseSchema_StrictClosedObjectWithEnum(t *testing.T) {
 	assert.Equal(t, false, schema["additionalProperties"])
 	assert.ElementsMatch(t, []string{"label", "score"}, schema["required"])
 
-	properties := mustMap(t, schema["properties"], "properties")
+	properties := llmtest.MustMap(t, schema["properties"], "properties")
 
-	label := mustMap(t, properties["label"], "label")
+	label := llmtest.MustMap(t, properties["label"], "label")
 	assert.Equal(t, "string", label["type"])
 	assert.Equal(t, []string{"negative", "neutral", "positive"}, label["enum"])
 
-	score := mustMap(t, properties["score"], "score")
+	score := llmtest.MustMap(t, properties["score"], "score")
 	assert.Equal(t, "number", score["type"])
 	assert.NotContains(t, score, "enum", "a non-enum property carries no enum")
 }

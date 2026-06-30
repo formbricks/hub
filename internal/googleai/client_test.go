@@ -14,6 +14,7 @@ import (
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/llm"
+	"github.com/formbricks/hub/internal/llm/llmtest"
 )
 
 func TestNewGoogleGeminiClient_emptyProject_returnsError(t *testing.T) {
@@ -168,25 +169,15 @@ func TestCompleteJSON_SendsResponseSchemaAndReturnsJSON(t *testing.T) {
 	assert.JSONEq(t, `{"label":"positive","score":1.5}`, out, "the JSON text is returned trimmed")
 
 	// The request carries a JSON response MIME type and a response schema.
-	generationConfig := mustMap(t, body["generationConfig"], "generationConfig")
+	generationConfig := llmtest.MustMap(t, body["generationConfig"], "generationConfig")
 	assert.Equal(t, "application/json", generationConfig["responseMimeType"])
 
-	responseSchema := mustMap(t, generationConfig["responseSchema"], "responseSchema")
+	responseSchema := llmtest.MustMap(t, generationConfig["responseSchema"], "responseSchema")
 	assert.ElementsMatch(t, []any{"label", "score"}, responseSchema["required"], "every property is required")
 
-	properties := mustMap(t, responseSchema["properties"], "properties")
+	properties := llmtest.MustMap(t, responseSchema["properties"], "properties")
 	assert.Contains(t, properties, "label")
 	assert.Contains(t, properties, "score")
-}
-
-// mustMap asserts v is a JSON object and returns it.
-func mustMap(t *testing.T, v any, name string) map[string]any {
-	t.Helper()
-
-	asMap, isMap := v.(map[string]any)
-	require.True(t, isMap, "%s must be a JSON object", name)
-
-	return asMap
 }
 
 func TestGeminiResponseSchema_ObjectWithRequiredAndEnum(t *testing.T) {
