@@ -264,6 +264,48 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 	})
 }
 
+// SetSentiment stores or clears the sentiment label and score for a feedback record. The write
+// is scoped to the record's tenant via the shared tenant write lock (so it cannot race a tenant
+// data purge) and does NOT publish a domain event: sentiment is a derived enrichment, not a
+// record edit, and re-publishing would loop the enrichment pipeline. A missing record (deleted
+// or purged between read and write) returns NotFound.
+//
+// Unlike SetTranslation the write is unconditional: sentiment has no per-tenant target that a
+// settings change could invalidate, so there is no supersession guard. Passing a nil sentiment
+// clears both columns (e.g. when value_text was emptied); a non-nil sentiment sets both. The
+// caller pairs label and score; the column CHECKs are the final guard.
+func (r *FeedbackRecordsRepository) SetSentiment(
+	ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
+) error {
+	// Encode the label as a plain nullable string for the driver: the column is a VARCHAR with a
+	// CHECK, not a Postgres enum type.
+	var label *string
+
+	if sentiment != nil {
+		text := string(*sentiment)
+		label = &text
+	}
+
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		// Sentiment rides the feedback record's tenant boundary; resolve and lock it so the
+		// write cannot race a tenant data purge.
+		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		if _, err := dbTx.Exec(ctx, `
+			UPDATE feedback_records
+			SET sentiment = $2, sentiment_score = $3, updated_at = NOW()
+			WHERE id = $1`,
+			feedbackRecordID, label, score,
+		); err != nil {
+			return fmt.Errorf("set feedback record sentiment: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // translationBackfillSelectSQL selects feedback records that need (re)translation: text
 // fields with non-empty value_text whose EFFECTIVE target language differs from the stored
 // translation_lang_key (never translated, or now stale). The effective target is the tenant's
