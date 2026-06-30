@@ -28,13 +28,12 @@ func TestTranslationAllowedReasonsAndStatuses(t *testing.T) {
 
 	for _, status := range []string{"success", "retry", "failed_final", "skipped"} {
 		assert.True(t, AllowedTranslationOutcomeStatus(status), status)
-		assert.Equal(t, status, normalizeTranslationStatus(status))
 	}
 
 	// Unknown values normalize to a bounded "other" bucket (keeps metric cardinality fixed).
 	assert.False(t, AllowedTranslationProviderReason("nope"))
 	assert.Equal(t, "other", NormalizeReason("nope", AllowedTranslationProviderReason))
-	assert.Equal(t, "other", normalizeTranslationStatus("nope"))
+	assert.False(t, AllowedTranslationOutcomeStatus("nope"))
 }
 
 func TestNewTranslationMetricsNilMeterDisabled(t *testing.T) {
@@ -70,6 +69,7 @@ func TestTranslationMetricsRecordEmitsDataPoints(t *testing.T) {
 	metrics.RecordProviderError(ctx, "enqueue_failed")
 	metrics.RecordProviderError(ctx, "bogus") // unknown reason -> normalized to "other"
 	metrics.RecordTranslationOutcome(ctx, "success")
+	metrics.RecordTranslationOutcome(ctx, "bogus") // unknown status -> normalized to "other"
 	metrics.RecordWorkerError(ctx, "tenant_write_conflict")
 	metrics.RecordTranslationDuration(ctx, 150*time.Millisecond, "success")
 
@@ -80,6 +80,7 @@ func TestTranslationMetricsRecordEmitsDataPoints(t *testing.T) {
 	assert.Equal(t, int64(1), counterValue(collected, MetricNameTranslationProviderErrors, AttrReason, "enqueue_failed"))
 	assert.Equal(t, int64(1), counterValue(collected, MetricNameTranslationProviderErrors, AttrReason, "other"))
 	assert.Equal(t, int64(1), counterValue(collected, MetricNameTranslationOutcomes, AttrStatus, "success"))
+	assert.Equal(t, int64(1), counterValue(collected, MetricNameTranslationOutcomes, AttrStatus, "other"))
 	assert.Equal(t, int64(1), counterValue(collected, MetricNameTranslationWorkerErrors, AttrReason, "tenant_write_conflict"))
 	assert.Equal(t, uint64(1), histogramCount(collected, MetricNameTranslationDuration, "success"))
 }

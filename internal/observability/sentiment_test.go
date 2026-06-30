@@ -27,13 +27,12 @@ func TestSentimentAllowedReasonsAndStatuses(t *testing.T) {
 
 	for _, status := range []string{"success", "retry", "failed_final", "skipped"} {
 		assert.True(t, AllowedSentimentOutcomeStatus(status), status)
-		assert.Equal(t, status, normalizeSentimentStatus(status))
 	}
 
 	// Unknown values normalize to a bounded "other" bucket (keeps metric cardinality fixed).
 	assert.False(t, AllowedSentimentProviderReason("nope"))
 	assert.Equal(t, "other", NormalizeReason("nope", AllowedSentimentProviderReason))
-	assert.Equal(t, "other", normalizeSentimentStatus("nope"))
+	assert.False(t, AllowedSentimentOutcomeStatus("nope"))
 }
 
 func TestNewSentimentMetricsNilMeterDisabled(t *testing.T) {
@@ -65,6 +64,7 @@ func TestSentimentMetricsRecordEmitsDataPoints(t *testing.T) {
 	metrics.RecordProviderError(ctx, "enqueue_failed")
 	metrics.RecordProviderError(ctx, "bogus") // unknown reason -> normalized to "other"
 	metrics.RecordSentimentOutcome(ctx, "success")
+	metrics.RecordSentimentOutcome(ctx, "bogus") // unknown status -> normalized to "other"
 	metrics.RecordWorkerError(ctx, "rate_limited")
 	metrics.RecordSentimentDuration(ctx, 150*time.Millisecond, "success")
 
@@ -75,6 +75,7 @@ func TestSentimentMetricsRecordEmitsDataPoints(t *testing.T) {
 	assert.Equal(t, int64(1), counterValue(collected, MetricNameSentimentProviderErrors, AttrReason, "enqueue_failed"))
 	assert.Equal(t, int64(1), counterValue(collected, MetricNameSentimentProviderErrors, AttrReason, "other"))
 	assert.Equal(t, int64(1), counterValue(collected, MetricNameSentimentOutcomes, AttrStatus, "success"))
+	assert.Equal(t, int64(1), counterValue(collected, MetricNameSentimentOutcomes, AttrStatus, "other"))
 	assert.Equal(t, int64(1), counterValue(collected, MetricNameSentimentWorkerErrors, AttrReason, "rate_limited"))
 	assert.Equal(t, uint64(1), histogramCount(collected, MetricNameSentimentDuration, "success"))
 }
