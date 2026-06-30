@@ -1473,6 +1473,13 @@ components:
                         records and topic labels into. Absent or empty means not configured.
                     maxLength: 35
                     example: "en-US"
+                sentiment_enabled:
+                    type: boolean
+                    description: |
+                        Per-directory switch for sentiment enrichment. Absent means the default (enabled), so a
+                        tenant is enriched unless it has explicitly set this to false. The deployment-level
+                        sentiment provider/model gate applies on top of this.
+                    example: true
         TenantSettingsOutputBody:
             type: object
             additionalProperties: false
@@ -1501,6 +1508,12 @@ components:
                         becomes "en-US"). Send an empty string to clear it.
                     maxLength: 35
                     example: "de-DE"
+                sentiment_enabled:
+                    type: boolean
+                    description: |
+                        Enable or disable sentiment enrichment for this tenant. As a full replace, omitting it
+                        clears the setting back to the default (enabled).
+                    example: false
         PatchTenantSettingsInputBody:
             type: object
             additionalProperties: false
@@ -1516,6 +1529,12 @@ components:
                         rejected.
                     maxLength: 35
                     example: "de-DE"
+                sentiment_enabled:
+                    type: [boolean, "null"]
+                    description: |
+                        Enable or disable sentiment enrichment. Send null to restore the default (enabled); omit
+                        to leave it unchanged.
+                    example: false
         SemanticSearchInputBody:
             type: object
             additionalProperties: false
@@ -1851,6 +1870,22 @@ components:
                     type: object
                     description: Additional context
                     additionalProperties: {}
+                sentiment:
+                    type: string
+                    description: Sentiment polarity inferred from value_text (sentiment enrichment). Read-only; absent until the record is enriched.
+                    enum:
+                        - very_negative
+                        - negative
+                        - neutral
+                        - positive
+                        - very_positive
+                        - mixed
+                sentiment_score:
+                    type: number
+                    description: Signed sentiment polarity from -2.0 (very negative) to 2.0 (very positive) (sentiment enrichment). Read-only; absent until the record is enriched.
+                    format: double
+                    minimum: -2.0
+                    maximum: 2.0
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID

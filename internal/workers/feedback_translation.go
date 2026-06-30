@@ -131,50 +131,6 @@ func (w *FeedbackTranslationWorker) Work(ctx context.Context, job *river.Job[ser
 	return nil
 }
 
-const (
-	// defaultRateLimitSnooze applies when a provider 429 carried no retry-after hint.
-	defaultRateLimitSnooze = 30 * time.Second
-	// minRateLimitSnooze / maxRateLimitSnooze bound a single snooze so a tiny or absurd
-	// provider hint still yields a sane delay.
-	minRateLimitSnooze = 5 * time.Second
-	maxRateLimitSnooze = 5 * time.Minute
-	// maxRateLimitSnoozeWindow caps how long a job may keep snoozing against a standing rate
-	// limit before it is allowed to fail (and be recovered by a later backfill), so a
-	// permanently exhausted quota cannot snooze a single job forever.
-	maxRateLimitSnoozeWindow = time.Hour
-)
-
-// rateLimitSnooze decides how long to snooze a rate-limited translation job. A provider 429
-// surfaces as a huberrors.RateLimitError; snoozing re-queues the job without consuming a retry
-// attempt, so a burst against a rate-limited model defers rather than drops work. ok is false
-// when err is not a rate-limit error, or when the job has been snoozing past
-// maxRateLimitSnoozeWindow (then it should fail normally and let a backfill recover it).
-func (w *FeedbackTranslationWorker) rateLimitSnooze(
-	err error, job *river.Job[service.FeedbackTranslationArgs],
-) (time.Duration, bool) {
-	var rateLimited *huberrors.RateLimitError
-	if !errors.As(err, &rateLimited) {
-		return 0, false
-	}
-
-	if !job.CreatedAt.IsZero() && time.Since(job.CreatedAt) > maxRateLimitSnoozeWindow {
-		return 0, false
-	}
-
-	delay := rateLimited.RetryAfter
-
-	switch {
-	case delay <= 0:
-		delay = defaultRateLimitSnooze
-	case delay < minRateLimitSnooze:
-		delay = minRateLimitSnooze
-	case delay > maxRateLimitSnooze:
-		delay = maxRateLimitSnooze
-	}
-
-	return delay, true
-}
-
 // handleTranslateError maps a translation provider failure to the right worker outcome: a
 // rate-limit 429 snoozes (re-queues without consuming an attempt, so a burst defers rather than
 // drops work); any other error retries until the attempts are spent, then fails.
@@ -182,7 +138,7 @@ func (w *FeedbackTranslationWorker) handleTranslateError(
 	ctx context.Context, err error, feedbackRecordID uuid.UUID, start time.Time,
 	job *river.Job[service.FeedbackTranslationArgs],
 ) error {
-	if delay, ok := w.rateLimitSnooze(err, job); ok {
+	if delay, ok := rateLimitSnoozeDelay(err, job.CreatedAt); ok {
 		if w.metrics != nil {
 			w.metrics.RecordWorkerError(ctx, "rate_limited")
 			w.metrics.RecordTranslationOutcome(ctx, "retry")

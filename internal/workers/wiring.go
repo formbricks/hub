@@ -32,6 +32,11 @@ type RiverDeps struct {
 	// Per-tenant translation backfill worker (registered alongside the translation worker).
 	TranslationBackfillService tenantTranslationBackfillService
 	TranslationMaxAttempts     int
+
+	// Sentiment worker (optional; if SentimentClient is nil, sentiment worker is not registered)
+	SentimentService sentimentWorkerService
+	SentimentClient  service.SentimentClient
+	SentimentMetrics observability.SentimentMetrics
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
@@ -48,11 +53,13 @@ func NewRiverWorkersAndQueues(
 	maxDefault := cfg.Webhook.DeliveryMaxConcurrent
 	maxEmbedding := cfg.Embedding.MaxConcurrent
 	maxTranslation := cfg.Translation.MaxConcurrent
+	maxSentiment := cfg.Sentiment.MaxConcurrent
 
 	if placeholderMaxWorkers > 0 {
 		maxDefault = placeholderMaxWorkers
 		maxEmbedding = placeholderMaxWorkers
 		maxTranslation = placeholderMaxWorkers
+		maxSentiment = placeholderMaxWorkers
 	}
 
 	queues := map[string]river.QueueConfig{
@@ -76,6 +83,13 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, backfillWorker)
 
 		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
+	}
+
+	if deps.SentimentClient != nil {
+		sentimentWorker := NewFeedbackSentimentWorker(deps.SentimentService, deps.SentimentClient, deps.SentimentMetrics)
+		river.AddWorker(workers, sentimentWorker)
+
+		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: maxSentiment}
 	}
 
 	return workers, queues

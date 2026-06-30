@@ -465,8 +465,6 @@ func TestFeedbackTranslationWorker_RateLimitSnoozesOnLastAttempt(t *testing.T) {
 }
 
 func TestRateLimitSnooze(t *testing.T) {
-	worker := NewFeedbackTranslationWorker(&mockTranslationWorkerService{}, &stubTranslationClient{}, nil)
-
 	tests := []struct {
 		name      string
 		err       error
@@ -505,21 +503,25 @@ func TestRateLimitSnooze(t *testing.T) {
 			createdAt: time.Now().Add(-2 * maxRateLimitSnoozeWindow),
 			wantOK:    false,
 		},
+		{
+			// Inside the window, but the next (default) snooze would overshoot the cap: fail now
+			// rather than re-queue past maxRateLimitSnoozeWindow.
+			name:      "next delay would overshoot the window fails",
+			err:       huberrors.NewRateLimitError(0, nil),
+			createdAt: time.Now().Add(-(maxRateLimitSnoozeWindow - 5*time.Second)),
+			wantOK:    false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			job := &river.Job[service.FeedbackTranslationArgs]{
-				JobRow: &rivertype.JobRow{Attempt: 1, MaxAttempts: 3, CreatedAt: tt.createdAt},
-			}
-
-			delay, ok := worker.rateLimitSnooze(tt.err, job)
+			delay, ok := rateLimitSnoozeDelay(tt.err, tt.createdAt)
 			if ok != tt.wantOK {
-				t.Fatalf("rateLimitSnooze ok = %v, want %v", ok, tt.wantOK)
+				t.Fatalf("rateLimitSnoozeDelay ok = %v, want %v", ok, tt.wantOK)
 			}
 
 			if tt.wantOK && delay != tt.wantDelay {
-				t.Fatalf("rateLimitSnooze delay = %v, want %v", delay, tt.wantDelay)
+				t.Fatalf("rateLimitSnoozeDelay delay = %v, want %v", delay, tt.wantDelay)
 			}
 		})
 	}

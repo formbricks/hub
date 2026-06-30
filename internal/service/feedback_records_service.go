@@ -29,10 +29,17 @@ var ErrEmbeddingBackfillNotConfigured = errors.New("embedding backfill not confi
 // translated is nil, intentionally passes an empty key to null both columns).
 var ErrTranslationLangKeyRequired = errors.New("translation lang key is required when translated text is set")
 
+// ErrInvalidSentimentLabel is returned when SetSentiment is given an unknown sentiment label.
+var ErrInvalidSentimentLabel = errors.New("invalid sentiment label")
+
+// ErrSentimentScoreRequired is returned when a sentiment label is set without a score: a label
+// must carry its score (clearing, where sentiment is nil, nulls both columns).
+var ErrSentimentScoreRequired = errors.New("sentiment score is required when a label is set")
+
 const uniqueByPeriodEmbedding = 24 * time.Hour
 
 // FeedbackRecordsRepository defines the interface for feedback records data access.
-type FeedbackRecordsRepository interface {
+type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesive feedback-record data-access boundary.
 	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, bool, error)
@@ -42,6 +49,7 @@ type FeedbackRecordsRepository interface {
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string) error
+	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64) error
 	ListTranslationBackfillTargets(
 		ctx context.Context, afterID uuid.UUID, limit int, defaultLang string,
 	) ([]models.TranslationBackfillTarget, error)
@@ -157,6 +165,37 @@ func (s *FeedbackRecordsService) SetTranslation(
 
 	if err := s.repo.SetTranslation(ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang); err != nil {
 		return fmt.Errorf("set feedback record translation: %w", err)
+	}
+
+	return nil
+}
+
+// SetSentiment persists or clears the sentiment label and score for a feedback record. It is the
+// accessor the sentiment worker uses; the write is tenant-write-locked in the repository and
+// publishes no event (no enrichment loop). Passing a nil sentiment clears both columns; a
+// non-nil label must be valid and carry a score.
+func (s *FeedbackRecordsService) SetSentiment(
+	ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
+) error {
+	// Clearing nulls both columns: a score has no meaning without a label.
+	if sentiment == nil {
+		if err := s.repo.SetSentiment(ctx, feedbackRecordID, nil, nil); err != nil {
+			return fmt.Errorf("clear feedback record sentiment: %w", err)
+		}
+
+		return nil
+	}
+
+	if !sentiment.IsValid() {
+		return ErrInvalidSentimentLabel
+	}
+
+	if score == nil {
+		return ErrSentimentScoreRequired
+	}
+
+	if err := s.repo.SetSentiment(ctx, feedbackRecordID, sentiment, score); err != nil {
+		return fmt.Errorf("set feedback record sentiment: %w", err)
 	}
 
 	return nil
