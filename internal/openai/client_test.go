@@ -264,21 +264,3 @@ func TestCompleteJSON_EmptyInputReturnsErrEmptyInput(t *testing.T) {
 	_, err := client.CompleteJSON(context.Background(), "classify", "   ", sentimentTestSchema)
 	require.ErrorIs(t, err, ErrEmptyInput)
 }
-
-func TestOpenAIResponseSchema_StrictClosedObjectWithEnum(t *testing.T) {
-	schema := openAIResponseSchema(sentimentTestSchema)
-
-	assert.Equal(t, "object", schema["type"])
-	assert.Equal(t, false, schema["additionalProperties"])
-	assert.ElementsMatch(t, []string{"label", "score"}, schema["required"])
-
-	properties := llmtest.MustMap(t, schema["properties"], "properties")
-
-	label := llmtest.MustMap(t, properties["label"], "label")
-	assert.Equal(t, "string", label["type"])
-	assert.Equal(t, []string{"negative", "neutral", "positive"}, label["enum"])
-
-	score := llmtest.MustMap(t, properties["score"], "score")
-	assert.Equal(t, "number", score["type"])
-	assert.NotContains(t, score, "enum", "a non-enum property carries no enum")
-}

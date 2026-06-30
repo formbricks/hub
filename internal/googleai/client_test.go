@@ -168,32 +168,17 @@ func TestCompleteJSON_SendsResponseSchemaAndReturnsJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"label":"positive","score":1.5}`, out, "the JSON text is returned trimmed")
 
-	// The request carries a JSON response MIME type and a response schema.
+	// The request carries a JSON response MIME type and a standard JSON Schema (responseJsonSchema,
+	// not the OpenAPI-subset responseSchema), enforcing the closed-object contract.
 	generationConfig := llmtest.MustMap(t, body["generationConfig"], "generationConfig")
 	assert.Equal(t, "application/json", generationConfig["responseMimeType"])
+	assert.NotContains(t, generationConfig, "responseSchema", "responseSchema must be omitted when responseJsonSchema is set")
 
-	responseSchema := llmtest.MustMap(t, generationConfig["responseSchema"], "responseSchema")
+	responseSchema := llmtest.MustMap(t, generationConfig["responseJsonSchema"], "responseJsonSchema")
+	assert.Equal(t, false, responseSchema["additionalProperties"], "the object is closed")
 	assert.ElementsMatch(t, []any{"label", "score"}, responseSchema["required"], "every property is required")
 
 	properties := llmtest.MustMap(t, responseSchema["properties"], "properties")
 	assert.Contains(t, properties, "label")
 	assert.Contains(t, properties, "score")
-}
-
-func TestGeminiResponseSchema_ObjectWithRequiredAndEnum(t *testing.T) {
-	schema := geminiResponseSchema(sentimentTestSchema)
-
-	assert.Equal(t, genai.TypeObject, schema.Type)
-	assert.ElementsMatch(t, []string{"label", "score"}, schema.Required)
-	assert.Equal(t, []string{"label", "score"}, schema.PropertyOrdering, "field order is pinned")
-
-	require.Contains(t, schema.Properties, "label")
-	assert.Equal(t, genai.TypeString, schema.Properties["label"].Type)
-	assert.Equal(t, []string{"negative", "neutral", "positive"}, schema.Properties["label"].Enum)
-	assert.Equal(t, "enum", schema.Properties["label"].Format, "an enum field must be marked format:enum so Gemini enforces it")
-
-	require.Contains(t, schema.Properties, "score")
-	assert.Equal(t, genai.TypeNumber, schema.Properties["score"].Type)
-	assert.Empty(t, schema.Properties["score"].Enum, "a non-enum property carries no enum")
-	assert.Empty(t, schema.Properties["score"].Format, "a non-enum property is not marked format:enum")
 }

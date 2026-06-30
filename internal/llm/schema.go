@@ -35,8 +35,7 @@ type Property struct {
 }
 
 // Schema describes the JSON object an LLM must return. Every property is
-// required and the object is closed (additionalProperties:false) — the common
-// subset OpenAI strict mode and Gemini responseSchema both guarantee. Numeric
+// required and the object is closed (additionalProperties:false). Numeric
 // bounds are deliberately omitted (OpenAI strict mode does not support
 // minimum/maximum), so callers validate ranges after parsing.
 type Schema struct {
@@ -46,4 +45,35 @@ type Schema struct {
 	// Properties are the object's fields, in a stable order (preserved as the
 	// provider property ordering where supported).
 	Properties []Property
+}
+
+// JSONSchema renders the schema to a standard JSON Schema object: a closed object
+// (additionalProperties:false) with every property required. Both OpenAI Structured Outputs
+// (response_format json_schema, strict) and Gemini responseJsonSchema enforce this subset, so
+// the same builder feeds both client wrappers — the closed-object contract is identical on
+// every provider.
+func (s Schema) JSONSchema() map[string]any {
+	properties := make(map[string]any, len(s.Properties))
+	required := make([]string, 0, len(s.Properties))
+
+	for _, p := range s.Properties {
+		property := map[string]any{"type": string(p.Type)}
+		if p.Description != "" {
+			property["description"] = p.Description
+		}
+
+		if len(p.Enum) > 0 {
+			property["enum"] = p.Enum
+		}
+
+		properties[p.Name] = property
+		required = append(required, p.Name)
+	}
+
+	return map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
 }

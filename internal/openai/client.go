@@ -201,7 +201,7 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 				JSONSchema: openaisdk.ResponseFormatJSONSchemaJSONSchemaParam{
 					Name:   schema.Name,
 					Strict: param.NewOpt(true),
-					Schema: openAIResponseSchema(schema),
+					Schema: schema.JSONSchema(),
 				},
 			},
 		},
@@ -239,35 +239,6 @@ func wrapChatCompletionError(err error) error {
 	}
 
 	return wrapped
-}
-
-// openAIResponseSchema renders an llm.Schema to the JSON-schema object OpenAI
-// Structured Outputs expects in strict mode: an object with every property
-// required and additionalProperties:false.
-func openAIResponseSchema(schema llm.Schema) map[string]any {
-	properties := make(map[string]any, len(schema.Properties))
-	required := make([]string, 0, len(schema.Properties))
-
-	for _, p := range schema.Properties {
-		property := map[string]any{"type": string(p.Type)}
-		if p.Description != "" {
-			property["description"] = p.Description
-		}
-
-		if len(p.Enum) > 0 {
-			property["enum"] = p.Enum
-		}
-
-		properties[p.Name] = property
-		required = append(required, p.Name)
-	}
-
-	return map[string]any{
-		"type":                 "object",
-		"properties":           properties,
-		"required":             required,
-		"additionalProperties": false,
-	}
 }
 
 // openaiRetryAfter reads the Retry-After header (delta-seconds) from a 429 response, or 0
