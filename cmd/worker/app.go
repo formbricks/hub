@@ -71,12 +71,14 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		webhookMetrics     observability.WebhookMetrics
 		embeddingMetrics   observability.EmbeddingMetrics
 		translationMetrics observability.TranslationMetrics
+		sentimentMetrics   observability.SentimentMetrics
 	)
 
 	if metrics != nil {
 		webhookMetrics = metrics.Webhooks
 		embeddingMetrics = metrics.Embeddings
 		translationMetrics = metrics.Translation
+		sentimentMetrics = metrics.Sentiment
 	}
 
 	webhookSender := service.NewWebhookSenderImpl(
@@ -161,6 +163,32 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.TranslationMetrics = translationMetrics
 		deps.TranslationBackfillService = translationRecordsService
 		deps.TranslationMaxAttempts = cfg.Translation.MaxAttempts
+	}
+
+	if cfg.Sentiment.Enabled() {
+		sentimentClient, err := service.NewSentimentClient(context.Background(), service.SentimentClientConfig{
+			Provider:            cfg.Sentiment.Provider,
+			ProviderAPIKey:      cfg.Sentiment.ProviderAPIKey,
+			Model:               cfg.Sentiment.Model,
+			BaseURL:             cfg.Sentiment.BaseURL,
+			GoogleCloudProject:  cfg.Sentiment.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Sentiment.GoogleCloudLocation,
+		})
+		if err != nil {
+			shutdownObservability(context.Background(), meterProvider, tracerProvider)
+
+			return nil, fmt.Errorf("sentiment config: %w", err)
+		}
+
+		// The sentiment worker only reads the record and writes the sentiment, so the
+		// embedding/translation-specific service params are unused here.
+		sentimentRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+		sentimentRecordsService := service.NewFeedbackRecordsService(
+			sentimentRecordsRepo, nil, "", nil, nil, "", 0, "")
+
+		deps.SentimentService = sentimentRecordsService
+		deps.SentimentClient = sentimentClient
+		deps.SentimentMetrics = sentimentMetrics
 	}
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)

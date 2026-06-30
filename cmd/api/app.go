@@ -178,12 +178,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		webhookMetrics     observability.WebhookMetrics
 		embeddingMetrics   observability.EmbeddingMetrics
 		translationMetrics observability.TranslationMetrics
+		sentimentMetrics   observability.SentimentMetrics
 	)
 	if metrics != nil {
 		eventMetrics = metrics.Events
 		webhookMetrics = metrics.Webhooks
 		embeddingMetrics = metrics.Embeddings
 		translationMetrics = metrics.Translation
+		sentimentMetrics = metrics.Sentiment
 	}
 
 	var tracerProvider *sdktrace.TracerProvider
@@ -314,6 +316,30 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
 
+	// Register the sentiment worker and declare its queue so the River client can enqueue
+	// sentiment jobs (kind + queue must be known at insert time); the jobs are processed by
+	// hub-worker, not in this process. Gated on SENTIMENT_PROVIDER+MODEL; the enqueue provider
+	// is registered below, after the River client exists.
+	if cfg.Sentiment.Enabled() {
+		sentimentClient, sentimentErr := service.NewSentimentClient(context.Background(), service.SentimentClientConfig{
+			Provider:            cfg.Sentiment.Provider,
+			ProviderAPIKey:      cfg.Sentiment.ProviderAPIKey,
+			Model:               cfg.Sentiment.Model,
+			BaseURL:             cfg.Sentiment.BaseURL,
+			GoogleCloudProject:  cfg.Sentiment.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Sentiment.GoogleCloudLocation,
+		})
+		if sentimentErr != nil {
+			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
+
+			return nil, fmt.Errorf("sentiment config: %w", sentimentErr)
+		}
+
+		river.AddWorker(riverWorkers, workers.NewFeedbackSentimentWorker(feedbackRecordsService, sentimentClient, sentimentMetrics))
+
+		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: 1}
+	}
+
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues:  queues,
 		Workers: riverWorkers,
@@ -351,6 +377,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			embeddingMetrics,
 		)
 		messageManager.RegisterProvider(embeddingProv)
+	}
+
+	// Sentiment enqueue provider: on a feedback-record create/update with open text it enqueues
+	// a sentiment job. Gated on SENTIMENT_PROVIDER+MODEL. Unlike translation it needs no tenant
+	// settings (no per-tenant target), so it is registered directly off the River client.
+	if cfg.Sentiment.Enabled() {
+		messageManager.RegisterProvider(service.NewSentimentProvider(
+			riverClient, service.SentimentsQueueName, cfg.Sentiment.MaxAttempts, sentimentMetrics))
 	}
 
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)

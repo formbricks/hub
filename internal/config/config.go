@@ -159,6 +159,8 @@ type SentimentConfig struct {
 	Provider            string `env:"SENTIMENT_PROVIDER"`
 	Model               string `env:"SENTIMENT_MODEL"`
 	BaseURL             string `env:"SENTIMENT_BASE_URL"`
+	MaxConcurrent       int    `env:"SENTIMENT_MAX_CONCURRENT"        env-default:"5"`
+	MaxAttempts         int    `env:"SENTIMENT_MAX_ATTEMPTS"          env-default:"3"`
 	GoogleCloudProject  string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
 	GoogleCloudLocation string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
 }
