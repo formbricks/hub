@@ -145,15 +145,37 @@ const (
 	SentimentMixed        SentimentValue = "mixed"
 )
 
-// validSentimentValues backs IsValid (set membership).
-var validSentimentValues = map[SentimentValue]struct{}{
-	SentimentVeryNegative: {},
-	SentimentNegative:     {},
-	SentimentNeutral:      {},
-	SentimentPositive:     {},
-	SentimentVeryPositive: {},
-	SentimentMixed:        {},
+// Sentiment score bounds (inclusive): -2 maps to very_negative, +2 to very_positive,
+// 0 to neutral/mixed. They match the feedback_records_sentiment_score_range DB CHECK and
+// bound the score the sentiment worker persists (the classifier output is clamped to them).
+const (
+	SentimentScoreMin = -2.0
+	SentimentScoreMax = 2.0
+)
+
+// SentimentValues lists every valid SentimentValue in ordinal order (very_negative ..
+// very_positive) followed by the distinct "mixed". It is the single in-Go source of the
+// label set: validSentimentValues (membership) and the sentiment structured-output enum
+// both derive from it, so the order is stable. Keep it in sync with the
+// feedback_records_sentiment_valid DB CHECK and the OpenAPI enum.
+var SentimentValues = []SentimentValue{
+	SentimentVeryNegative,
+	SentimentNegative,
+	SentimentNeutral,
+	SentimentPositive,
+	SentimentVeryPositive,
+	SentimentMixed,
 }
+
+// validSentimentValues backs IsValid (set membership), derived from SentimentValues.
+var validSentimentValues = func() map[SentimentValue]struct{} {
+	set := make(map[SentimentValue]struct{}, len(SentimentValues))
+	for _, value := range SentimentValues {
+		set[value] = struct{}{}
+	}
+
+	return set
+}()
 
 // IsValid reports whether s is a known sentiment label. The sentiment worker validates
 // with this before persisting; reads rely on the DB CHECK for the same guarantee.

@@ -155,9 +155,12 @@ type TranslationConfig struct {
 // Sentiment enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate embeddings and translation use (there is no separate enable flag).
 type SentimentConfig struct {
-	ProviderAPIKey string `env:"SENTIMENT_PROVIDER_API_KEY"`
-	Provider       string `env:"SENTIMENT_PROVIDER"`
-	Model          string `env:"SENTIMENT_MODEL"`
+	ProviderAPIKey      string `env:"SENTIMENT_PROVIDER_API_KEY"`
+	Provider            string `env:"SENTIMENT_PROVIDER"`
+	Model               string `env:"SENTIMENT_MODEL"`
+	BaseURL             string `env:"SENTIMENT_BASE_URL"`
+	GoogleCloudProject  string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
 }
 
 // Enabled reports whether sentiment enrichment is configured (provider and model both set).
