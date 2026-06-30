@@ -36,12 +36,55 @@ func NewFeedbackRecordsRepository(db *pgxpool.Pool) *FeedbackRecordsRepository {
 // the single source of truth for materializing a FeedbackRecord, so column order
 // and scan order cannot drift across the Create/Get/List/Update read paths (a
 // silent runtime scan error otherwise). It excludes derived rows like embeddings.
+//
+// NOTE: the taxonomy node-records query (taxonomy_repository.go) carries a parallel,
+// fr.-qualified copy of this list for its JOIN — keep that list, this const, and
+// scanFeedbackRecord in sync. (Follow-up: derive the qualified list from this const.)
 const feedbackRecordColumns = `id, collected_at, created_at, updated_at,
 	source_type, source_id, source_name,
 	field_id, field_label, field_type, field_group_id, field_group_label,
 	value_text, value_number, value_boolean, value_date,
 	metadata, language, user_id, tenant_id, submission_id,
-	value_text_translated, translation_lang_key`
+	value_text_translated, translation_lang_key,
+	sentiment, sentiment_score`
+
+// scanFeedbackRecord materializes a FeedbackRecord from a row, in the exact column order of
+// feedbackRecordColumns above. It lives beside that const so the SELECT/RETURNING order and
+// the scan order can never drift. Shared with the taxonomy repository (same package).
+func scanFeedbackRecord(row scanner) (*models.FeedbackRecord, error) {
+	var record models.FeedbackRecord
+	if err := row.Scan(
+		&record.ID,
+		&record.CollectedAt,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+		&record.SourceType,
+		&record.SourceID,
+		&record.SourceName,
+		&record.FieldID,
+		&record.FieldLabel,
+		&record.FieldType,
+		&record.FieldGroupID,
+		&record.FieldGroupLabel,
+		&record.ValueText,
+		&record.ValueNumber,
+		&record.ValueBoolean,
+		&record.ValueDate,
+		&record.Metadata,
+		&record.Language,
+		&record.UserID,
+		&record.TenantID,
+		&record.SubmissionID,
+		&record.ValueTextTranslated,
+		&record.TranslationLangKey,
+		&record.Sentiment,
+		&record.SentimentScore,
+	); err != nil {
+		return nil, fmt.Errorf("scan feedback record: %w", err)
+	}
+
+	return &record, nil
+}
 
 // Create inserts a new feedback record.
 func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {

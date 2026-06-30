@@ -130,6 +130,39 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// SentimentValue is the discrete sentiment label produced by the sentiment-enrichment
+// worker (ENG-1529). It is server-generated and persisted only after enrichment. Keep this
+// set in sync with the feedback_records_sentiment_valid DB CHECK and the OpenAPI enum.
+type SentimentValue string
+
+// Valid SentimentValue labels: the five ordinal levels plus a distinct "mixed".
+const (
+	SentimentVeryNegative SentimentValue = "very_negative"
+	SentimentNegative     SentimentValue = "negative"
+	SentimentNeutral      SentimentValue = "neutral"
+	SentimentPositive     SentimentValue = "positive"
+	SentimentVeryPositive SentimentValue = "very_positive"
+	SentimentMixed        SentimentValue = "mixed"
+)
+
+// validSentimentValues backs IsValid (set membership).
+var validSentimentValues = map[SentimentValue]struct{}{
+	SentimentVeryNegative: {},
+	SentimentNegative:     {},
+	SentimentNeutral:      {},
+	SentimentPositive:     {},
+	SentimentVeryPositive: {},
+	SentimentMixed:        {},
+}
+
+// IsValid reports whether s is a known sentiment label. The sentiment worker validates
+// with this before persisting; reads rely on the DB CHECK for the same guarantee.
+func (s SentimentValue) IsValid() bool {
+	_, ok := validSentimentValues[s]
+
+	return ok
+}
+
 // FeedbackRecord represents a single feedback record.
 type FeedbackRecord struct {
 	ID              uuid.UUID       `json:"id"`
@@ -157,6 +190,10 @@ type FeedbackRecord struct {
 	// the record is translated into the tenant's configured target language.
 	ValueTextTranslated *string `json:"value_text_translated,omitempty"`
 	TranslationLangKey  *string `json:"translation_lang_key,omitempty"`
+	// Sentiment-enrichment outputs (ENG-1529): server-generated, read-only. NULL until
+	// the record is enriched (or sentiment is disabled / the record is ineligible).
+	Sentiment      *SentimentValue `json:"sentiment,omitempty"`
+	SentimentScore *float64        `json:"sentiment_score,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.

@@ -1851,6 +1851,22 @@ components:
                     type: object
                     description: Additional context
                     additionalProperties: {}
+                sentiment:
+                    type: string
+                    description: Sentiment polarity inferred from value_text (sentiment enrichment). Read-only; absent until the record is enriched.
+                    enum:
+                        - very_negative
+                        - negative
+                        - neutral
+                        - positive
+                        - very_positive
+                        - mixed
+                sentiment_score:
+                    type: number
+                    description: Signed sentiment polarity from -2.0 (very negative) to 2.0 (very positive) (sentiment enrichment). Read-only; absent until the record is enriched.
+                    format: double
+                    minimum: -2.0
+                    maximum: 2.0
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID
