@@ -252,6 +252,41 @@ func TestLoad_EmbeddingGoogleCloudProject_fallback(t *testing.T) {
 	}
 }
 
+func TestLoad_Sentiment(t *testing.T) {
+	t.Run("enabled when provider and model are both set", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+		t.Setenv("SENTIMENT_PROVIDER", "openai")
+		t.Setenv("SENTIMENT_MODEL", "gpt-4o-mini")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.Sentiment.Provider != "openai" || cfg.Sentiment.Model != "gpt-4o-mini" {
+			t.Errorf("Sentiment = %+v, want provider openai / model gpt-4o-mini", cfg.Sentiment)
+		}
+
+		if !cfg.Sentiment.Enabled() {
+			t.Error("Sentiment.Enabled() = false, want true when provider and model are set")
+		}
+	})
+
+	t.Run("disabled when model is unset", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+		t.Setenv("SENTIMENT_PROVIDER", "openai")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.Sentiment.Enabled() {
+			t.Error("Sentiment.Enabled() = true, want false when model is unset")
+		}
+	})
+}
+
 func TestLoad_EmbeddingGoogleCloudLocation(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
 	t.Setenv("EMBEDDING_GOOGLE_CLOUD_LOCATION", "europe-west3")
