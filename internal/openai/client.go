@@ -16,6 +16,7 @@ import (
 	"github.com/openai/openai-go/v3/packages/param"
 
 	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/llm"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/pkg/embeddings"
 )
@@ -170,16 +171,51 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 		},
 	})
 	if err != nil {
-		wrapped := fmt.Errorf("openai chat completion: %w", err)
-
-		var apiErr *openaisdk.Error
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
-			return "", huberrors.NewRateLimitError(openaiRetryAfter(apiErr), wrapped)
-		}
-
-		return "", wrapped
+		return "", wrapChatCompletionError(err)
 	}
 
+	return completionText(resp)
+}
+
+// CompleteJSON sends a chat completion that must return JSON matching schema,
+// at temperature 0 (deterministic) using the configured model, and returns the
+// trimmed JSON text. It uses OpenAI Structured Outputs (response_format =
+// json_schema, strict) so the model is constrained to the schema; the service
+// layer builds the schema and parses/validates the result. It is the low-level
+// call behind structured enrichments (e.g. sentiment).
+func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string, schema llm.Schema) (string, error) {
+	userText = strings.TrimSpace(userText)
+	if userText == "" {
+		return "", ErrEmptyInput
+	}
+
+	resp, err := c.sdk.Chat.Completions.New(ctx, openaisdk.ChatCompletionNewParams{
+		Model:       c.model,
+		Temperature: param.NewOpt(0.0),
+		Messages: []openaisdk.ChatCompletionMessageParamUnion{
+			openaisdk.SystemMessage(systemPrompt),
+			openaisdk.UserMessage(userText),
+		},
+		ResponseFormat: openaisdk.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &openaisdk.ResponseFormatJSONSchemaParam{
+				JSONSchema: openaisdk.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   schema.Name,
+					Strict: param.NewOpt(true),
+					Schema: openAIResponseSchema(schema),
+				},
+			},
+		},
+	})
+	if err != nil {
+		return "", wrapChatCompletionError(err)
+	}
+
+	return completionText(resp)
+}
+
+// completionText extracts the single trimmed assistant message from a chat
+// completion response, or ErrNoCompletionInResponse when there is no usable text.
+func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 	if len(resp.Choices) == 0 {
 		return "", ErrNoCompletionInResponse
 	}
@@ -190,6 +226,48 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 	}
 
 	return out, nil
+}
+
+// wrapChatCompletionError wraps a chat-completion SDK error, mapping a 429 to a
+// huberrors.RateLimitError (carrying the Retry-After hint) so callers can snooze.
+func wrapChatCompletionError(err error) error {
+	wrapped := fmt.Errorf("openai chat completion: %w", err)
+
+	var apiErr *openaisdk.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
+		return huberrors.NewRateLimitError(openaiRetryAfter(apiErr), wrapped)
+	}
+
+	return wrapped
+}
+
+// openAIResponseSchema renders an llm.Schema to the JSON-schema object OpenAI
+// Structured Outputs expects in strict mode: an object with every property
+// required and additionalProperties:false.
+func openAIResponseSchema(schema llm.Schema) map[string]any {
+	properties := make(map[string]any, len(schema.Properties))
+	required := make([]string, 0, len(schema.Properties))
+
+	for _, p := range schema.Properties {
+		property := map[string]any{"type": string(p.Type)}
+		if p.Description != "" {
+			property["description"] = p.Description
+		}
+
+		if len(p.Enum) > 0 {
+			property["enum"] = p.Enum
+		}
+
+		properties[p.Name] = property
+		required = append(required, p.Name)
+	}
+
+	return map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
 }
 
 // openaiRetryAfter reads the Retry-After header (delta-seconds) from a 429 response, or 0

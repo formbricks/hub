@@ -14,6 +14,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/llm"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/pkg/embeddings"
 )
@@ -149,22 +150,102 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
 	})
 	if err != nil {
-		wrapped := fmt.Errorf("gemini generate content: %w", err)
-
-		var apiErr genai.APIError
-		if errors.As(err, &apiErr) && (apiErr.Code == http.StatusTooManyRequests || apiErr.Status == "RESOURCE_EXHAUSTED") {
-			return "", huberrors.NewRateLimitError(genaiRetryAfter(apiErr), wrapped)
-		}
-
-		return "", wrapped
+		return "", wrapGenerateContentError(err)
 	}
 
+	return generateContentText(resp)
+}
+
+// CompleteJSON generates content that must return JSON matching schema, at
+// temperature 0 (deterministic) using the configured model, and returns the
+// trimmed JSON text. It sets responseMimeType=application/json and a typed
+// responseSchema so the model is constrained to the schema; the service layer
+// builds the schema and parses/validates the result. It is the low-level call
+// behind structured enrichments (e.g. sentiment).
+func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string, schema llm.Schema) (string, error) {
+	userText = strings.TrimSpace(userText)
+	if userText == "" {
+		return "", ErrEmptyInput
+	}
+
+	temperature := float32(0)
+
+	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), &genai.GenerateContentConfig{
+		Temperature:       &temperature,
+		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
+		ResponseMIMEType:  "application/json",
+		ResponseSchema:    geminiResponseSchema(schema),
+	})
+	if err != nil {
+		return "", wrapGenerateContentError(err)
+	}
+
+	return generateContentText(resp)
+}
+
+// generateContentText extracts the trimmed text from a generate-content
+// response, or ErrNoCompletionInResponse when there is none.
+func generateContentText(resp *genai.GenerateContentResponse) (string, error) {
 	out := strings.TrimSpace(resp.Text())
 	if out == "" {
 		return "", ErrNoCompletionInResponse
 	}
 
 	return out, nil
+}
+
+// wrapGenerateContentError wraps a generate-content SDK error, mapping a 429 /
+// RESOURCE_EXHAUSTED to a huberrors.RateLimitError (carrying the retry hint) so
+// callers can snooze.
+func wrapGenerateContentError(err error) error {
+	wrapped := fmt.Errorf("gemini generate content: %w", err)
+
+	var apiErr genai.APIError
+	if errors.As(err, &apiErr) && (apiErr.Code == http.StatusTooManyRequests || apiErr.Status == "RESOURCE_EXHAUSTED") {
+		return huberrors.NewRateLimitError(genaiRetryAfter(apiErr), wrapped)
+	}
+
+	return wrapped
+}
+
+// geminiResponseSchema renders an llm.Schema to a typed *genai.Schema: an object
+// with every property required. PropertyOrdering pins a stable field order.
+func geminiResponseSchema(schema llm.Schema) *genai.Schema {
+	properties := make(map[string]*genai.Schema, len(schema.Properties))
+	required := make([]string, 0, len(schema.Properties))
+
+	for _, p := range schema.Properties {
+		properties[p.Name] = &genai.Schema{
+			Type:        geminiType(p.Type),
+			Description: p.Description,
+			Enum:        p.Enum,
+		}
+		required = append(required, p.Name)
+	}
+
+	return &genai.Schema{
+		Type:             genai.TypeObject,
+		Properties:       properties,
+		Required:         required,
+		PropertyOrdering: required,
+	}
+}
+
+// geminiType maps an llm.PropertyType to the genai schema type, defaulting to
+// string for an unknown type.
+func geminiType(t llm.PropertyType) genai.Type {
+	switch t {
+	case llm.TypeNumber:
+		return genai.TypeNumber
+	case llm.TypeInteger:
+		return genai.TypeInteger
+	case llm.TypeBoolean:
+		return genai.TypeBoolean
+	case llm.TypeString:
+		return genai.TypeString
+	default:
+		return genai.TypeString
+	}
 }
 
 // genaiRetryAfter extracts the RetryInfo retryDelay from a RESOURCE_EXHAUSTED error's
