@@ -32,8 +32,12 @@ func rateLimitSnoozeDelay(err error, jobCreatedAt time.Time) (time.Duration, boo
 		return 0, false
 	}
 
-	if !jobCreatedAt.IsZero() && time.Since(jobCreatedAt) > maxRateLimitSnoozeWindow {
-		return 0, false
+	elapsed := time.Duration(0)
+	if !jobCreatedAt.IsZero() {
+		elapsed = time.Since(jobCreatedAt)
+		if elapsed >= maxRateLimitSnoozeWindow {
+			return 0, false
+		}
 	}
 
 	delay := rateLimited.RetryAfter
@@ -45,6 +49,13 @@ func rateLimitSnoozeDelay(err error, jobCreatedAt time.Time) (time.Duration, boo
 		delay = minRateLimitSnooze
 	case delay > maxRateLimitSnooze:
 		delay = maxRateLimitSnooze
+	}
+
+	// Stop snoozing if the chosen delay would push the job past the window — otherwise a job
+	// still inside the window could overshoot the cap by up to maxRateLimitSnooze, breaking the
+	// "cannot snooze forever" guarantee and delaying the normal-failure/backfill path.
+	if !jobCreatedAt.IsZero() && elapsed+delay > maxRateLimitSnoozeWindow {
+		return 0, false
 	}
 
 	return delay, true

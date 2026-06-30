@@ -503,6 +503,14 @@ func TestRateLimitSnooze(t *testing.T) {
 			createdAt: time.Now().Add(-2 * maxRateLimitSnoozeWindow),
 			wantOK:    false,
 		},
+		{
+			// Inside the window, but the next (default) snooze would overshoot the cap: fail now
+			// rather than re-queue past maxRateLimitSnoozeWindow.
+			name:      "next delay would overshoot the window fails",
+			err:       huberrors.NewRateLimitError(0, nil),
+			createdAt: time.Now().Add(-(maxRateLimitSnoozeWindow - 5*time.Second)),
+			wantOK:    false,
+		},
 	}
 
 	for _, tt := range tests {
