@@ -24,25 +24,29 @@ const uniqueByPeriodSentiment = 24 * time.Hour
 // feedback record event: FeedbackRecordCreated with non-empty open text, or
 // FeedbackRecordUpdated whose value_text changed. On update the job is enqueued even when
 // value_text is now empty, so the worker can clear a stale sentiment. The worker resolves the
-// remaining work; ingestion is never blocked. It is the embedding-shaped sibling of the
-// translation provider: no per-tenant target, so no settings lookup on the enqueue path.
+// remaining work; ingestion is never blocked. Like the translation provider it resolves a
+// per-tenant setting on the enqueue path — here the per-directory sentiment switch (ENG-1529)
+// — and skips tenants that have turned sentiment off.
 type SentimentProvider struct {
 	inserter    RiverJobInserter
+	resolver    TenantSettingsReader
 	queueName   string
 	maxAttempts int
 	metrics     observability.SentimentMetrics
 }
 
 // NewSentimentProvider creates a provider that enqueues feedback_sentiment jobs.
-// metrics may be nil when metrics are disabled.
+// resolver reads the tenant's per-directory sentiment switch; metrics may be nil when disabled.
 func NewSentimentProvider(
 	inserter RiverJobInserter,
+	resolver TenantSettingsReader,
 	queueName string,
 	maxAttempts int,
 	metrics observability.SentimentMetrics,
 ) *SentimentProvider {
 	return &SentimentProvider{
 		inserter:    inserter,
+		resolver:    resolver,
 		queueName:   queueName,
 		maxAttempts: maxAttempts,
 		metrics:     metrics,
@@ -86,13 +90,33 @@ func (p *SentimentProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
+	// Per-directory gate: skip tenants that have switched sentiment enrichment off. Read after
+	// the cheap eligibility checks so non-eligible events never hit the settings cache.
+	settings, err := p.resolver.GetSettings(ctx, record.TenantID)
+	if err != nil {
+		if p.metrics != nil {
+			p.metrics.RecordProviderError(ctx, "settings_read_failed")
+		}
+
+		slog.Error("sentiment: resolve tenant settings failed",
+			"event_id", event.ID, "feedback_record_id", record.ID, "error", err)
+
+		return
+	}
+
+	if !settings.Settings.SentimentEnrichmentEnabled() {
+		slog.Debug("sentiment: skip, disabled for tenant", "feedback_record_id", record.ID)
+
+		return
+	}
+
 	opts := &river.InsertOpts{
 		Queue:       p.queueName,
 		MaxAttempts: p.maxAttempts,
 		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: uniqueByPeriodSentiment},
 	}
 
-	_, err := p.inserter.Insert(ctx, FeedbackSentimentArgs{
+	_, err = p.inserter.Insert(ctx, FeedbackSentimentArgs{
 		FeedbackRecordID: record.ID,
 		ValueTextHash:    sentimentContentHash(record.ValueText),
 	}, opts)

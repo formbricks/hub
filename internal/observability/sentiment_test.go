@@ -12,8 +12,10 @@ import (
 )
 
 func TestSentimentAllowedReasonsAndStatuses(t *testing.T) {
-	assert.True(t, AllowedSentimentProviderReason("enqueue_failed"))
-	assert.Equal(t, "enqueue_failed", NormalizeReason("enqueue_failed", AllowedSentimentProviderReason))
+	for _, reason := range []string{"settings_read_failed", "enqueue_failed"} {
+		assert.True(t, AllowedSentimentProviderReason(reason), reason)
+		assert.Equal(t, reason, NormalizeReason(reason, AllowedSentimentProviderReason))
+	}
 
 	workerReasons := []string{
 		"sentiment_api_failed", "get_record_failed", "update_failed", "tenant_write_conflict", "rate_limited",

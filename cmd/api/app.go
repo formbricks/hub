@@ -379,14 +379,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		messageManager.RegisterProvider(embeddingProv)
 	}
 
-	// Sentiment enqueue provider: on a feedback-record create/update with open text it enqueues
-	// a sentiment job. Gated on SENTIMENT_PROVIDER+MODEL. Unlike translation it needs no tenant
-	// settings (no per-tenant target), so it is registered directly off the River client.
-	if cfg.Sentiment.Enabled() {
-		messageManager.RegisterProvider(service.NewSentimentProvider(
-			riverClient, service.SentimentsQueueName, cfg.Sentiment.MaxAttempts, sentimentMetrics))
-	}
-
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
@@ -396,33 +388,54 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
 
-	// Translation enqueue provider: on a feedback-record create/update it resolves the
-	// tenant's target language (through a short-TTL cache over tenant settings) and
-	// enqueues a translation job. Gated on TRANSLATION_PROVIDER+MODEL.
-	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
-		var translationCacheMetrics observability.CacheMetrics
+	// Translation and sentiment enqueue providers both resolve a per-tenant setting on the
+	// enqueue path (translation's target language; sentiment's per-directory switch), so they
+	// share one short-TTL cache over tenant settings. The cache is evicted on a settings write
+	// (below) so a toggle is visible to the gates immediately, not after TTL expiry.
+	translationEnabled := cfg.Translation.Provider != "" && cfg.Translation.Model != ""
+
+	var tenantSettingsCache *service.CachedTenantSettings
+
+	if translationEnabled || cfg.Sentiment.Enabled() {
+		var cacheMetrics observability.CacheMetrics
 		if metrics != nil {
-			translationCacheMetrics = metrics.Cache
+			cacheMetrics = metrics.Cache
 		}
 
-		translationCache := service.NewCachedTenantSettings(
+		tenantSettingsCache = service.NewCachedTenantSettings(
 			tenantSettingsService,
 			cfg.TenantSettingsCache.Size, cfg.TenantSettingsCache.TTL.Duration(),
-			translationCacheMetrics,
+			cacheMetrics,
 		)
-		messageManager.RegisterProvider(service.NewTranslationProvider(
-			riverClient, translationCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts,
-			cfg.Translation.DefaultLanguage, translationMetrics))
+	}
 
-		// On a settings write: evict the tenant's cached settings (so a changed/enabled
-		// target is visible to the enqueue gate immediately, not after TTL expiry) and
-		// enqueue a per-tenant re-translation backfill (so existing records pick up a new
-		// target, not only newly ingested ones).
-		tenantSettingsService.SetSettingsChangeListener(service.NewCompositeSettingsChangeListener(
-			translationCache,
-			service.NewTranslationSettingsListener(
-				riverClient, service.TranslationBackfillsQueueName, cfg.Translation.MaxAttempts),
-		))
+	// Translation enqueue provider: resolves the tenant's target language and enqueues a
+	// translation job. Gated on TRANSLATION_PROVIDER+MODEL.
+	if translationEnabled {
+		messageManager.RegisterProvider(service.NewTranslationProvider(
+			riverClient, tenantSettingsCache, service.TranslationsQueueName, cfg.Translation.MaxAttempts,
+			cfg.Translation.DefaultLanguage, translationMetrics))
+	}
+
+	// Sentiment enqueue provider: on a create/update with open text it enqueues a sentiment job,
+	// skipping tenants that have switched sentiment off. Gated on SENTIMENT_PROVIDER+MODEL.
+	if cfg.Sentiment.Enabled() {
+		messageManager.RegisterProvider(service.NewSentimentProvider(
+			riverClient, tenantSettingsCache, service.SentimentsQueueName, cfg.Sentiment.MaxAttempts,
+			sentimentMetrics))
+	}
+
+	// On a settings write: evict the shared cache (so a changed setting is visible to the enqueue
+	// gates immediately) and, when translation is enabled, enqueue a per-tenant re-translation
+	// backfill (so existing records pick up a new target, not only newly ingested ones).
+	if tenantSettingsCache != nil {
+		listeners := []service.SettingsChangeListener{tenantSettingsCache}
+		if translationEnabled {
+			listeners = append(listeners, service.NewTranslationSettingsListener(
+				riverClient, service.TranslationBackfillsQueueName, cfg.Translation.MaxAttempts))
+		}
+
+		tenantSettingsService.SetSettingsChangeListener(service.NewCompositeSettingsChangeListener(listeners...))
 	}
 
 	taxonomyRepo := repository.NewTaxonomyRepository(db)

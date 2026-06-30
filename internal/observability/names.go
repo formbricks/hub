@@ -156,7 +156,8 @@ func AllowedTranslationWorkerReason(reason string) bool {
 
 // allowedSentimentProviderReasons for hub_sentiment_provider_errors_total.
 var allowedSentimentProviderReasons = map[string]bool{
-	"enqueue_failed": true,
+	"settings_read_failed": true,
+	"enqueue_failed":       true,
 }
 
 // allowedSentimentOutcomeStatuses for hub_sentiment_outcomes_total and hub_sentiment_duration_seconds.

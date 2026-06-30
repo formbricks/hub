@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -43,7 +44,7 @@ func sentimentTextRecord(id uuid.UUID, valueText *string) *models.FeedbackRecord
 
 func TestSentimentProvider_PublishEvent_Created_withText_enqueues(t *testing.T) {
 	inserter := &mockSentimentInserter{}
-	provider := NewSentimentProvider(inserter, SentimentsQueueName, 3, nil)
+	provider := NewSentimentProvider(inserter, stubSettingsResolver{}, SentimentsQueueName, 3, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	text := "Great product"
@@ -76,7 +77,7 @@ func TestSentimentProvider_PublishEvent_Created_skips(t *testing.T) {
 	for name, testCase := range tests {
 		t.Run(name, func(t *testing.T) {
 			inserter := &mockSentimentInserter{}
-			provider := NewSentimentProvider(inserter, SentimentsQueueName, 3, nil)
+			provider := NewSentimentProvider(inserter, stubSettingsResolver{}, SentimentsQueueName, 3, nil)
 
 			provider.PublishEvent(context.Background(), Event{
 				ID:   uuid.Must(uuid.NewV7()),
@@ -91,7 +92,7 @@ func TestSentimentProvider_PublishEvent_Created_skips(t *testing.T) {
 
 func TestSentimentProvider_PublishEvent_Updated_valueTextChanged_enqueues(t *testing.T) {
 	inserter := &mockSentimentInserter{}
-	provider := NewSentimentProvider(inserter, SentimentsQueueName, 3, nil)
+	provider := NewSentimentProvider(inserter, stubSettingsResolver{}, SentimentsQueueName, 3, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	text := "updated text"
@@ -110,7 +111,7 @@ func TestSentimentProvider_PublishEvent_Updated_valueTextChanged_enqueues(t *tes
 // must not re-enqueue.
 func TestSentimentProvider_PublishEvent_Updated_onlyLanguageChanged_skips(t *testing.T) {
 	inserter := &mockSentimentInserter{}
-	provider := NewSentimentProvider(inserter, SentimentsQueueName, 3, nil)
+	provider := NewSentimentProvider(inserter, stubSettingsResolver{}, SentimentsQueueName, 3, nil)
 
 	text := "unchanged text"
 	provider.PublishEvent(context.Background(), Event{
@@ -127,7 +128,7 @@ func TestSentimentProvider_PublishEvent_Updated_onlyLanguageChanged_skips(t *tes
 // stale sentiment.
 func TestSentimentProvider_PublishEvent_Updated_valueTextNowEmpty_enqueues(t *testing.T) {
 	inserter := &mockSentimentInserter{}
-	provider := NewSentimentProvider(inserter, SentimentsQueueName, 3, nil)
+	provider := NewSentimentProvider(inserter, stubSettingsResolver{}, SentimentsQueueName, 3, nil)
 
 	provider.PublishEvent(context.Background(), Event{
 		ID:            uuid.Must(uuid.NewV7()),
@@ -153,4 +154,67 @@ func TestSentimentContentHash(t *testing.T) {
 		"the hash is over trimmed, normalized text")
 	assert.NotEqual(t, sentimentContentHash(&hello), sentimentContentHash(&world))
 	assert.NotEqual(t, "empty", sentimentContentHash(&hello))
+}
+
+// stubSettingsResolver is a TenantSettingsReader returning fixed settings (or an error).
+type stubSettingsResolver struct {
+	settings models.EnrichmentSettings
+	err      error
+}
+
+func (s stubSettingsResolver) GetSettings(_ context.Context, tenantID string) (*models.TenantSettings, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return &models.TenantSettings{TenantID: tenantID, Settings: s.settings}, nil
+}
+
+func TestSentimentProvider_PublishEvent_skipsWhenDisabledForTenant(t *testing.T) {
+	inserter := &mockSentimentInserter{}
+	disabled := false
+	provider := NewSentimentProvider(
+		inserter, stubSettingsResolver{settings: models.EnrichmentSettings{SentimentEnabled: &disabled}},
+		SentimentsQueueName, 3, nil)
+
+	text := "Great product"
+	provider.PublishEvent(context.Background(), Event{
+		ID:   uuid.Must(uuid.NewV7()),
+		Type: datatypes.FeedbackRecordCreated,
+		Data: sentimentTextRecord(uuid.Must(uuid.NewV7()), &text),
+	})
+
+	assert.Empty(t, inserter.calls, "a tenant that switched sentiment off is not enqueued")
+}
+
+func TestSentimentProvider_PublishEvent_enqueuesWhenExplicitlyEnabled(t *testing.T) {
+	inserter := &mockSentimentInserter{}
+	enabled := true
+	provider := NewSentimentProvider(
+		inserter, stubSettingsResolver{settings: models.EnrichmentSettings{SentimentEnabled: &enabled}},
+		SentimentsQueueName, 3, nil)
+
+	text := "Great product"
+	provider.PublishEvent(context.Background(), Event{
+		ID:   uuid.Must(uuid.NewV7()),
+		Type: datatypes.FeedbackRecordCreated,
+		Data: sentimentTextRecord(uuid.Must(uuid.NewV7()), &text),
+	})
+
+	require.Len(t, inserter.calls, 1)
+}
+
+func TestSentimentProvider_PublishEvent_skipsOnSettingsReadError(t *testing.T) {
+	inserter := &mockSentimentInserter{}
+	provider := NewSentimentProvider(
+		inserter, stubSettingsResolver{err: errors.New("db down")}, SentimentsQueueName, 3, nil)
+
+	text := "Great product"
+	provider.PublishEvent(context.Background(), Event{
+		ID:   uuid.Must(uuid.NewV7()),
+		Type: datatypes.FeedbackRecordCreated,
+		Data: sentimentTextRecord(uuid.Must(uuid.NewV7()), &text),
+	})
+
+	assert.Empty(t, inserter.calls, "a settings read failure skips rather than enqueuing blindly")
 }
