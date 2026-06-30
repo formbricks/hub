@@ -293,13 +293,21 @@ func (r *FeedbackRecordsRepository) SetSentiment(
 			return err
 		}
 
-		if _, err := dbTx.Exec(ctx, `
+		tag, err := dbTx.Exec(ctx, `
 			UPDATE feedback_records
 			SET sentiment = $2, sentiment_score = $3, updated_at = NOW()
 			WHERE id = $1`,
 			feedbackRecordID, label, score,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("set feedback record sentiment: %w", err)
+		}
+
+		// The record was locked above, so zero rows means it was deleted between the lock and
+		// this write: surface NotFound so the worker treats it as a benign skip (matches the
+		// method's contract and the embedding/translation write paths).
+		if tag.RowsAffected() == 0 {
+			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 
 		return nil

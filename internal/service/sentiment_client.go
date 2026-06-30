@@ -50,8 +50,10 @@ type promptSentimentClient struct {
 // sentimentResponse is the on-the-wire structured-output shape. It is decoded then validated
 // into a SentimentResult; the field names match sentimentResponseSchema.
 type sentimentResponse struct {
-	Sentiment string  `json:"sentiment"`
-	Score     float64 `json:"score"`
+	Sentiment string `json:"sentiment"`
+	// Score is a pointer so an omitted field is distinguishable from a real 0 — a response
+	// missing score is out of contract and rejected rather than persisted as neutral.
+	Score *float64 `json:"score"`
 }
 
 // Classify builds the prompt and schema, calls the provider, and parses the result.
@@ -131,7 +133,11 @@ func parseSentimentResult(raw string) (SentimentResult, error) {
 		return SentimentResult{}, fmt.Errorf("%w: unknown label %q", ErrSentimentResponseInvalid, resp.Sentiment)
 	}
 
-	return SentimentResult{Label: label, Score: clampSentimentScore(resp.Score)}, nil
+	if resp.Score == nil {
+		return SentimentResult{}, fmt.Errorf("%w: missing score", ErrSentimentResponseInvalid)
+	}
+
+	return SentimentResult{Label: label, Score: clampSentimentScore(*resp.Score)}, nil
 }
 
 // clampSentimentScore bounds a score to [models.SentimentScoreMin, SentimentScoreMax] so a
@@ -150,8 +156,10 @@ func clampSentimentScore(score float64) float64 {
 // sentimentLabelStrings returns the valid sentiment labels as strings, in models.SentimentValues
 // order, for the structured-output enum.
 func sentimentLabelStrings() []string {
-	labels := make([]string, len(models.SentimentValues))
-	for i, value := range models.SentimentValues {
+	values := models.SentimentValues()
+	labels := make([]string, len(values))
+
+	for i, value := range values {
 		labels[i] = string(value)
 	}
 

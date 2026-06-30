@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -153,12 +154,13 @@ const (
 	SentimentScoreMax = 2.0
 )
 
-// SentimentValues lists every valid SentimentValue in ordinal order (very_negative ..
-// very_positive) followed by the distinct "mixed". It is the single in-Go source of the
-// label set: validSentimentValues (membership) and the sentiment structured-output enum
-// both derive from it, so the order is stable. Keep it in sync with the
-// feedback_records_sentiment_valid DB CHECK and the OpenAPI enum.
-var SentimentValues = []SentimentValue{
+// sentimentValues lists every valid SentimentValue in ordinal order (very_negative ..
+// very_positive) followed by the distinct "mixed". It is the single in-Go source of the label
+// set: validSentimentValues (membership) and the sentiment structured-output enum both derive
+// from it, so the order is stable. Keep it in sync with the feedback_records_sentiment_valid DB
+// CHECK and the OpenAPI enum. Unexported so the canonical ordering cannot be mutated; expose it
+// via SentimentValues().
+var sentimentValues = []SentimentValue{
 	SentimentVeryNegative,
 	SentimentNegative,
 	SentimentNeutral,
@@ -167,10 +169,17 @@ var SentimentValues = []SentimentValue{
 	SentimentMixed,
 }
 
-// validSentimentValues backs IsValid (set membership), derived from SentimentValues.
+// SentimentValues returns the valid SentimentValue labels in ordinal order. It returns a fresh
+// copy each call so callers cannot mutate the canonical set out from under validSentimentValues
+// / IsValid / the structured-output enum.
+func SentimentValues() []SentimentValue {
+	return slices.Clone(sentimentValues)
+}
+
+// validSentimentValues backs IsValid (set membership), derived from sentimentValues.
 var validSentimentValues = func() map[SentimentValue]struct{} {
-	set := make(map[SentimentValue]struct{}, len(SentimentValues))
-	for _, value := range SentimentValues {
+	set := make(map[SentimentValue]struct{}, len(sentimentValues))
+	for _, value := range sentimentValues {
 		set[value] = struct{}{}
 	}
 

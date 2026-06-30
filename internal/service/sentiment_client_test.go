@@ -50,7 +50,7 @@ func TestPromptSentimentClient_Classify_ParsesLabelAndScore(t *testing.T) {
 }
 
 func TestPromptSentimentClient_Classify_AcceptsEveryLabel(t *testing.T) {
-	for _, label := range models.SentimentValues {
+	for _, label := range models.SentimentValues() {
 		t.Run(string(label), func(t *testing.T) {
 			fake := &fakeStructuredCompleter{response: `{"sentiment":"` + string(label) + `","score":0}`}
 			client := promptSentimentClient{raw: fake}
@@ -88,6 +88,7 @@ func TestPromptSentimentClient_Classify_RejectsInvalidResponse(t *testing.T) {
 		"malformed json": `not json`,
 		"unknown label":  `{"sentiment":"furious","score":-2}`,
 		"empty label":    `{"sentiment":"","score":0}`,
+		"missing score":  `{"sentiment":"positive"}`,
 	}
 
 	for name, response := range tests {
@@ -131,7 +132,7 @@ func TestSentimentResponseSchema_EnumDerivesFromModelLabels(t *testing.T) {
 
 	require.NotNil(t, sentiment, "the schema must have a sentiment property")
 	assert.Equal(t, sentimentLabelStrings(), sentiment.Enum, "the enum is the model label set, in order")
-	assert.Len(t, sentiment.Enum, len(models.SentimentValues))
+	assert.Len(t, sentiment.Enum, len(models.SentimentValues()))
 }
 
 // TestParseSentimentResult_ConsumesSchemaPropertyNames guards the implicit coupling between the
