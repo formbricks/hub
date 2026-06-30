@@ -105,7 +105,7 @@ func buildSentimentPrompt(text, sourceLang string) (systemPrompt, userText strin
 			"- very_positive (score 2)\n" +
 			"- mixed (score 0): clearly expresses both strong positive and strong negative sentiment\n\n" +
 			"Return the single best-fitting label and a score from -2 to 2 reflecting intensity; " +
-			"use 0 for neutral or mixed.",
+			"use 0 for neutral or mixed. When unsure, default to neutral (0).",
 	)
 
 	if hint := languageDisplayName(sourceLang); hint != "" {
