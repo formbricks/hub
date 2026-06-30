@@ -215,11 +215,19 @@ func geminiResponseSchema(schema llm.Schema) *genai.Schema {
 	required := make([]string, 0, len(schema.Properties))
 
 	for _, p := range schema.Properties {
-		properties[p.Name] = &genai.Schema{
+		property := &genai.Schema{
 			Type:        geminiType(p.Type),
 			Description: p.Description,
 			Enum:        p.Enum,
 		}
+
+		// Gemini enforces an enum only when the field is also marked format:"enum"; without it
+		// the values are a hint, not a constraint (per the genai schema contract).
+		if len(p.Enum) > 0 {
+			property.Format = "enum"
+		}
+
+		properties[p.Name] = property
 		required = append(required, p.Name)
 	}
 

@@ -199,8 +199,10 @@ func TestGeminiResponseSchema_ObjectWithRequiredAndEnum(t *testing.T) {
 	require.Contains(t, schema.Properties, "label")
 	assert.Equal(t, genai.TypeString, schema.Properties["label"].Type)
 	assert.Equal(t, []string{"negative", "neutral", "positive"}, schema.Properties["label"].Enum)
+	assert.Equal(t, "enum", schema.Properties["label"].Format, "an enum field must be marked format:enum so Gemini enforces it")
 
 	require.Contains(t, schema.Properties, "score")
 	assert.Equal(t, genai.TypeNumber, schema.Properties["score"].Type)
 	assert.Empty(t, schema.Properties["score"].Enum, "a non-enum property carries no enum")
+	assert.Empty(t, schema.Properties["score"].Format, "a non-enum property is not marked format:enum")
 }
