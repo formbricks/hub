@@ -195,6 +195,62 @@ func (s SentimentValue) IsValid() bool {
 	return ok
 }
 
+// EmotionValue is a single emotion label produced by the emotion-enrichment worker (ENG-1573).
+// Emotions are multi-label — a record carries zero or more — server-generated and persisted only
+// after enrichment. Keep this set in sync with the feedback_records_emotions_valid DB CHECK and
+// the OpenAPI enum.
+type EmotionValue string
+
+// Valid EmotionValue labels: the six basic emotions (Ekman). "Mixed" is not a label — it is two
+// or more of these present at once.
+const (
+	EmotionJoy      EmotionValue = "joy"
+	EmotionAnger    EmotionValue = "anger"
+	EmotionSadness  EmotionValue = "sadness"
+	EmotionFear     EmotionValue = "fear"
+	EmotionSurprise EmotionValue = "surprise"
+	EmotionDisgust  EmotionValue = "disgust"
+)
+
+// emotionValues lists every valid EmotionValue. It is the single in-Go source of the label set:
+// validEmotionValues (membership) and the emotions structured-output enum both derive from it, so
+// the order is stable. Keep it in sync with the feedback_records_emotions_valid DB CHECK and the
+// OpenAPI enum. Unexported so the canonical ordering cannot be mutated; expose it via
+// EmotionValues().
+var emotionValues = []EmotionValue{
+	EmotionJoy,
+	EmotionAnger,
+	EmotionSadness,
+	EmotionFear,
+	EmotionSurprise,
+	EmotionDisgust,
+}
+
+// EmotionValues returns the valid EmotionValue labels in canonical order. It returns a fresh copy
+// each call so callers cannot mutate the canonical set out from under validEmotionValues / IsValid
+// / the structured-output enum.
+func EmotionValues() []EmotionValue {
+	return slices.Clone(emotionValues)
+}
+
+// validEmotionValues backs IsValid (set membership), derived from emotionValues.
+var validEmotionValues = func() map[EmotionValue]struct{} {
+	set := make(map[EmotionValue]struct{}, len(emotionValues))
+	for _, value := range emotionValues {
+		set[value] = struct{}{}
+	}
+
+	return set
+}()
+
+// IsValid reports whether e is a known emotion label. The emotion worker validates with this
+// before persisting; reads rely on the DB CHECK for the same guarantee.
+func (e EmotionValue) IsValid() bool {
+	_, ok := validEmotionValues[e]
+
+	return ok
+}
+
 // FeedbackRecord represents a single feedback record.
 type FeedbackRecord struct {
 	ID              uuid.UUID       `json:"id"`
@@ -226,6 +282,10 @@ type FeedbackRecord struct {
 	// the record is enriched (or sentiment is disabled / the record is ineligible).
 	Sentiment      *SentimentValue `json:"sentiment,omitempty"`
 	SentimentScore *float64        `json:"sentiment_score,omitempty"`
+	// Emotion-enrichment output (ENG-1573): server-generated, read-only, multi-label. NULL until
+	// the record is enriched (or emotions is disabled / the record is ineligible / no emotion was
+	// detected). Never an empty array — absence is NULL.
+	Emotions *[]EmotionValue `json:"emotions,omitempty"`
 }
 
 // IsTextField reports whether this record is an open-text field — the eligibility gate the text

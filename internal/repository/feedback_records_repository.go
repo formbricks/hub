@@ -46,13 +46,18 @@ const feedbackRecordColumns = `id, collected_at, created_at, updated_at,
 	value_text, value_number, value_boolean, value_date,
 	metadata, language, user_id, tenant_id, submission_id,
 	value_text_translated, translation_lang_key,
-	sentiment, sentiment_score`
+	sentiment, sentiment_score,
+	emotions`
 
 // scanFeedbackRecord materializes a FeedbackRecord from a row, in the exact column order of
 // feedbackRecordColumns above. It lives beside that const so the SELECT/RETURNING order and
 // the scan order can never drift. Shared with the taxonomy repository (same package).
 func scanFeedbackRecord(row scanner) (*models.FeedbackRecord, error) {
 	var record models.FeedbackRecord
+	// emotions (text[]) scans into a []string, then maps to []EmotionValue below: a NULL array
+	// yields a nil slice, so record.Emotions stays nil (not enriched); a populated array is
+	// converted. Using []string sidesteps driver scanning into a named-element slice type.
+	var emotions []string
 	if err := row.Scan(
 		&record.ID,
 		&record.CollectedAt,
@@ -79,8 +84,18 @@ func scanFeedbackRecord(row scanner) (*models.FeedbackRecord, error) {
 		&record.TranslationLangKey,
 		&record.Sentiment,
 		&record.SentimentScore,
+		&emotions,
 	); err != nil {
 		return nil, fmt.Errorf("scan feedback record: %w", err)
+	}
+
+	if emotions != nil {
+		values := make([]models.EmotionValue, len(emotions))
+		for i, label := range emotions {
+			values[i] = models.EmotionValue(label)
+		}
+
+		record.Emotions = &values
 	}
 
 	return &record, nil
