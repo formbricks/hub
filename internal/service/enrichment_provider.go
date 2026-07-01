@@ -36,7 +36,7 @@ type enrichmentProviderConfig struct {
 	triggers []string
 	// eligible reports whether a record is eligible at all (e.g. a text field). nil ⇒ always eligible.
 	eligible func(record *models.FeedbackRecord) bool
-	// hasContent reports whether a create event carries content to enrich (skip empty creates).
+	// hasContent reports whether a create event carries content to enrich (skip empty creates). Required.
 	hasContent func(record *models.FeedbackRecord) bool
 	// gated reports whether this enrichment reads per-tenant settings before enqueue. When true the
 	// provider resolves the tenant's settings and passes them to buildArgs; when false buildArgs
@@ -59,15 +59,26 @@ type EnrichmentProvider struct {
 	cfg enrichmentProviderConfig
 }
 
-// NewEnrichmentProvider builds a provider from cfg. It fails fast when the enrichment is gated
-// without a resolver to read the settings — a wiring bug that would otherwise nil-panic only on
-// the first eligible event, far from its cause.
+// NewEnrichmentProvider builds a provider from cfg, validating it fail-fast.
 func NewEnrichmentProvider(cfg enrichmentProviderConfig) *EnrichmentProvider {
-	if cfg.gated && cfg.resolver == nil {
-		panic("enrichment provider " + cfg.name + ": resolver is required when the enrichment is gated")
-	}
+	cfg.validate()
 
 	return &EnrichmentProvider{cfg: cfg}
+}
+
+// validate panics on a misconfigured provider — a missing required hook, or a gated enrichment
+// with no resolver. These are wiring bugs that would otherwise nil-panic only on the first
+// eligible event, far from their cause; providers are built at startup, so failing here surfaces
+// them immediately.
+func (cfg enrichmentProviderConfig) validate() {
+	switch {
+	case cfg.hasContent == nil:
+		panic("enrichment provider " + cfg.name + ": hasContent hook is required")
+	case cfg.buildArgs == nil:
+		panic("enrichment provider " + cfg.name + ": buildArgs hook is required")
+	case cfg.gated && cfg.resolver == nil:
+		panic("enrichment provider " + cfg.name + ": resolver is required when the enrichment is gated")
+	}
 }
 
 // PublishEvent enqueues an enrichment job for an eligible create/update event.
@@ -127,7 +138,10 @@ func (p *EnrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 	}
 
 	// buildArgs is the per-tenant gate and the payload builder in one: enqueue=false means skip
-	// (the enrichment is disabled for the tenant, or has no resolvable target).
+	// (the enrichment is disabled for the tenant, or has no resolvable target). Note that a gated
+	// enrichment which is now disabled skips even the empty-content clear above — a stale result is
+	// left until the enrichment is re-enabled (this preserves the pre-refactor gate-before-enqueue
+	// behavior).
 	args, enqueue := cfg.buildArgs(record, settings)
 	if !enqueue {
 		slog.Debug(cfg.name+": skip, not enabled for tenant", "feedback_record_id", record.ID)

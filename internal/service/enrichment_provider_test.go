@@ -3,18 +3,28 @@ package service
 import (
 	"testing"
 
+	"github.com/riverqueue/river"
 	"github.com/stretchr/testify/require"
+
+	"github.com/formbricks/hub/internal/models"
 )
 
-// TestNewEnrichmentProvider_RequiresResolverWhenGated guards the wiring invariant: a gated
-// enrichment needs a resolver to read its settings, so a config that is gated without a resolver
-// must fail fast at construction rather than nil-panic on the first eligible event.
-func TestNewEnrichmentProvider_RequiresResolverWhenGated(t *testing.T) {
+// TestNewEnrichmentProvider_ValidatesConfig guards the wiring invariants that would otherwise
+// nil-panic only on the first eligible event: the required hooks must be set, and a gated
+// enrichment must have a resolver. All are enforced fail-fast at construction.
+func TestNewEnrichmentProvider_ValidatesConfig(t *testing.T) {
+	hasContent := func(*models.FeedbackRecord) bool { return true }
+	buildArgs := func(*models.FeedbackRecord, *models.TenantSettings) (river.JobArgs, bool) { return nil, false }
+
 	require.Panics(t, func() {
-		NewEnrichmentProvider(enrichmentProviderConfig{name: "test", gated: true})
-	}, "a gated enrichment without a resolver is a wiring bug and must panic at construction")
+		NewEnrichmentProvider(enrichmentProviderConfig{name: "test", buildArgs: buildArgs})
+	}, "a missing required hook (hasContent) must panic at construction")
+
+	require.Panics(t, func() {
+		NewEnrichmentProvider(enrichmentProviderConfig{name: "test", hasContent: hasContent, buildArgs: buildArgs, gated: true})
+	}, "a gated enrichment without a resolver must panic at construction")
 
 	require.NotPanics(t, func() {
-		NewEnrichmentProvider(enrichmentProviderConfig{name: "test"})
-	}, "an ungated enrichment (e.g. embedding) needs no resolver")
+		NewEnrichmentProvider(enrichmentProviderConfig{name: "test", hasContent: hasContent, buildArgs: buildArgs})
+	}, "an ungated enrichment with all required hooks needs no resolver")
 }

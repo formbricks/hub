@@ -66,9 +66,30 @@ type EnrichmentWorker[A river.JobArgs, R any] struct {
 	cfg enrichmentWorkerConfig[A, R]
 }
 
-// newEnrichmentWorker builds a worker from cfg.
+// newEnrichmentWorker builds a worker from cfg, validating it fail-fast.
 func newEnrichmentWorker[A river.JobArgs, R any](cfg enrichmentWorkerConfig[A, R]) *EnrichmentWorker[A, R] {
+	cfg.validate()
+
 	return &EnrichmentWorker[A, R]{cfg: cfg}
+}
+
+// validate panics on a missing required hook — a wiring bug that would otherwise nil-panic only
+// when a job runs. Workers are built at startup, so failing here surfaces it immediately.
+func (cfg enrichmentWorkerConfig[A, R]) validate() {
+	switch {
+	case cfg.recordID == nil:
+		panic("enrichment worker " + cfg.name + ": recordID hook is required")
+	case cfg.getRecord == nil:
+		panic("enrichment worker " + cfg.name + ": getRecord hook is required")
+	case cfg.hasContent == nil:
+		panic("enrichment worker " + cfg.name + ": hasContent hook is required")
+	case cfg.classify == nil:
+		panic("enrichment worker " + cfg.name + ": classify hook is required")
+	case cfg.persist == nil:
+		panic("enrichment worker " + cfg.name + ": persist hook is required")
+	case cfg.metrics.outcome == nil || cfg.metrics.duration == nil || cfg.metrics.workerError == nil:
+		panic("enrichment worker " + cfg.name + ": metric hooks are required (build them via the per-type metrics adapter)")
+	}
 }
 
 // Timeout limits how long a single job can run.
