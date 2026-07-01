@@ -1882,10 +1882,10 @@ components:
                         - mixed
                 sentiment_score:
                     type: number
-                    description: Signed sentiment polarity from -2.0 (very negative) to 2.0 (very positive) (sentiment enrichment). Read-only; absent until the record is enriched.
+                    description: Signed sentiment polarity from -1.0 (very negative) to 1.0 (very positive) (sentiment enrichment). Read-only; absent until the record is enriched.
                     format: double
-                    minimum: -2.0
-                    maximum: 2.0
+                    minimum: -1.0
+                    maximum: 1.0
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID

@@ -146,12 +146,13 @@ const (
 	SentimentMixed        SentimentValue = "mixed"
 )
 
-// Sentiment score bounds (inclusive): -2 maps to very_negative, +2 to very_positive,
-// 0 to neutral/mixed. They match the feedback_records_sentiment_score_range DB CHECK and
-// bound the score the sentiment worker persists (the classifier output is clamped to them).
+// Sentiment score bounds (inclusive): a signed polarity from -1 (very_negative) to +1
+// (very_positive), with 0 for neutral/mixed — the conventional sentiment-polarity range (cf.
+// Google Cloud NL, TextBlob, VADER). They match the feedback_records_sentiment_score_range DB
+// CHECK and bound the score the sentiment worker persists (the classifier output is clamped).
 const (
-	SentimentScoreMin = -2.0
-	SentimentScoreMax = 2.0
+	SentimentScoreMin = -1.0
+	SentimentScoreMax = 1.0
 )
 
 // sentimentValues lists every valid SentimentValue in ordinal order (very_negative ..

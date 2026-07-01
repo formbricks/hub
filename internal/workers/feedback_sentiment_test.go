@@ -108,7 +108,7 @@ func TestFeedbackSentimentWorker_Success(t *testing.T) {
 	text := "Great product"
 	metrics := newCountingSentimentMetrics()
 	svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
-	client := &stubSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1.5}}
+	client := &stubSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 0.5}}
 	worker := NewFeedbackSentimentWorker(svc, client, metrics)
 
 	if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
@@ -123,8 +123,8 @@ func TestFeedbackSentimentWorker_Success(t *testing.T) {
 		t.Fatalf("setCalls = %+v, want one call with label positive", svc.setCalls)
 	}
 
-	if svc.setCalls[0].score == nil || *svc.setCalls[0].score != 1.5 {
-		t.Fatalf("stored score = %v, want 1.5", svc.setCalls[0].score)
+	if svc.setCalls[0].score == nil || *svc.setCalls[0].score != 0.5 {
+		t.Fatalf("stored score = %v, want 0.5", svc.setCalls[0].score)
 	}
 
 	if metrics.outcomes["success"] != 1 {

@@ -54,7 +54,7 @@ func TestFeedbackRecords_SentimentFields(t *testing.T) {
 	// A valid label + score round-trips through the read path (scan into the typed enum).
 	_, err = db.Exec(ctx,
 		`UPDATE feedback_records SET sentiment = $2, sentiment_score = $3 WHERE id = $1`,
-		created.ID, models.SentimentPositive, 1.5)
+		created.ID, models.SentimentPositive, 0.5)
 	require.NoError(t, err)
 
 	got, err := repo.GetByID(ctx, created.ID)
@@ -62,11 +62,11 @@ func TestFeedbackRecords_SentimentFields(t *testing.T) {
 	require.NotNil(t, got.Sentiment)
 	assert.Equal(t, models.SentimentPositive, *got.Sentiment)
 	require.NotNil(t, got.SentimentScore)
-	assert.InDelta(t, 1.5, *got.SentimentScore, 1e-9)
+	assert.InDelta(t, 0.5, *got.SentimentScore, 1e-9)
 
 	// CHECK constraints reject an out-of-range score and an unknown label.
 	_, err = db.Exec(ctx, `UPDATE feedback_records SET sentiment_score = 3.0 WHERE id = $1`, created.ID)
-	require.Error(t, err, "score > 2 must violate feedback_records_sentiment_score_range")
+	require.Error(t, err, "score > 1 must violate feedback_records_sentiment_score_range")
 
 	_, err = db.Exec(ctx, `UPDATE feedback_records SET sentiment = 'bogus' WHERE id = $1`, created.ID)
 	require.Error(t, err, "unknown label must violate feedback_records_sentiment_valid")
@@ -127,7 +127,7 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 
 	t.Run("classifies and persists", func(t *testing.T) {
 		rec := createText("Great product")
-		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1.5}}
+		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 0.5}}
 		worker := workers.NewFeedbackSentimentWorker(svc, fake, nil)
 
 		require.NoError(t, worker.Work(ctx, sentimentWorkerJob(rec.ID)))
@@ -137,7 +137,7 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 		require.NotNil(t, got.Sentiment)
 		assert.Equal(t, models.SentimentPositive, *got.Sentiment)
 		require.NotNil(t, got.SentimentScore)
-		assert.InDelta(t, 1.5, *got.SentimentScore, 1e-9)
+		assert.InDelta(t, 0.5, *got.SentimentScore, 1e-9)
 		assert.Equal(t, 1, fake.calls)
 	})
 
@@ -149,7 +149,7 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 		score := -1.0
 		require.NoError(t, svc.SetSentiment(ctx, rec.ID, &label, &score))
 
-		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 2}}
+		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1}}
 		worker := workers.NewFeedbackSentimentWorker(svc, fake, nil)
 
 		require.NoError(t, worker.Work(ctx, sentimentWorkerJob(rec.ID)))

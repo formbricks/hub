@@ -85,7 +85,7 @@ var sentimentResponseSchema = llm.Schema{
 		{
 			Name: "score",
 			Type: llm.TypeNumber,
-			Description: "Polarity intensity from -2 (very negative) to 2 (very positive). " +
+			Description: "Polarity intensity from -1 (very negative) to 1 (very positive). " +
 				"Use 0 for neutral or mixed.",
 		},
 	},
@@ -100,13 +100,13 @@ func buildSentimentPrompt(text, sourceLang string) (systemPrompt, userText strin
 	builder.WriteString(
 		"You are a sentiment-analysis expert. Classify the overall sentiment of the user's " +
 			"feedback on this scale:\n" +
-			"- very_negative (score -2)\n" +
-			"- negative (score -1)\n" +
+			"- very_negative (score -1)\n" +
+			"- negative (score -0.5)\n" +
 			"- neutral (score 0)\n" +
-			"- positive (score 1)\n" +
-			"- very_positive (score 2)\n" +
+			"- positive (score 0.5)\n" +
+			"- very_positive (score 1)\n" +
 			"- mixed (score 0): clearly expresses both strong positive and strong negative sentiment\n\n" +
-			"Return the single best-fitting label and a score from -2 to 2 reflecting intensity; " +
+			"Return the single best-fitting label and a score from -1 to 1 reflecting intensity; " +
 			"use 0 for neutral or mixed. When unsure, default to neutral (0).",
 	)
 

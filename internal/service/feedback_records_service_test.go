@@ -353,7 +353,7 @@ func TestFeedbackRecordsService_SetSentiment_Persists(t *testing.T) {
 	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
 	label := models.SentimentPositive
-	score := 1.5
+	score := 0.5
 
 	if err := svc.SetSentiment(context.Background(), uuid.New(), &label, &score); err != nil {
 		t.Fatalf("SetSentiment() error = %v", err)
@@ -363,8 +363,8 @@ func TestFeedbackRecordsService_SetSentiment_Persists(t *testing.T) {
 		t.Fatalf("repo not called with label+score: %+v", repo)
 	}
 
-	if *repo.setSentimentLabel != models.SentimentPositive || *repo.setSentimentScore != 1.5 {
-		t.Fatalf("repo got (%v, %v), want (positive, 1.5)", *repo.setSentimentLabel, *repo.setSentimentScore)
+	if *repo.setSentimentLabel != models.SentimentPositive || *repo.setSentimentScore != 0.5 {
+		t.Fatalf("repo got (%v, %v), want (positive, 0.5)", *repo.setSentimentLabel, *repo.setSentimentScore)
 	}
 }
 

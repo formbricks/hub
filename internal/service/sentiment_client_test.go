@@ -36,13 +36,13 @@ func (f *fakeStructuredCompleter) CompleteJSON(
 }
 
 func TestPromptSentimentClient_Classify_ParsesLabelAndScore(t *testing.T) {
-	fake := &fakeStructuredCompleter{response: `{"sentiment":"positive","score":1.5}`}
+	fake := &fakeStructuredCompleter{response: `{"sentiment":"positive","score":0.5}`}
 	client := promptSentimentClient{raw: fake}
 
 	result, err := client.Classify(context.Background(), "great product", "en-US")
 	require.NoError(t, err)
 	assert.Equal(t, models.SentimentPositive, result.Label)
-	assert.InDelta(t, 1.5, result.Score, 1e-9)
+	assert.InDelta(t, 0.5, result.Score, 1e-9)
 
 	// The record's text is the user message; the schema is the sentiment contract.
 	assert.Equal(t, "great product", fake.gotUser)
@@ -69,7 +69,7 @@ func TestPromptSentimentClient_Classify_ClampsScoreToRange(t *testing.T) {
 	}{
 		"above max is clamped": {response: `{"sentiment":"neutral","score":9}`, want: models.SentimentScoreMax},
 		"below min is clamped": {response: `{"sentiment":"neutral","score":-9}`, want: models.SentimentScoreMin},
-		"in range is kept":     {response: `{"sentiment":"neutral","score":1.3}`, want: 1.3},
+		"in range is kept":     {response: `{"sentiment":"neutral","score":0.75}`, want: 0.75},
 	}
 
 	for name, testCase := range tests {
@@ -86,7 +86,7 @@ func TestPromptSentimentClient_Classify_ClampsScoreToRange(t *testing.T) {
 func TestPromptSentimentClient_Classify_RejectsInvalidResponse(t *testing.T) {
 	tests := map[string]string{
 		"malformed json": `not json`,
-		"unknown label":  `{"sentiment":"furious","score":-2}`,
+		"unknown label":  `{"sentiment":"furious","score":-1}`,
 		"empty label":    `{"sentiment":"","score":0}`,
 		"missing score":  `{"sentiment":"positive"}`,
 	}
@@ -148,7 +148,7 @@ func TestParseSentimentResult_ConsumesSchemaPropertyNames(t *testing.T) {
 		case llm.TypeString:
 			values[property.Name] = string(models.SentimentPositive)
 		case llm.TypeNumber:
-			values[property.Name] = 1.5
+			values[property.Name] = 0.5
 		case llm.TypeInteger, llm.TypeBoolean:
 			t.Fatalf("unexpected schema property type %q for %q", property.Type, property.Name)
 		default:
@@ -162,7 +162,7 @@ func TestParseSentimentResult_ConsumesSchemaPropertyNames(t *testing.T) {
 	result, err := parseSentimentResult(string(raw))
 	require.NoError(t, err)
 	assert.Equal(t, models.SentimentPositive, result.Label)
-	assert.InDelta(t, 1.5, result.Score, 1e-9)
+	assert.InDelta(t, 0.5, result.Score, 1e-9)
 }
 
 func TestBuildSentimentPrompt_LanguageHint(t *testing.T) {
