@@ -116,6 +116,45 @@ func TestTenantSettings_SentimentEnabledRoundTrip(t *testing.T) {
 	assert.True(t, patched.Settings.SentimentEnrichmentEnabled(), "absent means default-enabled")
 }
 
+// TestTenantSettings_EmotionsEnabledRoundTrip exercises the per-directory emotion switch
+// (ENG-1573) through the full HTTP path: PUT sets it false, GET reads it back, and a PATCH null
+// restores the default (the field drops out of the JSONB, so the helper reports enabled again).
+func TestTenantSettings_EmotionsEnabledRoundTrip(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	tenantID := testTenantID("emotions-toggle")
+
+	putResp := settingsRequest(t, server.URL, http.MethodPut, tenantID, `{"emotions_enabled":false}`, true)
+	require.Equal(t, http.StatusOK, putResp.StatusCode)
+
+	var put models.TenantSettings
+	require.NoError(t, decodeData(putResp, &put))
+	require.NoError(t, putResp.Body.Close())
+	require.NotNil(t, put.Settings.EmotionsEnabled)
+	assert.False(t, *put.Settings.EmotionsEnabled)
+	assert.False(t, put.Settings.EmotionsEnrichmentEnabled(), "explicit false disables enrichment")
+
+	getResp := settingsRequest(t, server.URL, http.MethodGet, tenantID, "", true)
+	require.Equal(t, http.StatusOK, getResp.StatusCode)
+
+	var got models.TenantSettings
+	require.NoError(t, decodeData(getResp, &got))
+	require.NoError(t, getResp.Body.Close())
+	require.NotNil(t, got.Settings.EmotionsEnabled)
+	assert.False(t, *got.Settings.EmotionsEnabled, "the disabled state persists")
+
+	// PATCH null restores the default: the field drops out and the tenant is enabled again.
+	patchResp := settingsRequest(t, server.URL, http.MethodPatch, tenantID, `{"emotions_enabled":null}`, true)
+	require.Equal(t, http.StatusOK, patchResp.StatusCode)
+
+	var patched models.TenantSettings
+	require.NoError(t, decodeData(patchResp, &patched))
+	require.NoError(t, patchResp.Body.Close())
+	assert.Nil(t, patched.Settings.EmotionsEnabled, "null removes the setting")
+	assert.True(t, patched.Settings.EmotionsEnrichmentEnabled(), "absent means default-enabled")
+}
+
 func TestTenantSettings_GetReturnsDefaultsWhenUnset(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
