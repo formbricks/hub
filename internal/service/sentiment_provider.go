@@ -46,12 +46,21 @@ func NewSentimentProvider(
 			uniqueByPeriod: uniqueByPeriodSentiment,
 			// Re-classify only when the text changes: sentiment depends on value_text alone, not
 			// on source language (unlike translation).
-			triggers:    []string{"value_text"},
-			eligible:    sentimentEligible,
-			hasContent:  sentimentHasContent,
-			enabled:     sentimentEnabled,
-			contentHash: func(r *models.FeedbackRecord) string { return sentimentContentHash(r.ValueText) },
-			newArgs:     newSentimentArgs,
+			triggers:   []string{"value_text"},
+			eligible:   sentimentEligible,
+			hasContent: sentimentHasContent,
+			gated:      true,
+			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool) {
+				// Per-directory gate: skip tenants that switched sentiment enrichment off.
+				if !settings.Settings.SentimentEnrichmentEnabled() {
+					return nil, false
+				}
+
+				return FeedbackSentimentArgs{
+					FeedbackRecordID: record.ID,
+					ValueTextHash:    sentimentContentHash(record.ValueText),
+				}, true
+			},
 		}),
 	}
 }
@@ -64,17 +73,6 @@ func sentimentEligible(record *models.FeedbackRecord) bool {
 // sentimentHasContent reports whether a record has non-empty open text to classify (create gate).
 func sentimentHasContent(record *models.FeedbackRecord) bool {
 	return record.ValueText != nil && strings.TrimSpace(*record.ValueText) != ""
-}
-
-// sentimentEnabled reports the tenant's per-directory sentiment switch (default-on, opt-out).
-func sentimentEnabled(settings models.EnrichmentSettings) bool {
-	return settings.SentimentEnrichmentEnabled()
-}
-
-// newSentimentArgs builds the job payload; uniqueness is by (record, value_text hash). Sentiment
-// derives nothing from tenant settings, so the settings argument is unused.
-func newSentimentArgs(record *models.FeedbackRecord, hash string, _ *models.TenantSettings) river.JobArgs {
-	return FeedbackSentimentArgs{FeedbackRecordID: record.ID, ValueTextHash: hash}
 }
 
 // sentimentContentHash hashes the trimmed, NFC-normalized value_text for dedupe, so an edit

@@ -38,14 +38,16 @@ type enrichmentProviderConfig struct {
 	eligible func(record *models.FeedbackRecord) bool
 	// hasContent reports whether a create event carries content to enrich (skip empty creates).
 	hasContent func(record *models.FeedbackRecord) bool
-	// enabled reports whether the tenant has this enrichment on. nil ⇒ no per-tenant gate (no settings read).
-	enabled func(settings models.EnrichmentSettings) bool
-	// contentHash is the dedupe key for a record's content.
-	contentHash func(record *models.FeedbackRecord) string
-	// newArgs builds the River job payload for a record and its content hash. settings is the
-	// tenant's resolved settings when the enrichment is gated (enabled != nil), else nil — so a
-	// gated enrichment can derive per-tenant args (e.g. translation's target language).
-	newArgs func(record *models.FeedbackRecord, hash string, settings *models.TenantSettings) river.JobArgs
+	// gated reports whether this enrichment reads per-tenant settings before enqueue. When true the
+	// provider resolves the tenant's settings and passes them to buildArgs; when false buildArgs
+	// receives nil (no settings read). A gated config must supply a resolver.
+	gated bool
+	// buildArgs decides whether to enqueue and builds the River job payload from the record and
+	// (when gated) the tenant's resolved settings. Returning ok=false skips the event — the
+	// enrichment is disabled for the tenant, or has no resolvable target. Folding the per-tenant
+	// gate, the dedupe hash, and the args into one hook lets a settings-derived value (e.g.
+	// translation's target language) be resolved exactly once.
+	buildArgs func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool)
 }
 
 // EnrichmentProvider implements eventPublisher by enqueueing one enrichment job per eligible
@@ -57,12 +59,12 @@ type EnrichmentProvider struct {
 	cfg enrichmentProviderConfig
 }
 
-// NewEnrichmentProvider builds a provider from cfg. It fails fast when a per-tenant gate (enabled)
-// is configured without a resolver to read it — a wiring bug that would otherwise nil-panic only
-// on the first eligible event, far from its cause.
+// NewEnrichmentProvider builds a provider from cfg. It fails fast when the enrichment is gated
+// without a resolver to read the settings — a wiring bug that would otherwise nil-panic only on
+// the first eligible event, far from its cause.
 func NewEnrichmentProvider(cfg enrichmentProviderConfig) *EnrichmentProvider {
-	if cfg.enabled != nil && cfg.resolver == nil {
-		panic("enrichment provider " + cfg.name + ": resolver is required when a per-tenant gate is configured")
+	if cfg.gated && cfg.resolver == nil {
+		panic("enrichment provider " + cfg.name + ": resolver is required when the enrichment is gated")
 	}
 
 	return &EnrichmentProvider{cfg: cfg}
@@ -103,12 +105,12 @@ func (p *EnrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
-	// Per-tenant gate (when this enrichment has one): skip tenants that turned it off, and keep
-	// the resolved settings so newArgs can derive per-tenant args. Read after the cheap
-	// eligibility checks so non-eligible events never hit the settings store.
+	// Resolve per-tenant settings when gated, so buildArgs can apply the gate and derive per-tenant
+	// args. Read after the cheap eligibility checks so non-eligible events never hit the settings
+	// store.
 	var settings *models.TenantSettings
 
-	if cfg.enabled != nil {
+	if cfg.gated {
 		resolved, err := cfg.resolver.GetSettings(ctx, record.TenantID)
 		if err != nil {
 			if cfg.metrics != nil {
@@ -121,13 +123,16 @@ func (p *EnrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 			return
 		}
 
-		if !cfg.enabled(resolved.Settings) {
-			slog.Debug(cfg.name+": skip, disabled for tenant", "feedback_record_id", record.ID)
-
-			return
-		}
-
 		settings = resolved
+	}
+
+	// buildArgs is the per-tenant gate and the payload builder in one: enqueue=false means skip
+	// (the enrichment is disabled for the tenant, or has no resolvable target).
+	args, enqueue := cfg.buildArgs(record, settings)
+	if !enqueue {
+		slog.Debug(cfg.name+": skip, not enabled for tenant", "feedback_record_id", record.ID)
+
+		return
 	}
 
 	opts := &river.InsertOpts{
@@ -136,7 +141,7 @@ func (p *EnrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: cfg.uniqueByPeriod},
 	}
 
-	if _, err := cfg.inserter.Insert(ctx, cfg.newArgs(record, cfg.contentHash(record), settings), opts); err != nil {
+	if _, err := cfg.inserter.Insert(ctx, args, opts); err != nil {
 		if cfg.metrics != nil {
 			cfg.metrics.RecordProviderError(ctx, "enqueue_failed")
 		}

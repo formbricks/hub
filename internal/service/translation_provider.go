@@ -51,18 +51,26 @@ func NewTranslationProvider(
 			triggers:   []string{"value_text", "language"},
 			eligible:   translationEligible,
 			hasContent: translationHasContent,
-			// Gate on a resolvable target language: the tenant's own target wins, else the
-			// configured default; an empty result keeps translation per-tenant opt-in (skip).
-			enabled: func(settings models.EnrichmentSettings) bool {
-				return resolveTargetLang(settings.TargetLanguage, defaultLang) != ""
-			},
-			contentHash: translationContentHashFromRecord,
-			newArgs: func(record *models.FeedbackRecord, hash string, settings *models.TenantSettings) river.JobArgs {
+			gated:      true,
+			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool) {
+				// Gate on a resolvable target language (resolved once, then reused in the args):
+				// the tenant's own target wins, else the configured default; an empty result keeps
+				// translation per-tenant opt-in (skip).
+				target := resolveTargetLang(settings.Settings.TargetLanguage, defaultLang)
+				if target == "" {
+					return nil, false
+				}
+
+				sourceLang := ""
+				if record.Language != nil {
+					sourceLang = *record.Language
+				}
+
 				return FeedbackTranslationArgs{
 					FeedbackRecordID: record.ID,
-					TargetLang:       resolveTargetLang(settings.Settings.TargetLanguage, defaultLang),
-					ValueTextHash:    hash,
-				}
+					TargetLang:       target,
+					ValueTextHash:    translationContentHash(record.ValueText, sourceLang),
+				}, true
 			},
 		}),
 	}
@@ -84,17 +92,6 @@ func resolveTargetLang(tenantTarget, defaultLang string) string {
 	}
 
 	return defaultLang
-}
-
-// translationContentHashFromRecord hashes the inputs that determine the translation — value_text
-// and the record's source language — so a source-language correction re-enqueues.
-func translationContentHashFromRecord(record *models.FeedbackRecord) string {
-	sourceLang := ""
-	if record.Language != nil {
-		sourceLang = *record.Language
-	}
-
-	return translationContentHash(record.ValueText, sourceLang)
 }
 
 // translationContentHash hashes the trimmed, NFC-normalized value_text and the source language for
