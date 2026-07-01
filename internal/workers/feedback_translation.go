@@ -18,10 +18,10 @@ import (
 )
 
 // FeedbackTranslationWorker translates a feedback record's value_text into the tenant's target
-// language and stores it — a configured EnrichmentWorker. It borrows the shared rate-limit snooze
+// language and stores it — a configured enrichmentWorker. It borrows the shared rate-limit snooze
 // (it calls a rate-limited LLM provider) and uses the supersession skip: a stale-target write is a
 // no-op once a newer-target job owns the row.
-type FeedbackTranslationWorker = EnrichmentWorker[service.FeedbackTranslationArgs, string]
+type FeedbackTranslationWorker = enrichmentWorker[service.FeedbackTranslationArgs, string]
 
 // translationWorkerService is the minimal interface the worker needs.
 type translationWorkerService interface {

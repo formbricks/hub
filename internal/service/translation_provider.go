@@ -18,13 +18,13 @@ import (
 const uniqueByPeriodTranslation = 24 * time.Hour
 
 // TranslationProvider enqueues one translation job per eligible feedback record event, over the
-// shared EnrichmentProvider. Eligibility is a text field with non-empty open text; re-translation
+// shared enrichmentProvider. Eligibility is a text field with non-empty open text; re-translation
 // is triggered by a value_text OR source-language change (translation output depends on both,
 // unlike sentiment/embedding). The per-tenant target language (settings.target_language, falling
 // back to defaultLang) is both the gate — a record with no resolvable target is skipped — and part
 // of the job args.
 type TranslationProvider struct {
-	*EnrichmentProvider
+	*enrichmentProvider
 }
 
 // NewTranslationProvider creates a provider that enqueues feedback_translation jobs. defaultLang is
@@ -39,7 +39,7 @@ func NewTranslationProvider(
 	metrics observability.TranslationMetrics,
 ) *TranslationProvider {
 	return &TranslationProvider{
-		EnrichmentProvider: NewEnrichmentProvider(enrichmentProviderConfig{
+		enrichmentProvider: newEnrichmentProvider(enrichmentProviderConfig{
 			name:           "translation",
 			inserter:       inserter,
 			resolver:       resolver,

@@ -12,9 +12,9 @@ import (
 )
 
 // FeedbackSentimentWorker classifies a feedback record's value_text into a sentiment label and
-// score and stores it — a configured EnrichmentWorker. It borrows the shared rate-limit snooze
+// score and stores it — a configured enrichmentWorker. It borrows the shared rate-limit snooze
 // (it, too, calls a rate-limited LLM provider) and has no supersession (no per-tenant target).
-type FeedbackSentimentWorker = EnrichmentWorker[service.FeedbackSentimentArgs, service.SentimentResult]
+type FeedbackSentimentWorker = enrichmentWorker[service.FeedbackSentimentArgs, service.SentimentResult]
 
 // sentimentWorkerService is the minimal interface the worker needs.
 type sentimentWorkerService interface {

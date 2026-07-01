@@ -14,7 +14,7 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
-// These tests drive the generic EnrichmentWorker directly through a synthetic [A, R] config, so the
+// These tests drive the generic enrichmentWorker directly through a synthetic [A, R] config, so the
 // shared Work/error-mapping branches are locked independently of which concrete enrichment happens
 // to exercise each one (e.g. the supersession branch that no migrated type reaches yet).
 

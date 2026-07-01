@@ -20,7 +20,7 @@ type enqueueMetrics interface {
 	RecordProviderError(ctx context.Context, reason string)
 }
 
-// enrichmentProviderConfig configures an EnrichmentProvider: the shared deps plus the per-type
+// enrichmentProviderConfig configures an enrichmentProvider: the shared deps plus the per-type
 // hooks that actually vary between enrichments — which changed fields re-enqueue on update,
 // record eligibility, the per-tenant gate, the dedupe hash, and the job args.
 type enrichmentProviderConfig struct {
@@ -50,20 +50,20 @@ type enrichmentProviderConfig struct {
 	buildArgs func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool)
 }
 
-// EnrichmentProvider implements eventPublisher by enqueueing one enrichment job per eligible
+// enrichmentProvider implements eventPublisher by enqueueing one enrichment job per eligible
 // feedback-record event, driven by an enrichmentProviderConfig. It is the shared enqueue path
 // behind the per-type providers (sentiment today; translation and embedding to follow) — the
 // per-type differences live entirely in the config hooks. Failures are logged and swallowed so
 // they never block ingestion.
-type EnrichmentProvider struct {
+type enrichmentProvider struct {
 	cfg enrichmentProviderConfig
 }
 
-// NewEnrichmentProvider builds a provider from cfg, validating it fail-fast.
-func NewEnrichmentProvider(cfg enrichmentProviderConfig) *EnrichmentProvider {
+// newEnrichmentProvider builds a provider from cfg, validating it fail-fast.
+func newEnrichmentProvider(cfg enrichmentProviderConfig) *enrichmentProvider {
 	cfg.validate()
 
-	return &EnrichmentProvider{cfg: cfg}
+	return &enrichmentProvider{cfg: cfg}
 }
 
 // validate panics on a misconfigured provider — a missing required hook, or a gated enrichment
@@ -82,7 +82,7 @@ func (cfg enrichmentProviderConfig) validate() {
 }
 
 // PublishEvent enqueues an enrichment job for an eligible create/update event.
-func (p *EnrichmentProvider) PublishEvent(ctx context.Context, event Event) {
+func (p *enrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 	cfg := p.cfg
 
 	// Trigger gate: on update, re-enqueue only when a triggering field changed; otherwise the

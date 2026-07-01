@@ -18,12 +18,12 @@ import (
 const uniqueByPeriodSentiment = 24 * time.Hour
 
 // SentimentProvider enqueues one sentiment job per eligible feedback record event, over the shared
-// EnrichmentProvider. Eligibility is a text field with non-empty open text; re-classification is
+// enrichmentProvider. Eligibility is a text field with non-empty open text; re-classification is
 // triggered by a value_text change (sentiment does not depend on source language, unlike
 // translation). Like translation it resolves a per-tenant setting on the enqueue path — the
 // per-directory sentiment switch (ENG-1529) — and skips tenants that have turned sentiment off.
 type SentimentProvider struct {
-	*EnrichmentProvider
+	*enrichmentProvider
 }
 
 // NewSentimentProvider creates a provider that enqueues feedback_sentiment jobs.
@@ -36,7 +36,7 @@ func NewSentimentProvider(
 	metrics observability.SentimentMetrics,
 ) *SentimentProvider {
 	return &SentimentProvider{
-		EnrichmentProvider: NewEnrichmentProvider(enrichmentProviderConfig{
+		enrichmentProvider: newEnrichmentProvider(enrichmentProviderConfig{
 			name:           "sentiment",
 			inserter:       inserter,
 			resolver:       resolver,

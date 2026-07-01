@@ -25,7 +25,7 @@ type enrichmentWorkerMetrics struct {
 	workerError func(ctx context.Context, reason string)
 }
 
-// enrichmentWorkerConfig configures an EnrichmentWorker: how to read the record and extract its id,
+// enrichmentWorkerConfig configures an enrichmentWorker: how to read the record and extract its id,
 // decide eligibility and content, classify, and persist — plus the per-type behaviors (rate-limit
 // snooze, supersession skip) and metric labels. The shared Work body is identical across the
 // enrichments; only these hooks differ.
@@ -64,22 +64,22 @@ type enrichmentWorkerConfig[A river.JobArgs, R any] struct {
 	metrics enrichmentWorkerMetrics
 }
 
-// EnrichmentWorker is the shared River worker body for the enrichment pipelines: load the record,
+// enrichmentWorker is the shared River worker body for the enrichment pipelines: load the record,
 // clear-on-empty or classify, persist, and map every error to the right outcome (rate-limit
 // snooze, not-found skip, tenant-write-conflict retry, supersession skip, final-attempt fail). The
 // per-type differences live entirely in the config hooks; concrete workers are aliases of a
 // configured instantiation (see FeedbackSentimentWorker).
-type EnrichmentWorker[A river.JobArgs, R any] struct {
+type enrichmentWorker[A river.JobArgs, R any] struct {
 	river.WorkerDefaults[A]
 
 	cfg enrichmentWorkerConfig[A, R]
 }
 
 // newEnrichmentWorker builds a worker from cfg, validating it fail-fast.
-func newEnrichmentWorker[A river.JobArgs, R any](cfg enrichmentWorkerConfig[A, R]) *EnrichmentWorker[A, R] {
+func newEnrichmentWorker[A river.JobArgs, R any](cfg enrichmentWorkerConfig[A, R]) *enrichmentWorker[A, R] {
 	cfg.validate()
 
-	return &EnrichmentWorker[A, R]{cfg: cfg}
+	return &enrichmentWorker[A, R]{cfg: cfg}
 }
 
 // validate panics on a missing required hook — a wiring bug that would otherwise nil-panic only
@@ -102,13 +102,13 @@ func (cfg enrichmentWorkerConfig[A, R]) validate() {
 }
 
 // Timeout limits how long a single job can run.
-func (w *EnrichmentWorker[A, R]) Timeout(*river.Job[A]) time.Duration {
+func (w *enrichmentWorker[A, R]) Timeout(*river.Job[A]) time.Duration {
 	return w.cfg.timeout
 }
 
 // Work loads the record, classifies its content (or clears a stale result when the content is
 // empty), and persists the result.
-func (w *EnrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) error {
+func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) error {
 	cfg := w.cfg
 	start := time.Now()
 	id := cfg.recordID(job.Args)
@@ -175,7 +175,7 @@ func (w *EnrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 // handleClassifyError maps a provider failure to the right outcome: for rate-limited callers a 429
 // snoozes (re-queues without consuming an attempt, so a burst defers rather than drops work); any
 // other error retries until the attempts are spent, then fails.
-func (w *EnrichmentWorker[A, R]) handleClassifyError(
+func (w *enrichmentWorker[A, R]) handleClassifyError(
 	ctx context.Context, err error, id uuid.UUID, start time.Time, job *river.Job[A],
 ) error {
 	cfg := w.cfg
@@ -211,7 +211,7 @@ func (w *EnrichmentWorker[A, R]) handleClassifyError(
 // handlePersistError maps a write failure to an outcome: a missing record or a superseded result
 // completes the job (nothing to write), a tenant write conflict retries (the post-purge attempt
 // finds the record gone), and anything else fails the job.
-func (w *EnrichmentWorker[A, R]) handlePersistError(
+func (w *enrichmentWorker[A, R]) handlePersistError(
 	ctx context.Context, err error, id uuid.UUID, start time.Time, isLastAttempt bool,
 ) error {
 	cfg := w.cfg
@@ -253,7 +253,7 @@ func (w *EnrichmentWorker[A, R]) handlePersistError(
 }
 
 // recordOutcome records the job outcome and duration under the same status label.
-func (w *EnrichmentWorker[A, R]) recordOutcome(ctx context.Context, status string, start time.Time) {
+func (w *enrichmentWorker[A, R]) recordOutcome(ctx context.Context, status string, start time.Time) {
 	w.cfg.metrics.outcome(ctx, status)
 	w.cfg.metrics.duration(ctx, time.Since(start), status)
 }

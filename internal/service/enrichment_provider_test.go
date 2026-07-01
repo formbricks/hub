@@ -17,14 +17,14 @@ func TestNewEnrichmentProvider_ValidatesConfig(t *testing.T) {
 	buildArgs := func(*models.FeedbackRecord, *models.TenantSettings) (river.JobArgs, bool) { return nil, false }
 
 	require.Panics(t, func() {
-		NewEnrichmentProvider(enrichmentProviderConfig{name: "test", buildArgs: buildArgs})
+		newEnrichmentProvider(enrichmentProviderConfig{name: "test", buildArgs: buildArgs})
 	}, "a missing required hook (hasContent) must panic at construction")
 
 	require.Panics(t, func() {
-		NewEnrichmentProvider(enrichmentProviderConfig{name: "test", hasContent: hasContent, buildArgs: buildArgs, gated: true})
+		newEnrichmentProvider(enrichmentProviderConfig{name: "test", hasContent: hasContent, buildArgs: buildArgs, gated: true})
 	}, "a gated enrichment without a resolver must panic at construction")
 
 	require.NotPanics(t, func() {
-		NewEnrichmentProvider(enrichmentProviderConfig{name: "test", hasContent: hasContent, buildArgs: buildArgs})
+		newEnrichmentProvider(enrichmentProviderConfig{name: "test", hasContent: hasContent, buildArgs: buildArgs})
 	}, "an ungated enrichment with all required hooks needs no resolver")
 }
