@@ -34,10 +34,14 @@ type RiverDeps struct {
 	TranslationMaxAttempts     int
 
 	// Sentiment worker (optional; if SentimentClient is nil, sentiment worker is not registered)
-	SentimentService  sentimentWorkerService
-	SentimentResolver sentimentSettingsReader
-	SentimentClient   service.SentimentClient
-	SentimentMetrics  observability.SentimentMetrics
+	SentimentService sentimentWorkerService
+	SentimentClient  service.SentimentClient
+	SentimentMetrics observability.SentimentMetrics
+
+	// Emotions worker (optional; if EmotionsClient is nil, emotions worker is not registered)
+	EmotionsService emotionsWorkerService
+	EmotionsClient  service.EmotionsClient
+	EmotionsMetrics observability.EmotionsMetrics
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
@@ -55,12 +59,14 @@ func NewRiverWorkersAndQueues(
 	maxEmbedding := cfg.Embedding.MaxConcurrent
 	maxTranslation := cfg.Translation.MaxConcurrent
 	maxSentiment := cfg.Sentiment.MaxConcurrent
+	maxEmotions := cfg.Emotions.MaxConcurrent
 
 	if placeholderMaxWorkers > 0 {
 		maxDefault = placeholderMaxWorkers
 		maxEmbedding = placeholderMaxWorkers
 		maxTranslation = placeholderMaxWorkers
 		maxSentiment = placeholderMaxWorkers
+		maxEmotions = placeholderMaxWorkers
 	}
 
 	queues := map[string]river.QueueConfig{
@@ -87,11 +93,17 @@ func NewRiverWorkersAndQueues(
 	}
 
 	if deps.SentimentClient != nil {
-		sentimentWorker := NewFeedbackSentimentWorker(
-			deps.SentimentService, deps.SentimentResolver, deps.SentimentClient, deps.SentimentMetrics)
+		sentimentWorker := NewFeedbackSentimentWorker(deps.SentimentService, deps.SentimentClient, deps.SentimentMetrics)
 		river.AddWorker(workers, sentimentWorker)
 
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: maxSentiment}
+	}
+
+	if deps.EmotionsClient != nil {
+		emotionsWorker := NewFeedbackEmotionsWorker(deps.EmotionsService, deps.EmotionsClient, deps.EmotionsMetrics)
+		river.AddWorker(workers, emotionsWorker)
+
+		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: maxEmotions}
 	}
 
 	return workers, queues

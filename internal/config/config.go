@@ -50,6 +50,7 @@ type Config struct {
 	Embedding           EmbeddingConfig
 	Translation         TranslationConfig
 	Sentiment           SentimentConfig
+	Emotions            EmotionsConfig
 	TenantSettingsCache TenantSettingsCacheConfig
 	Taxonomy            TaxonomyConfig
 	TenantData          TenantDataConfig
@@ -167,6 +168,25 @@ type SentimentConfig struct {
 
 // Enabled reports whether sentiment enrichment is configured (provider and model both set).
 func (c SentimentConfig) Enabled() bool {
+	return c.Provider != "" && c.Model != ""
+}
+
+// EmotionsConfig holds the feedback emotion-enrichment provider settings (ENG-1573).
+// Emotion enrichment is disabled unless Provider and Model are both set — the same
+// provider+model gate the other enrichments use (there is no separate enable flag).
+type EmotionsConfig struct {
+	ProviderAPIKey      string `env:"EMOTIONS_PROVIDER_API_KEY"`
+	Provider            string `env:"EMOTIONS_PROVIDER"`
+	Model               string `env:"EMOTIONS_MODEL"`
+	BaseURL             string `env:"EMOTIONS_BASE_URL"`
+	MaxConcurrent       int    `env:"EMOTIONS_MAX_CONCURRENT"        env-default:"5"`
+	MaxAttempts         int    `env:"EMOTIONS_MAX_ATTEMPTS"          env-default:"3"`
+	GoogleCloudProject  string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
+}
+
+// Enabled reports whether emotion enrichment is configured (provider and model both set).
+func (c EmotionsConfig) Enabled() bool {
 	return c.Provider != "" && c.Model != ""
 }
 

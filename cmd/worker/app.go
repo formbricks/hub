@@ -72,6 +72,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		embeddingMetrics   observability.EmbeddingMetrics
 		translationMetrics observability.TranslationMetrics
 		sentimentMetrics   observability.SentimentMetrics
+		emotionsMetrics    observability.EmotionsMetrics
 	)
 
 	if metrics != nil {
@@ -79,6 +80,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		embeddingMetrics = metrics.Embeddings
 		translationMetrics = metrics.Translation
 		sentimentMetrics = metrics.Sentiment
+		emotionsMetrics = metrics.Emotions
 	}
 
 	webhookSender := service.NewWebhookSenderImpl(
@@ -196,6 +198,32 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.SentimentResolver = sentimentSettingsService
 		deps.SentimentClient = sentimentClient
 		deps.SentimentMetrics = sentimentMetrics
+	}
+
+	if cfg.Emotions.Enabled() {
+		emotionsClient, err := service.NewEmotionsClient(context.Background(), service.EmotionsClientConfig{
+			Provider:            cfg.Emotions.Provider,
+			ProviderAPIKey:      cfg.Emotions.ProviderAPIKey,
+			Model:               cfg.Emotions.Model,
+			BaseURL:             cfg.Emotions.BaseURL,
+			GoogleCloudProject:  cfg.Emotions.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Emotions.GoogleCloudLocation,
+		})
+		if err != nil {
+			shutdownObservability(context.Background(), meterProvider, tracerProvider)
+
+			return nil, fmt.Errorf("emotions config: %w", err)
+		}
+
+		// The emotions worker only reads the record and writes the emotions, so the
+		// embedding/translation-specific service params are unused here.
+		emotionsRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+		emotionsRecordsService := service.NewFeedbackRecordsService(
+			emotionsRecordsRepo, nil, "", nil, nil, "", 0, "")
+
+		deps.EmotionsService = emotionsRecordsService
+		deps.EmotionsClient = emotionsClient
+		deps.EmotionsMetrics = emotionsMetrics
 	}
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)

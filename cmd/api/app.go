@@ -179,6 +179,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		embeddingMetrics   observability.EmbeddingMetrics
 		translationMetrics observability.TranslationMetrics
 		sentimentMetrics   observability.SentimentMetrics
+		emotionsMetrics    observability.EmotionsMetrics
 	)
 	if metrics != nil {
 		eventMetrics = metrics.Events
@@ -186,6 +187,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		embeddingMetrics = metrics.Embeddings
 		translationMetrics = metrics.Translation
 		sentimentMetrics = metrics.Sentiment
+		emotionsMetrics = metrics.Emotions
 	}
 
 	var tracerProvider *sdktrace.TracerProvider
@@ -346,6 +348,30 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
 
+	// Register the emotions worker and declare its queue so the River client can enqueue emotion
+	// jobs (kind + queue must be known at insert time); the jobs are processed by hub-worker, not
+	// in this process. Gated on EMOTIONS_PROVIDER+MODEL; the enqueue provider is registered below,
+	// after the River client exists.
+	if cfg.Emotions.Enabled() {
+		emotionsClient, emotionsErr := service.NewEmotionsClient(context.Background(), service.EmotionsClientConfig{
+			Provider:            cfg.Emotions.Provider,
+			ProviderAPIKey:      cfg.Emotions.ProviderAPIKey,
+			Model:               cfg.Emotions.Model,
+			BaseURL:             cfg.Emotions.BaseURL,
+			GoogleCloudProject:  cfg.Emotions.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Emotions.GoogleCloudLocation,
+		})
+		if emotionsErr != nil {
+			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
+
+			return nil, fmt.Errorf("emotions config: %w", emotionsErr)
+		}
+
+		river.AddWorker(riverWorkers, workers.NewFeedbackEmotionsWorker(feedbackRecordsService, emotionsClient, emotionsMetrics))
+
+		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: 1}
+	}
+
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues:  queues,
 		Workers: riverWorkers,
@@ -392,15 +418,15 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
 
-	// Translation and sentiment enqueue providers both resolve a per-tenant setting on the
-	// enqueue path (translation's target language; sentiment's per-directory switch), so they
-	// share one short-TTL cache over tenant settings. The cache is evicted on a settings write
-	// (below) so a toggle is visible to the gates immediately, not after TTL expiry.
+	// Translation, sentiment, and emotion enqueue providers all resolve a per-tenant setting on
+	// the enqueue path (translation's target language; the sentiment and emotion per-directory
+	// switches), so they share one short-TTL cache over tenant settings. The cache is evicted on a
+	// settings write (below) so a toggle is visible to the gates immediately, not after TTL expiry.
 	translationEnabled := cfg.Translation.Provider != "" && cfg.Translation.Model != ""
 
 	var tenantSettingsCache *service.CachedTenantSettings
 
-	if translationEnabled || cfg.Sentiment.Enabled() {
+	if translationEnabled || cfg.Sentiment.Enabled() || cfg.Emotions.Enabled() {
 		var cacheMetrics observability.CacheMetrics
 		if metrics != nil {
 			cacheMetrics = metrics.Cache
@@ -427,6 +453,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		messageManager.RegisterProvider(service.NewSentimentProvider(
 			riverClient, tenantSettingsCache, service.SentimentsQueueName, cfg.Sentiment.MaxAttempts,
 			sentimentMetrics))
+	}
+
+	// Emotions enqueue provider: on a create/update with open text it enqueues an emotion job,
+	// skipping tenants that have switched emotions off. Gated on EMOTIONS_PROVIDER+MODEL.
+	if cfg.Emotions.Enabled() {
+		messageManager.RegisterProvider(service.NewEmotionsProvider(
+			riverClient, tenantSettingsCache, service.EmotionsQueueName, cfg.Emotions.MaxAttempts,
+			emotionsMetrics))
 	}
 
 	// On a settings write: evict the shared cache (so a changed setting is visible to the enqueue
