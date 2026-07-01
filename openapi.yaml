@@ -1177,6 +1177,12 @@ paths:
                                         deleted_feedback_records: 42
                                         deleted_embeddings: 17
                                         deleted_webhooks: 3
+                                        deleted_taxonomy_runs: 4
+                                        deleted_taxonomy_clusters: 28
+                                        deleted_taxonomy_cluster_memberships: 1200
+                                        deleted_taxonomy_nodes: 36
+                                        deleted_taxonomy_active_runs: 2
+                                        deleted_taxonomy_node_events: 9
                                         message: "Successfully deleted tenant data for org-123"
                 "400":
                     description: Bad Request (e.g. missing or invalid tenant_id)
@@ -1452,6 +1458,30 @@ components:
                     type: integer
                     description: Number of webhooks deleted
                     format: int64
+                deleted_taxonomy_runs:
+                    type: integer
+                    description: Number of taxonomy runs deleted
+                    format: int64
+                deleted_taxonomy_clusters:
+                    type: integer
+                    description: Number of taxonomy clusters deleted
+                    format: int64
+                deleted_taxonomy_cluster_memberships:
+                    type: integer
+                    description: Number of taxonomy cluster memberships deleted
+                    format: int64
+                deleted_taxonomy_nodes:
+                    type: integer
+                    description: Number of taxonomy nodes deleted
+                    format: int64
+                deleted_taxonomy_active_runs:
+                    type: integer
+                    description: Number of taxonomy active-run rows deleted
+                    format: int64
+                deleted_taxonomy_node_events:
+                    type: integer
+                    description: Number of taxonomy node events deleted
+                    format: int64
                 message:
                     type: string
                     description: Human-readable status message
@@ -1460,6 +1490,12 @@ components:
                 - deleted_feedback_records
                 - deleted_embeddings
                 - deleted_webhooks
+                - deleted_taxonomy_runs
+                - deleted_taxonomy_clusters
+                - deleted_taxonomy_cluster_memberships
+                - deleted_taxonomy_nodes
+                - deleted_taxonomy_active_runs
+                - deleted_taxonomy_node_events
                 - message
         EnrichmentSettings:
             type: object
