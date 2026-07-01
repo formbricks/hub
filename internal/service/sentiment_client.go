@@ -56,16 +56,10 @@ type sentimentResponse struct {
 	Score *float64 `json:"score"`
 }
 
-// Classify builds the prompt and schema, calls the provider, and parses the result.
+// Classify builds the sentiment prompt and schema, calls the provider, and parses the result via
+// the shared structured-classification path.
 func (c promptSentimentClient) Classify(ctx context.Context, text, sourceLang string) (SentimentResult, error) {
-	systemPrompt, userText := buildSentimentPrompt(text, sourceLang)
-
-	raw, err := c.raw.CompleteJSON(ctx, systemPrompt, userText, sentimentResponseSchema)
-	if err != nil {
-		return SentimentResult{}, fmt.Errorf("classify sentiment: %w", err)
-	}
-
-	return parseSentimentResult(raw)
+	return classifyStructured(ctx, c.raw, sentimentSpec, text, sourceLang)
 }
 
 // sentimentResponseSchema is the structured-output contract: the sentiment label (one of
@@ -89,6 +83,15 @@ var sentimentResponseSchema = llm.Schema{
 				"Use 0 for neutral or mixed.",
 		},
 	},
+}
+
+// sentimentSpec is the structured-classification contract for sentiment, driving the shared
+// classifyStructured path (mirrored by the future emotions client).
+var sentimentSpec = structuredSpec[SentimentResult]{
+	Name:        "sentiment",
+	Schema:      sentimentResponseSchema,
+	BuildPrompt: buildSentimentPrompt,
+	Parse:       parseSentimentResult,
 }
 
 // buildSentimentPrompt renders the system prompt and user text. The system prompt fixes the
