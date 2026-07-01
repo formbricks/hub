@@ -53,12 +53,15 @@ func baseFakeConfig(m *countingWorkerMetrics) enrichmentWorkerConfig[fakeEnrichm
 		getRecord: func(context.Context, uuid.UUID) (*models.FeedbackRecord, error) {
 			return &models.FeedbackRecord{FieldType: models.FieldTypeText, ValueText: &text}, nil
 		},
-		hasContent:     func(*models.FeedbackRecord) bool { return true },
-		classify:       func(context.Context, *models.FeedbackRecord) (string, error) { return "result", nil },
-		persist:        func(context.Context, uuid.UUID, *string) error { return nil },
-		rateLimited:    true,
-		apiErrorReason: "fake_api_failed",
-		metrics:        m.hooks(),
+		hasContent: func(*models.FeedbackRecord) bool { return true },
+		classify: func(context.Context, *models.FeedbackRecord, fakeEnrichmentArgs) (string, error) {
+			return "result", nil
+		},
+		persist:         func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error { return nil },
+		rateLimited:     true,
+		apiErrorReason:  "fake_api_failed",
+		classifyErrVerb: "classify",
+		metrics:         m.hooks(),
 	}
 }
 
@@ -74,7 +77,8 @@ func TestEnrichmentWorker_PersistSupersededIsSkipped(t *testing.T) {
 	metrics := newCountingWorkerMetrics()
 	cfg := baseFakeConfig(metrics)
 	cfg.isSuperseded = func(err error) bool { return errors.Is(err, errSuperseded) }
-	cfg.persist = func(context.Context, uuid.UUID, *string) error { return errSuperseded }
+	cfg.supersededReason = "superseded"
+	cfg.persist = func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error { return errSuperseded }
 
 	if err := newEnrichmentWorker(cfg).Work(context.Background(), fakeJob(1)); err != nil {
 		t.Fatalf("Work() = %v, want nil (a superseded write is a benign skip)", err)
@@ -83,12 +87,18 @@ func TestEnrichmentWorker_PersistSupersededIsSkipped(t *testing.T) {
 	if metrics.outcomes["skipped"] != 1 || metrics.outcomes["failed_final"] != 0 {
 		t.Fatalf("skipped=%d failed_final=%d, want 1/0", metrics.outcomes["skipped"], metrics.outcomes["failed_final"])
 	}
+
+	if metrics.workerErr["superseded"] != 1 {
+		t.Fatalf("superseded worker-error = %d, want 1", metrics.workerErr["superseded"])
+	}
 }
 
 func TestEnrichmentWorker_TenantConflictFinalAttemptFails(t *testing.T) {
 	metrics := newCountingWorkerMetrics()
 	cfg := baseFakeConfig(metrics)
-	cfg.persist = func(context.Context, uuid.UUID, *string) error { return huberrors.ErrTenantWriteConflict }
+	cfg.persist = func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error {
+		return huberrors.ErrTenantWriteConflict
+	}
 
 	if err := newEnrichmentWorker(cfg).Work(context.Background(), fakeJob(3)); err == nil {
 		t.Fatal("Work() = nil, want a failure on the final attempt")
@@ -103,7 +113,7 @@ func TestEnrichmentWorker_TenantConflictFinalAttemptFails(t *testing.T) {
 func TestEnrichmentWorker_ClassifyNonFinalRetries(t *testing.T) {
 	metrics := newCountingWorkerMetrics()
 	cfg := baseFakeConfig(metrics)
-	cfg.classify = func(context.Context, *models.FeedbackRecord) (string, error) {
+	cfg.classify = func(context.Context, *models.FeedbackRecord, fakeEnrichmentArgs) (string, error) {
 		return "", errors.New("provider hiccup")
 	}
 
@@ -121,7 +131,7 @@ func TestEnrichmentWorker_ClearPathPersistErrorFails(t *testing.T) {
 	metrics := newCountingWorkerMetrics()
 	cfg := baseFakeConfig(metrics)
 	cfg.hasContent = func(*models.FeedbackRecord) bool { return false } // force the clear path
-	cfg.persist = func(context.Context, uuid.UUID, *string) error { return errors.New("db down") }
+	cfg.persist = func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error { return errors.New("db down") }
 
 	if err := newEnrichmentWorker(cfg).Work(context.Background(), fakeJob(1)); err == nil {
 		t.Fatal("Work() = nil, want a failure when the clear write fails")

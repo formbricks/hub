@@ -37,17 +37,26 @@ type enrichmentWorkerConfig[A river.JobArgs, R any] struct {
 	getRecord  func(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	eligible   func(record *models.FeedbackRecord) bool // nil ⇒ always eligible
 	hasContent func(record *models.FeedbackRecord) bool
-	classify   func(ctx context.Context, record *models.FeedbackRecord) (R, error)
-	persist    func(ctx context.Context, id uuid.UUID, result *R) error // result nil ⇒ clear
+	// classify and persist receive the job args so a type can use a per-job value (e.g.
+	// translation's target language) for both the provider call and the write. persist's result is
+	// nil on the clear path.
+	classify func(ctx context.Context, record *models.FeedbackRecord, args A) (R, error)
+	persist  func(ctx context.Context, id uuid.UUID, args A, result *R) error
 
 	// isSuperseded reports whether a persist error is a benign "already superseded" skip
 	// (translation's stale-target case). nil ⇒ this enrichment has no supersession.
 	isSuperseded func(err error) bool
+	// supersededReason, when non-empty, is the worker-error metric reason recorded on the
+	// isSuperseded skip (so target churn / cache staleness stays observable). Ignored when
+	// isSuperseded is nil.
+	supersededReason string
 	// rateLimited applies the shared rate-limit snooze to classify failures (LLM callers do; the
 	// embedding worker does not).
 	rateLimited bool
 	// apiErrorReason is the worker-error metric reason recorded for a classify failure.
 	apiErrorReason string
+	// classifyErrVerb is the verb in the classify-failure error wrap (e.g. "classify", "translate").
+	classifyErrVerb string
 	// logResult returns extra slog attributes for the classify-success log (e.g. the sentiment
 	// label and score), or nil to log only the record id.
 	logResult func(result R) []any
@@ -132,7 +141,7 @@ func (w *EnrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 	// Content became empty since enqueue (e.g. an edit cleared it): clear any stale result rather
 	// than classify empty text.
 	if !cfg.hasContent(record) {
-		if err := cfg.persist(ctx, id, nil); err != nil {
+		if err := cfg.persist(ctx, id, job.Args, nil); err != nil {
 			return w.handlePersistError(ctx, err, id, start, job.Attempt >= job.MaxAttempts)
 		}
 
@@ -142,12 +151,12 @@ func (w *EnrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 		return nil
 	}
 
-	result, err := cfg.classify(ctx, record)
+	result, err := cfg.classify(ctx, record, job.Args)
 	if err != nil {
 		return w.handleClassifyError(ctx, err, id, start, job)
 	}
 
-	if err := cfg.persist(ctx, id, &result); err != nil {
+	if err := cfg.persist(ctx, id, job.Args, &result); err != nil {
 		return w.handlePersistError(ctx, err, id, start, job.Attempt >= job.MaxAttempts)
 	}
 
@@ -191,12 +200,12 @@ func (w *EnrichmentWorker[A, R]) handleClassifyError(
 		w.recordOutcome(ctx, "failed_final", start)
 		slog.Error(cfg.name+": provider failed (final attempt)", "feedback_record_id", id, "error", err)
 
-		return fmt.Errorf("classify (final attempt): %w", err)
+		return fmt.Errorf("%s (final attempt): %w", cfg.classifyErrVerb, err)
 	}
 
 	w.recordOutcome(ctx, "retry", start)
 
-	return fmt.Errorf("classify: %w", err)
+	return fmt.Errorf("%s: %w", cfg.classifyErrVerb, err)
 }
 
 // handlePersistError maps a write failure to an outcome: a missing record or a superseded result
@@ -214,6 +223,10 @@ func (w *EnrichmentWorker[A, R]) handlePersistError(
 
 		return nil
 	case cfg.isSuperseded != nil && cfg.isSuperseded(err):
+		if cfg.supersededReason != "" {
+			cfg.metrics.workerError(ctx, cfg.supersededReason)
+		}
+
 		w.recordOutcome(ctx, "skipped", start)
 		slog.Info(cfg.name+": result superseded, skipping", "feedback_record_id", id)
 

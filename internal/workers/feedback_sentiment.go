@@ -37,7 +37,7 @@ func NewFeedbackSentimentWorker(
 		getRecord:  svc.GetFeedbackRecord,
 		eligible:   sentimentWorkerEligible,
 		hasContent: sentimentWorkerHasContent,
-		classify: func(ctx context.Context, record *models.FeedbackRecord) (service.SentimentResult, error) {
+		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackSentimentArgs) (service.SentimentResult, error) {
 			sourceLang := ""
 			if record.Language != nil {
 				sourceLang = *record.Language
@@ -45,15 +45,16 @@ func NewFeedbackSentimentWorker(
 
 			return client.Classify(ctx, *record.ValueText, sourceLang)
 		},
-		persist: func(ctx context.Context, id uuid.UUID, result *service.SentimentResult) error {
+		persist: func(ctx context.Context, id uuid.UUID, _ service.FeedbackSentimentArgs, result *service.SentimentResult) error {
 			if result == nil {
 				return svc.SetSentiment(ctx, id, nil, nil)
 			}
 
 			return svc.SetSentiment(ctx, id, &result.Label, &result.Score)
 		},
-		rateLimited:    true,
-		apiErrorReason: "sentiment_api_failed",
+		rateLimited:     true,
+		apiErrorReason:  "sentiment_api_failed",
+		classifyErrVerb: "classify",
 		logResult: func(result service.SentimentResult) []any {
 			return []any{"sentiment", result.Label, "score", result.Score}
 		},
