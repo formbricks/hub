@@ -71,8 +71,9 @@ func sentimentEnabled(settings models.EnrichmentSettings) bool {
 	return settings.SentimentEnrichmentEnabled()
 }
 
-// newSentimentArgs builds the job payload; uniqueness is by (record, value_text hash).
-func newSentimentArgs(record *models.FeedbackRecord, hash string) river.JobArgs {
+// newSentimentArgs builds the job payload; uniqueness is by (record, value_text hash). Sentiment
+// derives nothing from tenant settings, so the settings argument is unused.
+func newSentimentArgs(record *models.FeedbackRecord, hash string, _ *models.TenantSettings) river.JobArgs {
 	return FeedbackSentimentArgs{FeedbackRecordID: record.ID, ValueTextHash: hash}
 }
 

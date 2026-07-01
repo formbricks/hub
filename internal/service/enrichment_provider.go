@@ -42,8 +42,10 @@ type enrichmentProviderConfig struct {
 	enabled func(settings models.EnrichmentSettings) bool
 	// contentHash is the dedupe key for a record's content.
 	contentHash func(record *models.FeedbackRecord) string
-	// newArgs builds the River job payload for a record and its content hash.
-	newArgs func(record *models.FeedbackRecord, hash string) river.JobArgs
+	// newArgs builds the River job payload for a record and its content hash. settings is the
+	// tenant's resolved settings when the enrichment is gated (enabled != nil), else nil — so a
+	// gated enrichment can derive per-tenant args (e.g. translation's target language).
+	newArgs func(record *models.FeedbackRecord, hash string, settings *models.TenantSettings) river.JobArgs
 }
 
 // EnrichmentProvider implements eventPublisher by enqueueing one enrichment job per eligible
@@ -101,10 +103,13 @@ func (p *EnrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
-	// Per-tenant gate (when this enrichment has one): skip tenants that turned it off. Read after
-	// the cheap eligibility checks so non-eligible events never hit the settings store.
+	// Per-tenant gate (when this enrichment has one): skip tenants that turned it off, and keep
+	// the resolved settings so newArgs can derive per-tenant args. Read after the cheap
+	// eligibility checks so non-eligible events never hit the settings store.
+	var settings *models.TenantSettings
+
 	if cfg.enabled != nil {
-		settings, err := cfg.resolver.GetSettings(ctx, record.TenantID)
+		resolved, err := cfg.resolver.GetSettings(ctx, record.TenantID)
 		if err != nil {
 			if cfg.metrics != nil {
 				cfg.metrics.RecordProviderError(ctx, "settings_read_failed")
@@ -116,11 +121,13 @@ func (p *EnrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 			return
 		}
 
-		if !cfg.enabled(settings.Settings) {
+		if !cfg.enabled(resolved.Settings) {
 			slog.Debug(cfg.name+": skip, disabled for tenant", "feedback_record_id", record.ID)
 
 			return
 		}
+
+		settings = resolved
 	}
 
 	opts := &river.InsertOpts{
@@ -129,7 +136,7 @@ func (p *EnrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: cfg.uniqueByPeriod},
 	}
 
-	if _, err := cfg.inserter.Insert(ctx, cfg.newArgs(record, cfg.contentHash(record)), opts); err != nil {
+	if _, err := cfg.inserter.Insert(ctx, cfg.newArgs(record, cfg.contentHash(record), settings), opts); err != nil {
 		if cfg.metrics != nil {
 			cfg.metrics.RecordProviderError(ctx, "enqueue_failed")
 		}
