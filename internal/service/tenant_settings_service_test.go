@@ -127,8 +127,9 @@ func TestTenantSettingsService_NotifiesListenerOnChange(t *testing.T) {
 		}
 
 		// PUT is a full replace: it notifies every settable key, in a stable order.
-		if got := listener.calls[0]; len(got) != 2 || got[0] != "target_language" || got[1] != "sentiment_enabled" {
-			t.Fatalf("PUT changedKeys = %v, want [target_language sentiment_enabled]", got)
+		if got := listener.calls[0]; len(got) != 3 || got[0] != "target_language" ||
+			got[1] != "sentiment_enabled" || got[2] != "emotions_enabled" {
+			t.Fatalf("PUT changedKeys = %v, want [target_language sentiment_enabled emotions_enabled]", got)
 		}
 
 		// The sentiment switch reaches the repo as part of the full-replace upsert.

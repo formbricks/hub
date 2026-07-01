@@ -15,6 +15,11 @@ type EnrichmentSettings struct {
 	// is enriched unless it has explicitly switched sentiment off. The deployment-level
 	// SENTIMENT_PROVIDER/MODEL gate still applies globally on top of this.
 	SentimentEnabled *bool `json:"sentiment_enabled,omitempty"`
+	// EmotionsEnabled is the per-directory switch for emotion enrichment (ENG-1573), tri-state
+	// like SentimentEnabled: absent (nil) means the default (enabled), so a tenant is enriched
+	// unless it has explicitly switched emotions off. The deployment-level EMOTIONS_PROVIDER/MODEL
+	// gate still applies globally on top of this.
+	EmotionsEnabled *bool `json:"emotions_enabled,omitempty"`
 }
 
 // SentimentEnrichmentEnabled reports whether sentiment enrichment is enabled for the tenant,
@@ -22,6 +27,13 @@ type EnrichmentSettings struct {
 // deployment-level provider/model gate is checked separately.
 func (s EnrichmentSettings) SentimentEnrichmentEnabled() bool {
 	return s.SentimentEnabled == nil || *s.SentimentEnabled
+}
+
+// EmotionsEnrichmentEnabled reports whether emotion enrichment is enabled for the tenant,
+// defaulting to true when unset (opt-out). It only governs the per-directory switch; the
+// deployment-level provider/model gate is checked separately.
+func (s EnrichmentSettings) EmotionsEnrichmentEnabled() bool {
+	return s.EmotionsEnabled == nil || *s.EmotionsEnabled
 }
 
 // TenantSettings is a tenant's persisted settings. It doubles as the API response
@@ -40,6 +52,9 @@ type UpdateTenantSettingsRequest struct {
 	// SentimentEnabled toggles sentiment enrichment for the tenant. As a full replace, an
 	// omitted member clears it back to the default (enabled).
 	SentimentEnabled *bool `json:"sentiment_enabled" validate:"omitempty"`
+	// EmotionsEnabled toggles emotion enrichment for the tenant. As a full replace, an omitted
+	// member clears it back to the default (enabled).
+	EmotionsEnabled *bool `json:"emotions_enabled" validate:"omitempty"`
 }
 
 // PatchTenantSettingsRequest is the body for PATCH /v1/tenants/{tenant_id}/settings.
@@ -53,4 +68,7 @@ type PatchTenantSettingsRequest struct {
 	// SentimentEnabled toggles sentiment enrichment: a concrete value sets it, an explicit
 	// null restores the default (enabled), an omitted member leaves it unchanged.
 	SentimentEnabled Optional[bool] `json:"sentiment_enabled"`
+	// EmotionsEnabled toggles emotion enrichment: a concrete value sets it, an explicit null
+	// restores the default (enabled), an omitted member leaves it unchanged.
+	EmotionsEnabled Optional[bool] `json:"emotions_enabled"`
 }
