@@ -49,8 +49,8 @@ func NewTranslationProvider(
 			uniqueByPeriod: uniqueByPeriodTranslation,
 			// Re-translate when the text or its source language changes: output depends on both.
 			triggers:   []string{"value_text", "language"},
-			eligible:   translationEligible,
-			hasContent: translationHasContent,
+			eligible:   (*models.FeedbackRecord).IsTextField,
+			hasContent: (*models.FeedbackRecord).HasOpenText,
 			gated:      true,
 			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool) {
 				// Gate on a resolvable target language (resolved once, then reused in the args):
@@ -74,14 +74,6 @@ func NewTranslationProvider(
 			},
 		}),
 	}
-}
-
-func translationEligible(record *models.FeedbackRecord) bool {
-	return record.FieldType == models.FieldTypeText
-}
-
-func translationHasContent(record *models.FeedbackRecord) bool {
-	return record.ValueText != nil && strings.TrimSpace(*record.ValueText) != ""
 }
 
 // resolveTargetLang returns the tenant's own target language, or the configured default when the

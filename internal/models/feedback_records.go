@@ -228,6 +228,18 @@ type FeedbackRecord struct {
 	SentimentScore *float64        `json:"sentiment_score,omitempty"`
 }
 
+// IsTextField reports whether this record is an open-text field — the eligibility gate the text
+// enrichments (sentiment, translation, and emotions) share.
+func (r *FeedbackRecord) IsTextField() bool {
+	return r.FieldType == FieldTypeText
+}
+
+// HasOpenText reports whether this record carries non-empty open text to enrich (value_text is
+// present and not just whitespace).
+func (r *FeedbackRecord) HasOpenText() bool {
+	return r.ValueText != nil && strings.TrimSpace(*r.ValueText) != ""
+}
+
 // CreateFeedbackRecordRequest represents the request to create a feedback record.
 type CreateFeedbackRecordRequest struct {
 	CollectedAt     *time.Time      `json:"collected_at,omitempty"`

@@ -2,7 +2,6 @@ package workers
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,8 +34,8 @@ func NewFeedbackSentimentWorker(
 		timeout:    feedbackSentimentTimeout,
 		recordID:   func(args service.FeedbackSentimentArgs) uuid.UUID { return args.FeedbackRecordID },
 		getRecord:  svc.GetFeedbackRecord,
-		eligible:   sentimentWorkerEligible,
-		hasContent: sentimentWorkerHasContent,
+		eligible:   (*models.FeedbackRecord).IsTextField,
+		hasContent: (*models.FeedbackRecord).HasOpenText,
 		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackSentimentArgs) (service.SentimentResult, error) {
 			sourceLang := ""
 			if record.Language != nil {
@@ -60,16 +59,6 @@ func NewFeedbackSentimentWorker(
 		},
 		metrics: sentimentWorkerMetrics(metrics),
 	})
-}
-
-// sentimentWorkerEligible reports whether a record can be classified: only text fields carry open text.
-func sentimentWorkerEligible(record *models.FeedbackRecord) bool {
-	return record.FieldType == models.FieldTypeText
-}
-
-// sentimentWorkerHasContent reports whether a record has non-empty open text to classify.
-func sentimentWorkerHasContent(record *models.FeedbackRecord) bool {
-	return record.ValueText != nil && strings.TrimSpace(*record.ValueText) != ""
 }
 
 // sentimentWorkerMetrics adapts SentimentMetrics to the worker's type-agnostic metric hooks,

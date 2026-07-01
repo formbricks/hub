@@ -42,8 +42,8 @@ func NewFeedbackTranslationWorker(
 		timeout:    feedbackTranslationTimeout,
 		recordID:   func(args service.FeedbackTranslationArgs) uuid.UUID { return args.FeedbackRecordID },
 		getRecord:  svc.GetFeedbackRecord,
-		eligible:   translationWorkerEligible,
-		hasContent: translationWorkerHasContent,
+		eligible:   (*models.FeedbackRecord).IsTextField,
+		hasContent: (*models.FeedbackRecord).HasOpenText,
 		classify: func(ctx context.Context, record *models.FeedbackRecord, args service.FeedbackTranslationArgs) (string, error) {
 			return translate(ctx, client, record, args.TargetLang)
 		},
@@ -64,16 +64,6 @@ func NewFeedbackTranslationWorker(
 		classifyErrVerb:  "translate",
 		metrics:          translationWorkerMetrics(metrics),
 	})
-}
-
-// translationWorkerEligible reports whether a record can be translated: only text fields carry open text.
-func translationWorkerEligible(record *models.FeedbackRecord) bool {
-	return record.FieldType == models.FieldTypeText
-}
-
-// translationWorkerHasContent reports whether a record has non-empty open text to translate.
-func translationWorkerHasContent(record *models.FeedbackRecord) bool {
-	return record.ValueText != nil && strings.TrimSpace(*record.ValueText) != ""
 }
 
 // translate returns the translated value_text, short-circuiting (copying the original) when the

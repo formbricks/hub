@@ -47,8 +47,8 @@ func NewSentimentProvider(
 			// Re-classify only when the text changes: sentiment depends on value_text alone, not
 			// on source language (unlike translation).
 			triggers:   []string{"value_text"},
-			eligible:   sentimentEligible,
-			hasContent: sentimentHasContent,
+			eligible:   (*models.FeedbackRecord).IsTextField,
+			hasContent: (*models.FeedbackRecord).HasOpenText,
 			gated:      true,
 			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool) {
 				// Per-directory gate: skip tenants that switched sentiment enrichment off.
@@ -63,16 +63,6 @@ func NewSentimentProvider(
 			},
 		}),
 	}
-}
-
-// sentimentEligible reports whether a record can be classified: only text fields carry open text.
-func sentimentEligible(record *models.FeedbackRecord) bool {
-	return record.FieldType == models.FieldTypeText
-}
-
-// sentimentHasContent reports whether a record has non-empty open text to classify (create gate).
-func sentimentHasContent(record *models.FeedbackRecord) bool {
-	return record.ValueText != nil && strings.TrimSpace(*record.ValueText) != ""
 }
 
 // sentimentContentHash hashes the trimmed, NFC-normalized value_text for dedupe, so an edit
