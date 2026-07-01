@@ -5,8 +5,8 @@
 // contract, not on a specific provider's JSON-schema representation.
 package llm
 
-// PropertyType is the JSON-schema scalar type of a structured-output field. The
-// set is intentionally the common subset that both OpenAI strict mode and Gemini
+// PropertyType is the JSON-schema type of a structured-output field. The set is
+// intentionally the common subset that both OpenAI strict mode and Gemini
 // responseSchema enforce.
 type PropertyType string
 
@@ -19,19 +19,27 @@ const (
 	TypeInteger PropertyType = "integer"
 	// TypeBoolean is a JSON boolean.
 	TypeBoolean PropertyType = "boolean"
+	// TypeArray is a JSON array; its element schema is given by Property.Items
+	// (e.g. an array of enum strings for a multi-label classification).
+	TypeArray PropertyType = "array"
 )
 
 // Property is one field of a structured-output object schema.
 type Property struct {
-	// Name is the JSON key. Must be unique within a Schema.
+	// Name is the JSON key. Must be unique within a Schema. Unused for an array's
+	// Items element, which is unnamed.
 	Name string
-	// Type is the field's scalar JSON type.
+	// Type is the field's JSON type.
 	Type PropertyType
 	// Description is an optional hint the model uses to fill the field; it is
 	// passed through to the provider schema rather than relying on the prompt.
 	Description string
 	// Enum, when non-empty, restricts a TypeString field to these exact values.
+	// For an array of enums, set it on Items (the element), not on the array.
 	Enum []string
+	// Items describes the element schema when Type is TypeArray; it is ignored for
+	// scalar types. Its Name is unused (array elements are unnamed).
+	Items *Property
 }
 
 // Schema describes the JSON object an LLM must return. Every property is
@@ -57,16 +65,7 @@ func (s Schema) JSONSchema() map[string]any {
 	required := make([]string, 0, len(s.Properties))
 
 	for _, p := range s.Properties {
-		property := map[string]any{"type": string(p.Type)}
-		if p.Description != "" {
-			property["description"] = p.Description
-		}
-
-		if len(p.Enum) > 0 {
-			property["enum"] = p.Enum
-		}
-
-		properties[p.Name] = property
+		properties[p.Name] = renderProperty(p)
 		required = append(required, p.Name)
 	}
 
@@ -76,4 +75,25 @@ func (s Schema) JSONSchema() map[string]any {
 		"required":             required,
 		"additionalProperties": false,
 	}
+}
+
+// renderProperty renders one property — or an array's element — to a JSON Schema fragment: its
+// type, optional description and enum, and, for a TypeArray, its element schema under "items".
+// It recurses through Items so an array of enum strings renders as
+// {"type":"array","items":{"type":"string","enum":[…]}}.
+func renderProperty(p Property) map[string]any {
+	rendered := map[string]any{"type": string(p.Type)}
+	if p.Description != "" {
+		rendered["description"] = p.Description
+	}
+
+	if len(p.Enum) > 0 {
+		rendered["enum"] = p.Enum
+	}
+
+	if p.Type == TypeArray && p.Items != nil {
+		rendered["items"] = renderProperty(*p.Items)
+	}
+
+	return rendered
 }

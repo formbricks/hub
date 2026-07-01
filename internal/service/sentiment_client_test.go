@@ -149,7 +149,7 @@ func TestParseSentimentResult_ConsumesSchemaPropertyNames(t *testing.T) {
 			values[property.Name] = string(models.SentimentPositive)
 		case llm.TypeNumber:
 			values[property.Name] = 0.5
-		case llm.TypeInteger, llm.TypeBoolean:
+		case llm.TypeInteger, llm.TypeBoolean, llm.TypeArray:
 			t.Fatalf("unexpected schema property type %q for %q", property.Type, property.Name)
 		default:
 			t.Fatalf("unhandled schema property type %q for %q", property.Type, property.Name)

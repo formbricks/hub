@@ -35,3 +35,49 @@ func TestSchema_JSONSchema_ClosedObjectWithEnum(t *testing.T) {
 	assert.Equal(t, "number", score["type"])
 	assert.NotContains(t, score, "enum", "a non-enum property carries no enum")
 }
+
+func TestSchema_JSONSchema_ArrayOfEnum(t *testing.T) {
+	schema := llm.Schema{
+		Name: "emotions",
+		Properties: []llm.Property{
+			{
+				Name:        "emotions",
+				Type:        llm.TypeArray,
+				Description: "applicable emotions",
+				Items:       &llm.Property{Type: llm.TypeString, Enum: []string{"joy", "anger", "sadness"}},
+			},
+		},
+	}
+
+	jsonSchema := schema.JSONSchema()
+
+	assert.Equal(t, "object", jsonSchema["type"])
+	assert.Equal(t, false, jsonSchema["additionalProperties"], "the object is closed")
+	assert.ElementsMatch(t, []string{"emotions"}, jsonSchema["required"], "the array field is required")
+
+	properties := llmtest.MustMap(t, jsonSchema["properties"], "properties")
+	emotions := llmtest.MustMap(t, properties["emotions"], "emotions")
+	assert.Equal(t, "array", emotions["type"])
+	assert.Equal(t, "applicable emotions", emotions["description"])
+	assert.NotContains(t, emotions, "enum", "the array itself carries no enum; the constraint lives on its items")
+
+	items := llmtest.MustMap(t, emotions["items"], "items")
+	assert.Equal(t, "string", items["type"])
+	assert.Equal(t, []string{"joy", "anger", "sadness"}, items["enum"])
+	assert.NotContains(t, items, "items", "a scalar element has no nested items")
+}
+
+// A TypeArray property with no Items renders just {"type":"array"} rather than panicking on the
+// nil dereference — a defensive guard; well-formed callers always set Items.
+func TestSchema_JSONSchema_ArrayWithoutItems(t *testing.T) {
+	schema := llm.Schema{
+		Name:       "tags",
+		Properties: []llm.Property{{Name: "tags", Type: llm.TypeArray}},
+	}
+
+	properties := llmtest.MustMap(t, schema.JSONSchema()["properties"], "properties")
+	tags := llmtest.MustMap(t, properties["tags"], "tags")
+
+	assert.Equal(t, "array", tags["type"])
+	assert.NotContains(t, tags, "items", "no Items => no items key")
+}
