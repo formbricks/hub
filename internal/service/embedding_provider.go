@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"log/slog"
 	"slices"
 	"strings"
@@ -196,12 +194,5 @@ func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 // embeddingValueTextHash returns a hash of the embedding input for dedupe (same content => same job within window).
 // Uses BuildEmbeddingInput; empty content returns "empty".
 func embeddingValueTextHash(fieldLabel, valueText *string, prefix string) string {
-	content := BuildEmbeddingInput(fieldLabel, valueText, prefix)
-	if content == "" {
-		return "empty"
-	}
-
-	sum := sha256.Sum256([]byte(content))
-
-	return hex.EncodeToString(sum[:])
+	return hashContent(BuildEmbeddingInput(fieldLabel, valueText, prefix))
 }

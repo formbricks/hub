@@ -1,13 +1,10 @@
 package service
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 	"time"
 
 	"github.com/riverqueue/river"
-	"golang.org/x/text/unicode/norm"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
@@ -86,20 +83,14 @@ func resolveTargetLang(tenantTarget, defaultLang string) string {
 	return defaultLang
 }
 
-// translationContentHash hashes the trimmed, NFC-normalized value_text and the source language for
-// dedupe, so a source-language correction re-enqueues. Empty/nil value_text returns "empty" (a
-// clear), independent of source language.
+// translationContentHash hashes value_text together with the source language for dedupe, so both an
+// edit and a source-language correction re-enqueue. Empty/nil value_text returns "empty" (a clear),
+// independent of source language.
 func translationContentHash(valueText *string, sourceLang string) string {
-	if valueText == nil {
+	text := normalizedText(valueText)
+	if text == "" {
 		return "empty"
 	}
 
-	trimmed := strings.TrimSpace(*valueText)
-	if trimmed == "" {
-		return "empty"
-	}
-
-	sum := sha256.Sum256([]byte(norm.NFC.String(trimmed) + "\x00" + strings.TrimSpace(sourceLang)))
-
-	return hex.EncodeToString(sum[:])
+	return hashContent(text + "\x00" + strings.TrimSpace(sourceLang))
 }

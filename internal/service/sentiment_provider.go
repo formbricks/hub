@@ -1,13 +1,9 @@
 package service
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
 	"time"
 
 	"github.com/riverqueue/river"
-	"golang.org/x/text/unicode/norm"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
@@ -65,20 +61,9 @@ func NewSentimentProvider(
 	}
 }
 
-// sentimentContentHash hashes the trimmed, NFC-normalized value_text for dedupe, so an edit
-// re-enqueues. Empty/nil value_text returns "empty" (a clear). Sentiment does not depend on
-// source language, so — unlike translation — language is not part of the hash.
+// sentimentContentHash hashes value_text for dedupe, so an edit re-enqueues. Empty/nil value_text
+// returns "empty" (a clear). Sentiment does not depend on source language, so — unlike translation
+// — language is not part of the hash.
 func sentimentContentHash(valueText *string) string {
-	if valueText == nil {
-		return "empty"
-	}
-
-	trimmed := strings.TrimSpace(*valueText)
-	if trimmed == "" {
-		return "empty"
-	}
-
-	sum := sha256.Sum256([]byte(norm.NFC.String(trimmed)))
-
-	return hex.EncodeToString(sum[:])
+	return hashContent(normalizedText(valueText))
 }
