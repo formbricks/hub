@@ -39,6 +39,13 @@ const (
 	MetricNameSentimentWorkerErrors   = "hub_sentiment_worker_errors_total"
 	MetricNameSentimentDuration       = "hub_sentiment_duration_seconds"
 
+	// MetricNameEmotionsJobsEnqueued and related emotion pipeline metrics.
+	MetricNameEmotionsJobsEnqueued   = "hub_emotions_jobs_enqueued_total"
+	MetricNameEmotionsProviderErrors = "hub_emotions_provider_errors_total"
+	MetricNameEmotionsOutcomes       = "hub_emotions_outcomes_total"
+	MetricNameEmotionsWorkerErrors   = "hub_emotions_worker_errors_total"
+	MetricNameEmotionsDuration       = "hub_emotions_duration_seconds"
+
 	MetricNameCacheHits   = "hub_cache_hits_total"
 	MetricNameCacheMisses = "hub_cache_misses_total"
 )
@@ -191,6 +198,44 @@ func AllowedSentimentOutcomeStatus(status string) bool {
 // AllowedSentimentWorkerReason returns true if reason is allowed for sentiment worker errors.
 func AllowedSentimentWorkerReason(reason string) bool {
 	return allowedSentimentWorkerReasons[reason]
+}
+
+// allowedEmotionsProviderReasons for hub_emotions_provider_errors_total.
+var allowedEmotionsProviderReasons = map[string]bool{
+	"settings_read_failed": true,
+	"enqueue_failed":       true,
+}
+
+// allowedEmotionsOutcomeStatuses for hub_emotions_outcomes_total and hub_emotions_duration_seconds.
+var allowedEmotionsOutcomeStatuses = map[string]bool{
+	"success":      true,
+	"retry":        true,
+	"failed_final": true,
+	"skipped":      true,
+}
+
+// allowedEmotionsWorkerReasons for hub_emotions_worker_errors_total.
+var allowedEmotionsWorkerReasons = map[string]bool{
+	"emotions_api_failed":   true,
+	"get_record_failed":     true,
+	"update_failed":         true,
+	"tenant_write_conflict": true,
+	"rate_limited":          true,
+}
+
+// AllowedEmotionsProviderReason returns true if reason is allowed for emotion provider errors.
+func AllowedEmotionsProviderReason(reason string) bool {
+	return allowedEmotionsProviderReasons[reason]
+}
+
+// AllowedEmotionsOutcomeStatus returns true if status is allowed for emotion outcomes.
+func AllowedEmotionsOutcomeStatus(status string) bool {
+	return allowedEmotionsOutcomeStatuses[status]
+}
+
+// AllowedEmotionsWorkerReason returns true if reason is allowed for emotion worker errors.
+func AllowedEmotionsWorkerReason(reason string) bool {
+	return allowedEmotionsWorkerReasons[reason]
 }
 
 // AllowedProviderReason returns true if reason is an allowed provider error reason.

@@ -16,6 +16,7 @@ type Metrics struct {
 	Embeddings  EmbeddingMetrics
 	Translation TranslationMetrics
 	Sentiment   SentimentMetrics
+	Emotions    EmotionsMetrics
 	Cache       CacheMetrics
 }
 
@@ -52,6 +53,11 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("sentiment metrics: %w", err)
 	}
 
+	emotions, err := NewEmotionsMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("emotion metrics: %w", err)
+	}
+
 	cache, err := NewCacheMetrics(meter)
 	if err != nil {
 		return nil, fmt.Errorf("cache metrics: %w", err)
@@ -63,6 +69,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		Embeddings:  embeddings,
 		Translation: translation,
 		Sentiment:   sentiment,
+		Emotions:    emotions,
 		Cache:       cache,
 	}, nil
 }
