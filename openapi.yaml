@@ -2135,6 +2135,13 @@ components:
                         tenant is enriched unless it has explicitly set this to false. The deployment-level
                         sentiment provider/model gate applies on top of this.
                     example: true
+                emotions_enabled:
+                    type: boolean
+                    description: |
+                        Per-directory switch for emotion enrichment. Absent means the default (enabled), so a
+                        tenant is enriched unless it has explicitly set this to false. The deployment-level
+                        emotions provider/model gate applies on top of this.
+                    example: true
         TenantSettingsOutputBody:
             type: object
             additionalProperties: false
@@ -2169,6 +2176,12 @@ components:
                         Enable or disable sentiment enrichment for this tenant. As a full replace, omitting it
                         clears the setting back to the default (enabled).
                     example: false
+                emotions_enabled:
+                    type: boolean
+                    description: |
+                        Enable or disable emotion enrichment for this tenant. As a full replace, omitting it
+                        clears the setting back to the default (enabled).
+                    example: false
         PatchTenantSettingsInputBody:
             type: object
             additionalProperties: false
@@ -2188,6 +2201,12 @@ components:
                     type: [boolean, "null"]
                     description: |
                         Enable or disable sentiment enrichment. Send null to restore the default (enabled); omit
+                        to leave it unchanged.
+                    example: false
+                emotions_enabled:
+                    type: [boolean, "null"]
+                    description: |
+                        Enable or disable emotion enrichment. Send null to restore the default (enabled); omit
                         to leave it unchanged.
                     example: false
         SemanticSearchInputBody:
@@ -2541,6 +2560,18 @@ components:
                     format: double
                     minimum: -1.0
                     maximum: 1.0
+                emotions:
+                    type: array
+                    description: Emotions inferred from value_text (emotion enrichment); multi-label from a fixed set. Read-only; absent until the record is enriched, and never an empty array.
+                    items:
+                        type: string
+                        enum:
+                            - joy
+                            - anger
+                            - sadness
+                            - fear
+                            - surprise
+                            - disgust
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID
