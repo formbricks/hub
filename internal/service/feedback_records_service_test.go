@@ -28,6 +28,9 @@ type mockFeedbackRecordsRepo struct {
 	setSentimentCalled bool
 	setSentimentLabel  *models.SentimentValue
 	setSentimentScore  *float64
+
+	setEmotionsCalled bool
+	setEmotionsLabels []models.EmotionValue
 }
 
 func (m *mockFeedbackRecordsRepo) Create(
@@ -77,6 +80,15 @@ func (m *mockFeedbackRecordsRepo) SetSentiment(
 	m.setSentimentCalled = true
 	m.setSentimentLabel = sentiment
 	m.setSentimentScore = score
+
+	return nil
+}
+
+func (m *mockFeedbackRecordsRepo) SetEmotions(
+	_ context.Context, _ uuid.UUID, emotions []models.EmotionValue,
+) error {
+	m.setEmotionsCalled = true
+	m.setEmotionsLabels = emotions
 
 	return nil
 }
@@ -415,6 +427,55 @@ func TestFeedbackRecordsService_SetSentiment_RejectsInvalidLabelAndMissingScore(
 			t.Fatal("a label without a score must not reach the repo")
 		}
 	})
+}
+
+func TestFeedbackRecordsService_SetEmotions_Persists(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	emotions := []models.EmotionValue{models.EmotionJoy, models.EmotionSurprise}
+
+	if err := svc.SetEmotions(context.Background(), uuid.New(), emotions); err != nil {
+		t.Fatalf("SetEmotions() error = %v", err)
+	}
+
+	if got := repo.setEmotionsLabels; !repo.setEmotionsCalled || len(got) != 2 ||
+		got[0] != models.EmotionJoy || got[1] != models.EmotionSurprise {
+		t.Fatalf("repo got %v (called=%v), want [joy surprise]", got, repo.setEmotionsCalled)
+	}
+}
+
+func TestFeedbackRecordsService_SetEmotions_ClearsWithEmpty(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	// An empty set (the "no emotion detected" worker path) clears rather than writing {}.
+	if err := svc.SetEmotions(context.Background(), uuid.New(), []models.EmotionValue{}); err != nil {
+		t.Fatalf("SetEmotions(clear) error = %v", err)
+	}
+
+	if !repo.setEmotionsCalled {
+		t.Fatal("clearing must still write (nulls the column)")
+	}
+
+	if repo.setEmotionsLabels != nil {
+		t.Fatalf("clear passed %v, want nil (an empty set clears)", repo.setEmotionsLabels)
+	}
+}
+
+func TestFeedbackRecordsService_SetEmotions_RejectsInvalidLabel(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	emotions := []models.EmotionValue{models.EmotionJoy, models.EmotionValue("ecstatic")}
+
+	if err := svc.SetEmotions(context.Background(), uuid.New(), emotions); !errors.Is(err, ErrInvalidEmotionLabel) {
+		t.Fatalf("err = %v, want ErrInvalidEmotionLabel", err)
+	}
+
+	if repo.setEmotionsCalled {
+		t.Fatal("an invalid label must not reach the repo")
+	}
 }
 
 func TestFeedbackRecordsService_BackfillTranslationsForTenant(t *testing.T) {

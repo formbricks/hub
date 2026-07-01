@@ -329,6 +329,55 @@ func (r *FeedbackRecordsRepository) SetSentiment(
 	})
 }
 
+// SetEmotions stores or clears the emotion labels for a feedback record. Like SetSentiment the
+// write is tenant-write-locked (so it cannot race a tenant data purge) and publishes no domain
+// event (emotions is a derived enrichment). Emotions are multi-label: an empty or nil slice clears
+// the column (writes NULL), a non-empty slice replaces it. The caller validates label membership;
+// the column CHECKs are the final guard. A missing record returns NotFound.
+func (r *FeedbackRecordsRepository) SetEmotions(
+	ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
+) error {
+	// Encode as a text[] for the driver (the column is text[], not a Postgres enum). An empty set
+	// binds SQL NULL via an untyped-nil arg -- absence is NULL, and the non-empty CHECK rejects {},
+	// so a typed-nil []string (whose NULL-vs-{} encoding is ambiguous) is deliberately avoided.
+	var emotionsArg any
+
+	if len(emotions) > 0 {
+		labels := make([]string, len(emotions))
+		for i, emotion := range emotions {
+			labels[i] = string(emotion)
+		}
+
+		emotionsArg = labels
+	}
+
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		// Emotions ride the feedback record's tenant boundary; resolve and lock it so the write
+		// cannot race a tenant data purge.
+		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		tag, err := dbTx.Exec(ctx, `
+			UPDATE feedback_records
+			SET emotions = $2, updated_at = NOW()
+			WHERE id = $1`,
+			feedbackRecordID, emotionsArg,
+		)
+		if err != nil {
+			return fmt.Errorf("set feedback record emotions: %w", err)
+		}
+
+		// Locked above, so zero rows means the record was deleted between the lock and this write:
+		// surface NotFound so the worker treats it as a benign skip.
+		if tag.RowsAffected() == 0 {
+			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+		}
+
+		return nil
+	})
+}
+
 // translationBackfillSelectSQL selects feedback records that need (re)translation: text
 // fields with non-empty value_text whose EFFECTIVE target language differs from the stored
 // translation_lang_key (never translated, or now stale). The effective target is the tenant's

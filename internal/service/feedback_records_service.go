@@ -36,6 +36,9 @@ var ErrInvalidSentimentLabel = errors.New("invalid sentiment label")
 // must carry its score (clearing, where sentiment is nil, nulls both columns).
 var ErrSentimentScoreRequired = errors.New("sentiment score is required when a label is set")
 
+// ErrInvalidEmotionLabel is returned when SetEmotions is given an unknown emotion label.
+var ErrInvalidEmotionLabel = errors.New("invalid emotion label")
+
 const uniqueByPeriodEmbedding = 24 * time.Hour
 
 // FeedbackRecordsRepository defines the interface for feedback records data access.
@@ -50,6 +53,7 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string) error
 	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64) error
+	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue) error
 	ListTranslationBackfillTargets(
 		ctx context.Context, afterID uuid.UUID, limit int, defaultLang string,
 	) ([]models.TranslationBackfillTarget, error)
@@ -196,6 +200,35 @@ func (s *FeedbackRecordsService) SetSentiment(
 
 	if err := s.repo.SetSentiment(ctx, feedbackRecordID, sentiment, score); err != nil {
 		return fmt.Errorf("set feedback record sentiment: %w", err)
+	}
+
+	return nil
+}
+
+// SetEmotions persists or clears the emotion labels for a feedback record. It is the accessor the
+// emotion worker uses; the write is tenant-write-locked in the repository and publishes no event
+// (no enrichment loop). Emotions are multi-label; an empty (or nil) set clears the column, so "no
+// emotion detected" and "not yet enriched" share the same NULL representation.
+func (s *FeedbackRecordsService) SetEmotions(
+	ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
+) error {
+	// An empty set clears (stored as NULL, never an empty array).
+	if len(emotions) == 0 {
+		if err := s.repo.SetEmotions(ctx, feedbackRecordID, nil); err != nil {
+			return fmt.Errorf("clear feedback record emotions: %w", err)
+		}
+
+		return nil
+	}
+
+	for _, emotion := range emotions {
+		if !emotion.IsValid() {
+			return ErrInvalidEmotionLabel
+		}
+	}
+
+	if err := s.repo.SetEmotions(ctx, feedbackRecordID, emotions); err != nil {
+		return fmt.Errorf("set feedback record emotions: %w", err)
 	}
 
 	return nil
