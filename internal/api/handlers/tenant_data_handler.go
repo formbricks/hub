@@ -35,11 +35,17 @@ func (h *TenantDataHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := models.TenantDataDeleteResponse{
-		TenantID:               result.TenantID,
-		DeletedFeedbackRecords: result.DeletedFeedbackRecords,
-		DeletedEmbeddings:      result.DeletedEmbeddings,
-		DeletedWebhooks:        result.DeletedWebhooks,
-		Message:                "Successfully deleted tenant data for " + result.TenantID,
+		TenantID:                          result.TenantID,
+		DeletedFeedbackRecords:            result.DeletedFeedbackRecords,
+		DeletedEmbeddings:                 result.DeletedEmbeddings,
+		DeletedWebhooks:                   result.DeletedWebhooks,
+		DeletedTaxonomyRuns:               result.DeletedTaxonomyRuns,
+		DeletedTaxonomyClusters:           result.DeletedTaxonomyClusters,
+		DeletedTaxonomyClusterMemberships: result.DeletedTaxonomyClusterMemberships,
+		DeletedTaxonomyNodes:              result.DeletedTaxonomyNodes,
+		DeletedTaxonomyActiveRuns:         result.DeletedTaxonomyActiveRuns,
+		DeletedTaxonomyNodeEvents:         result.DeletedTaxonomyNodeEvents,
+		Message:                           "Successfully deleted tenant data for " + result.TenantID,
 	}
 
 	response.RespondJSON(w, http.StatusOK, resp)

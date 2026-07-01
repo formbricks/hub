@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/models"
 )
 
 // fakeTenantDataExecutor is the shared Exec recorder embedded by
@@ -56,16 +57,56 @@ func purgeLockTags() []pgconn.CommandTag {
 	}
 }
 
+// tenantDeleteTags returns command tags for the ten DELETE statements
+// deleteTenantDataInTx issues, in execution order, each with a distinct row
+// count so tests can assert the per-table count mapping (see
+// assertTenantDeleteCounts).
+func tenantDeleteTags() []pgconn.CommandTag {
+	return []pgconn.CommandTag{
+		pgconn.NewCommandTag("DELETE 2"),  // embeddings
+		pgconn.NewCommandTag("DELETE 11"), // taxonomy_node_events
+		pgconn.NewCommandTag("DELETE 12"), // taxonomy_cluster_memberships
+		pgconn.NewCommandTag("DELETE 13"), // taxonomy_nodes
+		pgconn.NewCommandTag("DELETE 14"), // taxonomy_clusters
+		pgconn.NewCommandTag("DELETE 15"), // taxonomy_active_runs
+		pgconn.NewCommandTag("DELETE 16"), // taxonomy_runs
+		pgconn.NewCommandTag("DELETE 3"),  // feedback_records
+		pgconn.NewCommandTag("DELETE 1"),  // webhooks
+		pgconn.NewCommandTag("DELETE 99"), // tenant_settings (count not surfaced)
+	}
+}
+
+// assertTenantDeleteCounts verifies the counts produced from tenantDeleteTags(),
+// including every taxonomy table (tenant_settings is intentionally not surfaced).
+func assertTenantDeleteCounts(t *testing.T, counts *models.TenantDataDeleteCounts) {
+	t.Helper()
+
+	want := models.TenantDataDeleteCounts{
+		DeletedFeedbackRecords:            3,
+		DeletedEmbeddings:                 2,
+		DeletedWebhooks:                   1,
+		DeletedTaxonomyRuns:               16,
+		DeletedTaxonomyClusters:           14,
+		DeletedTaxonomyClusterMemberships: 12,
+		DeletedTaxonomyNodes:              13,
+		DeletedTaxonomyActiveRuns:         15,
+		DeletedTaxonomyNodeEvents:         11,
+	}
+
+	if counts == nil {
+		t.Fatalf("counts = nil, want %+v", want)
+	}
+
+	if *counts != want {
+		t.Fatalf("counts = %+v, want %+v", *counts, want)
+	}
+}
+
 func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 	t.Run("locks tenant exclusively, commits transaction, and returns counts", func(t *testing.T) {
 		transaction := &fakeTenantWriteTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				tags: append(purgeLockTags(),
-					pgconn.NewCommandTag("DELETE 2"),
-					pgconn.NewCommandTag("DELETE 4"),
-					pgconn.NewCommandTag("DELETE 3"),
-					pgconn.NewCommandTag("DELETE 1"),
-				),
+				tags: append(purgeLockTags(), tenantDeleteTags()...),
 			},
 			rollbackErr: pgx.ErrTxClosed,
 		}
@@ -76,9 +117,7 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 			t.Fatalf("DeleteByTenant() error = %v", err)
 		}
 
-		if counts.DeletedEmbeddings != 2 || counts.DeletedFeedbackRecords != 3 || counts.DeletedWebhooks != 1 {
-			t.Fatalf("counts = %+v, want embeddings=2 feedback=3 webhooks=1", counts)
-		}
+		assertTenantDeleteCounts(t, counts)
 
 		if !transaction.committed {
 			t.Fatal("transaction was not committed")
@@ -88,15 +127,15 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 			t.Fatal("deferred rollback was not called")
 		}
 
-		if len(transaction.queries) != 8 {
-			t.Fatalf("queries = %d, want 8 (3 lock statements + 5 deletes)", len(transaction.queries))
+		if len(transaction.queries) != 13 {
+			t.Fatalf("queries = %d, want 13 (3 lock statements + 10 deletes)", len(transaction.queries))
 		}
 
 		assertQueryContains(t, transaction.queries[0], "set_config('lock_timeout', $1, true)")
 		assertQueryContains(t, transaction.queries[1], "pg_advisory_xact_lock(hashtextextended($1, 0))")
 		assertQueryContains(t, transaction.queries[2], "set_config('lock_timeout', '0', true)")
 		assertQueryContains(t, transaction.queries[3], "DELETE FROM embeddings")
-		assertQueryContains(t, transaction.queries[7], "DELETE FROM tenant_settings")
+		assertQueryContains(t, transaction.queries[12], "DELETE FROM tenant_settings")
 
 		if len(transaction.args[1]) != 1 || transaction.args[1][0] != TenantWriteLockKey("org-123") {
 			t.Fatalf("lock args = %#v, want tenant write lock key", transaction.args[1])
@@ -183,12 +222,7 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 		commitErr := errors.New("commit failed")
 		transaction := &fakeTenantWriteTx{
 			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				tags: append(purgeLockTags(),
-					pgconn.NewCommandTag("DELETE 2"),
-					pgconn.NewCommandTag("DELETE 4"),
-					pgconn.NewCommandTag("DELETE 3"),
-					pgconn.NewCommandTag("DELETE 1"),
-				),
+				tags: append(purgeLockTags(), tenantDeleteTags()...),
 			},
 			commitErr:   commitErr,
 			rollbackErr: pgx.ErrTxClosed,
@@ -208,34 +242,37 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 
 func TestDeleteTenantDataInTx(t *testing.T) {
 	t.Run("deletes explicit tenant owned tables and returns counts", func(t *testing.T) {
-		exec := &fakeTenantDataExecutor{
-			tags: []pgconn.CommandTag{
-				pgconn.NewCommandTag("DELETE 2"),
-				pgconn.NewCommandTag("DELETE 4"),
-				pgconn.NewCommandTag("DELETE 3"),
-				pgconn.NewCommandTag("DELETE 1"),
-			},
-		}
+		exec := &fakeTenantDataExecutor{tags: tenantDeleteTags()}
 
 		counts, err := deleteTenantDataInTx(context.Background(), exec, "org-123")
 		if err != nil {
 			t.Fatalf("deleteTenantDataInTx() error = %v", err)
 		}
 
-		if counts.DeletedEmbeddings != 2 || counts.DeletedFeedbackRecords != 3 || counts.DeletedWebhooks != 1 {
-			t.Fatalf("counts = %+v, want embeddings=2 feedback=3 webhooks=1", counts)
+		assertTenantDeleteCounts(t, counts)
+
+		if len(exec.queries) != 10 {
+			t.Fatalf("queries = %d, want 10", len(exec.queries))
 		}
 
-		if len(exec.queries) != 5 {
-			t.Fatalf("queries = %d, want 5", len(exec.queries))
-		}
-
+		// Children before parents, with taxonomy_runs deleted after the
+		// run-scoped nodes/clusters and before feedback_records.
 		assertQueryContains(t, exec.queries[0], "DELETE FROM embeddings")
 		assertQueryContains(t, exec.queries[0], "USING feedback_records")
-		assertQueryContains(t, exec.queries[1], "DELETE FROM taxonomy_runs")
-		assertQueryContains(t, exec.queries[2], "DELETE FROM feedback_records")
-		assertQueryContains(t, exec.queries[3], "DELETE FROM webhooks")
-		assertQueryContains(t, exec.queries[4], "DELETE FROM tenant_settings")
+		assertQueryContains(t, exec.queries[1], "DELETE FROM taxonomy_node_events")
+		assertQueryContains(t, exec.queries[2], "DELETE FROM taxonomy_cluster_memberships")
+		assertQueryContains(t, exec.queries[3], "DELETE FROM taxonomy_nodes")
+		assertQueryContains(t, exec.queries[4], "DELETE FROM taxonomy_clusters")
+		assertQueryContains(t, exec.queries[5], "DELETE FROM taxonomy_active_runs")
+		assertQueryContains(t, exec.queries[6], "DELETE FROM taxonomy_runs")
+		assertQueryContains(t, exec.queries[7], "DELETE FROM feedback_records")
+		assertQueryContains(t, exec.queries[8], "DELETE FROM webhooks")
+		assertQueryContains(t, exec.queries[9], "DELETE FROM tenant_settings")
+
+		// taxonomy_nodes and taxonomy_clusters have no tenant_id column, so they
+		// must be scoped through their run via a taxonomy_runs subquery.
+		assertQueryContains(t, exec.queries[3], "SELECT id FROM taxonomy_runs WHERE tenant_id = $1")
+		assertQueryContains(t, exec.queries[4], "SELECT id FROM taxonomy_runs WHERE tenant_id = $1")
 
 		for queryIndex, args := range exec.args {
 			if len(args) != 1 || args[0] != "org-123" {
@@ -261,13 +298,8 @@ func TestDeleteTenantDataInTx(t *testing.T) {
 		}
 	})
 
-	t.Run("stops before feedback records after taxonomy runs delete error", func(t *testing.T) {
-		exec := &fakeTenantDataExecutor{
-			tags: []pgconn.CommandTag{
-				pgconn.NewCommandTag("DELETE 2"),
-			},
-			errAtQuery: 2,
-		}
+	t.Run("stops after taxonomy node events delete error", func(t *testing.T) {
+		exec := &fakeTenantDataExecutor{tags: tenantDeleteTags(), errAtQuery: 2}
 
 		counts, err := deleteTenantDataInTx(context.Background(), exec, "org-123")
 		if err == nil {
@@ -281,16 +313,39 @@ func TestDeleteTenantDataInTx(t *testing.T) {
 		if len(exec.queries) != 2 {
 			t.Fatalf("queries = %d, want 2", len(exec.queries))
 		}
+
+		assertQueryContains(t, exec.queries[1], "DELETE FROM taxonomy_node_events")
+	})
+
+	t.Run("stops before feedback records after taxonomy runs delete error", func(t *testing.T) {
+		// taxonomy_runs is the seventh delete (errAtQuery is 1-based).
+		exec := &fakeTenantDataExecutor{tags: tenantDeleteTags(), errAtQuery: 7}
+
+		counts, err := deleteTenantDataInTx(context.Background(), exec, "org-123")
+		if err == nil {
+			t.Fatal("deleteTenantDataInTx() error = nil, want error")
+		}
+
+		if counts != nil {
+			t.Fatalf("counts = %+v, want nil", counts)
+		}
+
+		if len(exec.queries) != 7 {
+			t.Fatalf("queries = %d, want 7", len(exec.queries))
+		}
+
+		assertQueryContains(t, exec.queries[6], "DELETE FROM taxonomy_runs")
+
+		for _, query := range exec.queries {
+			if strings.Contains(query, "DELETE FROM feedback_records") {
+				t.Fatalf("feedback_records deleted before taxonomy runs error: %q", query)
+			}
+		}
 	})
 
 	t.Run("stops before webhooks after feedback delete error", func(t *testing.T) {
-		exec := &fakeTenantDataExecutor{
-			tags: []pgconn.CommandTag{
-				pgconn.NewCommandTag("DELETE 2"),
-				pgconn.NewCommandTag("DELETE 4"),
-			},
-			errAtQuery: 3,
-		}
+		// feedback_records is the eighth delete.
+		exec := &fakeTenantDataExecutor{tags: tenantDeleteTags(), errAtQuery: 8}
 
 		counts, err := deleteTenantDataInTx(context.Background(), exec, "org-123")
 		if err == nil {
@@ -301,21 +356,16 @@ func TestDeleteTenantDataInTx(t *testing.T) {
 			t.Fatalf("counts = %+v, want nil", counts)
 		}
 
-		if len(exec.queries) != 3 {
-			t.Fatalf("queries = %d, want 3", len(exec.queries))
+		if len(exec.queries) != 8 {
+			t.Fatalf("queries = %d, want 8", len(exec.queries))
 		}
+
+		assertQueryContains(t, exec.queries[7], "DELETE FROM feedback_records")
 	})
 
 	t.Run("stops after tenant settings delete error", func(t *testing.T) {
-		exec := &fakeTenantDataExecutor{
-			tags: []pgconn.CommandTag{
-				pgconn.NewCommandTag("DELETE 2"),
-				pgconn.NewCommandTag("DELETE 4"),
-				pgconn.NewCommandTag("DELETE 3"),
-				pgconn.NewCommandTag("DELETE 1"),
-			},
-			errAtQuery: 5,
-		}
+		// tenant_settings is the tenth (final) delete.
+		exec := &fakeTenantDataExecutor{tags: tenantDeleteTags(), errAtQuery: 10}
 
 		counts, err := deleteTenantDataInTx(context.Background(), exec, "org-123")
 		if err == nil {
@@ -326,11 +376,11 @@ func TestDeleteTenantDataInTx(t *testing.T) {
 			t.Fatalf("counts = %+v, want nil", counts)
 		}
 
-		if len(exec.queries) != 5 {
-			t.Fatalf("queries = %d, want 5", len(exec.queries))
+		if len(exec.queries) != 10 {
+			t.Fatalf("queries = %d, want 10", len(exec.queries))
 		}
 
-		assertQueryContains(t, exec.queries[4], "DELETE FROM tenant_settings")
+		assertQueryContains(t, exec.queries[9], "DELETE FROM tenant_settings")
 	})
 }
 
