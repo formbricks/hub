@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +28,8 @@ const feedbackSentimentTimeout = 30 * time.Second
 // NewFeedbackSentimentWorker creates a worker that fetches the record, classifies its value_text,
 // and stores the result. metrics may be nil when metrics are disabled.
 func NewFeedbackSentimentWorker(
-	svc sentimentWorkerService, client service.SentimentClient, metrics observability.SentimentMetrics,
+	svc sentimentWorkerService, resolver tenantSettingsReader,
+	client service.SentimentClient, metrics observability.SentimentMetrics,
 ) *FeedbackSentimentWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackSentimentArgs, service.SentimentResult]{
 		name:       "sentiment",
@@ -36,6 +38,14 @@ func NewFeedbackSentimentWorker(
 		getRecord:  svc.GetFeedbackRecord,
 		eligible:   (*models.FeedbackRecord).IsTextField,
 		hasContent: (*models.FeedbackRecord).HasOpenText,
+		checkEnabled: func(ctx context.Context, record *models.FeedbackRecord) (bool, error) {
+			settings, err := resolver.GetSettings(ctx, record.TenantID)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant settings: %w", err)
+			}
+
+			return settings.Settings.SentimentEnrichmentEnabled(), nil
+		},
 		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackSentimentArgs) (service.SentimentResult, error) {
 			sourceLang := ""
 			if record.Language != nil {

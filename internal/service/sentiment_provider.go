@@ -35,13 +35,16 @@ func NewSentimentProvider(
 			maxAttempts: maxAttempts,
 			// Re-classify only when the text changes: sentiment depends on value_text alone, not
 			// on source language (unlike translation).
-			triggers:   []string{"value_text"},
-			eligible:   (*models.FeedbackRecord).IsTextField,
-			hasContent: (*models.FeedbackRecord).HasOpenText,
-			gated:      true,
+			triggers:                []string{"value_text"},
+			eligible:                (*models.FeedbackRecord).IsTextField,
+			hasContent:              (*models.FeedbackRecord).HasOpenText,
+			gated:                   true,
+			failOpenOnSettingsError: true,
 			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool) {
-				// Per-directory gate: skip tenants that switched sentiment enrichment off.
-				if !settings.Settings.SentimentEnrichmentEnabled() {
+				// Per-directory gate: skip tenants that switched sentiment enrichment off. settings is
+				// nil when the read failed and we are failing open — enqueue and let the worker
+				// re-check the gate (the authoritative check before the LLM call).
+				if settings != nil && !settings.Settings.SentimentEnrichmentEnabled() {
 					return nil, false
 				}
 

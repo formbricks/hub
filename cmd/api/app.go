@@ -342,7 +342,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			return nil, fmt.Errorf("sentiment config: %w", sentimentErr)
 		}
 
-		river.AddWorker(riverWorkers, workers.NewFeedbackSentimentWorker(feedbackRecordsService, sentimentClient, sentimentMetrics))
+		river.AddWorker(riverWorkers, workers.NewFeedbackSentimentWorker(
+			feedbackRecordsService, tenantSettingsService, sentimentClient, sentimentMetrics))
 
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}

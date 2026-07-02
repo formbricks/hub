@@ -110,8 +110,8 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 
 	repo := repository.NewFeedbackRecordsRepository(db)
 	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
-	// Real settings reader for the worker's per-directory gate; an unconfigured tenant defaults
-	// to sentiment-on, so the classify/clear subtests below exercise the enabled path end to end.
+	// Real settings reader for the worker's per-directory gate; an unconfigured tenant defaults to
+	// sentiment-on, so the classify/clear subtests below exercise the enabled path end to end.
 	settingsSvc := service.NewTenantSettingsService(repository.NewTenantSettingsRepository(db))
 
 	createText := func(valueText string) *models.FeedbackRecord {
