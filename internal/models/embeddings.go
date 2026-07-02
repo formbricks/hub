@@ -26,4 +26,8 @@ type FeedbackRecordWithScore struct {
 	Score            float64   `json:"score"`
 	FieldLabel       string    `json:"field_label"` // label of the field (included in embedding for context)
 	ValueText        string    `json:"value_text"`  // text that was embedded (with field_label)
+	// Distance is the raw cosine distance the row was ordered by, carried for the keyset cursor.
+	// Score is derived (1 - distance) for display; re-deriving distance from the score loses a
+	// ulp and would duplicate or skip boundary rows across pages. Internal only, not in the API.
+	Distance float64 `json:"-"`
 }

@@ -138,7 +138,7 @@ func (s *SearchService) SemanticSearch(
 	if hasMore && len(results) > 0 {
 		last := results[len(results)-1]
 
-		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
+		nextCursor, err := EncodeSearchCursor(last.Distance, last.FeedbackRecordID)
 		if err != nil {
 			return out, fmt.Errorf("encode next cursor: %w", err)
 		}
@@ -199,7 +199,7 @@ func (s *SearchService) SimilarFeedback(
 	if hasMore && len(results) > 0 {
 		last := results[len(results)-1]
 
-		nextCursor, err := EncodeSearchCursor(1-last.Score, last.FeedbackRecordID)
+		nextCursor, err := EncodeSearchCursor(last.Distance, last.FeedbackRecordID)
 		if err != nil {
 			return out, fmt.Errorf("encode next cursor: %w", err)
 		}
