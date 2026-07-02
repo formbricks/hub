@@ -286,31 +286,6 @@ func (r *EmbeddingsRepository) GetEmbeddingAndTenantByFeedbackRecordAndModel(
 	return vec.Slice(), tenantID, nil
 }
 
-// GetEmbeddingByFeedbackRecordAndModelAndTenant returns the stored embedding only when the feedback record
-// belongs to the given tenant. Used by SimilarFeedback to enforce tenant isolation (source record must match tenant).
-// Returns ErrEmbeddingNotFound when no row exists or tenant does not match.
-func (r *EmbeddingsRepository) GetEmbeddingByFeedbackRecordAndModelAndTenant(
-	ctx context.Context, feedbackRecordID uuid.UUID, model, tenantID string,
-) ([]float32, error) {
-	var vec pgvector.HalfVector
-
-	err := r.db.QueryRow(ctx,
-		`SELECT e.embedding FROM embeddings e
-		 INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
-		 WHERE e.feedback_record_id = $1 AND e.model = $2 AND fr.tenant_id = $3`,
-		feedbackRecordID, model, tenantID,
-	).Scan(&vec)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrEmbeddingNotFound
-		}
-
-		return nil, fmt.Errorf("get embedding by tenant: %w", err)
-	}
-
-	return vec.Slice(), nil
-}
-
 // NearestFeedbackRecordsByEmbedding returns feedback record IDs and similarity scores (0..1) for the
 // nearest neighbors to queryEmbedding, filtered by model and tenant. Rows with score < minScore are
 // filtered in application code (not in WHERE) so pgvector's iterative index scan can run. The query

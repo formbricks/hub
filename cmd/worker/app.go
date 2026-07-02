@@ -301,13 +301,29 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.cfg.Server.ShutdownTimeout.Duration())
 		defer cancel()
 
-		_ = a.river.Stop(stopCtx)
+		// River's documented two-phase shutdown: give running jobs the grace period to finish,
+		// then escalate to StopAndCancel (cancels job contexts) so the process exits before the
+		// orchestrator's SIGKILL. Without the escalation, jobs still running at the deadline were
+		// killed mid-flight with their rows left in `running` until the rescuer reclaimed them
+		// (~1h by default) — an enrichment latency hole after every unlucky deploy.
+		if err := a.river.Stop(stopCtx); err != nil {
+			slog.Warn("river graceful stop did not finish in time; cancelling running jobs", "error", err)
+
+			cancelCtx, cancelHard := context.WithTimeout(context.WithoutCancel(ctx), riverStopAndCancelTimeout)
+			defer cancelHard()
+
+			_ = a.river.StopAndCancel(cancelCtx)
+		}
 	}()
 
 	<-a.river.Stopped()
 
 	return nil
 }
+
+// riverStopAndCancelTimeout bounds the escalated (job-cancelling) stop after the graceful stop
+// timed out; kept short so the pod exits within the orchestrator's termination grace period.
+const riverStopAndCancelTimeout = 5 * time.Second
 
 func shutdownObservability(ctx context.Context, meter *sdkmetric.MeterProvider, tracer *sdktrace.TracerProvider) {
 	if tracer != nil {

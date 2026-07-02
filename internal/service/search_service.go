@@ -150,7 +150,10 @@ func (s *SearchService) SemanticSearch(
 }
 
 // SimilarFeedback returns feedback record IDs and similarity scores for records similar to the given one.
-// The tenant boundary is derived from the source record before running nearest-neighbor search.
+// The tenant boundary is derived from the SOURCE RECORD (whoever owns the given UUID) — there is no
+// caller-supplied tenant check, by design: Hub sits behind the product gateway, which owns
+// record-level authorization (ENG-1289). If Hub ever becomes reachable without that gateway, this
+// endpoint needs a tenant parameter checked against the source record before the search.
 // Returns ErrEmbeddingNotFound when the record has no embedding for the current model. Uses cursor-based pagination.
 func (s *SearchService) SimilarFeedback(
 	ctx context.Context, feedbackRecordID uuid.UUID, limit int, minScore float64, cursor string,
