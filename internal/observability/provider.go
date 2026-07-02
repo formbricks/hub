@@ -25,12 +25,13 @@ func newResource(serviceName string) (*resource.Resource, error) {
 		return base, nil
 	}
 
+	// Add our per-binary service.name via a schemaless resource so it merges cleanly with the SDK
+	// default regardless of the default's semconv schema version. Passing a pinned semconv.SchemaURL
+	// here conflicts with resource.Default()'s (newer) schema URL, so resource.Merge fails with
+	// ErrSchemaURLConflict and aborts telemetry startup — the very path this fallback serves.
 	res, err := resource.Merge(
 		base,
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(serviceName),
-		),
+		resource.NewSchemaless(semconv.ServiceName(serviceName)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("merge resource: %w", err)
