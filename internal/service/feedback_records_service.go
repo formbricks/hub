@@ -60,6 +60,8 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 	ListTranslationBackfillTargetsForTenant(
 		ctx context.Context, tenantID string, afterID uuid.UUID, limit int, defaultLang string,
 	) ([]models.TranslationBackfillTarget, error)
+	ListSentimentBackfillTargets(ctx context.Context, afterID uuid.UUID, limit int) ([]uuid.UUID, error)
+	ListEmotionsBackfillTargets(ctx context.Context, afterID uuid.UUID, limit int) ([]uuid.UUID, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	DeleteByUser(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) ([]models.DeletedFeedbackRecordsByTenant, error)
 }

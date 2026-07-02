@@ -24,6 +24,10 @@ type mockFeedbackRecordsRepo struct {
 	translationBackfillErr     error
 	tenantBackfillTargets      []models.TranslationBackfillTarget
 	tenantBackfillErr          error
+	sentimentBackfillTargets   []uuid.UUID
+	sentimentBackfillErr       error
+	emotionsBackfillTargets    []uuid.UUID
+	emotionsBackfillErr        error
 
 	setSentimentCalled bool
 	setSentimentLabel  *models.SentimentValue
@@ -126,6 +130,34 @@ func (m *mockFeedbackRecordsRepo) ListTranslationBackfillTargetsForTenant(
 	}
 
 	return m.tenantBackfillTargets, nil
+}
+
+func (m *mockFeedbackRecordsRepo) ListSentimentBackfillTargets(
+	_ context.Context, afterID uuid.UUID, _ int,
+) ([]uuid.UUID, error) {
+	if m.sentimentBackfillErr != nil {
+		return nil, m.sentimentBackfillErr
+	}
+
+	if afterID != uuid.Nil {
+		return nil, nil
+	}
+
+	return m.sentimentBackfillTargets, nil
+}
+
+func (m *mockFeedbackRecordsRepo) ListEmotionsBackfillTargets(
+	_ context.Context, afterID uuid.UUID, _ int,
+) ([]uuid.UUID, error) {
+	if m.emotionsBackfillErr != nil {
+		return nil, m.emotionsBackfillErr
+	}
+
+	if afterID != uuid.Nil {
+		return nil, nil
+	}
+
+	return m.emotionsBackfillTargets, nil
 }
 
 func (m *mockFeedbackRecordsRepo) Delete(_ context.Context, id uuid.UUID) error {
@@ -554,6 +586,81 @@ func TestFeedbackRecordsService_BackfillTranslations_RepoError(t *testing.T) {
 	_, err := svc.BackfillTranslations(context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3, "run-1")
 	if err == nil {
 		t.Fatal("BackfillTranslations() = nil, want the repo error propagated")
+	}
+}
+
+func TestFeedbackRecordsService_BackfillSentiment(t *testing.T) {
+	id1 := uuid.Must(uuid.NewV7())
+	id2 := uuid.Must(uuid.NewV7())
+	repo := &mockFeedbackRecordsRepo{sentimentBackfillTargets: []uuid.UUID{id1, id2}}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+	inserter := &recordingInserter{}
+
+	enqueued, err := svc.BackfillSentiment(context.Background(), inserter, SentimentsQueueName, 3, "run-1")
+	if err != nil {
+		t.Fatalf("BackfillSentiment() error = %v", err)
+	}
+
+	if enqueued != 2 || len(inserter.args) != 2 {
+		t.Fatalf("enqueued=%d calls=%d, want 2/2", enqueued, len(inserter.args))
+	}
+
+	first, ok := inserter.args[0].(FeedbackSentimentArgs)
+	if !ok {
+		t.Fatalf("first job type = %T, want FeedbackSentimentArgs", inserter.args[0])
+	}
+
+	if first.FeedbackRecordID != id1 || first.ValueTextHash != "backfill:run-1" {
+		t.Fatalf("first job = %+v, want {%s backfill:run-1}", first, id1)
+	}
+
+	// Backfill jobs dedupe by (record, run) within the window.
+	if !inserter.opts[0].UniqueOpts.ByArgs || inserter.opts[0].UniqueOpts.ByPeriod != classifyBackfillUniquePeriod {
+		t.Fatalf("insert opts UniqueOpts = %+v, want ByArgs + classifyBackfillUniquePeriod", inserter.opts[0].UniqueOpts)
+	}
+}
+
+func TestFeedbackRecordsService_BackfillSentiment_RepoError(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{sentimentBackfillErr: errors.New("db down")}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	if _, err := svc.BackfillSentiment(context.Background(), &recordingInserter{}, SentimentsQueueName, 3, "run-1"); err == nil {
+		t.Fatal("BackfillSentiment() = nil error, want the repo error propagated")
+	}
+}
+
+func TestFeedbackRecordsService_BackfillEmotions(t *testing.T) {
+	id1 := uuid.Must(uuid.NewV7())
+	id2 := uuid.Must(uuid.NewV7())
+	repo := &mockFeedbackRecordsRepo{emotionsBackfillTargets: []uuid.UUID{id1, id2}}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+	inserter := &recordingInserter{}
+
+	enqueued, err := svc.BackfillEmotions(context.Background(), inserter, EmotionsQueueName, 3, "run-1")
+	if err != nil {
+		t.Fatalf("BackfillEmotions() error = %v", err)
+	}
+
+	if enqueued != 2 || len(inserter.args) != 2 {
+		t.Fatalf("enqueued=%d calls=%d, want 2/2", enqueued, len(inserter.args))
+	}
+
+	first, ok := inserter.args[0].(FeedbackEmotionsArgs)
+	if !ok {
+		t.Fatalf("first job type = %T, want FeedbackEmotionsArgs", inserter.args[0])
+	}
+
+	if first.FeedbackRecordID != id1 || first.ValueTextHash != "backfill:run-1" {
+		t.Fatalf("first job = %+v, want {%s backfill:run-1}", first, id1)
+	}
+}
+
+func TestFeedbackRecordsService_BackfillEmotions_RepoError(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{emotionsBackfillErr: errors.New("boom")}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	if _, err := svc.BackfillEmotions(context.Background(), &recordingInserter{}, EmotionsQueueName, 3, "run-1"); err == nil {
+		t.Fatal("BackfillEmotions() = nil, want the repo error propagated")
 	}
 }
 

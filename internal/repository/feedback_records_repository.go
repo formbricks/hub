@@ -463,6 +463,75 @@ func scanTranslationBackfillTargets(rows pgx.Rows) ([]models.TranslationBackfill
 	return targets, nil
 }
 
+// classifyBackfillEligibleSQL is the shared eligibility for a classify (sentiment/emotions)
+// backfill: an open-text field with content. Each per-type caller appends its own "<column> IS
+// NULL" predicate plus the keyset/order/limit — the column predicates are hardcoded constants,
+// never user input.
+const classifyBackfillEligibleSQL = `
+	SELECT id FROM feedback_records
+	WHERE field_type = 'text' AND value_text IS NOT NULL AND btrim(value_text) <> ''`
+
+const sentimentBackfillSelectSQL = classifyBackfillEligibleSQL + `
+		AND sentiment IS NULL
+		AND id > $1
+	ORDER BY id
+	LIMIT $2`
+
+const emotionsBackfillSelectSQL = classifyBackfillEligibleSQL + `
+		AND emotions IS NULL
+		AND id > $1
+	ORDER BY id
+	LIMIT $2`
+
+// ListSentimentBackfillTargets returns one keyset page (id > afterID, ordered by id, at most limit
+// rows) of eligible text records whose sentiment is not yet set. Used by the one-off classify
+// backfill. Pass uuid.Nil as afterID for the first page (every UUIDv7 id sorts after it).
+func (r *FeedbackRecordsRepository) ListSentimentBackfillTargets(
+	ctx context.Context, afterID uuid.UUID, limit int,
+) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx, sentimentBackfillSelectSQL, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query sentiment backfill targets: %w", err)
+	}
+
+	return scanBackfillTargetIDs(rows, "sentiment")
+}
+
+// ListEmotionsBackfillTargets returns one keyset page of eligible text records whose emotions are
+// not yet set. Pass uuid.Nil as afterID for the first page.
+func (r *FeedbackRecordsRepository) ListEmotionsBackfillTargets(
+	ctx context.Context, afterID uuid.UUID, limit int,
+) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx, emotionsBackfillSelectSQL, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query emotions backfill targets: %w", err)
+	}
+
+	return scanBackfillTargetIDs(rows, "emotions")
+}
+
+// scanBackfillTargetIDs collects id rows and closes rows; name labels any error.
+func scanBackfillTargetIDs(rows pgx.Rows, name string) ([]uuid.UUID, error) {
+	defer rows.Close()
+
+	var ids []uuid.UUID
+
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan %s backfill target: %w", name, err)
+		}
+
+		ids = append(ids, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s backfill targets: %w", name, err)
+	}
+
+	return ids, nil
+}
+
 // buildFilterConditions builds WHERE clause conditions and arguments from filters.
 // Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice.
 func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereClause string, args []any) {
