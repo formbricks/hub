@@ -227,6 +227,7 @@ var allowedEmotionsOutcomeStatuses = map[string]bool{
 var allowedEmotionsWorkerReasons = map[string]bool{
 	"emotions_api_failed":   true,
 	"get_record_failed":     true,
+	"settings_read_failed":  true,
 	"update_failed":         true,
 	"tenant_write_conflict": true,
 	"rate_limited":          true,
