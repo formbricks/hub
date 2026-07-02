@@ -2,6 +2,7 @@
 package models
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -339,6 +340,56 @@ type UpdateFeedbackRecordRequest struct {
 	Metadata     json.RawMessage `json:"metadata,omitempty"`
 	Language     *string         `json:"language,omitempty"      validate:"omitempty,no_null_bytes,max=10"`
 	UserID       *string         `json:"user_id,omitempty"`
+}
+
+// FieldsChangedFrom returns the names of fields that are set in the update request AND differ
+// from old's current values. Unlike ChangedFields (presence only), this is comparison-based, so
+// an idempotent re-send — an integration re-PATCHing the same value_text every sync — produces
+// an empty result and fires no update event, instead of re-triggering webhooks and re-running
+// every LLM enrichment on unchanged content.
+func (r *UpdateFeedbackRecordRequest) FieldsChangedFrom(old *FeedbackRecord) []string {
+	var fields []string
+
+	if r.ValueText != nil && !stringPtrEqual(old.ValueText, r.ValueText) {
+		fields = append(fields, "value_text")
+	}
+
+	if r.ValueNumber != nil && (old.ValueNumber == nil || *old.ValueNumber != *r.ValueNumber) {
+		fields = append(fields, "value_number")
+	}
+
+	if r.ValueBoolean != nil && (old.ValueBoolean == nil || *old.ValueBoolean != *r.ValueBoolean) {
+		fields = append(fields, "value_boolean")
+	}
+
+	if r.ValueDate != nil && (old.ValueDate == nil || !old.ValueDate.Equal(*r.ValueDate)) {
+		fields = append(fields, "value_date")
+	}
+
+	// Byte-level comparison: a re-serialized metadata object (key order, whitespace) counts as
+	// a change — conservative toward firing the event.
+	if r.Metadata != nil && !bytes.Equal(old.Metadata, r.Metadata) {
+		fields = append(fields, "metadata")
+	}
+
+	if r.Language != nil && !stringPtrEqual(old.Language, r.Language) {
+		fields = append(fields, "language")
+	}
+
+	if r.UserID != nil && !stringPtrEqual(old.UserID, r.UserID) {
+		fields = append(fields, "user_id")
+	}
+
+	return fields
+}
+
+// stringPtrEqual reports whether two optional strings hold the same value (nil equals only nil).
+func stringPtrEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+
+	return *a == *b
 }
 
 // ChangedFields returns the names of fields that are set (non-nil) in the update request.

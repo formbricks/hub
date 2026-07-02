@@ -1,17 +1,11 @@
 package service
 
 import (
-	"time"
-
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 )
-
-// uniqueByPeriodSentiment dedupes identical sentiment jobs (same record + value_text) within
-// this window, mirroring the embedding and translation pipelines.
-const uniqueByPeriodSentiment = 24 * time.Hour
 
 // SentimentProvider enqueues one sentiment job per eligible feedback record event, over the shared
 // enrichmentProvider. Eligibility is a text field with non-empty open text; re-classification is
@@ -33,13 +27,12 @@ func NewSentimentProvider(
 ) *SentimentProvider {
 	return &SentimentProvider{
 		enrichmentProvider: newEnrichmentProvider(enrichmentProviderConfig{
-			name:           "sentiment",
-			inserter:       inserter,
-			resolver:       resolver,
-			metrics:        metrics,
-			queueName:      queueName,
-			maxAttempts:    maxAttempts,
-			uniqueByPeriod: uniqueByPeriodSentiment,
+			name:        "sentiment",
+			inserter:    inserter,
+			resolver:    resolver,
+			metrics:     metrics,
+			queueName:   queueName,
+			maxAttempts: maxAttempts,
 			// Re-classify only when the text changes: sentiment depends on value_text alone, not
 			// on source language (unlike translation).
 			triggers:   []string{"value_text"},

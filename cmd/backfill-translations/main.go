@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
@@ -115,8 +116,12 @@ func run() int {
 		return exitFailure
 	}
 
+	// A fresh run id per invocation: a re-run is a new fan-out and must not be swallowed by a
+	// previous run's completed jobs (River's unique states include completed).
+	runID := uuid.NewString()
+
 	enqueued, err := feedbackRecordsService.BackfillTranslations(
-		ctx, riverClient, service.TranslationsQueueName, maxAttempts)
+		ctx, riverClient, service.TranslationsQueueName, maxAttempts, runID)
 	if err != nil {
 		slog.Error("Backfill failed", "error", err)
 

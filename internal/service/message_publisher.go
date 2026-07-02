@@ -112,6 +112,13 @@ func (m *MessagePublisherManager) Shutdown() {
 // startWorker runs in a dedicated goroutine, reading events from the channel
 // and fanning out each event to all registered providers. It is started with go
 // in NewMessagePublisherManager and runs for the lifetime of the manager.
+//
+// Providers run CONCURRENTLY per event: with webhooks plus four enrichment enqueues each
+// doing a DB round trip, a sequential fan-out capped throughput at a few hundred events/s —
+// past which the bounded channel starts dropping events, permanently losing enrichment for
+// the affected records. Events themselves stay strictly ordered (the next event starts only
+// after every provider finished this one), so per-provider ordering guarantees (e.g. webhook
+// delivery order) are unchanged.
 func (m *MessagePublisherManager) startWorker() {
 	defer m.wg.Done()
 
@@ -127,10 +134,15 @@ func (m *MessagePublisherManager) startWorker() {
 		// Timeout per event so one stuck provider doesn't freeze the worker
 		ctx, cancel := context.WithTimeout(bgCtx, m.perEventTimeout)
 
+		var fanOut sync.WaitGroup
+
 		for _, provider := range m.providers {
-			provider.PublishEvent(ctx, event)
+			fanOut.Go(func() {
+				provider.PublishEvent(ctx, event)
+			})
 		}
 
+		fanOut.Wait()
 		cancel()
 
 		if m.metrics != nil {

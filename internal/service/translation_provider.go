@@ -10,8 +10,10 @@ import (
 	"github.com/formbricks/hub/internal/observability"
 )
 
-// uniqueByPeriodTranslation dedupes identical translation jobs (same record, target, and
-// value_text) within this window, mirroring the embedding pipeline.
+// uniqueByPeriodTranslation dedupes identical BACKFILL translation jobs (same record, target,
+// and backfill run) within this window, so a rescued/retried backfill fan-out cannot double-
+// enqueue the pages it already inserted. Event-driven jobs are deliberately not deduped (see
+// enrichmentProvider.PublishEvent).
 const uniqueByPeriodTranslation = 24 * time.Hour
 
 // TranslationProvider enqueues one translation job per eligible feedback record event, over the
@@ -37,13 +39,12 @@ func NewTranslationProvider(
 ) *TranslationProvider {
 	return &TranslationProvider{
 		enrichmentProvider: newEnrichmentProvider(enrichmentProviderConfig{
-			name:           "translation",
-			inserter:       inserter,
-			resolver:       resolver,
-			metrics:        metrics,
-			queueName:      queueName,
-			maxAttempts:    maxAttempts,
-			uniqueByPeriod: uniqueByPeriodTranslation,
+			name:        "translation",
+			inserter:    inserter,
+			resolver:    resolver,
+			metrics:     metrics,
+			queueName:   queueName,
+			maxAttempts: maxAttempts,
 			// Re-translate when the text or its source language changes: output depends on both.
 			triggers:   []string{"value_text", "language"},
 			eligible:   (*models.FeedbackRecord).IsTextField,

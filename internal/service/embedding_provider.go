@@ -87,10 +87,14 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	valueTextHash := embeddingValueTextHash(record.FieldLabel, record.ValueText, p.docPrefix)
 
+	// Deliberately no UniqueOpts on the event path — mirrors the classify providers: River's
+	// completed-state dedupe swallowed the re-embed after content transitioned away and back
+	// within the dedupe bucket, leaving the record without an embedding (the clear path deletes
+	// the row). Update events fire only on actual field changes, so each event is a real
+	// transition worth embedding.
 	opts := &river.InsertOpts{
 		Queue:       p.queueName,
 		MaxAttempts: p.maxAttempts,
-		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: uniqueByPeriodEmbedding},
 	}
 
 	_, err := p.inserter.Insert(ctx, FeedbackEmbeddingArgs{

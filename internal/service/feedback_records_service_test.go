@@ -65,6 +65,10 @@ func (m *mockFeedbackRecordsRepo) ListAfterCursor(
 func (m *mockFeedbackRecordsRepo) Update(
 	_ context.Context, _ uuid.UUID, _ *models.UpdateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, error) {
+	if m.record != nil {
+		return m.record, nil
+	}
+
 	return nil, errors.New("not implemented")
 }
 
@@ -490,7 +494,7 @@ func TestFeedbackRecordsService_BackfillTranslationsForTenant(t *testing.T) {
 	inserter := &mockTranslationInserter{}
 	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
-	enqueued, err := svc.BackfillTranslationsForTenant(context.Background(), inserter, TranslationsQueueName, 3, "org-1")
+	enqueued, err := svc.BackfillTranslationsForTenant(context.Background(), inserter, TranslationsQueueName, 3, "org-1", "run-1")
 	if err != nil {
 		t.Fatalf("BackfillTranslationsForTenant() error = %v", err)
 	}
@@ -500,8 +504,8 @@ func TestFeedbackRecordsService_BackfillTranslationsForTenant(t *testing.T) {
 	}
 
 	if inserter.calls[0].FeedbackRecordID != firstID ||
-		inserter.calls[0].TargetLang != "de-DE" || inserter.calls[0].ValueTextHash != "backfill" {
-		t.Fatalf("first job = %+v, want firstID/de-DE/backfill", inserter.calls[0])
+		inserter.calls[0].TargetLang != "de-DE" || inserter.calls[0].ValueTextHash != "backfill:run-1" {
+		t.Fatalf("first job = %+v, want firstID/de-DE/backfill:run-1", inserter.calls[0])
 	}
 }
 
@@ -510,7 +514,7 @@ func TestFeedbackRecordsService_BackfillTranslationsForTenant_RepoError(t *testi
 	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
 	_, err := svc.BackfillTranslationsForTenant(
-		context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3, "org-1")
+		context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3, "org-1", "run-1")
 	if err == nil {
 		t.Fatal("BackfillTranslationsForTenant() = nil error, want repo error")
 	}
@@ -528,7 +532,7 @@ func TestFeedbackRecordsService_BackfillTranslations(t *testing.T) {
 	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 	inserter := &mockTranslationInserter{}
 
-	enqueued, err := svc.BackfillTranslations(context.Background(), inserter, TranslationsQueueName, 3)
+	enqueued, err := svc.BackfillTranslations(context.Background(), inserter, TranslationsQueueName, 3, "run-1")
 	if err != nil {
 		t.Fatalf("BackfillTranslations() error = %v", err)
 	}
@@ -538,8 +542,8 @@ func TestFeedbackRecordsService_BackfillTranslations(t *testing.T) {
 	}
 
 	first := inserter.calls[0]
-	if first.FeedbackRecordID != id1 || first.TargetLang != "de-DE" || first.ValueTextHash != "backfill" {
-		t.Fatalf("first job = %+v, want {%s de-DE backfill}", first, id1)
+	if first.FeedbackRecordID != id1 || first.TargetLang != "de-DE" || first.ValueTextHash != "backfill:run-1" {
+		t.Fatalf("first job = %+v, want {%s de-DE backfill:run-1}", first, id1)
 	}
 }
 
@@ -547,7 +551,7 @@ func TestFeedbackRecordsService_BackfillTranslations_RepoError(t *testing.T) {
 	repo := &mockFeedbackRecordsRepo{translationBackfillErr: errors.New("boom")}
 	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
-	_, err := svc.BackfillTranslations(context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3)
+	_, err := svc.BackfillTranslations(context.Background(), &mockTranslationInserter{}, TranslationsQueueName, 3, "run-1")
 	if err == nil {
 		t.Fatal("BackfillTranslations() = nil, want the repo error propagated")
 	}
@@ -618,5 +622,91 @@ func assertDeletedEventData(
 		if data.IDs[i] != ids[i] {
 			t.Errorf("IDs[%d] = %v, want %v", i, data.IDs[i], ids[i])
 		}
+	}
+}
+
+// TestFeedbackRecordsService_UpdateFeedbackRecord_IdempotentResendPublishesNoEvent locks the
+// comparison-based event contract: a PATCH whose set fields all equal the record's current values
+// (an integration idempotently re-sending state) publishes NO update event — so webhooks are not
+// re-fired and no enrichment re-runs on unchanged content.
+func TestFeedbackRecordsService_UpdateFeedbackRecord_IdempotentResendPublishesNoEvent(t *testing.T) {
+	text := "same text"
+	current := &models.FeedbackRecord{
+		ID:        uuid.Must(uuid.NewV7()),
+		FieldType: models.FieldTypeText,
+		ValueText: &text,
+	}
+	repo := &mockFeedbackRecordsRepo{record: current}
+	publisher := &capturePublisher{}
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
+
+	resend := "same text"
+
+	_, err := svc.UpdateFeedbackRecord(context.Background(), current.ID, &models.UpdateFeedbackRecordRequest{
+		ValueText: &resend,
+	})
+	if err != nil {
+		t.Fatalf("UpdateFeedbackRecord() error = %v", err)
+	}
+
+	if publisher.callCount != 0 {
+		t.Fatalf("published %d event(s) for an idempotent re-send, want 0", publisher.callCount)
+	}
+}
+
+// TestFeedbackRecordsService_UpdateFeedbackRecord_RealChangePublishesChangedFields locks the
+// complement: a PATCH that actually changes a field publishes the update event carrying exactly
+// the fields that changed.
+func TestFeedbackRecordsService_UpdateFeedbackRecord_RealChangePublishesChangedFields(t *testing.T) {
+	oldText := "old text"
+	lang := "en"
+	current := &models.FeedbackRecord{
+		ID:        uuid.Must(uuid.NewV7()),
+		FieldType: models.FieldTypeText,
+		ValueText: &oldText,
+		Language:  &lang,
+	}
+	repo := &mockFeedbackRecordsRepo{record: current}
+	publisher := &capturePublisher{}
+	svc := NewFeedbackRecordsService(repo, nil, "", publisher, nil, "", 0, "")
+
+	newText := "new text"
+	sameLang := "en"
+
+	_, err := svc.UpdateFeedbackRecord(context.Background(), current.ID, &models.UpdateFeedbackRecordRequest{
+		ValueText: &newText,
+		Language:  &sameLang, // present but unchanged: must not appear in ChangedFields
+	})
+	if err != nil {
+		t.Fatalf("UpdateFeedbackRecord() error = %v", err)
+	}
+
+	if publisher.callCount != 1 || publisher.eventType != datatypes.FeedbackRecordUpdated {
+		t.Fatalf("published (%d, %s), want one feedback_record.updated", publisher.callCount, publisher.eventType)
+	}
+
+	if len(publisher.changedFields) != 1 || publisher.changedFields[0] != "value_text" {
+		t.Fatalf("changedFields = %v, want [value_text] (only what actually changed)", publisher.changedFields)
+	}
+}
+
+// TestFeedbackRecordsService_BackfillTranslations_CountsUniqueSkipsSeparately locks the truthful
+// enqueue accounting: a unique-skipped duplicate is not reported as enqueued.
+func TestFeedbackRecordsService_BackfillTranslations_CountsUniqueSkipsSeparately(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{translationBackfillTargets: []models.TranslationBackfillTarget{
+		{FeedbackRecordID: uuid.Must(uuid.NewV7()), TargetLang: "de-DE"},
+		{FeedbackRecordID: uuid.Must(uuid.NewV7()), TargetLang: "de-DE"},
+	}}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	inserter := &mockTranslationInserter{skipEvery: 2} // every 2nd insert reports UniqueSkippedAsDuplicate
+
+	enqueued, err := svc.BackfillTranslations(context.Background(), inserter, TranslationsQueueName, 3, "run-1")
+	if err != nil {
+		t.Fatalf("BackfillTranslations() error = %v", err)
+	}
+
+	if enqueued != 1 {
+		t.Fatalf("enqueued = %d, want 1 (the duplicate is skipped, not counted)", enqueued)
 	}
 }

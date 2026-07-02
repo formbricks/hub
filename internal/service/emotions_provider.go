@@ -1,17 +1,11 @@
 package service
 
 import (
-	"time"
-
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 )
-
-// uniqueByPeriodEmotions dedupes identical emotion jobs (same record + value_text) within this
-// window, mirroring the sentiment and translation pipelines.
-const uniqueByPeriodEmotions = 24 * time.Hour
 
 // EmotionsProvider enqueues one emotion job per eligible feedback record event, over the shared
 // enrichmentProvider. Eligibility is a text field with non-empty open text; re-classification is
@@ -33,13 +27,12 @@ func NewEmotionsProvider(
 ) *EmotionsProvider {
 	return &EmotionsProvider{
 		enrichmentProvider: newEnrichmentProvider(enrichmentProviderConfig{
-			name:           "emotions",
-			inserter:       inserter,
-			resolver:       resolver,
-			metrics:        metrics,
-			queueName:      queueName,
-			maxAttempts:    maxAttempts,
-			uniqueByPeriod: uniqueByPeriodEmotions,
+			name:        "emotions",
+			inserter:    inserter,
+			resolver:    resolver,
+			metrics:     metrics,
+			queueName:   queueName,
+			maxAttempts: maxAttempts,
 			// Re-classify only when the text changes: emotions depend on value_text alone, not on
 			// source language (a prompt hint only), like sentiment.
 			triggers:   []string{"value_text"},

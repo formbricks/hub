@@ -218,7 +218,7 @@ func TestBackfillTranslationsForTenant_Isolation(t *testing.T) {
 	inserter := &countingTranslationInserter{}
 	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
-	enqueued, err := svc.BackfillTranslationsForTenant(ctx, inserter, service.TranslationsQueueName, 3, tenantA)
+	enqueued, err := svc.BackfillTranslationsForTenant(ctx, inserter, service.TranslationsQueueName, 3, tenantA, "run-1")
 	require.NoError(t, err)
 	assert.Equal(t, 2, enqueued)
 
@@ -226,7 +226,7 @@ func TestBackfillTranslationsForTenant_Isolation(t *testing.T) {
 	for _, job := range inserter.args {
 		enqueuedIDs[job.FeedbackRecordID] = job.TargetLang
 
-		assert.Equal(t, "backfill", job.ValueTextHash, "backfill jobs carry the constant hash")
+		assert.Equal(t, "backfill:run-1", job.ValueTextHash, "backfill jobs carry the per-run marker")
 	}
 
 	assert.Equal(t, map[uuid.UUID]string{recA1.ID: "de-DE", recA2.ID: "de-DE"}, enqueuedIDs,

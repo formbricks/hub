@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"github.com/riverqueue/river"
 
@@ -24,13 +23,12 @@ type enqueueMetrics interface {
 // hooks that actually vary between enrichments — which changed fields re-enqueue on update,
 // record eligibility, the per-tenant gate, the dedupe hash, and the job args.
 type enrichmentProviderConfig struct {
-	name           string // enrichment name, used only in log messages ("sentiment", ...)
-	inserter       RiverJobInserter
-	resolver       TenantSettingsReader // required iff enabled != nil; otherwise unused
-	metrics        enqueueMetrics       // may be nil when metrics are disabled
-	queueName      string
-	maxAttempts    int
-	uniqueByPeriod time.Duration
+	name        string // enrichment name, used only in log messages ("sentiment", ...)
+	inserter    RiverJobInserter
+	resolver    TenantSettingsReader // required iff enabled != nil; otherwise unused
+	metrics     enqueueMetrics       // may be nil when metrics are disabled
+	queueName   string
+	maxAttempts int
 
 	// triggers are the changed fields that re-enqueue on an update event.
 	triggers []string
@@ -149,10 +147,16 @@ func (p *enrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
+	// Deliberately no UniqueOpts: River's default unique states include `completed` (which
+	// cannot be removed), so hash-dedupe silently swallowed legitimate re-enrichment whenever
+	// content transitioned away and back within the epoch-aligned dedupe bucket (A→cleared→A
+	// left the enrichment NULL; A→""→B→"" kept B's result on an empty record). Update events
+	// fire only for fields that actually changed (FieldsChangedFrom), so every event here is a
+	// real content transition that must re-enrich — idempotent client re-sends never reach this
+	// path in the first place.
 	opts := &river.InsertOpts{
 		Queue:       cfg.queueName,
 		MaxAttempts: cfg.maxAttempts,
-		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: cfg.uniqueByPeriod},
 	}
 
 	if _, err := cfg.inserter.Insert(ctx, args, opts); err != nil {

@@ -296,17 +296,35 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, error) {
+	// Read the pre-update row so the event can carry the fields that ACTUALLY changed, not
+	// merely the fields present in the request: an integration idempotently re-PATCHing the
+	// same values must not re-fire webhooks or re-run every LLM enrichment. Best-effort — on a
+	// read error, fall back to presence-based fields (conservative toward firing). One cheap PK
+	// lookup on the update path only; the hot create path is untouched.
+	var old *models.FeedbackRecord
+	if s.publisher != nil && len(req.ChangedFields()) > 0 {
+		old, _ = s.repo.GetByID(ctx, id)
+	}
+
 	record, err := s.repo.Update(ctx, id, req)
 	if err != nil {
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
 
-	// A no-op update (no fields set) writes nothing — the repository returns the
-	// current row without taking the tenant write lock — so it must not publish
-	// an "updated" event either. Otherwise an empty PATCH would fire tenant-owned
-	// side effects, including while the tenant is under a data purge.
-	if changed := req.ChangedFields(); s.publisher != nil && len(changed) > 0 {
-		s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, changed)
+	// A no-op update (no fields set, or every set field equal to its current value) must not
+	// publish an "updated" event: the repository returns the current row for an empty PATCH
+	// without taking the tenant write lock, and firing tenant-owned side effects for a
+	// nothing-changed write would re-trigger webhooks and enrichment for free — including
+	// while the tenant is under a data purge.
+	if s.publisher != nil {
+		changed := req.ChangedFields()
+		if old != nil {
+			changed = req.FieldsChangedFrom(old)
+		}
+
+		if len(changed) > 0 {
+			s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, changed)
+		}
 	}
 
 	return record, nil
@@ -431,6 +449,7 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model s
 	}
 
 	enqueued := 0
+	skipped := 0
 	afterID := uuid.Nil
 
 	for {
@@ -444,13 +463,21 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model s
 		}
 
 		for _, id := range ids {
-			_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
+			res, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
 				FeedbackRecordID: id,
 				Model:            model,
 				ValueTextHash:    "backfill",
 			}, opts)
 			if err != nil {
 				return enqueued, fmt.Errorf("enqueue embedding job for %s: %w", id, err)
+			}
+
+			// A duplicate skipped by the unique insert (a still-pending job from an earlier
+			// run) is not an enqueue — count it truthfully.
+			if res != nil && res.UniqueSkippedAsDuplicate {
+				skipped++
+
+				continue
 			}
 
 			enqueued++
@@ -463,6 +490,11 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model s
 		if len(ids) < embeddingBackfillPageSize {
 			break
 		}
+	}
+
+	if skipped > 0 {
+		slog.Info("embedding backfill: duplicate jobs skipped by unique insert",
+			"skipped", skipped, "enqueued", enqueued)
 	}
 
 	return enqueued, nil
@@ -481,11 +513,12 @@ const translationBackfillPageSize = 500
 
 // BackfillTranslations enqueues a translation job for every feedback record (across all
 // tenants) that needs (re)translation, streaming the targets in keyset pages. Used by the
-// one-off global backfill command. Returns the number of jobs enqueued.
+// one-off global backfill command. runID discriminates this run's jobs from earlier runs'
+// (see enqueueTranslationBackfillJobs). Returns the number of jobs enqueued.
 func (s *FeedbackRecordsService) BackfillTranslations(
-	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int,
+	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int, runID string,
 ) (int, error) {
-	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts),
+	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts), runID,
 		func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error) {
 			targets, err := s.repo.ListTranslationBackfillTargets(
 				ctx, afterID, translationBackfillPageSize, s.translationDefaultLang)
@@ -500,11 +533,12 @@ func (s *FeedbackRecordsService) BackfillTranslations(
 // BackfillTranslationsForTenant enqueues a translation job for every record of a single
 // tenant that needs (re)translation, streaming in keyset pages so a large tenant is never
 // fully materialized. It is the bulk work behind a settings-change re-translation
-// (TenantTranslationBackfillArgs). Returns the number of jobs enqueued.
+// (TenantTranslationBackfillArgs). runID discriminates this run's jobs from earlier runs'
+// (see enqueueTranslationBackfillJobs). Returns the number of jobs enqueued.
 func (s *FeedbackRecordsService) BackfillTranslationsForTenant(
-	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int, tenantID string,
+	ctx context.Context, inserter RiverJobInserter, queueName string, maxAttempts int, tenantID, runID string,
 ) (int, error) {
-	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts),
+	return s.backfillTranslationsPaged(ctx, inserter, translationBackfillInsertOpts(queueName, maxAttempts), runID,
 		func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error) {
 			targets, err := s.repo.ListTranslationBackfillTargetsForTenant(
 				ctx, tenantID, afterID, translationBackfillPageSize, s.translationDefaultLang)
@@ -524,9 +558,11 @@ func (s *FeedbackRecordsService) backfillTranslationsPaged(
 	ctx context.Context,
 	inserter RiverJobInserter,
 	opts *river.InsertOpts,
+	runID string,
 	fetchPage func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error),
 ) (int, error) {
 	enqueued := 0
+	skipped := 0
 	afterID := uuid.Nil
 
 	for {
@@ -539,8 +575,9 @@ func (s *FeedbackRecordsService) backfillTranslationsPaged(
 			break
 		}
 
-		inserted, err := enqueueTranslationBackfillJobs(ctx, inserter, opts, targets)
+		inserted, duplicates, err := enqueueTranslationBackfillJobs(ctx, inserter, opts, runID, targets)
 		enqueued += inserted
+		skipped += duplicates
 
 		if err != nil {
 			return enqueued, err
@@ -553,11 +590,17 @@ func (s *FeedbackRecordsService) backfillTranslationsPaged(
 		}
 	}
 
+	if skipped > 0 {
+		slog.Info("translation backfill: duplicate jobs skipped by unique insert",
+			"skipped", skipped, "enqueued", enqueued)
+	}
+
 	return enqueued, nil
 }
 
 // translationBackfillInsertOpts is the shared River insert config for backfill translation
-// jobs: per-record dedup by (record, target, hash) within the 24h window.
+// jobs: per-record dedup by (record, target, run) within the 24h window, so a rescued or
+// retried fan-out cannot double-enqueue the pages it already inserted.
 func translationBackfillInsertOpts(queueName string, maxAttempts int) *river.InsertOpts {
 	return &river.InsertOpts{
 		Queue:       queueName,
@@ -567,25 +610,34 @@ func translationBackfillInsertOpts(queueName string, maxAttempts int) *river.Ins
 }
 
 // enqueueTranslationBackfillJobs inserts one FeedbackTranslationArgs per target. The
-// "backfill" hash marks these jobs distinct from event-driven ones. It returns the count
-// enqueued and stops on the first insert error.
+// "backfill:<runID>" hash marks these jobs distinct from event-driven ones AND from earlier
+// runs' jobs: River's unique states include completed, so a constant marker would let a
+// completed job from a previous run (e.g. before the tenant's target flip-flopped back the
+// same day) silently swallow this run's re-translation. Within one run the marker is stable,
+// so a rescued/retried fan-out still dedupes its own re-inserted pages. Unique-skipped
+// duplicates are counted separately — never as enqueued. Stops on the first insert error.
 func enqueueTranslationBackfillJobs(
 	ctx context.Context, inserter RiverJobInserter, opts *river.InsertOpts,
-	targets []models.TranslationBackfillTarget,
-) (int, error) {
-	enqueued := 0
-
+	runID string, targets []models.TranslationBackfillTarget,
+) (enqueued, skipped int, err error) {
 	for _, target := range targets {
-		if _, err := inserter.Insert(ctx, FeedbackTranslationArgs{
+		res, err := inserter.Insert(ctx, FeedbackTranslationArgs{
 			FeedbackRecordID: target.FeedbackRecordID,
 			TargetLang:       target.TargetLang,
-			ValueTextHash:    "backfill",
-		}, opts); err != nil {
-			return enqueued, fmt.Errorf("enqueue translation job for %s: %w", target.FeedbackRecordID, err)
+			ValueTextHash:    "backfill:" + runID,
+		}, opts)
+		if err != nil {
+			return enqueued, skipped, fmt.Errorf("enqueue translation job for %s: %w", target.FeedbackRecordID, err)
+		}
+
+		if res != nil && res.UniqueSkippedAsDuplicate {
+			skipped++
+
+			continue
 		}
 
 		enqueued++
 	}
 
-	return enqueued, nil
+	return enqueued, skipped, nil
 }
