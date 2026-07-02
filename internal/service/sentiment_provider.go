@@ -90,21 +90,20 @@ func (p *SentimentProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
-	// Per-directory gate: skip tenants that have switched sentiment enrichment off. Read after
-	// the cheap eligibility checks so non-eligible events never hit the settings cache.
+	// Per-directory gate: skip tenants that have switched sentiment enrichment off. Read after the
+	// cheap eligibility checks so non-eligible events never hit the settings cache. This gate is a
+	// best-effort optimization: on a settings-read error we fail OPEN (enqueue anyway) and let the
+	// worker re-check the setting as the authoritative gate, so a transient tenant_settings/cache
+	// outage cannot permanently lose enrichment for events ingested during the outage.
 	settings, err := p.resolver.GetSettings(ctx, record.TenantID)
 	if err != nil {
 		if p.metrics != nil {
 			p.metrics.RecordProviderError(ctx, "settings_read_failed")
 		}
 
-		slog.Error("sentiment: resolve tenant settings failed",
+		slog.Warn("sentiment: resolve tenant settings failed, enqueuing anyway (worker re-checks the gate)",
 			"event_id", event.ID, "feedback_record_id", record.ID, "error", err)
-
-		return
-	}
-
-	if !settings.Settings.SentimentEnrichmentEnabled() {
+	} else if !settings.Settings.SentimentEnrichmentEnabled() {
 		slog.Debug("sentiment: skip, disabled for tenant", "feedback_record_id", record.ID)
 
 		return

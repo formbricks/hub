@@ -172,6 +172,7 @@ var allowedSentimentOutcomeStatuses = map[string]bool{
 var allowedSentimentWorkerReasons = map[string]bool{
 	"sentiment_api_failed":  true,
 	"get_record_failed":     true,
+	"settings_read_failed":  true,
 	"update_failed":         true,
 	"tenant_write_conflict": true,
 	"rate_limited":          true,

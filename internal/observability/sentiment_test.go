@@ -18,7 +18,8 @@ func TestSentimentAllowedReasonsAndStatuses(t *testing.T) {
 	}
 
 	workerReasons := []string{
-		"sentiment_api_failed", "get_record_failed", "update_failed", "tenant_write_conflict", "rate_limited",
+		"sentiment_api_failed", "get_record_failed", "settings_read_failed",
+		"update_failed", "tenant_write_conflict", "rate_limited",
 	}
 	for _, reason := range workerReasons {
 		assert.True(t, AllowedSentimentWorkerReason(reason), reason)

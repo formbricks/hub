@@ -207,7 +207,10 @@ func TestSentimentProvider_PublishEvent_enqueuesWhenExplicitlyEnabled(t *testing
 	require.Len(t, inserter.calls, 1)
 }
 
-func TestSentimentProvider_PublishEvent_skipsOnSettingsReadError(t *testing.T) {
+func TestSentimentProvider_PublishEvent_failsOpenOnSettingsReadError(t *testing.T) {
+	// A settings-read failure must not drop the event: the provider fails open (enqueues anyway)
+	// and the worker re-checks the gate, so a transient settings/cache outage cannot permanently
+	// lose enrichment for events ingested during the outage.
 	inserter := &mockSentimentInserter{}
 	provider := NewSentimentProvider(
 		inserter, stubSettingsResolver{err: errors.New("db down")}, SentimentsQueueName, 3, nil)
@@ -219,5 +222,5 @@ func TestSentimentProvider_PublishEvent_skipsOnSettingsReadError(t *testing.T) {
 		Data: sentimentTextRecord(uuid.Must(uuid.NewV7()), &text),
 	})
 
-	assert.Empty(t, inserter.calls, "a settings read failure skips rather than enqueuing blindly")
+	require.Len(t, inserter.calls, 1, "a settings read failure fails open (enqueues), leaving the gate to the worker")
 }

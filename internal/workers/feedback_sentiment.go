@@ -24,9 +24,10 @@ import (
 type FeedbackSentimentWorker struct {
 	river.WorkerDefaults[service.FeedbackSentimentArgs]
 
-	service sentimentWorkerService
-	client  service.SentimentClient
-	metrics observability.SentimentMetrics
+	service  sentimentWorkerService
+	resolver sentimentSettingsReader
+	client   service.SentimentClient
+	metrics  observability.SentimentMetrics
 }
 
 // sentimentWorkerService is the minimal interface the worker needs.
@@ -35,12 +36,23 @@ type sentimentWorkerService interface {
 	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64) error
 }
 
-// NewFeedbackSentimentWorker creates a worker that fetches the record, classifies its value_text,
-// and stores the result. metrics may be nil when metrics are disabled.
+// sentimentSettingsReader resolves a tenant's enrichment settings. The worker re-checks the
+// per-directory sentiment switch through it because the enqueue provider fails open on a
+// settings-read error (it enqueues rather than dropping the event), which makes the worker the
+// authoritative gate before the LLM call: a transient tenant_settings/cache outage can defer
+// work, but can never enrich a tenant that turned sentiment off, nor permanently drop it.
+type sentimentSettingsReader interface {
+	GetSettings(ctx context.Context, tenantID string) (*models.TenantSettings, error)
+}
+
+// NewFeedbackSentimentWorker creates a worker that fetches the record, re-checks the per-directory
+// sentiment gate, classifies its value_text, and stores the result. metrics may be nil when
+// metrics are disabled.
 func NewFeedbackSentimentWorker(
-	svc sentimentWorkerService, client service.SentimentClient, metrics observability.SentimentMetrics,
+	svc sentimentWorkerService, resolver sentimentSettingsReader,
+	client service.SentimentClient, metrics observability.SentimentMetrics,
 ) *FeedbackSentimentWorker {
-	return &FeedbackSentimentWorker{service: svc, client: client, metrics: metrics}
+	return &FeedbackSentimentWorker{service: svc, resolver: resolver, client: client, metrics: metrics}
 }
 
 const feedbackSentimentTimeout = 30 * time.Second
@@ -92,6 +104,37 @@ func (w *FeedbackSentimentWorker) Work(ctx context.Context, job *river.Job[servi
 	if record.FieldType != models.FieldTypeText {
 		w.recordOutcome(ctx, "skipped", start)
 		slog.Info("sentiment: skipped, not a text field", "feedback_record_id", args.FeedbackRecordID)
+
+		return nil
+	}
+
+	// Authoritative per-directory gate. The enqueue provider fails open on a settings-read error
+	// (it enqueues rather than dropping), so re-check here before doing any work: a read error is
+	// transient and retries; a tenant that turned sentiment off is skipped without classifying or
+	// clearing (matching what the provider gate does when settings are readable).
+	settings, err := w.resolver.GetSettings(ctx, record.TenantID)
+	if err != nil {
+		isLastAttempt := job.Attempt >= job.MaxAttempts
+
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "settings_read_failed")
+		}
+
+		w.recordOutcome(ctx, outcome, start)
+		slog.Error("sentiment: resolve tenant settings failed",
+			"feedback_record_id", args.FeedbackRecordID, "final_attempt", isLastAttempt, "error", err)
+
+		return fmt.Errorf("resolve tenant settings: %w", err)
+	}
+
+	if !settings.Settings.SentimentEnrichmentEnabled() {
+		w.recordOutcome(ctx, "skipped", start)
+		slog.Info("sentiment: skipped, disabled for tenant", "feedback_record_id", args.FeedbackRecordID)
 
 		return nil
 	}
