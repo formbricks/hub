@@ -750,33 +750,51 @@ func buildUpdateQuery(
 		argCount++
 	}
 
-	// Clear a now-stale translation, but only when value_text or language ACTUALLY changes:
-	// the bare column on the RHS of an UPDATE ... SET is the pre-update value, so this compares
-	// old vs new. Clearing only on a real change keeps a client re-sending an unchanged value
-	// from wiping a valid translation, while a real change NULLs the pair — which both triggers
-	// re-translation via the update event and makes the row a backfill target
-	// (translation_lang_key NULL IS DISTINCT FROM the tenant target), so a missed or
-	// finally-failed re-translation is still recovered by a later backfill. The value_text
-	// comparison is btrim-level to match the enrichment content hash (which trims before
-	// hashing): a whitespace-only edit must not count as a content change, or it would clear a
-	// translation the pipeline considers current. (NFC-only differences remain byte-unequal here
-	// — exotic, and the update event still re-translates them.) Reuses the existing value_text /
-	// language placeholders, so it consumes none of its own.
-	var staleConds []string
+	// Clear now-stale enrichment outputs, but only when the field they derive from ACTUALLY
+	// changes: the bare column on the RHS of an UPDATE ... SET is the pre-update value, so each
+	// CASE compares old vs new and clears only on a real change. This keeps a client re-sending an
+	// unchanged value from wiping a valid enrichment, while a real change NULLs the output — which
+	// both re-triggers enrichment via the update event and (for translation) makes the row a
+	// backfill target (translation_lang_key NULL IS DISTINCT FROM the tenant target), so a missed
+	// or finally-failed re-enrichment is still recovered by a later backfill. The value_text
+	// comparison is btrim-level to match the enrichment content hash (which trims before hashing):
+	// a whitespace-only edit must not count as a content change, or it would clear an output the
+	// pipeline considers current. (NFC-only differences remain byte-unequal here — exotic, and the
+	// update event still re-enriches them.) Reuses the existing value_text / language placeholders,
+	// so it consumes none of its own.
+	//
+	// Each output's trigger set MIRRORS its provider's `triggers` (internal/service/*_provider.go):
+	// sentiment and emotions depend on value_text alone; translation on value_text OR language.
+	// Keep the two in sync — TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange guards it.
+	// The embedding is a separate search-index table, intentionally left to its worker's atomic
+	// overwrite (not cleared here).
+	var valueTextChanged, languageChanged string
 	if valueTextArg != 0 {
-		staleConds = append(staleConds,
-			fmt.Sprintf("btrim(coalesce(value_text, '')) IS DISTINCT FROM btrim(coalesce($%d, ''))", valueTextArg))
+		valueTextChanged = fmt.Sprintf(
+			"btrim(coalesce(value_text, '')) IS DISTINCT FROM btrim(coalesce($%d, ''))", valueTextArg)
 	}
 
 	if languageArg != 0 {
-		staleConds = append(staleConds, fmt.Sprintf("language IS DISTINCT FROM $%d", languageArg))
+		// language is a varchar column, so SET language = $N coerces the param to varchar. The
+		// comparison must cast to varchar too: a bare `language IS DISTINCT FROM $N` resolves via
+		// the text operator and pins the shared placeholder to text, which conflicts with the
+		// varchar assignment and fails with "inconsistent types deduced for parameter" (42P08).
+		languageChanged = fmt.Sprintf("language IS DISTINCT FROM $%d::varchar", languageArg)
 	}
 
-	if len(staleConds) > 0 {
-		cond := strings.Join(staleConds, " OR ")
+	// Translation is invalidated by a text OR language change; sentiment/emotions by text alone.
+	if translationCond := joinOr(valueTextChanged, languageChanged); translationCond != "" {
 		updates = append(updates,
-			fmt.Sprintf("value_text_translated = CASE WHEN %s THEN NULL ELSE value_text_translated END", cond),
-			fmt.Sprintf("translation_lang_key = CASE WHEN %s THEN NULL ELSE translation_lang_key END", cond),
+			clearColumnWhen("value_text_translated", translationCond),
+			clearColumnWhen("translation_lang_key", translationCond),
+		)
+	}
+
+	if valueTextChanged != "" {
+		updates = append(updates,
+			clearColumnWhen("sentiment", valueTextChanged),
+			clearColumnWhen("sentiment_score", valueTextChanged),
+			clearColumnWhen("emotions", valueTextChanged),
 		)
 	}
 
@@ -800,6 +818,26 @@ func buildUpdateQuery(
 		strings.Join(updates, ", "), argCount, argCount+1)
 
 	return query, args, true
+}
+
+// clearColumnWhen builds a SET assignment that nulls col when cond holds and otherwise preserves
+// col's pre-update value (the bare column on the RHS is the old value). cond must reference only
+// already-bound placeholders, so the clear consumes no new args.
+func clearColumnWhen(col, cond string) string {
+	return col + " = CASE WHEN " + cond + " THEN NULL ELSE " + col + " END"
+}
+
+// joinOr joins the non-empty predicates with OR, returning "" when none are present.
+func joinOr(conds ...string) string {
+	nonEmpty := make([]string, 0, len(conds))
+
+	for _, c := range conds {
+		if c != "" {
+			nonEmpty = append(nonEmpty, c)
+		}
+	}
+
+	return strings.Join(nonEmpty, " OR ")
 }
 
 // Update updates an existing feedback record

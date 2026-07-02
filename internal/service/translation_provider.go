@@ -46,6 +46,8 @@ func NewTranslationProvider(
 			queueName:   queueName,
 			maxAttempts: maxAttempts,
 			// Re-translate when the text or its source language changes: output depends on both.
+			// Mirrored by the repo eager-clear in buildUpdateQuery (feedback_records_repository.go)
+			// — keep the two trigger sets in sync.
 			triggers:   []string{"value_text", "language"},
 			eligible:   (*models.FeedbackRecord).IsTextField,
 			hasContent: (*models.FeedbackRecord).HasOpenText,

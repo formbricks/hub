@@ -34,7 +34,8 @@ func NewSentimentProvider(
 			queueName:   queueName,
 			maxAttempts: maxAttempts,
 			// Re-classify only when the text changes: sentiment depends on value_text alone, not
-			// on source language (unlike translation).
+			// on source language (unlike translation). Mirrored by the repo eager-clear in
+			// buildUpdateQuery (feedback_records_repository.go) — keep the two trigger sets in sync.
 			triggers:                []string{"value_text"},
 			eligible:                (*models.FeedbackRecord).IsTextField,
 			hasContent:              (*models.FeedbackRecord).HasOpenText,

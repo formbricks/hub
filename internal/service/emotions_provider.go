@@ -34,7 +34,8 @@ func NewEmotionsProvider(
 			queueName:   queueName,
 			maxAttempts: maxAttempts,
 			// Re-classify only when the text changes: emotions depend on value_text alone, not on
-			// source language (a prompt hint only), like sentiment.
+			// source language (a prompt hint only), like sentiment. Mirrored by the repo eager-clear
+			// in buildUpdateQuery (feedback_records_repository.go) — keep the two trigger sets in sync.
 			triggers:                []string{"value_text"},
 			eligible:                (*models.FeedbackRecord).IsTextField,
 			hasContent:              (*models.FeedbackRecord).HasOpenText,
