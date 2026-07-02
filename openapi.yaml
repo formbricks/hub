@@ -52,6 +52,8 @@ tags:
       description: Tenant-scoped data purge operations
     - name: Tenant Settings
       description: Tenant-scoped enrichment settings
+    - name: Taxonomy
+      description: Automatic topic/subtopic taxonomy generation, run history, tree browsing, and node edits
 security:
     - ApiKeyAuth: []
 paths:
@@ -1407,6 +1409,623 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/fields:
+        get:
+            tags:
+                - Taxonomy
+            summary: List taxonomy-capable fields
+            description: |
+                Returns the feedback fields that can be used to generate a taxonomy for a tenant, along with the
+                number of text records and embedded records available per field scope (source_type, source_id,
+                field_id). A field with no attributed source is exposed under the canonical "no source" bucket
+                (empty source_id). Requires Hub embeddings to be configured; otherwise the endpoint returns 503.
+            operationId: list-taxonomy-fields
+            parameters:
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant whose taxonomy-capable fields should be listed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: Taxonomy-capable fields
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyFieldsOutputBody'
+                "400":
+                    description: Bad Request (e.g. missing or invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "503":
+                    description: |
+                        Service Unavailable – Hub embeddings are not configured, so taxonomy is unavailable
+                        (code `service_unavailable`). Retry once embeddings are enabled.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/runs:
+        get:
+            tags:
+                - Taxonomy
+            summary: List taxonomy runs
+            description: |
+                Returns taxonomy run history for a tenant, most recent first. Optionally filter by source_type,
+                field_id, and source_id. source_id is a tri-state filter: omit it for no source filter, pass an
+                empty string to scope to the canonical "no source" bucket, or pass a concrete value to match that
+                source.
+            operationId: list-taxonomy-runs
+            parameters:
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant whose runs should be listed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                - name: source_type
+                  in: query
+                  required: false
+                  description: Optional source_type filter.
+                  schema:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                - name: source_id
+                  in: query
+                  required: false
+                  description: |
+                    Optional source_id filter. Omit for no filter; empty string scopes to the "no source"
+                    bucket; a concrete value matches that source.
+                  schema:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                - name: field_id
+                  in: query
+                  required: false
+                  description: Optional field_id filter.
+                  schema:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                - name: limit
+                  in: query
+                  required: false
+                  description: Maximum number of runs to return.
+                  schema:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    maximum: 100
+            responses:
+                "200":
+                    description: Taxonomy run history
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListTaxonomyRunsOutputBody'
+                "400":
+                    description: Bad Request (e.g. missing/invalid tenant_id or query parameters)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        post:
+            tags:
+                - Taxonomy
+            summary: Start a taxonomy run
+            description: |
+                Starts a manual taxonomy generation run for a field scope. Hub validates that the field has enough
+                embedded text feedback (below the configured minimum returns 400 with an "insufficient data"
+                validation error), creates the run, and hands it to the taxonomy compute service.
+
+                Idempotent per scope: if a run is already pending or running for the same scope, the existing run
+                is returned with `in_progress: true` (HTTP 200) instead of starting a new one; a newly created run
+                returns HTTP 202 with `in_progress: false`. While a tenant data purge runs for the same tenant_id,
+                the request is rejected with HTTP 409 (code `tenant_write_conflict`) and may be retried. Requires
+                Hub embeddings and the taxonomy service to be configured; otherwise returns 503.
+            operationId: create-taxonomy-run
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateTaxonomyRunInputBody'
+                        examples:
+                            start:
+                                summary: Start a run for a survey field
+                                value:
+                                    tenant_id: "org-123"
+                                    source_type: "formbricks"
+                                    source_id: "survey-abc"
+                                    field_id: "feedback"
+                                    actor_id: "user-42"
+            responses:
+                "202":
+                    description: Run accepted and started
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreateTaxonomyRunOutputBody'
+                "200":
+                    description: A run for this scope is already in progress; the existing run is returned.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreateTaxonomyRunOutputBody'
+                "400":
+                    description: |
+                        Bad Request – invalid scope, or insufficient input (no text feedback for the field, or
+                        fewer embedded records than the configured minimum).
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "409":
+                    description: |
+                        Conflict – a tenant data purge for the same tenant_id is in progress
+                        (code `tenant_write_conflict`). No run was created; retry later.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "503":
+                    description: |
+                        Service Unavailable – Hub embeddings or the taxonomy compute service are not configured
+                        or did not accept the run (code `service_unavailable`). Retry later.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/runs/active/tree:
+        get:
+            tags:
+                - Taxonomy
+            summary: Get the active taxonomy tree for a scope
+            description: |
+                Returns the currently active taxonomy run and its tree for a field scope. Exactly one run is
+                active per scope at a time. Returns 404 when no run has been activated for the scope.
+            operationId: get-active-taxonomy-tree
+            parameters:
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant that owns the scope.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                - name: source_type
+                  in: query
+                  required: true
+                  description: Source type of the scope.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                - name: source_id
+                  in: query
+                  required: false
+                  description: Source ID of the scope; empty string is the canonical "no source" bucket.
+                  schema:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                - name: field_id
+                  in: query
+                  required: true
+                  description: Field ID of the scope.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+            responses:
+                "200":
+                    description: The active run and its taxonomy tree
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyTreeOutputBody'
+                "400":
+                    description: Bad Request (e.g. missing/invalid scope parameters)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – no active taxonomy run exists for the scope.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/runs/{run_id}:
+        get:
+            tags:
+                - Taxonomy
+            summary: Get a taxonomy run
+            description: Returns a single taxonomy run by ID, scoped to the tenant. Returns 404 if the run does not belong to the tenant.
+            operationId: get-taxonomy-run
+            parameters:
+                - name: run_id
+                  in: path
+                  required: true
+                  description: Taxonomy run ID.
+                  schema:
+                    type: string
+                    format: uuid
+                    example: "019f177f-9aa3-705e-8195-cea2aa187268"
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant that owns the run.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: The taxonomy run
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyRunData'
+                "400":
+                    description: Bad Request (e.g. invalid run_id or missing/invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – no run with this ID for the tenant.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/runs/{run_id}/tree:
+        get:
+            tags:
+                - Taxonomy
+            summary: Get a taxonomy run's tree
+            description: Returns the run and its taxonomy tree (visible nodes only; soft-removed nodes are excluded). Tenant-scoped; returns 404 if the run does not belong to the tenant.
+            operationId: get-taxonomy-run-tree
+            parameters:
+                - name: run_id
+                  in: path
+                  required: true
+                  description: Taxonomy run ID.
+                  schema:
+                    type: string
+                    format: uuid
+                    example: "019f177f-9aa3-705e-8195-cea2aa187268"
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant that owns the run.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: The run and its taxonomy tree
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyTreeOutputBody'
+                "400":
+                    description: Bad Request (e.g. invalid run_id or missing/invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – no run with this ID for the tenant.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/nodes/{node_id}:
+        patch:
+            tags:
+                - Taxonomy
+            summary: Rename a taxonomy node
+            description: |
+                Renames a taxonomy node's label and records a rename event attributed to actor_id. Tenant-scoped;
+                returns 404 if the node does not belong to the tenant. While a tenant data purge runs for the same
+                tenant_id, the request is rejected with HTTP 409 (code `tenant_write_conflict`) and may be retried.
+            operationId: rename-taxonomy-node
+            parameters:
+                - name: node_id
+                  in: path
+                  required: true
+                  description: Taxonomy node ID.
+                  schema:
+                    type: string
+                    format: uuid
+                    example: "019f177f-9abe-78cd-8008-f40b58e3147d"
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RenameTaxonomyNodeInputBody'
+                        examples:
+                            rename:
+                                summary: Rename a node
+                                value:
+                                    tenant_id: "org-123"
+                                    actor_id: "user-42"
+                                    label: "Authentication Problems"
+            responses:
+                "200":
+                    description: The updated node
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyNodeData'
+                "400":
+                    description: Bad Request (e.g. invalid node_id, missing fields, or empty label)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – no node with this ID for the tenant.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "409":
+                    description: |
+                        Conflict – a tenant data purge for the same tenant_id is in progress
+                        (code `tenant_write_conflict`). The node was not changed; retry later.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+        delete:
+            tags:
+                - Taxonomy
+            summary: Soft-remove a taxonomy node
+            description: |
+                Soft-removes a taxonomy node (sets removed_at/removed_by) and records a soft_remove event
+                attributed to actor_id. The node is retained for audit but excluded from tree responses.
+                Tenant-scoped; returns 404 if the node does not belong to the tenant. While a tenant data purge
+                runs for the same tenant_id, the request is rejected with HTTP 409 (code `tenant_write_conflict`).
+            operationId: remove-taxonomy-node
+            parameters:
+                - name: node_id
+                  in: path
+                  required: true
+                  description: Taxonomy node ID.
+                  schema:
+                    type: string
+                    format: uuid
+                    example: "019f177f-9abe-78cd-8008-f40b58e3147d"
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant that owns the node.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                - name: actor_id
+                  in: query
+                  required: true
+                  description: Identifier of the actor performing the removal (recorded in the audit event).
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+            responses:
+                "200":
+                    description: The soft-removed node
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyNodeData'
+                "400":
+                    description: Bad Request (e.g. invalid node_id or missing/invalid query parameters)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – no node with this ID for the tenant.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "409":
+                    description: |
+                        Conflict – a tenant data purge for the same tenant_id is in progress
+                        (code `tenant_write_conflict`). The node was not changed; retry later.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/nodes/{node_id}/records:
+        get:
+            tags:
+                - Taxonomy
+            summary: List feedback records for a taxonomy node
+            description: |
+                Returns the feedback records assigned to a node and all of its (visible) descendant nodes, via the
+                clusters those nodes reference. Tenant-scoped. The `limit` in the response reflects the applied cap.
+            operationId: list-taxonomy-node-records
+            parameters:
+                - name: node_id
+                  in: path
+                  required: true
+                  description: Taxonomy node ID.
+                  schema:
+                    type: string
+                    format: uuid
+                    example: "019f177f-9abe-78cd-8008-f40b58e3147d"
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant that owns the node.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                - name: limit
+                  in: query
+                  required: false
+                  description: Maximum number of feedback records to return.
+                  schema:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    maximum: 100
+            responses:
+                "200":
+                    description: Feedback records assigned to the node subtree
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyNodeRecordsOutputBody'
+                "400":
+                    description: Bad Request (e.g. invalid node_id or missing/invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
 components:
     securitySchemes:
         ApiKeyAuth:
@@ -2221,3 +2840,370 @@ components:
                     type: string
                     description: Update text response. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+        TaxonomyRunStatus:
+            type: string
+            description: Lifecycle state of a taxonomy run. Allowed transitions are pending -> running|failed|canceled and running -> succeeded|failed|canceled.
+            enum:
+                - pending
+                - running
+                - succeeded
+                - failed
+                - canceled
+        TaxonomyRunFailureCode:
+            type: string
+            description: Machine-readable reason a taxonomy run failed or a prerequisite was not met.
+            enum:
+                - insufficient_data
+                - service_unavailable
+                - generation_failed
+                - invalid_output
+                - internal_error
+        TaxonomyNodeType:
+            type: string
+            description: Position of a node within the taxonomy tree.
+            enum:
+                - root
+                - branch
+                - leaf
+        TaxonomyRunData:
+            type: object
+            additionalProperties: false
+            description: A persisted taxonomy generation run.
+            properties:
+                id:
+                    type: string
+                    format: uuid
+                tenant_id:
+                    type: string
+                source_type:
+                    type: string
+                source_id:
+                    type: string
+                    description: Empty string is the canonical "no source" bucket.
+                field_id:
+                    type: string
+                field_label:
+                    type: string
+                    description: Human-readable field label; absent when unknown.
+                status:
+                    $ref: '#/components/schemas/TaxonomyRunStatus'
+                params:
+                    type: object
+                    additionalProperties: true
+                    description: Opaque run parameters recorded by Hub.
+                metrics:
+                    type: object
+                    additionalProperties: true
+                    description: Opaque run metrics recorded by the taxonomy service.
+                record_count:
+                    type: integer
+                    format: int64
+                embedding_count:
+                    type: integer
+                    format: int64
+                cluster_count:
+                    type: integer
+                    format: int64
+                node_count:
+                    type: integer
+                    format: int64
+                error:
+                    type: string
+                    description: Sanitized failure message; present on failed runs.
+                error_code:
+                    $ref: '#/components/schemas/TaxonomyRunFailureCode'
+                started_at:
+                    type: string
+                    format: date-time
+                finished_at:
+                    type: string
+                    format: date-time
+                created_at:
+                    type: string
+                    format: date-time
+                updated_at:
+                    type: string
+                    format: date-time
+            required:
+                - id
+                - tenant_id
+                - source_type
+                - source_id
+                - field_id
+                - status
+                - record_count
+                - embedding_count
+                - cluster_count
+                - node_count
+                - created_at
+                - updated_at
+        TaxonomyClusterData:
+            type: object
+            additionalProperties: false
+            description: A generated feedback cluster within a taxonomy run. Clusters are summarized by leaf nodes in the tree.
+            properties:
+                id:
+                    type: string
+                    format: uuid
+                run_id:
+                    type: string
+                    format: uuid
+                cluster_key:
+                    type: integer
+                    format: int64
+                    description: Stable per-run cluster index.
+                label:
+                    type: string
+                llm_label:
+                    type: string
+                    description: LLM-generated cluster label.
+                keywords:
+                    type: array
+                    description: Representative keywords for the cluster.
+                    items:
+                        type: string
+                size:
+                    type: integer
+                    format: int64
+                    description: Number of feedback records in the cluster.
+                is_outlier:
+                    type: boolean
+                metrics:
+                    type: object
+                    additionalProperties: true
+                created_at:
+                    type: string
+                    format: date-time
+                updated_at:
+                    type: string
+                    format: date-time
+            required:
+                - id
+                - run_id
+                - cluster_key
+                - size
+                - is_outlier
+                - created_at
+                - updated_at
+        TaxonomyNodeData:
+            type: object
+            additionalProperties: false
+            description: A node in a taxonomy tree. Non-root nodes have a parent; leaf nodes reference the cluster they summarize.
+            properties:
+                id:
+                    type: string
+                    format: uuid
+                run_id:
+                    type: string
+                    format: uuid
+                parent_id:
+                    type: string
+                    format: uuid
+                    description: Parent node ID; absent for the root node.
+                cluster_id:
+                    type: string
+                    format: uuid
+                    description: Cluster this node summarizes; typically present on leaf nodes.
+                node_type:
+                    $ref: '#/components/schemas/TaxonomyNodeType'
+                label:
+                    type: string
+                original_label:
+                    type: string
+                    description: Label as originally generated, before any rename.
+                description:
+                    type: string
+                level:
+                    type: integer
+                    format: int64
+                    description: Depth in the tree; the root is level 0.
+                sort_order:
+                    type: integer
+                    format: int64
+                metadata:
+                    type: object
+                    additionalProperties: true
+                removed_at:
+                    type: string
+                    format: date-time
+                    description: Set when the node has been soft-removed.
+                removed_by:
+                    type: string
+                    description: Actor that soft-removed the node.
+                created_at:
+                    type: string
+                    format: date-time
+                updated_at:
+                    type: string
+                    format: date-time
+                children:
+                    type: array
+                    description: Child nodes, present when the tree is returned hierarchically.
+                    items:
+                        $ref: '#/components/schemas/TaxonomyNodeData'
+            required:
+                - id
+                - run_id
+                - node_type
+                - label
+                - level
+                - sort_order
+                - created_at
+                - updated_at
+        TaxonomyFieldOption:
+            type: object
+            additionalProperties: false
+            description: A feedback field that can be used for taxonomy generation, with its available input counts.
+            properties:
+                tenant_id:
+                    type: string
+                source_type:
+                    type: string
+                source_id:
+                    type: string
+                    description: Empty string is the canonical "no source" bucket.
+                source_name:
+                    type: string
+                field_id:
+                    type: string
+                field_label:
+                    type: string
+                record_count:
+                    type: integer
+                    format: int64
+                    description: Number of text feedback records in the scope.
+                embedding_count:
+                    type: integer
+                    format: int64
+                    description: Number of those records that have an embedding.
+            required:
+                - tenant_id
+                - source_type
+                - source_id
+                - field_id
+                - record_count
+                - embedding_count
+        TaxonomyFieldsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                data:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/TaxonomyFieldOption'
+            required:
+                - data
+        CreateTaxonomyRunInputBody:
+            type: object
+            additionalProperties: false
+            description: Request to start a manual taxonomy run for a field scope.
+            properties:
+                tenant_id:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                source_type:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                source_id:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    description: Optional; empty or omitted is the canonical "no source" bucket.
+                field_id:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                field_label:
+                    type: string
+                    pattern: '^[^\x00]*$'
+                    description: Optional human-readable field label.
+                actor_id:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    description: Optional identifier of the actor starting the run.
+            required:
+                - tenant_id
+                - source_type
+                - field_id
+        CreateTaxonomyRunOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                run:
+                    $ref: '#/components/schemas/TaxonomyRunData'
+                in_progress:
+                    type: boolean
+                    description: True when an existing pending/running run for the scope was returned instead of starting a new one.
+            required:
+                - run
+                - in_progress
+        ListTaxonomyRunsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                data:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/TaxonomyRunData'
+            required:
+                - data
+        TaxonomyTreeOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                run:
+                    $ref: '#/components/schemas/TaxonomyRunData'
+                root:
+                    description: Root node of the tree, or null when the run has no nodes.
+                    oneOf:
+                        - $ref: '#/components/schemas/TaxonomyNodeData'
+                        - type: "null"
+            required:
+                - run
+                - root
+        RenameTaxonomyNodeInputBody:
+            type: object
+            additionalProperties: false
+            description: Request to rename a taxonomy node.
+            properties:
+                tenant_id:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                actor_id:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                label:
+                    type: string
+                    minLength: 1
+                    pattern: '^[^\x00]*$'
+                    description: New node label.
+            required:
+                - tenant_id
+                - actor_id
+                - label
+        TaxonomyNodeRecordsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                data:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/FeedbackRecordData'
+                limit:
+                    type: integer
+                    format: int64
+                    description: The applied maximum number of records.
+            required:
+                - data
+                - limit
