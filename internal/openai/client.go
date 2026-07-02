@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	openaisdk "github.com/openai/openai-go/v3"
@@ -41,6 +42,9 @@ type Client struct {
 	dimensions int
 	model      string
 	normalize  bool
+	// temperatureUnsupported latches once the configured model rejects the temperature
+	// parameter (reasoning models do), so later calls omit it instead of failing.
+	temperatureUnsupported atomic.Bool
 }
 
 // ClientOption configures the Client.
@@ -87,6 +91,12 @@ func NewClient(apiKey string, opts ...ClientOption) *Client {
 
 	sdkOpts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
+		// Disable the SDK's internal retry loop (default 2 retries sleeping the full,
+		// uncapped Retry-After): it races the worker's job deadline, so a throttled call
+		// surfaced as context.DeadlineExceeded instead of the 429 — defeating the
+		// RateLimitError -> snooze path — and tripled request volume against an already
+		// rate-limited provider. River and the rate-limit snooze own all retry policy.
+		option.WithMaxRetries(0),
 	}
 	if client.baseURL != "" {
 		sdkOpts = append(sdkOpts, option.WithBaseURL(client.baseURL))
@@ -162,9 +172,8 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 		return "", ErrEmptyInput
 	}
 
-	resp, err := c.sdk.Chat.Completions.New(ctx, openaisdk.ChatCompletionNewParams{
-		Model:       c.model,
-		Temperature: param.NewOpt(0.0),
+	resp, err := c.createChatCompletion(ctx, openaisdk.ChatCompletionNewParams{
+		Model: c.model,
 		Messages: []openaisdk.ChatCompletionMessageParamUnion{
 			openaisdk.SystemMessage(systemPrompt),
 			openaisdk.UserMessage(userText),
@@ -189,9 +198,8 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 		return "", ErrEmptyInput
 	}
 
-	resp, err := c.sdk.Chat.Completions.New(ctx, openaisdk.ChatCompletionNewParams{
-		Model:       c.model,
-		Temperature: param.NewOpt(0.0),
+	resp, err := c.createChatCompletion(ctx, openaisdk.ChatCompletionNewParams{
+		Model: c.model,
 		Messages: []openaisdk.ChatCompletionMessageParamUnion{
 			openaisdk.SystemMessage(systemPrompt),
 			openaisdk.UserMessage(userText),
@@ -213,15 +221,71 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 	return completionText(resp)
 }
 
+// createChatCompletion runs a chat completion at temperature 0 (deterministic), falling back to
+// the model's default temperature for models that reject the parameter: reasoning models
+// (o-series, gpt-5 family) 400 on any non-default temperature, which config validation cannot
+// know up front. The first such rejection retries once without the parameter and latches
+// temperatureUnsupported, so every later call skips it — self-healing, with no model list to
+// maintain.
+func (c *Client) createChatCompletion(
+	ctx context.Context, params openaisdk.ChatCompletionNewParams,
+) (*openaisdk.ChatCompletion, error) {
+	if !c.temperatureUnsupported.Load() {
+		params.Temperature = param.NewOpt(0.0)
+	}
+
+	resp, err := c.sdk.Chat.Completions.New(ctx, params)
+	if err != nil && isUnsupportedTemperatureError(err) {
+		c.temperatureUnsupported.Store(true)
+
+		params.Temperature = param.Opt[float64]{} // omit the parameter entirely
+
+		resp, err = c.sdk.Chat.Completions.New(ctx, params)
+	}
+
+	if err != nil {
+		// Deliberately unwrapped: the per-call wrapping (and 429 mapping) happens in
+		// wrapChatCompletionError at the call sites.
+		return nil, err //nolint:wrapcheck // wrapped by the callers via wrapChatCompletionError.
+	}
+
+	return resp, nil
+}
+
+// isUnsupportedTemperatureError reports whether err is the API rejecting the temperature
+// parameter (invalid_request_error with param "temperature", as returned by reasoning models).
+func isUnsupportedTemperatureError(err error) bool {
+	var apiErr *openaisdk.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+
+	return apiErr.Param == "temperature" ||
+		strings.Contains(strings.ToLower(apiErr.Message), "temperature")
+}
+
 // completionText extracts the single trimmed assistant message from a chat
 // completion response, or ErrNoCompletionInResponse when there is no usable text.
+// A refusal or abnormal finish reason (e.g. content_filter, length) is included in
+// the error — model-generated text, never the user's input — so a persistent
+// refusal is diagnosable in logs instead of looking like a provider outage.
 func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 	if len(resp.Choices) == 0 {
 		return "", ErrNoCompletionInResponse
 	}
 
-	out := strings.TrimSpace(resp.Choices[0].Message.Content)
+	choice := resp.Choices[0]
+
+	out := strings.TrimSpace(choice.Message.Content)
 	if out == "" {
+		if refusal := strings.TrimSpace(choice.Message.Refusal); refusal != "" {
+			return "", fmt.Errorf("%w: model refused: %s", ErrNoCompletionInResponse, refusal)
+		}
+
+		if choice.FinishReason != "" && choice.FinishReason != "stop" {
+			return "", fmt.Errorf("%w: finish reason %q", ErrNoCompletionInResponse, choice.FinishReason)
+		}
+
 		return "", ErrNoCompletionInResponse
 	}
 
@@ -241,17 +305,38 @@ func wrapChatCompletionError(err error) error {
 	return wrapped
 }
 
-// openaiRetryAfter reads the Retry-After header (delta-seconds) from a 429 response, or 0
-// when absent or not an integer-seconds value.
+// openaiRetryAfter reads the retry hint from a 429 response: retry-after-ms
+// (milliseconds — OpenAI sends it for sub-second waits), then Retry-After as
+// delta-seconds (integer or fractional per the SDK's own parser), then Retry-After
+// as an HTTP-date. Returns 0 when absent or unparseable (the worker snoozes its
+// default). The result is a hint only; the worker clamps it to sane bounds.
 func openaiRetryAfter(apiErr *openaisdk.Error) time.Duration {
 	if apiErr == nil || apiErr.Response == nil {
 		return 0
 	}
 
-	secs, err := strconv.Atoi(apiErr.Response.Header.Get("Retry-After"))
-	if err != nil || secs < 0 {
+	if ms, err := strconv.ParseFloat(apiErr.Response.Header.Get("Retry-After-Ms"), 64); err == nil && ms > 0 {
+		return time.Duration(ms * float64(time.Millisecond))
+	}
+
+	header := apiErr.Response.Header.Get("Retry-After")
+	if header == "" {
 		return 0
 	}
 
-	return time.Duration(secs) * time.Second
+	if secs, err := strconv.ParseFloat(header, 64); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+
+		return time.Duration(secs * float64(time.Second))
+	}
+
+	if at, err := http.ParseTime(header); err == nil {
+		if wait := time.Until(at); wait > 0 {
+			return wait
+		}
+	}
+
+	return 0
 }

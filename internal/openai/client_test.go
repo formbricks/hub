@@ -121,10 +121,13 @@ func newChatCompletionServer(t *testing.T, handler http.HandlerFunc) *httptest.S
 }
 
 func TestTranslate_RateLimitReturnsRateLimitError(t *testing.T) {
-	// x-should-retry:false stops the SDK's own retry/backoff, so the 429 surfaces immediately.
+	// No x-should-retry masking: the client disables the SDK's internal retries
+	// (WithMaxRetries(0)), so a real 429 must surface immediately from a single call.
+	var calls atomic.Int32
+
 	server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
 		w.Header().Set("Retry-After", "12")
-		w.Header().Set("X-Should-Retry", "false")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 
@@ -136,11 +139,12 @@ func TestTranslate_RateLimitReturnsRateLimitError(t *testing.T) {
 	var rateLimited *huberrors.RateLimitError
 	require.ErrorAs(t, err, &rateLimited)
 	assert.Equal(t, 12*time.Second, rateLimited.RetryAfter, "the Retry-After header is honored")
+	assert.Equal(t, int32(1), calls.Load(),
+		"the SDK must not retry internally — River and the snooze own retry policy")
 }
 
 func TestTranslate_RateLimitWithoutRetryAfterHeader(t *testing.T) {
 	server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("X-Should-Retry", "false")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 
@@ -151,6 +155,73 @@ func TestTranslate_RateLimitWithoutRetryAfterHeader(t *testing.T) {
 	var rateLimited *huberrors.RateLimitError
 	require.ErrorAs(t, err, &rateLimited)
 	assert.Equal(t, time.Duration(0), rateLimited.RetryAfter, "no header means no hint, not a parse error")
+}
+
+func TestTranslate_RateLimitRetryAfterVariants(t *testing.T) {
+	tests := map[string]struct {
+		header string // header name
+		value  func() string
+		check  func(t *testing.T, got time.Duration)
+	}{
+		"fractional seconds": {
+			header: "Retry-After",
+			value:  func() string { return "1.5" },
+			check: func(t *testing.T, got time.Duration) {
+				t.Helper()
+				assert.Equal(t, 1500*time.Millisecond, got)
+			},
+		},
+		"http-date": {
+			header: "Retry-After",
+			value:  func() string { return time.Now().Add(90 * time.Second).UTC().Format(http.TimeFormat) },
+			check: func(t *testing.T, got time.Duration) {
+				t.Helper()
+				assert.InDelta(t, float64(90*time.Second), float64(got), float64(5*time.Second),
+					"an HTTP-date Retry-After is converted to a wait duration")
+			},
+		},
+		"retry-after-ms": {
+			header: "Retry-After-Ms",
+			value:  func() string { return "250" },
+			check: func(t *testing.T, got time.Duration) {
+				t.Helper()
+				assert.Equal(t, 250*time.Millisecond, got)
+			},
+		},
+		"negative seconds ignored": {
+			header: "Retry-After",
+			value:  func() string { return "-3" },
+			check: func(t *testing.T, got time.Duration) {
+				t.Helper()
+				assert.Equal(t, time.Duration(0), got)
+			},
+		},
+		"past http-date ignored": {
+			header: "Retry-After",
+			value:  func() string { return time.Now().Add(-time.Minute).UTC().Format(http.TimeFormat) },
+			check: func(t *testing.T, got time.Duration) {
+				t.Helper()
+				assert.Equal(t, time.Duration(0), got)
+			},
+		},
+	}
+
+	for name, testCase := range tests {
+		t.Run(name, func(t *testing.T) {
+			server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set(testCase.header, testCase.value())
+				w.WriteHeader(http.StatusTooManyRequests)
+			})
+
+			client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"))
+
+			_, err := client.Translate(context.Background(), "system prompt", "hello")
+
+			var rateLimited *huberrors.RateLimitError
+			require.ErrorAs(t, err, &rateLimited)
+			testCase.check(t, rateLimited.RetryAfter)
+		})
+	}
 }
 
 func TestTranslate_NonRateLimitErrorIsNotWrapped(t *testing.T) {
@@ -245,7 +316,6 @@ func TestCompleteJSON_SendsStrictSchemaAndReturnsJSON(t *testing.T) {
 func TestCompleteJSON_RateLimitReturnsRateLimitError(t *testing.T) {
 	server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "7")
-		w.Header().Set("X-Should-Retry", "false")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 
@@ -263,4 +333,106 @@ func TestCompleteJSON_EmptyInputReturnsErrEmptyInput(t *testing.T) {
 
 	_, err := client.CompleteJSON(context.Background(), "classify", "   ", sentimentTestSchema)
 	require.ErrorIs(t, err, ErrEmptyInput)
+}
+
+func TestCompleteJSON_RefusalAndFinishReasonAreSurfaced(t *testing.T) {
+	tests := map[string]struct {
+		message      map[string]any
+		finishReason string
+		wantInError  string
+	}{
+		"refusal": {
+			message:      map[string]any{"role": "assistant", "content": "", "refusal": "I can't help with that."},
+			finishReason: "stop",
+			wantInError:  "model refused: I can't help with that.",
+		},
+		"content filter": {
+			message:      map[string]any{"role": "assistant", "content": ""},
+			finishReason: "content_filter",
+			wantInError:  `finish reason "content_filter"`,
+		},
+	}
+
+	for name, testCase := range tests {
+		t.Run(name, func(t *testing.T) {
+			server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+
+				if err := json.NewEncoder(w).Encode(map[string]any{
+					"id":     "chatcmpl-test",
+					"object": "chat.completion",
+					"model":  "test-model",
+					"choices": []map[string]any{{
+						"index":         0,
+						"finish_reason": testCase.finishReason,
+						"message":       testCase.message,
+					}},
+				}); err != nil {
+					t.Errorf("encode response body: %v", err)
+				}
+			})
+
+			client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"))
+
+			_, err := client.CompleteJSON(context.Background(), "classify", "hello", sentimentTestSchema)
+			require.ErrorIs(t, err, ErrNoCompletionInResponse)
+			assert.ErrorContains(t, err, testCase.wantInError,
+				"the block/refusal reason must be diagnosable in logs")
+		})
+	}
+}
+
+// TestCompleteJSON_TemperatureFallbackForReasoningModels: a model that rejects the temperature
+// parameter (invalid_request_error, param "temperature" — reasoning-model behavior) triggers one
+// retry without it, and the client latches so later calls omit it up front.
+func TestCompleteJSON_TemperatureFallbackForReasoningModels(t *testing.T) {
+	var bodies []map[string]any
+
+	server := newChatCompletionServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		bodies = append(bodies, body)
+
+		if _, hasTemperature := body["temperature"]; hasTemperature {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{` +
+				`"message":"Unsupported parameter: 'temperature' is not supported with this model.",` +
+				`"type":"invalid_request_error","param":"temperature","code":"unsupported_parameter"}}`))
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"id":     "chatcmpl-test",
+			"object": "chat.completion",
+			"model":  "test-model",
+			"choices": []map[string]any{{
+				"index":         0,
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": `{"label":"neutral","score":0}`},
+			}},
+		}); err != nil {
+			t.Errorf("encode response body: %v", err)
+		}
+	})
+
+	client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("o-test"))
+
+	// First call: temperature rejected -> retried once without it, succeeding.
+	out, err := client.CompleteJSON(context.Background(), "classify", "hello", sentimentTestSchema)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"label":"neutral","score":0}`, out)
+
+	// Second call: the latch skips temperature up front (no wasted 400).
+	_, err = client.CompleteJSON(context.Background(), "classify", "hello again", sentimentTestSchema)
+	require.NoError(t, err)
+
+	require.Len(t, bodies, 3, "reject + fallback retry + latched second call")
+	assert.Contains(t, bodies[0], "temperature", "first attempt sends temperature 0")
+	assert.NotContains(t, bodies[1], "temperature", "the fallback retry omits it")
+	assert.NotContains(t, bodies[2], "temperature", "later calls skip it up front")
 }

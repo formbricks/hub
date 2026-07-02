@@ -181,4 +181,112 @@ func TestCompleteJSON_SendsResponseSchemaAndReturnsJSON(t *testing.T) {
 	properties := llmtest.MustMap(t, responseSchema["properties"], "properties")
 	assert.Contains(t, properties, "label")
 	assert.Contains(t, properties, "score")
+
+	// Classifications request a zero thinking budget: 2.5 models otherwise think by default,
+	// paying token cost and latency a one-line classification does not need.
+	thinkingConfig := llmtest.MustMap(t, generationConfig["thinkingConfig"], "thinkingConfig")
+	assert.EqualValues(t, 0, thinkingConfig["thinkingBudget"])
+}
+
+// TestCompleteJSON_ThinkingBudgetFallbackForProModels: a model that rejects the zero thinking
+// budget (Pro models cannot disable thinking) triggers one retry without the config, and the
+// client latches so later calls omit it up front.
+func TestCompleteJSON_ThinkingBudgetFallbackForProModels(t *testing.T) {
+	ctx := context.Background()
+
+	var bodies []map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		bodies = append(bodies, body)
+
+		if config, ok := body["generationConfig"].(map[string]any); ok {
+			if _, hasThinking := config["thinkingConfig"]; hasThinking {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT",` +
+					`"message":"Unable to submit request because thinking is enabled by default and thinking budget 0 is invalid for this model."}}`))
+
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model",` +
+			`"parts":[{"text":"{\"label\":\"neutral\",\"score\":0}"}]}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:      "test-key",
+		Backend:     genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
+	})
+	require.NoError(t, err)
+
+	client := &Client{client: genaiClient, model: "gemini-2.5-pro"}
+
+	// First call: budget rejected -> retried once without the config, succeeding.
+	out, err := client.CompleteJSON(ctx, "classify", "hello", sentimentTestSchema)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"label":"neutral","score":0}`, out)
+
+	// Second call: the latch skips the config up front (no wasted 400).
+	_, err = client.CompleteJSON(ctx, "classify", "hello again", sentimentTestSchema)
+	require.NoError(t, err)
+
+	require.Len(t, bodies, 3, "reject + fallback retry + latched second call")
+
+	firstConfig := llmtest.MustMap(t, bodies[0]["generationConfig"], "generationConfig")
+	assert.Contains(t, firstConfig, "thinkingConfig", "first attempt requests a zero budget")
+
+	secondConfig := llmtest.MustMap(t, bodies[1]["generationConfig"], "generationConfig")
+	assert.NotContains(t, secondConfig, "thinkingConfig", "the fallback retry omits it")
+
+	thirdConfig := llmtest.MustMap(t, bodies[2]["generationConfig"], "generationConfig")
+	assert.NotContains(t, thirdConfig, "thinkingConfig", "later calls skip it up front")
+}
+
+func TestCompleteJSON_BlockAndFinishReasonAreSurfaced(t *testing.T) {
+	tests := map[string]struct {
+		response    string
+		wantInError string
+	}{
+		"safety block": {
+			response:    `{"promptFeedback":{"blockReason":"SAFETY"}}`,
+			wantInError: "blocked: SAFETY",
+		},
+		"abnormal finish reason": {
+			response:    `{"candidates":[{"finishReason":"MAX_TOKENS","content":{"role":"model","parts":[]}}]}`,
+			wantInError: "finish reason: MAX_TOKENS",
+		},
+	}
+
+	for name, testCase := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(testCase.response))
+			}))
+			t.Cleanup(server.Close)
+
+			genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+				APIKey:      "test-key",
+				Backend:     genai.BackendGeminiAPI,
+				HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
+			})
+			require.NoError(t, err)
+
+			client := &Client{client: genaiClient, model: "gemini-2.5-flash"}
+
+			_, err = client.CompleteJSON(ctx, "classify", "hello", sentimentTestSchema)
+			require.ErrorIs(t, err, ErrNoCompletionInResponse)
+			assert.ErrorContains(t, err, testCase.wantInError,
+				"the block/finish reason must be diagnosable in logs")
+		})
+	}
 }

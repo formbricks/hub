@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/genai"
@@ -42,6 +43,10 @@ type Client struct {
 	model      string
 	dimensions int
 	normalize  bool
+	// thinkingBudgetUnsupported latches once the configured model rejects a zero thinking
+	// budget (Pro models cannot disable thinking), so later calls fall back to the model's
+	// default thinking behavior instead of failing.
+	thinkingBudgetUnsupported atomic.Bool
 }
 
 // ClientOption configures the Client.
@@ -173,12 +178,31 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 	// ResponseJsonSchema (standard JSON Schema) rather than ResponseSchema (the OpenAPI subset):
 	// it enforces the closed-object contract (additionalProperties:false), matching the OpenAI
 	// strict path. ResponseSchema must be omitted when ResponseJsonSchema is set.
-	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), &genai.GenerateContentConfig{
+	config := &genai.GenerateContentConfig{
 		Temperature:        &temperature,
 		SystemInstruction:  genai.NewContentFromText(systemPrompt, genai.RoleUser),
 		ResponseMIMEType:   "application/json",
 		ResponseJsonSchema: schema.JSONSchema(),
-	})
+	}
+
+	// Gemini 2.5 models think by default (dynamic budget), which adds thinking-token cost and
+	// seconds of latency to every one-line classification for no accuracy need at this task
+	// size. Request a zero budget (Flash-family models accept it); Pro models reject zero with
+	// an INVALID_ARGUMENT, in which case retry without the config and latch, falling back to
+	// the model's default thinking — self-healing, with no model list to maintain.
+	if !c.thinkingBudgetUnsupported.Load() {
+		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingBudget: new(int32)}
+	}
+
+	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), config)
+	if err != nil && isUnsupportedThinkingBudgetError(err) {
+		c.thinkingBudgetUnsupported.Store(true)
+
+		config.ThinkingConfig = nil
+
+		resp, err = c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), config)
+	}
+
 	if err != nil {
 		return "", wrapGenerateContentError(err)
 	}
@@ -186,15 +210,51 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 	return generateContentText(resp)
 }
 
+// isUnsupportedThinkingBudgetError reports whether err is the API rejecting the thinking-budget
+// configuration (INVALID_ARGUMENT mentioning thinking, as returned by Pro models for budget 0).
+func isUnsupportedThinkingBudgetError(err error) bool {
+	var apiErr genai.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != http.StatusBadRequest {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(apiErr.Message), "thinking")
+}
+
 // generateContentText extracts the trimmed text from a generate-content
-// response, or ErrNoCompletionInResponse when there is none.
+// response, or ErrNoCompletionInResponse when there is none. A safety block or
+// abnormal finish reason is included in the error — provider metadata, never the
+// user's input — so a persistent block is diagnosable in logs instead of looking
+// like a provider outage.
 func generateContentText(resp *genai.GenerateContentResponse) (string, error) {
 	out := strings.TrimSpace(resp.Text())
 	if out == "" {
-		return "", ErrNoCompletionInResponse
+		return "", fmt.Errorf("%w%s", ErrNoCompletionInResponse, emptyResponseDetail(resp))
 	}
 
 	return out, nil
+}
+
+// emptyResponseDetail renders the block/finish metadata explaining an empty response
+// (": blocked: SAFETY", ": finish reason: MAX_TOKENS"), or "" when none is present.
+func emptyResponseDetail(resp *genai.GenerateContentResponse) string {
+	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
+		detail := fmt.Sprintf(": blocked: %s", resp.PromptFeedback.BlockReason)
+		if resp.PromptFeedback.BlockReasonMessage != "" {
+			detail += " (" + resp.PromptFeedback.BlockReasonMessage + ")"
+		}
+
+		return detail
+	}
+
+	if len(resp.Candidates) > 0 {
+		candidate := resp.Candidates[0]
+		if candidate.FinishReason != "" && candidate.FinishReason != genai.FinishReasonStop {
+			return fmt.Sprintf(": finish reason: %s", candidate.FinishReason)
+		}
+	}
+
+	return ""
 }
 
 // wrapGenerateContentError wraps a generate-content SDK error, mapping a 429 /
