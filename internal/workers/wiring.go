@@ -39,9 +39,10 @@ type RiverDeps struct {
 	SentimentMetrics observability.SentimentMetrics
 
 	// Emotions worker (optional; if EmotionsClient is nil, emotions worker is not registered)
-	EmotionsService emotionsWorkerService
-	EmotionsClient  service.EmotionsClient
-	EmotionsMetrics observability.EmotionsMetrics
+	EmotionsService  emotionsWorkerService
+	EmotionsResolver tenantSettingsReader
+	EmotionsClient   service.EmotionsClient
+	EmotionsMetrics  observability.EmotionsMetrics
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
@@ -100,7 +101,8 @@ func NewRiverWorkersAndQueues(
 	}
 
 	if deps.EmotionsClient != nil {
-		emotionsWorker := NewFeedbackEmotionsWorker(deps.EmotionsService, deps.EmotionsClient, deps.EmotionsMetrics)
+		emotionsWorker := NewFeedbackEmotionsWorker(
+			deps.EmotionsService, deps.EmotionsResolver, deps.EmotionsClient, deps.EmotionsMetrics)
 		river.AddWorker(workers, emotionsWorker)
 
 		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: maxEmotions}

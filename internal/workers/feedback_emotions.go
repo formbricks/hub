@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,12 +23,20 @@ type emotionsWorkerService interface {
 	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue) error
 }
 
+// tenantSettingsReader resolves a tenant's enrichment settings for the worker's authoritative
+// per-directory gate (the enqueue provider fails open on a settings-read error, so the worker is
+// the real gate before the LLM call).
+type tenantSettingsReader interface {
+	GetSettings(ctx context.Context, tenantID string) (*models.TenantSettings, error)
+}
+
 const feedbackEmotionsTimeout = 30 * time.Second
 
 // NewFeedbackEmotionsWorker creates a worker that fetches the record, classifies its value_text,
 // and stores the emotion labels. metrics may be nil when metrics are disabled.
 func NewFeedbackEmotionsWorker(
-	svc emotionsWorkerService, client service.EmotionsClient, metrics observability.EmotionsMetrics,
+	svc emotionsWorkerService, resolver tenantSettingsReader,
+	client service.EmotionsClient, metrics observability.EmotionsMetrics,
 ) *FeedbackEmotionsWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackEmotionsArgs, service.EmotionsResult]{
 		name:       "emotions",
@@ -36,6 +45,14 @@ func NewFeedbackEmotionsWorker(
 		getRecord:  svc.GetFeedbackRecord,
 		eligible:   (*models.FeedbackRecord).IsTextField,
 		hasContent: (*models.FeedbackRecord).HasOpenText,
+		checkEnabled: func(ctx context.Context, record *models.FeedbackRecord) (bool, error) {
+			settings, err := resolver.GetSettings(ctx, record.TenantID)
+			if err != nil {
+				return false, fmt.Errorf("resolve tenant settings: %w", err)
+			}
+
+			return settings.Settings.EmotionsEnrichmentEnabled(), nil
+		},
 		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackEmotionsArgs) (service.EmotionsResult, error) {
 			sourceLang := ""
 			if record.Language != nil {

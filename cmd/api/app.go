@@ -250,7 +250,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.Translation.DefaultLanguage,
 	)
 
-	// Tenant settings service: shared by the sentiment worker's authoritative gate (registered
+	// Tenant settings service: shared by the emotions worker's authoritative gate (registered
 	// below), the settings HTTP handler, and the enqueue-path settings cache.
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
@@ -342,8 +342,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			return nil, fmt.Errorf("sentiment config: %w", sentimentErr)
 		}
 
-		river.AddWorker(riverWorkers, workers.NewFeedbackSentimentWorker(
-			feedbackRecordsService, tenantSettingsService, sentimentClient, sentimentMetrics))
+		river.AddWorker(riverWorkers, workers.NewFeedbackSentimentWorker(feedbackRecordsService, sentimentClient, sentimentMetrics))
 
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
@@ -367,7 +366,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			return nil, fmt.Errorf("emotions config: %w", emotionsErr)
 		}
 
-		river.AddWorker(riverWorkers, workers.NewFeedbackEmotionsWorker(feedbackRecordsService, emotionsClient, emotionsMetrics))
+		river.AddWorker(riverWorkers, workers.NewFeedbackEmotionsWorker(
+			feedbackRecordsService, tenantSettingsService, emotionsClient, emotionsMetrics))
 
 		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}

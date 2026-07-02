@@ -221,7 +221,14 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		emotionsRecordsService := service.NewFeedbackRecordsService(
 			emotionsRecordsRepo, nil, "", nil, nil, "", 0, "")
 
+		// The worker re-checks the per-directory emotions gate (the enqueue provider fails open on a
+		// settings-read error), so it needs its own tenant-settings reader. Read uncached so the gate
+		// stays authoritative: a toggle takes effect on the next job, and there is no settings-write
+		// cache-eviction hook in this process (writes go through hub-api).
+		emotionsSettingsService := service.NewTenantSettingsService(repository.NewTenantSettingsRepository(db))
+
 		deps.EmotionsService = emotionsRecordsService
+		deps.EmotionsResolver = emotionsSettingsService
 		deps.EmotionsClient = emotionsClient
 		deps.EmotionsMetrics = emotionsMetrics
 	}

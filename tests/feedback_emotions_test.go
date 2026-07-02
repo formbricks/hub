@@ -107,6 +107,9 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 
 	repo := repository.NewFeedbackRecordsRepository(db)
 	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+	// Real settings reader for the worker's per-directory gate; an unconfigured tenant defaults to
+	// emotions-on, so the classify/clear subtests below exercise the enabled path end to end.
+	settingsSvc := service.NewTenantSettingsService(repository.NewTenantSettingsRepository(db))
 
 	createText := func(valueText string) *models.FeedbackRecord {
 		rec, createErr := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
@@ -127,7 +130,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{
 			Labels: []models.EmotionValue{models.EmotionJoy, models.EmotionFear},
 		}}
-		worker := workers.NewFeedbackEmotionsWorker(svc, fake, nil)
+		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
 
 		require.NoError(t, worker.Work(ctx, emotionsWorkerJob(rec.ID)))
 
@@ -145,7 +148,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 		require.NoError(t, svc.SetEmotions(ctx, rec.ID, []models.EmotionValue{models.EmotionAnger}))
 
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{Labels: nil}}
-		worker := workers.NewFeedbackEmotionsWorker(svc, fake, nil)
+		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
 
 		require.NoError(t, worker.Work(ctx, emotionsWorkerJob(rec.ID)))
 
@@ -161,7 +164,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 		require.NoError(t, svc.SetEmotions(ctx, rec.ID, []models.EmotionValue{models.EmotionSadness}))
 
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{Labels: []models.EmotionValue{models.EmotionJoy}}}
-		worker := workers.NewFeedbackEmotionsWorker(svc, fake, nil)
+		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
 
 		require.NoError(t, worker.Work(ctx, emotionsWorkerJob(rec.ID)))
 
@@ -173,7 +176,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 
 	t.Run("worker skips a record gone before classify", func(t *testing.T) {
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{Labels: []models.EmotionValue{models.EmotionJoy}}}
-		worker := workers.NewFeedbackEmotionsWorker(svc, fake, nil)
+		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
 
 		require.NoError(t, worker.Work(ctx, emotionsWorkerJob(uuid.Must(uuid.NewV7()))))
 		assert.Equal(t, 0, fake.calls, "a gone record is not classified")

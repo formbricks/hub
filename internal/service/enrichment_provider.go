@@ -40,6 +40,12 @@ type enrichmentProviderConfig struct {
 	// provider resolves the tenant's settings and passes them to buildArgs; when false buildArgs
 	// receives nil (no settings read). A gated config must supply a resolver.
 	gated bool
+	// failOpenOnSettingsError makes a settings-read error enqueue the job anyway (buildArgs receives
+	// nil settings) instead of dropping it, so a transient settings/cache outage cannot permanently
+	// lose enrichment. Only safe when buildArgs is nil-safe and the worker re-checks the gate
+	// (sentiment, emotions); translation derives its target language from settings, so it needs them
+	// to build args and stays fail-closed (its backfill recovers dropped work).
+	failOpenOnSettingsError bool
 	// buildArgs decides whether to enqueue and builds the River job payload from the record and
 	// (when gated) the tenant's resolved settings. Returning ok=false skips the event — the
 	// enrichment is disabled for the tenant, or has no resolvable target. Folding the per-tenant
@@ -76,6 +82,8 @@ func (cfg enrichmentProviderConfig) validate() {
 		panic("enrichment provider " + cfg.name + ": buildArgs hook is required")
 	case cfg.gated && cfg.resolver == nil:
 		panic("enrichment provider " + cfg.name + ": resolver is required when the enrichment is gated")
+	case cfg.failOpenOnSettingsError && !cfg.gated:
+		panic("enrichment provider " + cfg.name + ": failOpenOnSettingsError requires a gated enrichment")
 	}
 }
 
@@ -126,13 +134,20 @@ func (p *enrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 				cfg.metrics.RecordProviderError(ctx, "settings_read_failed")
 			}
 
-			slog.Error(cfg.name+": resolve tenant settings failed",
+			if !cfg.failOpenOnSettingsError {
+				slog.Error(cfg.name+": resolve tenant settings failed",
+					"event_id", event.ID, "feedback_record_id", record.ID, "error", err)
+
+				return
+			}
+
+			// Fail open: enqueue anyway with nil settings; the worker re-checks the gate, so a
+			// transient settings/cache outage defers work to the worker rather than dropping it.
+			slog.Warn(cfg.name+": resolve tenant settings failed, enqueuing anyway (worker re-checks the gate)",
 				"event_id", event.ID, "feedback_record_id", record.ID, "error", err)
-
-			return
+		} else {
+			settings = resolved
 		}
-
-		settings = resolved
 	}
 
 	// buildArgs is the per-tenant gate and the payload builder in one: enqueue=false means skip

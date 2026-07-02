@@ -37,6 +37,12 @@ type enrichmentWorkerConfig[A river.JobArgs, R any] struct {
 	getRecord  func(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	eligible   func(record *models.FeedbackRecord) bool // nil ⇒ always eligible
 	hasContent func(record *models.FeedbackRecord) bool
+	// checkEnabled, when set, is the authoritative per-tenant gate re-checked in the worker before
+	// classifying: the enqueue provider fails open on a settings-read error, so the worker is the
+	// real gate. A read error retries (transient); a disabled tenant is skipped without classifying
+	// or clearing (matching the provider gate). nil ⇒ no worker-side gate (ungated, or enqueue-gated
+	// types whose args depend on settings, like translation).
+	checkEnabled func(ctx context.Context, record *models.FeedbackRecord) (bool, error)
 	// classify and persist receive the job args so a type can use a per-job value (e.g.
 	// translation's target language) for both the provider call and the write. persist's result is
 	// nil on the clear path.
@@ -136,6 +142,35 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 		slog.Info(cfg.name+": skipped, record not eligible", "feedback_record_id", id)
 
 		return nil
+	}
+
+	// Authoritative per-directory gate for gated types: the enqueue provider fails open on a
+	// settings-read error, so re-check here before doing any work. A read error retries; a tenant
+	// that turned the enrichment off is skipped without classifying or clearing.
+	if cfg.checkEnabled != nil {
+		enabled, err := cfg.checkEnabled(ctx, record)
+		if err != nil {
+			isLastAttempt := job.Attempt >= job.MaxAttempts
+
+			outcome := "retry"
+			if isLastAttempt {
+				outcome = "failed_final"
+			}
+
+			cfg.metrics.workerError(ctx, "settings_read_failed")
+			w.recordOutcome(ctx, outcome, start)
+			slog.Error(cfg.name+": resolve tenant settings failed",
+				"feedback_record_id", id, "final_attempt", isLastAttempt, "error", err)
+
+			return fmt.Errorf("resolve tenant settings: %w", err)
+		}
+
+		if !enabled {
+			w.recordOutcome(ctx, "skipped", start)
+			slog.Info(cfg.name+": skipped, disabled for tenant", "feedback_record_id", id)
+
+			return nil
+		}
 	}
 
 	// Content became empty since enqueue (e.g. an edit cleared it): clear any stale result rather
