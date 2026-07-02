@@ -133,7 +133,7 @@ func setupEmbeddingSearchHandler(
 // setupMetrics creates meter provider and hub metrics when metrics are enabled.
 // When NewMeterProvider returns nil (unsupported or disabled exporter), returns (nil, nil, nil) (metrics disabled).
 func setupMetrics(cfg *config.Config) (*sdkmetric.MeterProvider, *observability.Metrics, error) {
-	mp, err := observability.NewMeterProvider(cfg)
+	mp, err := observability.NewMeterProvider(cfg, "hub-api")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create meter provider: %w", err)
 	}
@@ -195,7 +195,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	if cfg.Observability.TracesExporter == "" {
 		slog.Warn("tracing not enabled (OTEL_TRACES_EXPORTER empty or unset)")
 	} else {
-		tracerProvider, err = observability.NewTracerProvider(cfg)
+		tracerProvider, err = observability.NewTracerProvider(cfg, "hub-api")
 		if err != nil {
 			if meterProvider != nil {
 				if err2 := observability.ShutdownMeterProvider(context.Background(), meterProvider); err2 != nil {
@@ -665,26 +665,65 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
-// runRiverQueueDepthPoller periodically updates the River default-queue depth gauge.
+// riverDepthQueues is the fixed queue set the depth poller reports — every queue the Hub
+// declares. The list bounds the gauge's queue-label cardinality; a queue with no backlog is
+// reported as 0 so dashboards see the series exist.
+var riverDepthQueues = []string{
+	river.QueueDefault,
+	service.EmbeddingsQueueName,
+	service.TranslationsQueueName,
+	service.TranslationBackfillsQueueName,
+	service.SentimentsQueueName,
+	service.EmotionsQueueName,
+}
+
+// runRiverQueueDepthPoller periodically updates the per-queue River backlog gauge. Covering
+// every declared queue (not just default) means a provider outage or a backfill piling tens of
+// thousands of jobs into an enrichment queue is visible in metrics before users notice the lag.
 func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetrics observability.EventMetrics) {
 	ticker := time.NewTicker(riverQueueDepthInterval)
 	defer ticker.Stop()
 
 	update := func() {
-		var count int
-
-		err := db.QueryRow(ctx,
-			`SELECT COUNT(*) FROM river_job WHERE queue = $1 AND state IN ($2, $3, $4)`,
-			river.QueueDefault,
+		rows, err := db.Query(ctx,
+			`SELECT queue, COUNT(*) FROM river_job
+			 WHERE queue = ANY($1) AND state IN ($2, $3, $4)
+			 GROUP BY queue`,
+			riverDepthQueues,
 			rivertype.JobStateAvailable, rivertype.JobStateRetryable, rivertype.JobStateScheduled,
-		).Scan(&count)
+		)
 		if err != nil {
 			slog.WarnContext(ctx, "river queue depth poll failed", "error", err)
 
 			return
 		}
+		defer rows.Close()
 
-		eventMetrics.SetRiverQueueDepth(count)
+		counts := make(map[string]int, len(riverDepthQueues))
+
+		for rows.Next() {
+			var (
+				queue string
+				count int
+			)
+			if err := rows.Scan(&queue, &count); err != nil {
+				slog.WarnContext(ctx, "river queue depth scan failed", "error", err)
+
+				return
+			}
+
+			counts[queue] = count
+		}
+
+		if err := rows.Err(); err != nil {
+			slog.WarnContext(ctx, "river queue depth poll failed", "error", err)
+
+			return
+		}
+
+		for _, queue := range riverDepthQueues {
+			eventMetrics.SetRiverQueueDepth(queue, counts[queue])
+		}
 	}
 
 	update()

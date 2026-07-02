@@ -55,6 +55,9 @@ const (
 	AttrEventType = "event_type"
 	AttrReason    = "reason"
 	AttrStatus    = "status"
+	// AttrQueue labels the River queue-depth gauge; values come from the poller's fixed queue
+	// set, so cardinality is bounded.
+	AttrQueue = "queue"
 )
 
 // AllowedEventTypes returns event type strings allowed for metric attributes (bounded cardinality).

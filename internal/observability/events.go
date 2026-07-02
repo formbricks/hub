@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,7 +17,9 @@ type EventMetrics interface {
 	RecordEventDiscarded(ctx context.Context, eventType string)
 	RecordFanOutDuration(ctx context.Context, duration time.Duration, eventType string)
 	SetChannelDepth(depth int)
-	SetRiverQueueDepth(depth int)
+	// SetRiverQueueDepth records the backlog of one named queue. The queue label is emitted on
+	// the gauge, so cardinality is bounded by the caller's fixed queue set (the poller's).
+	SetRiverQueueDepth(queue string, depth int)
 }
 
 // eventMetrics implements EventMetrics.
@@ -24,9 +27,13 @@ type eventMetrics struct {
 	eventsDiscarded   metric.Int64Counter
 	fanOutDuration    metric.Float64Histogram
 	channelDepth      atomic.Int64
-	riverQueueDepth   atomic.Int64
 	channelDepthGauge metric.Float64ObservableGauge
 	riverQueueGauge   metric.Float64ObservableGauge
+
+	// riverQueueDepths holds the latest polled backlog per queue name (a small fixed set from
+	// the poller), read by the observable-gauge callback.
+	riverQueueMu     sync.Mutex
+	riverQueueDepths map[string]int64
 }
 
 // NewEventMetrics creates EventMetrics and registers gauges. Returns (nil, nil) when meter is nil (metrics disabled).
@@ -54,8 +61,9 @@ func NewEventMetrics(meter metric.Meter) (EventMetrics, error) {
 	}
 
 	evtMetrics := &eventMetrics{
-		eventsDiscarded: eventsDiscarded,
-		fanOutDuration:  fanOutDuration,
+		eventsDiscarded:  eventsDiscarded,
+		fanOutDuration:   fanOutDuration,
+		riverQueueDepths: map[string]int64{},
 	}
 
 	channelDepthGauge, err := meter.Float64ObservableGauge(
@@ -75,9 +83,14 @@ func NewEventMetrics(meter metric.Meter) (EventMetrics, error) {
 
 	riverQueueGauge, err := meter.Float64ObservableGauge(
 		MetricNameRiverQueueDepth,
-		metric.WithDescription("Current River job queue depth (default queue, available/ready/scheduled)"),
+		metric.WithDescription("Current River job queue depth per queue (available/retryable/scheduled)"),
 		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
-			o.Observe(float64(evtMetrics.riverQueueDepth.Load()))
+			evtMetrics.riverQueueMu.Lock()
+			defer evtMetrics.riverQueueMu.Unlock()
+
+			for queue, depth := range evtMetrics.riverQueueDepths {
+				o.Observe(float64(depth), metric.WithAttributes(attribute.String(AttrQueue, queue)))
+			}
 
 			return nil
 		}),
@@ -109,6 +122,9 @@ func (e *eventMetrics) SetChannelDepth(depth int) {
 	e.channelDepth.Store(int64(depth))
 }
 
-func (e *eventMetrics) SetRiverQueueDepth(depth int) {
-	e.riverQueueDepth.Store(int64(depth))
+func (e *eventMetrics) SetRiverQueueDepth(queue string, depth int) {
+	e.riverQueueMu.Lock()
+	defer e.riverQueueMu.Unlock()
+
+	e.riverQueueDepths[queue] = int64(depth)
 }

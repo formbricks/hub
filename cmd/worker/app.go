@@ -39,7 +39,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	)
 
 	if cfg.Observability.MetricsExporter == "otlp" {
-		meterProvider, err = observability.NewMeterProvider(cfg)
+		meterProvider, err = observability.NewMeterProvider(cfg, "hub-worker")
 		if err != nil {
 			return nil, fmt.Errorf("create meter provider: %w", err)
 		}
@@ -55,7 +55,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	}
 
 	if cfg.Observability.TracesExporter != "" {
-		tracerProvider, err = observability.NewTracerProvider(cfg)
+		tracerProvider, err = observability.NewTracerProvider(cfg, "hub-worker")
 		if err != nil {
 			if meterProvider != nil {
 				_ = observability.ShutdownMeterProvider(context.Background(), meterProvider)

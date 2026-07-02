@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -14,13 +15,21 @@ import (
 	"github.com/formbricks/hub/internal/config"
 )
 
-// newResource returns a resource with service name "hub-api" merged with default.
-func newResource() (*resource.Resource, error) {
+// newResource returns a resource carrying serviceName merged with the SDK defaults. An explicit
+// OTEL_SERVICE_NAME wins: resource.Default() reads it, and overriding an operator's explicit
+// choice with our fallback would misattribute every metric and trace from that process.
+func newResource(serviceName string) (*resource.Resource, error) {
+	base := resource.Default()
+
+	if os.Getenv("OTEL_SERVICE_NAME") != "" {
+		return base, nil
+	}
+
 	res, err := resource.Merge(
-		resource.Default(),
+		base,
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
-			semconv.ServiceName("hub-api"),
+			semconv.ServiceName(serviceName),
 		),
 	)
 	if err != nil {
@@ -32,13 +41,13 @@ func newResource() (*resource.Resource, error) {
 
 // NewMeterProvider creates a MeterProvider when metrics are enabled via OTLP push.
 // When cfg is nil or cfg.Observability.MetricsExporter is not "otlp" (or empty), returns (nil, nil).
-func NewMeterProvider(cfg *config.Config) (*sdkmetric.MeterProvider, error) {
+func NewMeterProvider(cfg *config.Config, serviceName string) (*sdkmetric.MeterProvider, error) {
 	if cfg == nil || cfg.Observability.MetricsExporter != "otlp" {
 		//nolint:nilnil // intentional: metrics disabled or unsupported exporter, caller checks for nil
 		return nil, nil
 	}
 
-	res, err := newResource()
+	res, err := newResource(serviceName)
 	if err != nil {
 		return nil, fmt.Errorf("create resource: %w", err)
 	}
@@ -87,13 +96,13 @@ func ShutdownMeterProvider(ctx context.Context, provider *sdkmetric.MeterProvide
 
 // NewTracerProvider creates a TracerProvider when tracing is enabled.
 // When cfg is nil or cfg.Observability.TracesExporter is empty, returns (nil, nil).
-func NewTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
+func NewTracerProvider(cfg *config.Config, serviceName string) (*sdktrace.TracerProvider, error) {
 	if cfg == nil || cfg.Observability.TracesExporter == "" {
 		//nolint:nilnil // intentional: tracing disabled, caller checks for nil
 		return nil, nil
 	}
 
-	res, err := newResource()
+	res, err := newResource(serviceName)
 	if err != nil {
 		return nil, fmt.Errorf("create resource: %w", err)
 	}
