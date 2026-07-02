@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -841,5 +842,122 @@ func validValidationConfig() *Config {
 			BufferSize:         1,
 			PerEventTimeoutSec: 1,
 		},
+	}
+}
+
+// TestLoad_GoogleCloudFallbackCoversAllEnrichments locks the documented behavior that the
+// global GOOGLE_CLOUD_PROJECT/LOCATION pair backs every enrichment type, not just embedding
+// (.env.example says "or use GOOGLE_CLOUD_PROJECT" for all four).
+func TestLoad_GoogleCloudFallbackCoversAllEnrichments(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "fallback-project")
+	t.Setenv("GOOGLE_CLOUD_LOCATION", "europe-west3")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	for name, got := range map[string]struct{ project, location string }{
+		"embedding":   {cfg.Embedding.GoogleCloudProject, cfg.Embedding.GoogleCloudLocation},
+		"translation": {cfg.Translation.GoogleCloudProject, cfg.Translation.GoogleCloudLocation},
+		"sentiment":   {cfg.Sentiment.GoogleCloudProject, cfg.Sentiment.GoogleCloudLocation},
+		"emotions":    {cfg.Emotions.GoogleCloudProject, cfg.Emotions.GoogleCloudLocation},
+	} {
+		if got.project != "fallback-project" || got.location != "europe-west3" {
+			t.Errorf("%s GoogleCloud = (%q, %q), want the global fallback pair", name, got.project, got.location)
+		}
+	}
+}
+
+// TestLoad_EnrichmentTunablesCoerced locks the <=0 coercion for every enrichment type: an
+// explicit 0 must not fail worker startup (MaxWorkers 0) or fall through to River's default
+// of 25 attempts.
+func TestLoad_EnrichmentTunablesCoerced(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("SENTIMENT_MAX_CONCURRENT", "0")
+	t.Setenv("SENTIMENT_MAX_ATTEMPTS", "0")
+	t.Setenv("EMOTIONS_MAX_CONCURRENT", "-1")
+	t.Setenv("EMOTIONS_MAX_ATTEMPTS", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Sentiment.MaxConcurrent != 5 || cfg.Sentiment.MaxAttempts != 3 {
+		t.Errorf("Sentiment tunables = (%d, %d), want coerced (5, 3)",
+			cfg.Sentiment.MaxConcurrent, cfg.Sentiment.MaxAttempts)
+	}
+
+	if cfg.Emotions.MaxConcurrent != 5 || cfg.Emotions.MaxAttempts != 3 {
+		t.Errorf("Emotions tunables = (%d, %d), want coerced (5, 3)",
+			cfg.Emotions.MaxConcurrent, cfg.Emotions.MaxAttempts)
+	}
+}
+
+// TestLoad_SentimentEmotionsBaseURLValidated locks the startup URL validation for the two
+// newer types: a schemeless base URL must fail fast like embedding/translation, not boot
+// cleanly and then fail every job at request time.
+func TestLoad_SentimentEmotionsBaseURLValidated(t *testing.T) {
+	t.Run("sentiment", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+		t.Setenv("SENTIMENT_BASE_URL", "llm.internal:4000")
+
+		_, err := Load()
+		if !errors.Is(err, ErrInvalidSentimentBaseURL) {
+			t.Fatalf("Load() error = %v, want ErrInvalidSentimentBaseURL", err)
+		}
+	})
+
+	t.Run("emotions", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+		t.Setenv("EMOTIONS_BASE_URL", "llm.internal:4000")
+
+		_, err := Load()
+		if !errors.Is(err, ErrInvalidEmotionsBaseURL) {
+			t.Fatalf("Load() error = %v, want ErrInvalidEmotionsBaseURL", err)
+		}
+	})
+
+	t.Run("valid URLs are normalized and accepted", func(t *testing.T) {
+		t.Setenv("API_KEY", "test-api-key")
+		t.Setenv("SENTIMENT_BASE_URL", "https://llm.internal:4000/v1/")
+		t.Setenv("EMOTIONS_BASE_URL", "https://llm.internal:4000/v1")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.Sentiment.BaseURL == "" || cfg.Emotions.BaseURL == "" {
+			t.Errorf("base URLs = (%q, %q), want normalized non-empty",
+				cfg.Sentiment.BaseURL, cfg.Emotions.BaseURL)
+		}
+	})
+}
+
+// TestLoad_MalformedDotEnvWithholdsContent locks the secret-safety contract: a malformed .env
+// must produce a static error, never one embedding the file's content (godotenv parse errors
+// echo the remainder of the file — API keys included — and main logs the error).
+func TestLoad_MalformedDotEnvWithholdsContent(t *testing.T) {
+	dir := t.TempDir()
+
+	secret := "sk-super-secret-value"
+	// An unterminated quote makes godotenv's parser fail while the secret is still unread.
+	if err := os.WriteFile(dir+"/.env", []byte("BROKEN=\"unterminated\nSENTIMENT_PROVIDER_API_KEY="+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+	t.Setenv("API_KEY", "test-api-key")
+
+	_, err := Load()
+	if !errors.Is(err, ErrDotEnvMalformed) {
+		t.Fatalf("Load() error = %v, want ErrDotEnvMalformed", err)
+	}
+
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "unterminated") {
+		t.Fatalf("Load() error leaks .env content: %q", err.Error())
 	}
 }
