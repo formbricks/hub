@@ -270,4 +270,73 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 				metrics.workerErr["tenant_write_conflict"], metrics.outcomes["retry"])
 		}
 	})
+
+	t.Run("generic write error retries then fails final", func(t *testing.T) {
+		// A generic (non-not-found, non-tenant-conflict) write failure retries while attempts
+		// remain and only counts as failed_final on the last attempt, so failed_final is not
+		// overcounted across the retries.
+		for _, testCase := range []struct {
+			name        string
+			attempt     int
+			wantOutcome string
+			otherZero   string
+		}{
+			{"retry while attempts remain", 1, "retry", "failed_final"},
+			{"final failure on last attempt", 3, "failed_final", "retry"},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: errors.New("db unavailable")}
+				metrics := newCountingSentimentMetrics()
+				worker := NewFeedbackSentimentWorker(svc, &stubSentimentClient{result: result}, metrics)
+
+				if err := worker.Work(context.Background(), sentimentJob(testCase.attempt)); err == nil {
+					t.Fatal("Work() error = nil, want a write failure")
+				}
+
+				if metrics.workerErr["update_failed"] != 1 {
+					t.Fatalf("update_failed = %d, want 1", metrics.workerErr["update_failed"])
+				}
+
+				if metrics.outcomes[testCase.wantOutcome] != 1 || metrics.outcomes[testCase.otherZero] != 0 {
+					t.Fatalf("%s=%d %s=%d, want 1/0",
+						testCase.wantOutcome, metrics.outcomes[testCase.wantOutcome],
+						testCase.otherZero, metrics.outcomes[testCase.otherZero])
+				}
+			})
+		}
+	})
+}
+
+func TestFeedbackSentimentWorker_GetRecordErrorRetriesThenFailsFinal(t *testing.T) {
+	// A non-not-found read error retries while attempts remain and only counts as failed_final on
+	// the last attempt, so failed_final is not overcounted across the retries.
+	for _, testCase := range []struct {
+		name        string
+		attempt     int
+		wantOutcome string
+		otherZero   string
+	}{
+		{"retry while attempts remain", 1, "retry", "failed_final"},
+		{"final failure on last attempt", 3, "failed_final", "retry"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			svc := &mockSentimentWorkerService{getErr: errors.New("db unavailable")}
+			metrics := newCountingSentimentMetrics()
+			worker := NewFeedbackSentimentWorker(svc, &stubSentimentClient{}, metrics)
+
+			if err := worker.Work(context.Background(), sentimentJob(testCase.attempt)); err == nil {
+				t.Fatal("Work() error = nil, want a get-record failure")
+			}
+
+			if metrics.workerErr["get_record_failed"] != 1 {
+				t.Fatalf("get_record_failed = %d, want 1", metrics.workerErr["get_record_failed"])
+			}
+
+			if metrics.outcomes[testCase.wantOutcome] != 1 || metrics.outcomes[testCase.otherZero] != 0 {
+				t.Fatalf("%s=%d %s=%d, want 1/0",
+					testCase.wantOutcome, metrics.outcomes[testCase.wantOutcome],
+					testCase.otherZero, metrics.outcomes[testCase.otherZero])
+			}
+		})
+	}
 }

@@ -68,12 +68,23 @@ func (w *FeedbackSentimentWorker) Work(ctx context.Context, job *river.Job[servi
 			return nil
 		}
 
+		// A non-not-found read error is transient (e.g. a DB blip): River retries while attempts
+		// remain, so only the last attempt is a final failure. Recording failed_final on every
+		// attempt would overcount it.
+		isLastAttempt := job.Attempt >= job.MaxAttempts
+
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
 		if w.metrics != nil {
 			w.metrics.RecordWorkerError(ctx, "get_record_failed")
 		}
 
-		w.recordOutcome(ctx, "failed_final", start)
-		slog.Error("sentiment: get record failed", "feedback_record_id", args.FeedbackRecordID, "error", err)
+		w.recordOutcome(ctx, outcome, start)
+		slog.Error("sentiment: get record failed",
+			"feedback_record_id", args.FeedbackRecordID, "final_attempt", isLastAttempt, "error", err)
 
 		return fmt.Errorf("get feedback record: %w", err)
 	}
@@ -159,8 +170,9 @@ func (w *FeedbackSentimentWorker) handleClassifyError(
 
 // handleSetSentimentError maps a sentiment write failure to a worker outcome, mirroring the
 // embedding worker: a missing record completes the job (nothing to write), a tenant write
-// conflict retries (the post-purge attempt finds the record gone), and anything else fails the
-// job. Sentiment has no supersession case (no per-tenant target to be invalidated).
+// conflict retries (the post-purge attempt finds the record gone), and anything else retries
+// until the attempts are spent, then fails. Sentiment has no supersession case (no per-tenant
+// target to be invalidated).
 func (w *FeedbackSentimentWorker) handleSetSentimentError(
 	ctx context.Context, err error, feedbackRecordID uuid.UUID, start time.Time, isLastAttempt bool,
 ) error {
@@ -186,12 +198,21 @@ func (w *FeedbackSentimentWorker) handleSetSentimentError(
 
 		return fmt.Errorf("set feedback record sentiment: %w", err)
 	default:
+		// A generic write failure is transient (e.g. a DB blip): River retries while attempts
+		// remain, so only the last attempt is a final failure — recording failed_final on every
+		// attempt would overcount it (matches the classify and tenant-write-conflict branches).
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
 		if w.metrics != nil {
 			w.metrics.RecordWorkerError(ctx, "update_failed")
 		}
 
-		w.recordOutcome(ctx, "failed_final", start)
-		slog.Error("sentiment: set sentiment failed", "feedback_record_id", feedbackRecordID, "error", err)
+		w.recordOutcome(ctx, outcome, start)
+		slog.Error("sentiment: set sentiment failed",
+			"feedback_record_id", feedbackRecordID, "final_attempt", isLastAttempt, "error", err)
 
 		return fmt.Errorf("set feedback record sentiment: %w", err)
 	}
