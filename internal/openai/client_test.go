@@ -436,3 +436,21 @@ func TestCompleteJSON_TemperatureFallbackForReasoningModels(t *testing.T) {
 	assert.NotContains(t, bodies[1], "temperature", "the fallback retry omits it")
 	assert.NotContains(t, bodies[2], "temperature", "later calls skip it up front")
 }
+
+func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
+	// The embedding path must map 429s like the chat path — a throttled backfill snoozes
+	// via RateLimitError instead of burning River attempts to failed_final.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "9")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"))
+
+	_, err := client.CreateEmbedding(context.Background(), "hello")
+
+	var rateLimited *huberrors.RateLimitError
+	require.ErrorAs(t, err, &rateLimited, "an embedding 429 must surface as a rate-limit error")
+	assert.Equal(t, 9*time.Second, rateLimited.RetryAfter)
+}

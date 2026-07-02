@@ -166,6 +166,36 @@ func (e *TranslationSupersededError) Is(target error) bool {
 	return ok
 }
 
+// ErrEmbeddingSuperseded is the sentinel for an embedding write skipped because the record's
+// value_text/field_label changed between the job reading the record and writing the vector —
+// a newer job owns the row, and letting the stale vector land last would permanently attach an
+// old text's embedding to the record (the missing-rows-only backfill can never repair that).
+// A benign no-op, not a failure: callers should record it as skipped rather than retry.
+var ErrEmbeddingSuperseded = &EmbeddingSupersededError{}
+
+// EmbeddingSupersededError is a sentinel for a stale-content embedding write. Deliberately
+// distinct from NotFoundError (the record still exists) and ConflictError (nothing is wrong
+// with the data) so an out-of-order embedding is treated as a skip.
+type EmbeddingSupersededError struct {
+	Message string
+}
+
+// Error implements the error interface.
+func (e *EmbeddingSupersededError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+
+	return "embedding superseded by newer record content"
+}
+
+// Is implements the error interface for error comparison.
+func (e *EmbeddingSupersededError) Is(target error) bool {
+	_, ok := target.(*EmbeddingSupersededError)
+
+	return ok
+}
+
 // ErrTenantWriteConflict is the sentinel for tenant write coordination conflicts:
 // a tenant-owned write rejected because a tenant data purge is in progress, or a
 // purge that could not acquire its lock while tenant-owned writes were in flight.

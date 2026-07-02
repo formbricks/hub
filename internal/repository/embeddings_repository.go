@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -60,8 +61,16 @@ func rollbackQuietly(ctx context.Context, tx pgx.Tx, msg string) {
 // Upsert inserts or updates the embedding for (feedback_record_id, model). On conflict updates embedding and updated_at.
 // Uses halfvec storage (2 bytes per dimension); pgvector-go converts float32 to float16 when encoding.
 // embedding must have length models.EmbeddingVectorDimensions (fixed 768).
+//
+// stillCurrent (optional) guards against the concurrent-jobs race: two jobs for the same record
+// run in parallel and the one that read OLDER content lands its write LAST, permanently attaching
+// a stale vector (the missing-rows-only backfill can never repair it). Under a per-record
+// advisory lock the record's current content is re-read and compared; a mismatch returns
+// huberrors.ErrEmbeddingSuperseded — a benign skip, since the job holding the current content
+// writes the row.
 func (r *EmbeddingsRepository) Upsert(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
+	stillCurrent func(fieldLabel, valueText *string) bool,
 ) error {
 	if len(embedding) != models.EmbeddingVectorDimensions {
 		return fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(embedding), models.EmbeddingVectorDimensions)
@@ -75,6 +84,10 @@ func (r *EmbeddingsRepository) Upsert(
 		// record; resolve and lock it so embedding writes cannot race a tenant
 		// data purge. A missing parent means the record was deleted or purged.
 		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		if err := guardEmbeddingSourceCurrent(ctx, dbTx, feedbackRecordID, stillCurrent); err != nil {
 			return err
 		}
 
@@ -94,11 +107,18 @@ func (r *EmbeddingsRepository) Upsert(
 }
 
 // DeleteByFeedbackRecordAndModel removes the embedding row for the given feedback record and model.
+// stillCurrent (optional) has the same stale-write guard semantics as Upsert: a clear enqueued for
+// since-changed content must not delete the vector a newer job wrote.
 func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string,
+	stillCurrent func(fieldLabel, valueText *string) bool,
 ) error {
 	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		if err := guardEmbeddingSourceCurrent(ctx, dbTx, feedbackRecordID, stillCurrent); err != nil {
 			return err
 		}
 
@@ -112,6 +132,73 @@ func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 
 		return nil
 	})
+}
+
+// guardEmbeddingSourceCurrent serializes same-record embedding writes (per-record advisory
+// transaction lock — a hash collision merely over-serializes) and re-reads the record's current
+// content for the stillCurrent check. Returns ErrEmbeddingSuperseded when the content moved on,
+// NotFound when the record vanished mid-transaction, and nil (no-op) when stillCurrent is nil.
+func guardEmbeddingSourceCurrent(
+	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID, stillCurrent func(fieldLabel, valueText *string) bool,
+) error {
+	if stillCurrent == nil {
+		return nil
+	}
+
+	if _, err := dbTx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, feedbackRecordID,
+	); err != nil {
+		return fmt.Errorf("lock feedback record for embedding write: %w", err)
+	}
+
+	var fieldLabel, valueText *string
+
+	err := dbTx.QueryRow(ctx,
+		`SELECT field_label, value_text FROM feedback_records WHERE id = $1`, feedbackRecordID,
+	).Scan(&fieldLabel, &valueText)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+		}
+
+		return fmt.Errorf("read feedback record content for embedding write: %w", err)
+	}
+
+	if !stillCurrent(fieldLabel, valueText) {
+		return huberrors.ErrEmbeddingSuperseded
+	}
+
+	return nil
+}
+
+// DeleteEmbeddingsForOtherModels batch-deletes embedding rows whose model differs from
+// currentModel. Reads only ever join on the current model, so such rows are dead weight — but
+// they sit inside the single shared HNSW index, where every stale vector consumes candidate
+// budget on every search (worsening recall) and storage grows with each model migration. Batched
+// (batchSize rows per DELETE) so a large prune never holds long row locks or produces one giant
+// WAL burst. Returns the total deleted. Run only after a model migration's backfill has
+// completed, or search goes dark until the new model's vectors exist.
+func (r *EmbeddingsRepository) DeleteEmbeddingsForOtherModels(
+	ctx context.Context, currentModel string, batchSize int,
+) (int64, error) {
+	var total int64
+
+	for {
+		tag, err := r.db.Exec(ctx, `
+			DELETE FROM embeddings WHERE id IN (
+				SELECT id FROM embeddings WHERE model <> $1 LIMIT $2
+			)`, currentModel, batchSize)
+		if err != nil {
+			return total, fmt.Errorf("delete stale-model embeddings: %w", err)
+		}
+
+		deleted := tag.RowsAffected()
+		total += deleted
+
+		if deleted < int64(batchSize) {
+			return total, nil
+		}
+	}
 }
 
 // ListFeedbackRecordIDsForBackfill returns one keyset page (fr.id > afterID, ordered by id,

@@ -30,7 +30,10 @@ type FeedbackEmbeddingWorker struct {
 // feedbackEmbeddingService is the minimal interface needed by the worker.
 type feedbackEmbeddingService interface {
 	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
-	SetEmbedding(ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32) error
+	SetEmbedding(
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
+		stillCurrent func(fieldLabel, valueText *string) bool,
+	) error
 }
 
 // NewFeedbackEmbeddingWorker creates a worker that fetches the record, calls the embedding client, and stores the result.
@@ -96,39 +99,24 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	text := service.BuildEmbeddingInput(record.FieldLabel, record.ValueText, w.docPrefix)
 
+	// stillCurrent lets the repository verify, atomically with the write, that the content this
+	// job embedded is still the record's content — so of two concurrent jobs for one record, the
+	// stale one skips instead of clobbering the newer vector (last-write-wins would attach an old
+	// text's embedding forever; the missing-rows-only backfill cannot repair that).
+	stillCurrent := func(fieldLabel, valueText *string) bool {
+		return service.BuildEmbeddingInput(fieldLabel, valueText, w.docPrefix) == text
+	}
+
 	if text == "" {
-		return w.handleEmptyText(ctx, job, record, start)
+		return w.handleEmptyText(ctx, job, record, start, stillCurrent)
 	}
 
 	embedding, err := w.embeddingClient.CreateEmbedding(ctx, text)
 	if err != nil {
-		isLastAttempt := job.Attempt >= job.MaxAttempts
-
-		if w.metrics != nil {
-			w.metrics.RecordWorkerError(ctx, "embedding_api_failed")
-
-			if isLastAttempt {
-				w.metrics.RecordEmbeddingOutcome(ctx, "failed_final")
-				w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
-			} else {
-				w.metrics.RecordEmbeddingOutcome(ctx, "retry")
-				w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "retry")
-			}
-		}
-
-		if isLastAttempt {
-			slog.Error("embedding: API failed (final attempt)",
-				"feedback_record_id", args.FeedbackRecordID,
-				"error", err,
-			)
-			// Return error so River marks the job as failed; otherwise these records never get embeddings and don't show as failed in River UI.
-			return fmt.Errorf("embedding API (final attempt): %w", err)
-		}
-
-		return fmt.Errorf("embedding API: %w", err)
+		return w.handleEmbedError(ctx, err, job, start)
 	}
 
-	err = w.embeddingService.SetEmbedding(ctx, args.FeedbackRecordID, args.Model, embedding)
+	err = w.embeddingService.SetEmbedding(ctx, args.FeedbackRecordID, args.Model, embedding, stillCurrent)
 	if err != nil {
 		isLastAttempt := job.Attempt >= job.MaxAttempts
 
@@ -145,6 +133,55 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 	}
 
 	return nil
+}
+
+// handleEmbedError maps an embedding-API failure to a worker outcome: a provider 429 snoozes
+// instead of consuming a retry attempt — critical for the backfill, which can enqueue far more
+// jobs than the provider's rate limit and would otherwise mass-discard them as failed_final
+// (mirrors the classify workers) — while anything else retries, failing on the last attempt.
+func (w *FeedbackEmbeddingWorker) handleEmbedError(
+	ctx context.Context, err error, job *river.Job[service.FeedbackEmbeddingArgs], start time.Time,
+) error {
+	if delay, ok := rateLimitSnoozeDelay(err, job.CreatedAt); ok {
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "rate_limited")
+			w.metrics.RecordEmbeddingOutcome(ctx, "retry")
+			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "retry")
+		}
+
+		slog.Warn("embedding: provider rate limited, snoozing",
+			"feedback_record_id", job.Args.FeedbackRecordID,
+			"delay", delay,
+		)
+
+		//nolint:wrapcheck // river sentinel: JobSnooze must be returned unwrapped for River to detect the snooze
+		return river.JobSnooze(delay)
+	}
+
+	isLastAttempt := job.Attempt >= job.MaxAttempts
+
+	if w.metrics != nil {
+		w.metrics.RecordWorkerError(ctx, "embedding_api_failed")
+
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
+		w.metrics.RecordEmbeddingOutcome(ctx, outcome)
+		w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), outcome)
+	}
+
+	if isLastAttempt {
+		slog.Error("embedding: API failed (final attempt)",
+			"feedback_record_id", job.Args.FeedbackRecordID,
+			"error", err,
+		)
+		// Return error so River marks the job as failed; otherwise these records never get embeddings and don't show as failed in River UI.
+		return fmt.Errorf("embedding API (final attempt): %w", err)
+	}
+
+	return fmt.Errorf("embedding API: %w", err)
 }
 
 // handleSetEmbeddingError maps embedding write failures to worker outcomes.
@@ -169,6 +206,21 @@ func (w *FeedbackEmbeddingWorker) handleSetEmbeddingError(
 		}
 
 		slog.Info("embedding: record gone before write, skipping",
+			"feedback_record_id", feedbackRecordID,
+		)
+
+		return nil
+	case errors.Is(err, huberrors.ErrEmbeddingSuperseded):
+		// The record's content changed while this job ran; the job holding the current content
+		// owns the row. A benign no-op — record it under a distinct label so write races stay
+		// observable.
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "superseded")
+			w.metrics.RecordEmbeddingOutcome(ctx, "skipped")
+			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "skipped")
+		}
+
+		slog.Info("embedding: content changed mid-job, superseded write skipped",
 			"feedback_record_id", feedbackRecordID,
 		)
 
@@ -212,11 +264,12 @@ func (w *FeedbackEmbeddingWorker) handleEmptyText(
 	job *river.Job[service.FeedbackEmbeddingArgs],
 	record *models.FeedbackRecord,
 	start time.Time,
+	stillCurrent func(fieldLabel, valueText *string) bool,
 ) error {
 	feedbackRecordID := job.Args.FeedbackRecordID
 
 	if record.FieldType == models.FieldTypeText {
-		err := w.embeddingService.SetEmbedding(ctx, feedbackRecordID, job.Args.Model, nil)
+		err := w.embeddingService.SetEmbedding(ctx, feedbackRecordID, job.Args.Model, nil, stillCurrent)
 		if err != nil {
 			isLastAttempt := job.Attempt >= job.MaxAttempts
 

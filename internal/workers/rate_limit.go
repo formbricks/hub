@@ -20,12 +20,15 @@ const (
 	maxRateLimitSnoozeWindow = time.Hour
 )
 
-// rateLimitSnoozeDelay decides how long to snooze a rate-limited LLM enrichment job (shared by
-// the translation and sentiment workers, which both call rate-limited providers). A provider 429
-// surfaces as a *huberrors.RateLimitError; snoozing re-queues the job without consuming a retry
-// attempt, so a burst against a rate-limited model defers rather than drops work. ok is false
-// when err is not a rate-limit error, or when the job has been snoozing past
-// maxRateLimitSnoozeWindow (then it should fail normally and let a backfill recover it).
+// rateLimitSnoozeDelay decides how long to snooze a rate-limited enrichment job (shared by every
+// enrichment worker — translation, sentiment, emotions, and embedding all call rate-limited
+// providers). A provider 429 surfaces as a *huberrors.RateLimitError; snoozing re-queues the job
+// without consuming a retry attempt, so a burst against a rate-limited model defers rather than
+// drops work. ok is false when err is not a rate-limit error, or when the job has been snoozing
+// past maxRateLimitSnoozeWindow — then it fails normally. Note the recovery story past the window
+// differs by pipeline: translation and embedding have backfills that pick failed records up, while
+// sentiment and emotions do not yet (their shared backfill is tracked P6 work), so a provider
+// outage longer than the window loses their enrichment for records ingested during it.
 func rateLimitSnoozeDelay(err error, jobCreatedAt time.Time) (time.Duration, bool) {
 	var rateLimited *huberrors.RateLimitError
 	if !errors.As(err, &rateLimited) {

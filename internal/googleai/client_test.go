@@ -15,6 +15,7 @@ import (
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/llm"
 	"github.com/formbricks/hub/internal/llm/llmtest"
+	"github.com/formbricks/hub/internal/models"
 )
 
 func TestNewGoogleGeminiClient_emptyProject_returnsError(t *testing.T) {
@@ -289,4 +290,33 @@ func TestCompleteJSON_BlockAndFinishReasonAreSurfaced(t *testing.T) {
 				"the block/finish reason must be diagnosable in logs")
 		})
 	}
+}
+
+func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
+	// The embedding path must map RESOURCE_EXHAUSTED like the generate-content path — a
+	// throttled backfill snoozes via RateLimitError instead of burning River attempts.
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"quota",` +
+			`"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"17s"}]}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:      "test-key",
+		Backend:     genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
+	})
+	require.NoError(t, err)
+
+	client := &Client{client: genaiClient, model: "test-embedding-model", dimensions: models.EmbeddingVectorDimensions}
+
+	_, err = client.CreateEmbedding(ctx, "hello")
+
+	var rateLimited *huberrors.RateLimitError
+	require.ErrorAs(t, err, &rateLimited, "an embedding 429 must surface as a rate-limit error")
+	assert.Equal(t, 17*time.Second, rateLimited.RetryAfter)
 }

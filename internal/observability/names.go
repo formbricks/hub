@@ -105,9 +105,12 @@ var allowedEmbeddingOutcomeStatuses = map[string]bool{
 
 // allowedEmbeddingWorkerReasons for hub_embedding_worker_errors_total.
 var allowedEmbeddingWorkerReasons = map[string]bool{
-	"embedding_api_failed": true,
-	"get_record_failed":    true,
-	"update_failed":        true,
+	"embedding_api_failed":  true,
+	"get_record_failed":     true,
+	"update_failed":         true,
+	"tenant_write_conflict": true,
+	"rate_limited":          true,
+	"superseded":            true,
 }
 
 // AllowedEmbeddingProviderReason returns true if reason is allowed for embedding provider errors.
@@ -144,6 +147,9 @@ var allowedTranslationWorkerReasons = map[string]bool{
 	"update_failed":          true,
 	"tenant_write_conflict":  true,
 	"rate_limited":           true,
+	// A stale-target write skipped by the supersession guard: benign, but kept under its own
+	// label (not folded into "other") so target churn / cache staleness stays observable.
+	"superseded": true,
 }
 
 // AllowedTranslationProviderReason returns true if reason is allowed for translation provider errors.

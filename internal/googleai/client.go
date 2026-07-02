@@ -261,7 +261,15 @@ func emptyResponseDetail(resp *genai.GenerateContentResponse) string {
 // RESOURCE_EXHAUSTED to a huberrors.RateLimitError (carrying the retry hint) so
 // callers can snooze.
 func wrapGenerateContentError(err error) error {
-	wrapped := fmt.Errorf("gemini generate content: %w", err)
+	return wrapGenaiError("gemini generate content", err)
+}
+
+// wrapGenaiError wraps an SDK error under op, mapping a 429 / RESOURCE_EXHAUSTED to a
+// huberrors.RateLimitError (carrying the retry hint) so callers can snooze. Shared by the
+// generate-content and embedding call paths — a throttled embedding backfill must snooze,
+// not burn retry attempts.
+func wrapGenaiError(op string, err error) error {
+	wrapped := fmt.Errorf("%s: %w", op, err)
 
 	var apiErr genai.APIError
 	if errors.As(err, &apiErr) && (apiErr.Code == http.StatusTooManyRequests || apiErr.Status == "RESOURCE_EXHAUSTED") {
@@ -309,7 +317,7 @@ func (c *Client) embedWithTaskType(ctx context.Context, input, taskType string) 
 		OutputDimensionality: &dimInt32,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gemini embedding: %w", err)
+		return nil, wrapGenaiError("gemini embedding", err)
 	}
 
 	if len(resp.Embeddings) == 0 {

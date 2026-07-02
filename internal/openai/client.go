@@ -129,7 +129,7 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		Dimensions: param.NewOpt(int64(c.dimensions)),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("openai embedding: %w", err)
+		return nil, wrapOpenAIError("openai embedding", err)
 	}
 
 	if len(resp.Data) == 0 {
@@ -295,7 +295,14 @@ func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 // wrapChatCompletionError wraps a chat-completion SDK error, mapping a 429 to a
 // huberrors.RateLimitError (carrying the Retry-After hint) so callers can snooze.
 func wrapChatCompletionError(err error) error {
-	wrapped := fmt.Errorf("openai chat completion: %w", err)
+	return wrapOpenAIError("openai chat completion", err)
+}
+
+// wrapOpenAIError wraps an SDK error under op, mapping a 429 to a huberrors.RateLimitError
+// (carrying the Retry-After hint) so callers can snooze. Shared by the chat-completion and
+// embedding call paths — a throttled embedding backfill must snooze, not burn retry attempts.
+func wrapOpenAIError(op string, err error) error {
+	wrapped := fmt.Errorf("%s: %w", op, err)
 
 	var apiErr *openaisdk.Error
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
