@@ -2396,6 +2396,7 @@ components:
                     examples:
                         - Great service!
                     pattern: '^[^\x00]*$'
+                    maxLength: 30000
             required:
                 - source_type
                 - field_id
@@ -2942,6 +2943,7 @@ components:
                     type: string
                     description: Update text response. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                    maxLength: 30000
         TaxonomyRunStatus:
             type: string
             description: Lifecycle state of a taxonomy run. Allowed transitions are pending -> running|failed|canceled and running -> succeeded|failed|canceled.

@@ -312,7 +312,7 @@ type CreateFeedbackRecordRequest struct {
 	FieldType       FieldType       `json:"field_type"                  validate:"required,field_type"`
 	FieldGroupID    *string         `json:"field_group_id,omitempty"    validate:"omitempty,no_null_bytes,max=255"`
 	FieldGroupLabel *string         `json:"field_group_label,omitempty"`
-	ValueText       *string         `json:"value_text,omitempty"        validate:"omitempty,no_null_bytes"`
+	ValueText       *string         `json:"value_text,omitempty"        validate:"omitempty,no_null_bytes,max=30000"`
 	ValueNumber     *float64        `json:"value_number,omitempty"`
 	ValueBoolean    *bool           `json:"value_boolean,omitempty"`
 	ValueDate       *time.Time      `json:"value_date,omitempty"`
@@ -333,7 +333,7 @@ type TranslationBackfillTarget struct {
 // UpdateFeedbackRecordRequest represents the request to update a feedback record
 // Only value fields, metadata, language, and user_id can be updated.
 type UpdateFeedbackRecordRequest struct {
-	ValueText    *string         `json:"value_text,omitempty"    validate:"omitempty,no_null_bytes"`
+	ValueText    *string         `json:"value_text,omitempty"    validate:"omitempty,no_null_bytes,max=30000"`
 	ValueNumber  *float64        `json:"value_number,omitempty"`
 	ValueBoolean *bool           `json:"value_boolean,omitempty"`
 	ValueDate    *time.Time      `json:"value_date,omitempty"`
