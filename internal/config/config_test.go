@@ -961,3 +961,23 @@ func TestLoad_MalformedDotEnvWithholdsContent(t *testing.T) {
 		t.Fatalf("Load() error leaks .env content: %q", err.Error())
 	}
 }
+
+// TestLoad_SurfacesEnvCoercionError is the counterpart to the secret-safety test: a struct-
+// coercion failure (a non-numeric int env var) carries no .env file content, so it must be
+// surfaced with the offending variable named — not masked as the misleading ErrDotEnvMalformed.
+func TestLoad_SurfacesEnvCoercionError(t *testing.T) {
+	t.Setenv("SENTIMENT_MAX_ATTEMPTS", "not-a-number")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want a coercion error for SENTIMENT_MAX_ATTEMPTS")
+	}
+
+	if errors.Is(err, ErrDotEnvMalformed) {
+		t.Fatalf("Load() masked a struct-coercion error as ErrDotEnvMalformed; it carries no file content and must be surfaced: %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "SENTIMENT_MAX_ATTEMPTS") {
+		t.Fatalf("Load() error = %v, want it to name the offending SENTIMENT_MAX_ATTEMPTS variable", err)
+	}
+}

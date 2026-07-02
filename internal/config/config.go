@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
+	"github.com/joho/godotenv"
 	"golang.org/x/text/language"
 
 	"github.com/formbricks/hub/pkg/database"
@@ -288,19 +289,26 @@ func parseBlacklist(s string) map[string]struct{} {
 func Load() (*Config, error) {
 	cfg := &Config{}
 
-	err := cleanenv.ReadConfig(".env", cfg)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || isNotExist(err) {
-			if readErr := cleanenv.ReadEnv(cfg); readErr != nil {
-				return nil, fmt.Errorf("read env: %w", readErr)
-			}
-		} else {
-			// Do NOT wrap the parse error: godotenv formats it with the offending file
-			// content (e.g. `unexpected character %q in variable name near %q`, where the
-			// second value is the rest of the file), and main logs this error — which would
-			// put API keys and the database password into stdout and the log aggregator.
-			return nil, ErrDotEnvMalformed
-		}
+	// cleanenv.ReadConfig(".env", cfg) is split here into its two phases on purpose, to
+	// discriminate the error SOURCE:
+	//   - A .env *parse* failure (godotenv) is formatted with the offending file content (e.g.
+	//     `unexpected character %q in variable name near %q`, the second value being the rest of
+	//     the file), and main logs the returned error — surfacing it would put API keys and the
+	//     database password into stdout and the log aggregator. It is masked as the static
+	//     ErrDotEnvMalformed.
+	//   - A struct *coercion* failure from ReadEnv (e.g. a non-numeric SENTIMENT_MAX_ATTEMPTS)
+	//     names only the field and env var plus the type error; it carries no file content, so it
+	//     is surfaced to point the operator at the actual problem instead of a misleading
+	//     "malformed .env".
+	// godotenv.Overload mirrors cleanenv's .env handling (parse + unconditional os.Setenv), so a
+	// value in .env still overrides a pre-existing environment variable, and a missing file is a
+	// no-op (env-only configuration).
+	if err := godotenv.Overload(".env"); err != nil && !errors.Is(err, os.ErrNotExist) && !isNotExist(err) {
+		return nil, ErrDotEnvMalformed
+	}
+
+	if err := cleanenv.ReadEnv(cfg); err != nil {
+		return nil, fmt.Errorf("read env: %w", err)
 	}
 
 	applyDefaults(cfg)
