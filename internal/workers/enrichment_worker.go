@@ -130,9 +130,20 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 			return nil
 		}
 
+		// A non-not-found read error is transient (e.g. a DB blip): River retries while attempts
+		// remain, so only the last attempt is a final failure — recording failed_final on every
+		// attempt overcounts it (matches the classify and persist branches).
+		isLastAttempt := job.Attempt >= job.MaxAttempts
+
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
 		cfg.metrics.workerError(ctx, "get_record_failed")
-		w.recordOutcome(ctx, "failed_final", start)
-		slog.Error(cfg.name+": get record failed", "feedback_record_id", id, "error", err)
+		w.recordOutcome(ctx, outcome, start)
+		slog.Error(cfg.name+": get record failed",
+			"feedback_record_id", id, "final_attempt", isLastAttempt, "error", err)
 
 		return fmt.Errorf("get feedback record: %w", err)
 	}

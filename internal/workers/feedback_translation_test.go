@@ -351,7 +351,9 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 		}
 	})
 
-	t.Run("get record failure records get_record_failed and failed_final", func(t *testing.T) {
+	t.Run("get record failure retries, failing on the final attempt", func(t *testing.T) {
+		// A non-not-found read error is transient: retry while attempts remain, failed_final only
+		// on the last attempt, so failed_final is not overcounted.
 		metrics := newCountingTranslationMetrics()
 		svc := &mockTranslationWorkerService{getErr: errors.New("db down")}
 		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, metrics)
@@ -360,9 +362,17 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 			t.Fatal("Work() = nil, want error on get failure")
 		}
 
-		if metrics.workerErr["get_record_failed"] != 1 || metrics.outcomes["failed_final"] != 1 {
-			t.Fatalf("get_record_failed=%d failed_final=%d, want 1/1",
-				metrics.workerErr["get_record_failed"], metrics.outcomes["failed_final"])
+		if metrics.workerErr["get_record_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+			t.Fatalf("get_record_failed=%d retry=%d failed_final=%d, want 1/1/0 (transient read blip must not read as final)",
+				metrics.workerErr["get_record_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+		}
+
+		if err := worker.Work(context.Background(), translationJob("en-US", 3)); err == nil {
+			t.Fatal("Work() = nil, want error on the final attempt")
+		}
+
+		if metrics.outcomes["failed_final"] != 1 {
+			t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
 		}
 	})
 

@@ -117,6 +117,35 @@ func TestFeedbackEmbeddingWorker_GetNotFoundRecordsSkipped(t *testing.T) {
 	}
 }
 
+func TestFeedbackEmbeddingWorker_GetRecordErrorRetriesThenFailsFinal(t *testing.T) {
+	// A non-not-found read error is transient: the worker retries while attempts remain and only
+	// counts as failed_final on the last attempt, so failed_final is not overcounted.
+	metrics := newCountingEmbeddingMetrics()
+	svc := &mockEmbeddingService{getErr: errors.New("db unavailable")}
+	worker := NewFeedbackEmbeddingWorker(svc, &mockEmbeddingClient{}, "", metrics)
+
+	if err := worker.Work(context.Background(), embeddingJob()); err == nil { // attempt 1 of 3
+		t.Fatal("Work() error = nil, want a get-record failure returned for retry")
+	}
+
+	if metrics.workerErr["get_record_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("get_record_failed=%d retry=%d failed_final=%d, want 1/1/0 (transient read blip must not read as final)",
+			metrics.workerErr["get_record_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+	}
+
+	finalJob := &river.Job[service.FeedbackEmbeddingArgs]{
+		JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
+		Args:   service.FeedbackEmbeddingArgs{FeedbackRecordID: uuid.Must(uuid.NewV7()), Model: "test-model"},
+	}
+	if err := worker.Work(context.Background(), finalJob); err == nil {
+		t.Fatal("Work() error = nil, want a failure on the final attempt")
+	}
+
+	if metrics.outcomes["failed_final"] != 1 {
+		t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
+	}
+}
+
 func TestFeedbackEmbeddingWorker_Work_SetEmbeddingConflict(t *testing.T) {
 	ctx := context.Background()
 

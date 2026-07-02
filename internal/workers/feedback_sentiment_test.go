@@ -207,7 +207,9 @@ func TestFeedbackSentimentWorker_RecordGoneSkips(t *testing.T) {
 	}
 }
 
-func TestFeedbackSentimentWorker_GetRecordFailsFinal(t *testing.T) {
+func TestFeedbackSentimentWorker_GetRecordFailsRetriesThenFailsFinal(t *testing.T) {
+	// A non-not-found read error is transient: the worker retries while attempts remain and only
+	// counts as failed_final on the last attempt, so failed_final is not overcounted.
 	metrics := newCountingSentimentMetrics()
 	svc := &mockSentimentWorkerService{getErr: errors.New("db unavailable")}
 	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{}, metrics)
@@ -216,9 +218,17 @@ func TestFeedbackSentimentWorker_GetRecordFailsFinal(t *testing.T) {
 		t.Fatal("Work() error = nil, want a get-record failure returned for retry")
 	}
 
-	if metrics.workerErr["get_record_failed"] != 1 || metrics.outcomes["failed_final"] != 1 {
-		t.Fatalf("get_record_failed=%d failed_final=%d, want 1/1",
-			metrics.workerErr["get_record_failed"], metrics.outcomes["failed_final"])
+	if metrics.workerErr["get_record_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("get_record_failed=%d retry=%d failed_final=%d, want 1/1/0 (transient read blip must not read as final)",
+			metrics.workerErr["get_record_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+	}
+
+	if err := worker.Work(context.Background(), sentimentJob(3)); err == nil {
+		t.Fatal("Work() error = nil, want a failure on the final attempt")
+	}
+
+	if metrics.outcomes["failed_final"] != 1 {
+		t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
 	}
 }
 
