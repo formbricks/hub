@@ -286,7 +286,7 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("other write error fails", func(t *testing.T) {
+	t.Run("other write error retries, failing on the final attempt", func(t *testing.T) {
 		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: errors.New("db unavailable")}
 		metrics := newCountingSentimentMetrics()
 		worker := NewFeedbackSentimentWorker(svc, &stubSentimentClient{result: result}, metrics)
@@ -295,9 +295,17 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 			t.Fatal("Work() error = nil, want a failure")
 		}
 
-		if metrics.workerErr["update_failed"] != 1 || metrics.outcomes["failed_final"] != 1 {
-			t.Fatalf("update_failed=%d failed_final=%d, want 1/1",
-				metrics.workerErr["update_failed"], metrics.outcomes["failed_final"])
+		if metrics.workerErr["update_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+			t.Fatalf("update_failed=%d retry=%d failed_final=%d, want 1/1/0 (transient write blip must not read as final)",
+				metrics.workerErr["update_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+		}
+
+		if err := worker.Work(context.Background(), sentimentJob(3)); err == nil {
+			t.Fatal("Work() error = nil, want a failure on the final attempt")
+		}
+
+		if metrics.outcomes["failed_final"] != 1 {
+			t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
 		}
 	})
 }

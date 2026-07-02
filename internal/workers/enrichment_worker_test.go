@@ -133,13 +133,24 @@ func TestEnrichmentWorker_ClearPathPersistErrorFails(t *testing.T) {
 	cfg.hasContent = func(*models.FeedbackRecord) bool { return false } // force the clear path
 	cfg.persist = func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error { return errors.New("db down") }
 
+	// A transient write failure on a NON-final attempt returns an error (River retries) and is
+	// outcome "retry" — not failed_final, which would double-count a later success.
 	if err := newEnrichmentWorker(cfg).Work(context.Background(), fakeJob(1)); err == nil {
 		t.Fatal("Work() = nil, want a failure when the clear write fails")
 	}
 
-	if metrics.workerErr["update_failed"] != 1 || metrics.outcomes["failed_final"] != 1 {
-		t.Fatalf("update_failed=%d failed_final=%d, want 1/1",
-			metrics.workerErr["update_failed"], metrics.outcomes["failed_final"])
+	if metrics.workerErr["update_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("update_failed=%d retry=%d failed_final=%d, want 1/1/0",
+			metrics.workerErr["update_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+	}
+
+	// On the final attempt the same failure is terminal.
+	if err := newEnrichmentWorker(cfg).Work(context.Background(), fakeJob(3)); err == nil {
+		t.Fatal("Work() = nil, want a failure on the final attempt")
+	}
+
+	if metrics.outcomes["failed_final"] != 1 {
+		t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
 	}
 }
 

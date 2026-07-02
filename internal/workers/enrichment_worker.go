@@ -244,9 +244,20 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 
 		return fmt.Errorf("set feedback record %s: %w", cfg.name, err)
 	default:
+		// The returned error makes River retry, so a transient write failure is outcome
+		// "retry" until the final attempt — mirroring the classify path and the
+		// tenant-conflict branch. (The pre-scaffold workers recorded failed_final on every
+		// attempt here, double-counting a later success and falsely tripping final-failure
+		// alerts on one-off DB blips.)
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
 		cfg.metrics.workerError(ctx, "update_failed")
-		w.recordOutcome(ctx, "failed_final", start)
-		slog.Error(cfg.name+": set result failed", "feedback_record_id", id, "error", err)
+		w.recordOutcome(ctx, outcome, start)
+		slog.Error(cfg.name+": set result failed",
+			"feedback_record_id", id, "final_attempt", isLastAttempt, "error", err)
 
 		return fmt.Errorf("set feedback record %s: %w", cfg.name, err)
 	}

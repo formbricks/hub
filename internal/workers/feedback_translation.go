@@ -129,14 +129,22 @@ func sameLanguageAndScript(source, target string) bool {
 		return false
 	}
 
-	// "und" (and similar) coerce to a guessed base via likely-subtags; never treat an undetermined
-	// source or target as a match — translate instead of copying.
+	// Never treat an undetermined language as a match — translate instead of copying. The bare
+	// "und" tag is checked directly, but compound und tags (und-Latn, und-DE, ...) parse to a
+	// GUESSED base via likely-subtags (und-Latn -> en with High confidence), so requiring Exact
+	// base confidence on both sides is what actually keeps "unknown language, Latin script"
+	// feedback from being copied through untranslated as the target language. Real tags — incl.
+	// deprecated aliases like iw -> he — canonicalize with Exact confidence, so they still match.
 	if sourceTag == language.Und || targetTag == language.Und {
 		return false
 	}
 
-	sourceBase, _ := sourceTag.Base()
-	targetBase, _ := targetTag.Base()
+	sourceBase, sourceConf := sourceTag.Base()
+	targetBase, targetConf := targetTag.Base()
+
+	if sourceConf != language.Exact || targetConf != language.Exact {
+		return false
+	}
 
 	if sourceBase != targetBase {
 		return false

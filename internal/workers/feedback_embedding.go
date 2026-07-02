@@ -243,14 +243,22 @@ func (w *FeedbackEmbeddingWorker) handleSetEmbeddingError(
 
 		return fmt.Errorf("%s: %w", action, err)
 	default:
+		// The returned error makes River retry, so a transient write failure is outcome
+		// "retry" until the final attempt (matches the shared enrichment worker).
+		outcome := "retry"
+		if isLastAttempt {
+			outcome = "failed_final"
+		}
+
 		if w.metrics != nil {
 			w.metrics.RecordWorkerError(ctx, "update_failed")
-			w.metrics.RecordEmbeddingOutcome(ctx, "failed_final")
-			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
+			w.metrics.RecordEmbeddingOutcome(ctx, outcome)
+			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), outcome)
 		}
 
 		slog.Error("embedding: "+action+" failed",
 			"feedback_record_id", feedbackRecordID,
+			"final_attempt", isLastAttempt,
 			"error", err,
 		)
 

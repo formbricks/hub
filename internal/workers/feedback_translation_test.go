@@ -390,11 +390,18 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 		}
 		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics)
 
+		// Non-final attempt: River retries, so the outcome is "retry", not failed_final.
 		_ = worker.Work(context.Background(), translationJob("en-US", 1))
 
-		if metrics.workerErr["update_failed"] != 1 || metrics.outcomes["failed_final"] != 1 {
-			t.Fatalf("update_failed=%d failed_final=%d, want 1/1",
-				metrics.workerErr["update_failed"], metrics.outcomes["failed_final"])
+		if metrics.workerErr["update_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+			t.Fatalf("update_failed=%d retry=%d failed_final=%d, want 1/1/0",
+				metrics.workerErr["update_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+		}
+
+		_ = worker.Work(context.Background(), translationJob("en-US", 3))
+
+		if metrics.outcomes["failed_final"] != 1 {
+			t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
 		}
 	})
 
@@ -522,6 +529,42 @@ func TestRateLimitSnooze(t *testing.T) {
 
 			if tt.wantOK && delay != tt.wantDelay {
 				t.Fatalf("rateLimitSnoozeDelay delay = %v, want %v", delay, tt.wantDelay)
+			}
+		})
+	}
+}
+
+// TestSameLanguageAndScript locks the copy-through guard, most importantly the und-* regression:
+// compound undetermined tags (und-Latn, und-DE) parse to a GUESSED base via likely-subtags
+// (und-Latn -> en), so without the Exact-confidence requirement, "unknown language, Latin script"
+// feedback was copied through untranslated as the target language.
+func TestSameLanguageAndScript(t *testing.T) {
+	tests := map[string]struct {
+		source, target string
+		want           bool
+	}{
+		// Matches: same base + script — copying the source is safe.
+		"same language different region": {source: "en-US", target: "en-GB", want: true},
+		"deprecated alias canonicalizes": {source: "iw", target: "he", want: true},
+		"explicit script equals default": {source: "sr-Latn", target: "sh", want: true},
+
+		// Non-matches: must translate.
+		"different languages":       {source: "fr", target: "en", want: false},
+		"different scripts":         {source: "zh-Hans", target: "zh-Hant", want: false},
+		"bare und":                  {source: "und", target: "en", want: false},
+		"und with script (the bug)": {source: "und-Latn", target: "en", want: false},
+		"und with region":           {source: "und-DE", target: "de", want: false},
+		"und on the target side":    {source: "en", target: "und-Latn", want: false},
+		"empty source":              {source: "", target: "en", want: false},
+		"whitespace source":         {source: "   ", target: "en", want: false},
+		"unparseable source":        {source: "not-a-tag-!!", target: "en", want: false},
+	}
+
+	for name, testCase := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := sameLanguageAndScript(testCase.source, testCase.target); got != testCase.want {
+				t.Fatalf("sameLanguageAndScript(%q, %q) = %v, want %v",
+					testCase.source, testCase.target, got, testCase.want)
 			}
 		})
 	}

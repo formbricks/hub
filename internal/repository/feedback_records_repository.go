@@ -683,16 +683,20 @@ func buildUpdateQuery(
 
 	// Clear a now-stale translation, but only when value_text or language ACTUALLY changes:
 	// the bare column on the RHS of an UPDATE ... SET is the pre-update value, so this compares
-	// old vs new. Clearing only on a real change keeps "clear" aligned with a new content hash
-	// — so the re-translation the change triggers is not deduped against the prior job and
-	// actually repopulates — while a client re-sending an unchanged value leaves the valid
-	// translation intact. NULLing on a real change also makes the row a backfill target
+	// old vs new. Clearing only on a real change keeps a client re-sending an unchanged value
+	// from wiping a valid translation, while a real change NULLs the pair — which both triggers
+	// re-translation via the update event and makes the row a backfill target
 	// (translation_lang_key NULL IS DISTINCT FROM the tenant target), so a missed or
-	// finally-failed re-translation is still recovered by a later backfill. Reuses the existing
-	// value_text / language placeholders, so it consumes none of its own.
+	// finally-failed re-translation is still recovered by a later backfill. The value_text
+	// comparison is btrim-level to match the enrichment content hash (which trims before
+	// hashing): a whitespace-only edit must not count as a content change, or it would clear a
+	// translation the pipeline considers current. (NFC-only differences remain byte-unequal here
+	// — exotic, and the update event still re-translates them.) Reuses the existing value_text /
+	// language placeholders, so it consumes none of its own.
 	var staleConds []string
 	if valueTextArg != 0 {
-		staleConds = append(staleConds, fmt.Sprintf("value_text IS DISTINCT FROM $%d", valueTextArg))
+		staleConds = append(staleConds,
+			fmt.Sprintf("btrim(coalesce(value_text, '')) IS DISTINCT FROM btrim(coalesce($%d, ''))", valueTextArg))
 	}
 
 	if languageArg != 0 {
