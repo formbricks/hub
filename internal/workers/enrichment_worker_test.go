@@ -57,7 +57,7 @@ func baseFakeConfig(m *countingWorkerMetrics) enrichmentWorkerConfig[fakeEnrichm
 		classify: func(context.Context, *models.FeedbackRecord, fakeEnrichmentArgs) (string, error) {
 			return "result", nil
 		},
-		persist:         func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error { return nil },
+		persist:         func(context.Context, *models.FeedbackRecord, fakeEnrichmentArgs, *string) error { return nil },
 		rateLimited:     true,
 		apiErrorReason:  "fake_api_failed",
 		classifyErrVerb: "classify",
@@ -78,7 +78,7 @@ func TestEnrichmentWorker_PersistSupersededIsSkipped(t *testing.T) {
 	cfg := baseFakeConfig(metrics)
 	cfg.isSuperseded = func(err error) bool { return errors.Is(err, errSuperseded) }
 	cfg.supersededReason = "superseded"
-	cfg.persist = func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error { return errSuperseded }
+	cfg.persist = func(context.Context, *models.FeedbackRecord, fakeEnrichmentArgs, *string) error { return errSuperseded }
 
 	if err := newEnrichmentWorker(cfg).Work(context.Background(), fakeJob(1)); err != nil {
 		t.Fatalf("Work() = %v, want nil (a superseded write is a benign skip)", err)
@@ -96,7 +96,7 @@ func TestEnrichmentWorker_PersistSupersededIsSkipped(t *testing.T) {
 func TestEnrichmentWorker_TenantConflictFinalAttemptFails(t *testing.T) {
 	metrics := newCountingWorkerMetrics()
 	cfg := baseFakeConfig(metrics)
-	cfg.persist = func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error {
+	cfg.persist = func(context.Context, *models.FeedbackRecord, fakeEnrichmentArgs, *string) error {
 		return huberrors.ErrTenantWriteConflict
 	}
 
@@ -131,7 +131,9 @@ func TestEnrichmentWorker_ClearPathPersistErrorFails(t *testing.T) {
 	metrics := newCountingWorkerMetrics()
 	cfg := baseFakeConfig(metrics)
 	cfg.hasContent = func(*models.FeedbackRecord) bool { return false } // force the clear path
-	cfg.persist = func(context.Context, uuid.UUID, fakeEnrichmentArgs, *string) error { return errors.New("db down") }
+	cfg.persist = func(context.Context, *models.FeedbackRecord, fakeEnrichmentArgs, *string) error {
+		return errors.New("db down")
+	}
 
 	// A transient write failure on a NON-final attempt returns an error (River retries) and is
 	// outcome "retry" — not failed_final, which would double-count a later success.

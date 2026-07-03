@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,9 +46,10 @@ type enrichmentWorkerConfig[A river.JobArgs, R any] struct {
 	checkEnabled func(ctx context.Context, record *models.FeedbackRecord) (bool, error)
 	// classify and persist receive the job args so a type can use a per-job value (e.g.
 	// translation's target language) for both the provider call and the write. persist's result is
-	// nil on the clear path.
+	// nil on the clear path. persist also receives the Work-time record read, so a type can build
+	// a content-supersession guard (valueTextStillCurrent) from the exact text it classified.
 	classify func(ctx context.Context, record *models.FeedbackRecord, args A) (R, error)
-	persist  func(ctx context.Context, id uuid.UUID, args A, result *R) error
+	persist  func(ctx context.Context, record *models.FeedbackRecord, args A, result *R) error
 
 	// isSuperseded reports whether a persist error is a benign "already superseded" skip
 	// (translation's stale-target case). nil ⇒ this enrichment has no supersession.
@@ -187,7 +189,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 	// Content became empty since enqueue (e.g. an edit cleared it): clear any stale result rather
 	// than classify empty text.
 	if !cfg.hasContent(record) {
-		if err := cfg.persist(ctx, id, job.Args, nil); err != nil {
+		if err := cfg.persist(ctx, record, job.Args, nil); err != nil {
 			return w.handlePersistError(ctx, err, id, start, job.Attempt >= job.MaxAttempts)
 		}
 
@@ -202,7 +204,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 		return w.handleClassifyError(ctx, err, id, start, job)
 	}
 
-	if err := cfg.persist(ctx, id, job.Args, &result); err != nil {
+	if err := cfg.persist(ctx, record, job.Args, &result); err != nil {
 		return w.handlePersistError(ctx, err, id, start, job.Attempt >= job.MaxAttempts)
 	}
 
@@ -313,4 +315,26 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 func (w *enrichmentWorker[A, R]) recordOutcome(ctx context.Context, status string, start time.Time) {
 	w.cfg.metrics.outcome(ctx, status)
 	w.cfg.metrics.duration(ctx, time.Since(start), status)
+}
+
+// valueTextStillCurrent returns a persist-time content guard bound to the Work-time value_text
+// snapshot the classification was computed from: the repository re-reads the record's current
+// value_text atomically with the write and skips (superseded) when it no longer matches, so of
+// two overlapping jobs for one record the one that read older text cannot land its result last.
+// The comparison is TrimSpace-level, matching HasOpenText and the update path's
+// whitespace-insensitive eager-clear: a whitespace-only difference is not a content change.
+func valueTextStillCurrent(snapshot *string) func(valueText *string) bool {
+	snap := trimmedOrEmpty(snapshot)
+
+	return func(valueText *string) bool { return trimmedOrEmpty(valueText) == snap }
+}
+
+// trimmedOrEmpty normalizes an optional text for the content-guard comparison: nil and
+// whitespace-only both become "".
+func trimmedOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(*s)
 }

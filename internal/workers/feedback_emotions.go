@@ -2,11 +2,13 @@ package workers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
@@ -14,13 +16,16 @@ import (
 
 // FeedbackEmotionsWorker classifies a feedback record's value_text into a set of emotion labels and
 // stores it — a configured enrichmentWorker. It borrows the shared rate-limit snooze (it, too,
-// calls a rate-limited LLM provider) and has no supersession (no per-tenant target).
+// calls a rate-limited LLM provider); it has no per-tenant target, but its persist is guarded
+// against content supersession (a job that read older text skips instead of landing its labels
+// last — stale non-NULL labels would escape the NULL-rows-only backfill forever).
 type FeedbackEmotionsWorker = enrichmentWorker[service.FeedbackEmotionsArgs, service.EmotionsResult]
 
 // emotionsWorkerService is the minimal interface the worker needs.
 type emotionsWorkerService interface {
 	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
-	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue) error
+	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
+		stillCurrent func(valueText *string) bool) error
 }
 
 // tenantSettingsReader resolves a tenant's enrichment settings for the worker's authoritative
@@ -61,18 +66,22 @@ func NewFeedbackEmotionsWorker(
 
 			return client.Classify(ctx, *record.ValueText, sourceLang)
 		},
-		persist: func(ctx context.Context, id uuid.UUID, _ service.FeedbackEmotionsArgs, result *service.EmotionsResult) error {
-			// A nil result (empty content) or an empty label set both clear the column: absence is
-			// NULL, never an empty array.
+		persist: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackEmotionsArgs, result *service.EmotionsResult) error {
+			// Guard the write against content churn since the Work-time read: a stale job's labels
+			// (or clear) must not land last over a newer job's write. A nil result (empty content)
+			// or an empty label set both clear the column: absence is NULL, never an empty array.
+			stillCurrent := valueTextStillCurrent(record.ValueText)
 			if result == nil {
-				return svc.SetEmotions(ctx, id, nil)
+				return svc.SetEmotions(ctx, record.ID, nil, stillCurrent)
 			}
 
-			return svc.SetEmotions(ctx, id, result.Labels)
+			return svc.SetEmotions(ctx, record.ID, result.Labels, stillCurrent)
 		},
-		rateLimited:     true,
-		apiErrorReason:  "emotions_api_failed",
-		classifyErrVerb: "classify",
+		isSuperseded:     func(err error) bool { return errors.Is(err, huberrors.ErrClassificationSuperseded) },
+		supersededReason: "superseded",
+		rateLimited:      true,
+		apiErrorReason:   "emotions_api_failed",
+		classifyErrVerb:  "classify",
 		logResult: func(result service.EmotionsResult) []any {
 			return []any{"emotions", result.Labels}
 		},

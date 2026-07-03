@@ -75,6 +75,7 @@ func (m *mockSentimentWorkerService) GetFeedbackRecord(_ context.Context, _ uuid
 
 func (m *mockSentimentWorkerService) SetSentiment(
 	_ context.Context, _ uuid.UUID, sentiment *models.SentimentValue, score *float64,
+	_ func(valueText *string) bool,
 ) error {
 	m.setCalls = append(m.setCalls, sentimentSetCall{label: sentiment, score: score})
 
@@ -293,6 +294,21 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 
 		if metrics.outcomes["skipped"] != 1 {
 			t.Fatalf("skipped = %d, want 1", metrics.outcomes["skipped"])
+		}
+	})
+
+	t.Run("content-superseded write is a benign skip", func(t *testing.T) {
+		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: huberrors.ErrClassificationSuperseded}
+		metrics := newCountingSentimentMetrics()
+		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics)
+
+		if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
+			t.Fatalf("Work() error = %v, want nil (superseded is a skip, not a failure)", err)
+		}
+
+		if metrics.outcomes["skipped"] != 1 || metrics.workerErr["superseded"] != 1 {
+			t.Fatalf("skipped=%d superseded=%d, want 1/1",
+				metrics.outcomes["skipped"], metrics.workerErr["superseded"])
 		}
 	})
 

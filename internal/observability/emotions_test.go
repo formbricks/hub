@@ -19,7 +19,7 @@ func TestEmotionsAllowedReasonsAndStatuses(t *testing.T) {
 
 	workerReasons := []string{
 		"emotions_api_failed", "get_record_failed", "settings_read_failed",
-		"update_failed", "tenant_write_conflict", "rate_limited",
+		"superseded", "update_failed", "tenant_write_conflict", "rate_limited",
 	}
 	for _, reason := range workerReasons {
 		assert.True(t, AllowedEmotionsWorkerReason(reason), reason)

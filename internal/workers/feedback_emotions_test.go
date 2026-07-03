@@ -69,7 +69,7 @@ func (m *mockEmotionsWorkerService) GetFeedbackRecord(_ context.Context, _ uuid.
 }
 
 func (m *mockEmotionsWorkerService) SetEmotions(
-	_ context.Context, _ uuid.UUID, emotions []models.EmotionValue,
+	_ context.Context, _ uuid.UUID, emotions []models.EmotionValue, _ func(valueText *string) bool,
 ) error {
 	m.setCalls = append(m.setCalls, emotions)
 
@@ -286,6 +286,21 @@ func TestFeedbackEmotionsWorker_SetEmotionsErrors(t *testing.T) {
 
 		if metrics.outcomes["skipped"] != 1 {
 			t.Fatalf("skipped = %d, want 1", metrics.outcomes["skipped"])
+		}
+	})
+
+	t.Run("content-superseded write is a benign skip", func(t *testing.T) {
+		svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text), setErr: huberrors.ErrClassificationSuperseded}
+		metrics := newCountingEmotionsMetrics()
+		worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics)
+
+		if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
+			t.Fatalf("Work() error = %v, want nil (superseded is a skip, not a failure)", err)
+		}
+
+		if metrics.outcomes["skipped"] != 1 || metrics.workerErr["superseded"] != 1 {
+			t.Fatalf("skipped=%d superseded=%d, want 1/1",
+				metrics.outcomes["skipped"], metrics.workerErr["superseded"])
 		}
 	})
 

@@ -196,6 +196,37 @@ func (e *EmbeddingSupersededError) Is(target error) bool {
 	return ok
 }
 
+// ErrClassificationSuperseded is the sentinel for a sentiment/emotions write skipped because the
+// record's value_text changed between the job reading the record and persisting the label — a
+// newer job owns the row, and letting the stale classification land last would permanently attach
+// a label computed from the old text (the NULL-rows-only classify backfill can never repair a
+// wrong non-NULL value). A benign no-op, not a failure: callers should record it as skipped
+// rather than retry.
+var ErrClassificationSuperseded = &ClassificationSupersededError{}
+
+// ClassificationSupersededError is a sentinel for a stale-content classification write.
+// Deliberately distinct from NotFoundError (the record still exists) and ConflictError (nothing
+// is wrong with the data) so an out-of-order classification is treated as a skip.
+type ClassificationSupersededError struct {
+	Message string
+}
+
+// Error implements the error interface.
+func (e *ClassificationSupersededError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+
+	return "classification superseded by newer record content"
+}
+
+// Is implements the error interface for error comparison.
+func (e *ClassificationSupersededError) Is(target error) bool {
+	_, ok := target.(*ClassificationSupersededError)
+
+	return ok
+}
+
 // ErrTenantWriteConflict is the sentinel for tenant write coordination conflicts:
 // a tenant-owned write rejected because a tenant data purge is in progress, or a
 // purge that could not acquire its lock while tenant-owned writes were in flight.

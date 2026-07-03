@@ -581,7 +581,14 @@ paths:
             tags:
                 - Feedback Records
             summary: Update a feedback record
-            description: Updates specific fields of a feedback record data point
+            description: |-
+                Updates specific fields of a feedback record data point.
+
+                Changing `value_text` clears the server-generated enrichment fields computed from it
+                (`sentiment`, `sentiment_score`, `emotions`, `value_text_translated`,
+                `translation_lang_key`) and queues re-enrichment; changing `language` clears and
+                re-queues the translation pair only. The response reflects the cleared state — the
+                fields are absent until the asynchronous re-enrichment completes.
             operationId: update-feedback-record
             parameters:
                 - name: id

@@ -145,7 +145,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 		rec := createText("the weather forecast for tomorrow")
 
 		// Seed a stale set to prove an empty classification nulls the column rather than leaving it.
-		require.NoError(t, svc.SetEmotions(ctx, rec.ID, []models.EmotionValue{models.EmotionAnger}))
+		require.NoError(t, svc.SetEmotions(ctx, rec.ID, []models.EmotionValue{models.EmotionAnger}, nil))
 
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{Labels: nil}}
 		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
@@ -161,7 +161,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 	t.Run("clears a stale set when value_text is empty", func(t *testing.T) {
 		rec := createText("")
 
-		require.NoError(t, svc.SetEmotions(ctx, rec.ID, []models.EmotionValue{models.EmotionSadness}))
+		require.NoError(t, svc.SetEmotions(ctx, rec.ID, []models.EmotionValue{models.EmotionSadness}, nil))
 
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{Labels: []models.EmotionValue{models.EmotionJoy}}}
 		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
@@ -183,7 +183,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 	})
 
 	t.Run("SetEmotions on a missing record returns NotFound", func(t *testing.T) {
-		err := repo.SetEmotions(ctx, uuid.Must(uuid.NewV7()), nil)
+		err := repo.SetEmotions(ctx, uuid.Must(uuid.NewV7()), nil, nil)
 		require.ErrorIs(t, err, huberrors.ErrNotFound)
 	})
 }

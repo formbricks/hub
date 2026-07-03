@@ -2,11 +2,13 @@ package workers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
@@ -14,13 +16,16 @@ import (
 
 // FeedbackSentimentWorker classifies a feedback record's value_text into a sentiment label and
 // score and stores it — a configured enrichmentWorker. It borrows the shared rate-limit snooze
-// (it, too, calls a rate-limited LLM provider) and has no supersession (no per-tenant target).
+// (it, too, calls a rate-limited LLM provider); it has no per-tenant target, but its persist is
+// guarded against content supersession (a job that read older text skips instead of landing its
+// label last — a stale non-NULL label would escape the NULL-rows-only backfill forever).
 type FeedbackSentimentWorker = enrichmentWorker[service.FeedbackSentimentArgs, service.SentimentResult]
 
 // sentimentWorkerService is the minimal interface the worker needs.
 type sentimentWorkerService interface {
 	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
-	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64) error
+	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
+		stillCurrent func(valueText *string) bool) error
 }
 
 const feedbackSentimentTimeout = 30 * time.Second
@@ -54,16 +59,23 @@ func NewFeedbackSentimentWorker(
 
 			return client.Classify(ctx, *record.ValueText, sourceLang)
 		},
-		persist: func(ctx context.Context, id uuid.UUID, _ service.FeedbackSentimentArgs, result *service.SentimentResult) error {
+		persist: func(
+			ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackSentimentArgs, result *service.SentimentResult,
+		) error {
+			// Guard the write against content churn since the Work-time read: a stale job's label
+			// (or clear) must not land last over a newer job's write.
+			stillCurrent := valueTextStillCurrent(record.ValueText)
 			if result == nil {
-				return svc.SetSentiment(ctx, id, nil, nil)
+				return svc.SetSentiment(ctx, record.ID, nil, nil, stillCurrent)
 			}
 
-			return svc.SetSentiment(ctx, id, &result.Label, &result.Score)
+			return svc.SetSentiment(ctx, record.ID, &result.Label, &result.Score, stillCurrent)
 		},
-		rateLimited:     true,
-		apiErrorReason:  "sentiment_api_failed",
-		classifyErrVerb: "classify",
+		isSuperseded:     func(err error) bool { return errors.Is(err, huberrors.ErrClassificationSuperseded) },
+		supersededReason: "superseded",
+		rateLimited:      true,
+		apiErrorReason:   "sentiment_api_failed",
+		classifyErrVerb:  "classify",
 		logResult: func(result service.SentimentResult) []any {
 			return []any{"sentiment", result.Label, "score", result.Score}
 		},

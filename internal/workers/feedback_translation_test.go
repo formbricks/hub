@@ -74,7 +74,7 @@ func (m *mockTranslationWorkerService) GetFeedbackRecord(_ context.Context, _ uu
 }
 
 func (m *mockTranslationWorkerService) SetTranslation(
-	_ context.Context, _ uuid.UUID, translated *string, langKey string,
+	_ context.Context, _ uuid.UUID, translated *string, langKey string, _ func(valueText *string) bool,
 ) error {
 	m.setCalls = append(m.setCalls, translationSetCall{translated: translated, langKey: langKey})
 

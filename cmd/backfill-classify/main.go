@@ -1,6 +1,9 @@
 // backfill-classify enqueues River enrichment jobs for feedback records that are missing a
-// classification: sentiment (sentiment IS NULL) or emotions (emotions IS NULL). Run this one-off
-// after enabling SENTIMENT_* / EMOTIONS_* on a deployment, or to re-enrich a backlog; hub-worker
+// classification: sentiment (sentiment IS NULL) or emotions (emotions IS NULL). NULL rows arise
+// from enabling SENTIMENT_* / EMOTIONS_* on a deployment with an existing backlog, from a
+// value_text edit whose re-enrichment job was lost or finally failed (the edit eagerly clears the
+// stale outputs), and from tenants that edited records while their enrichment toggle was off
+// (re-enabling does not re-enrich by itself). Run this one-off to recover any of those; hub-worker
 // (or the API process) runs the enqueued jobs. Select the type with -type sentiment|emotions.
 package main
 

@@ -19,14 +19,15 @@ import (
 
 // FeedbackTranslationWorker translates a feedback record's value_text into the tenant's target
 // language and stores it — a configured enrichmentWorker. It borrows the shared rate-limit snooze
-// (it calls a rate-limited LLM provider) and uses the supersession skip: a stale-target write is a
-// no-op once a newer-target job owns the row.
+// (it calls a rate-limited LLM provider) and uses the supersession skip: a stale-target OR
+// stale-content write is a no-op once a newer job owns the row.
 type FeedbackTranslationWorker = enrichmentWorker[service.FeedbackTranslationArgs, string]
 
 // translationWorkerService is the minimal interface the worker needs.
 type translationWorkerService interface {
 	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
-	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string) error
+	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string,
+		stillCurrent func(valueText *string) bool) error
 }
 
 const feedbackTranslationTimeout = 30 * time.Second
@@ -47,16 +48,19 @@ func NewFeedbackTranslationWorker(
 		classify: func(ctx context.Context, record *models.FeedbackRecord, args service.FeedbackTranslationArgs) (string, error) {
 			return translate(ctx, client, record, args.TargetLang)
 		},
-		persist: func(ctx context.Context, id uuid.UUID, args service.FeedbackTranslationArgs, translated *string) error {
+		persist: func(ctx context.Context, record *models.FeedbackRecord, args service.FeedbackTranslationArgs, translated *string) error {
+			// Guard the write against content churn since the Work-time read: a stale job's
+			// translation (or clear) must not land last over a newer job's write.
+			stillCurrent := valueTextStillCurrent(record.ValueText)
 			if translated == nil {
-				return svc.SetTranslation(ctx, id, nil, "")
+				return svc.SetTranslation(ctx, record.ID, nil, "", stillCurrent)
 			}
 
-			return svc.SetTranslation(ctx, id, translated, args.TargetLang)
+			return svc.SetTranslation(ctx, record.ID, translated, args.TargetLang, stillCurrent)
 		},
-		// A stale-target write (the tenant's target changed, or this job came from a stale settings
-		// cache) is a benign no-op — a newer-target job owns the row. Record it under a distinct
-		// label so target churn / cache staleness stays observable.
+		// A stale write (the tenant's target changed, this job came from a stale settings cache,
+		// or the record's content changed mid-job) is a benign no-op — a newer job owns the row.
+		// Record it under a distinct label so target/content churn stays observable.
 		isSuperseded:     func(err error) bool { return errors.Is(err, huberrors.ErrTranslationSuperseded) },
 		supersededReason: "superseded",
 		rateLimited:      true,

@@ -64,7 +64,7 @@ func TestListClassifyBackfillTargets(t *testing.T) {
 
 		label := models.SentimentPositive
 		score := 1.0
-		require.NoError(t, repo.SetSentiment(ctx, alreadySet.ID, &label, &score))
+		require.NoError(t, repo.SetSentiment(ctx, alreadySet.ID, &label, &score, nil))
 
 		ids, listErr := repo.ListSentimentBackfillTargets(ctx, uuid.Nil, bigLimit)
 		require.NoError(t, listErr)
@@ -78,7 +78,7 @@ func TestListClassifyBackfillTargets(t *testing.T) {
 		needsBackfill := mkText("I am thrilled and a little scared")
 		alreadySet := mkText("already classified")
 
-		require.NoError(t, repo.SetEmotions(ctx, alreadySet.ID, []models.EmotionValue{models.EmotionJoy}))
+		require.NoError(t, repo.SetEmotions(ctx, alreadySet.ID, []models.EmotionValue{models.EmotionJoy}, nil))
 
 		ids, listErr := repo.ListEmotionsBackfillTargets(ctx, uuid.Nil, bigLimit)
 		require.NoError(t, listErr)

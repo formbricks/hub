@@ -204,6 +204,50 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 	return record, nil
 }
 
+// guardValueTextCurrent verifies, atomically with the caller's enrichment write, that the
+// record's current value_text still matches the content the caller's result was computed from —
+// the concurrent-jobs race guard shared by the classify enrichments (the embedding write has its
+// own sibling, guardEmbeddingSourceCurrent): of two overlapping jobs for one record, the one that
+// read OLDER content lands its write LAST and would permanently attach a stale result — the
+// NULL-rows-only backfills can never repair a wrong non-NULL value. Under a per-record advisory
+// lock (the same key the embedding guard takes, so all enrichment writers for a record
+// serialize) the current value_text is re-read and compared; a mismatch returns superseded — a
+// benign skip, since the job holding the current content writes the row. A nil stillCurrent
+// skips the guard (unconditional write).
+func guardValueTextCurrent(
+	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID,
+	stillCurrent func(valueText *string) bool, superseded error,
+) error {
+	if stillCurrent == nil {
+		return nil
+	}
+
+	if _, err := dbTx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, feedbackRecordID,
+	); err != nil {
+		return fmt.Errorf("lock feedback record for enrichment write: %w", err)
+	}
+
+	var valueText *string
+
+	err := dbTx.QueryRow(ctx,
+		`SELECT value_text FROM feedback_records WHERE id = $1`, feedbackRecordID,
+	).Scan(&valueText)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+		}
+
+		return fmt.Errorf("read feedback record content for enrichment write: %w", err)
+	}
+
+	if !stillCurrent(valueText) {
+		return superseded
+	}
+
+	return nil
+}
+
 // SetTranslation stores the translated text and the target locale it was produced in
 // for a feedback record. The write is scoped to the record's tenant via the shared
 // tenant write lock (so it cannot race a tenant data purge) and does NOT publish a
@@ -216,9 +260,16 @@ func (r *FeedbackRecordsRepository) GetByID(ctx context.Context, id uuid.UUID) (
 // (TRANSLATION_DEFAULT_LANGUAGE) when it has none — otherwise it returns
 // huberrors.ErrTranslationSuperseded. This makes the write atomic w.r.t. a concurrent target
 // change and immune to a stale settings-cache read, so an out-of-order stale-target job cannot
-// clobber a newer translation. Clearing (translated == nil) is unconditional.
+// clobber a newer translation.
+//
+// stillCurrent (optional) additionally guards BOTH paths against content churn: the record's
+// current value_text is re-read atomically with the write and compared to the content the
+// translation (or clear) was computed from; a mismatch returns ErrTranslationSuperseded so a job
+// that read older text cannot land its result last and clobber a newer job's write (see
+// guardValueTextCurrent). nil ⇒ no content guard.
 func (r *FeedbackRecordsRepository) SetTranslation(
 	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
+	stillCurrent func(valueText *string) bool,
 ) error {
 	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		// Translation rides the feedback record's tenant boundary; resolve and lock
@@ -227,9 +278,14 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 			return err
 		}
 
-		// Clearing (translated == nil) nulls both columns unconditionally: an emptied
-		// value_text must drop any stale translation regardless of the tenant's target,
-		// and a lang key has no meaning without a translation.
+		if err := guardValueTextCurrent(ctx, dbTx, feedbackRecordID, stillCurrent,
+			huberrors.ErrTranslationSuperseded); err != nil {
+			return err
+		}
+
+		// Clearing (translated == nil) nulls both columns regardless of the tenant's target
+		// (a lang key has no meaning without a translation); only the content guard above can
+		// skip it, so a clear enqueued for since-refilled text cannot drop a newer translation.
 		if translated == nil {
 			if _, err := dbTx.Exec(ctx, `
 				UPDATE feedback_records
@@ -285,12 +341,18 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 // record edit, and re-publishing would loop the enrichment pipeline. A missing record (deleted
 // or purged between read and write) returns NotFound.
 //
-// Unlike SetTranslation the write is unconditional: sentiment has no per-tenant target that a
-// settings change could invalidate, so there is no supersession guard. Passing a nil sentiment
-// clears both columns (e.g. when value_text was emptied); a non-nil sentiment sets both. The
-// caller pairs label and score; the column CHECKs are the final guard.
+// Sentiment has no per-tenant target that a settings change could invalidate (unlike
+// SetTranslation's target guard), but it shares the content race: stillCurrent (optional)
+// re-reads the record's value_text atomically with the write and compares it to the content the
+// classification was computed from; a mismatch returns huberrors.ErrClassificationSuperseded so
+// a job that read older text cannot land its label last over a newer job's write — a stale
+// non-NULL label would escape the NULL-rows-only backfill forever (see guardValueTextCurrent).
+// nil ⇒ unconditional write. Passing a nil sentiment clears both columns (e.g. when value_text
+// was emptied); a non-nil sentiment sets both. The caller pairs label and score; the column
+// CHECKs are the final guard.
 func (r *FeedbackRecordsRepository) SetSentiment(
 	ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
+	stillCurrent func(valueText *string) bool,
 ) error {
 	// Encode the label as a plain nullable string for the driver: the column is a VARCHAR with a
 	// CHECK, not a Postgres enum type.
@@ -305,6 +367,11 @@ func (r *FeedbackRecordsRepository) SetSentiment(
 		// Sentiment rides the feedback record's tenant boundary; resolve and lock it so the
 		// write cannot race a tenant data purge.
 		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		if err := guardValueTextCurrent(ctx, dbTx, feedbackRecordID, stillCurrent,
+			huberrors.ErrClassificationSuperseded); err != nil {
 			return err
 		}
 
@@ -330,12 +397,16 @@ func (r *FeedbackRecordsRepository) SetSentiment(
 }
 
 // SetEmotions stores or clears the emotion labels for a feedback record. Like SetSentiment the
-// write is tenant-write-locked (so it cannot race a tenant data purge) and publishes no domain
-// event (emotions is a derived enrichment). Emotions are multi-label: an empty or nil slice clears
-// the column (writes NULL), a non-empty slice replaces it. The caller validates label membership;
-// the column CHECKs are the final guard. A missing record returns NotFound.
+// write is tenant-write-locked (so it cannot race a tenant data purge), publishes no domain
+// event (emotions is a derived enrichment), and takes the same optional stillCurrent content
+// guard: a mismatch against the record's current value_text returns
+// huberrors.ErrClassificationSuperseded instead of landing a stale label last (see
+// guardValueTextCurrent); nil ⇒ unconditional write. Emotions are multi-label: an empty or nil
+// slice clears the column (writes NULL), a non-empty slice replaces it. The caller validates
+// label membership; the column CHECKs are the final guard. A missing record returns NotFound.
 func (r *FeedbackRecordsRepository) SetEmotions(
 	ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
+	stillCurrent func(valueText *string) bool,
 ) error {
 	// Encode as a text[] for the driver (the column is text[], not a Postgres enum). An empty set
 	// binds SQL NULL via an untyped-nil arg -- absence is NULL, and the non-empty CHECK rejects {},
@@ -355,6 +426,11 @@ func (r *FeedbackRecordsRepository) SetEmotions(
 		// Emotions ride the feedback record's tenant boundary; resolve and lock it so the write
 		// cannot race a tenant data purge.
 		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		if err := guardValueTextCurrent(ctx, dbTx, feedbackRecordID, stillCurrent,
+			huberrors.ErrClassificationSuperseded); err != nil {
 			return err
 		}
 
@@ -757,11 +833,12 @@ func buildUpdateQuery(
 	// both re-triggers enrichment via the update event and (for translation) makes the row a
 	// backfill target (translation_lang_key NULL IS DISTINCT FROM the tenant target), so a missed
 	// or finally-failed re-enrichment is still recovered by a later backfill. The value_text
-	// comparison is btrim-level to match the enrichment content hash (which trims before hashing):
-	// a whitespace-only edit must not count as a content change, or it would clear an output the
-	// pipeline considers current. (NFC-only differences remain byte-unequal here — exotic, and the
-	// update event still re-enriches them.) Reuses the existing value_text / language placeholders,
-	// so it consumes none of its own.
+	// comparison trims ASCII whitespace, approximating the enrichment content hash's
+	// strings.TrimSpace: a whitespace-only edit must not count as a content change, or it would
+	// clear an output the pipeline considers current. (Unicode-whitespace-only and NFC-only
+	// differences still count as changes here — exotic, and only transiently wrong: the update
+	// event re-enriches them.) Reuses the existing value_text / language placeholders, so it
+	// consumes none of its own.
 	//
 	// Each output's trigger set MIRRORS its provider's `triggers` (internal/service/*_provider.go):
 	// sentiment and emotions depend on value_text alone; translation on value_text OR language.
@@ -771,7 +848,8 @@ func buildUpdateQuery(
 	var valueTextChanged, languageChanged string
 	if valueTextArg != 0 {
 		valueTextChanged = fmt.Sprintf(
-			"btrim(coalesce(value_text, '')) IS DISTINCT FROM btrim(coalesce($%d, ''))", valueTextArg)
+			`btrim(coalesce(value_text, ''), E' \t\r\n') IS DISTINCT FROM btrim(coalesce($%d, ''), E' \t\r\n')`,
+			valueTextArg)
 	}
 
 	if languageArg != 0 {

@@ -150,7 +150,7 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 		// Seed a stale sentiment to prove the worker nulls it instead of classifying empty text.
 		label := models.SentimentNegative
 		score := -1.0
-		require.NoError(t, svc.SetSentiment(ctx, rec.ID, &label, &score))
+		require.NoError(t, svc.SetSentiment(ctx, rec.ID, &label, &score, nil))
 
 		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1}}
 		worker := workers.NewFeedbackSentimentWorker(svc, settingsSvc, fake, nil)
@@ -176,7 +176,7 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 	})
 
 	t.Run("SetSentiment on a missing record returns NotFound", func(t *testing.T) {
-		err := repo.SetSentiment(ctx, uuid.Must(uuid.NewV7()), nil, nil)
+		err := repo.SetSentiment(ctx, uuid.Must(uuid.NewV7()), nil, nil, nil)
 		require.ErrorIs(t, err, huberrors.ErrNotFound)
 	})
 }

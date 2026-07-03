@@ -51,9 +51,12 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
 	) ([]models.FeedbackRecord, bool, error)
 	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
-	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string) error
-	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64) error
-	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue) error
+	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
+		stillCurrent func(valueText *string) bool) error
+	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
+		stillCurrent func(valueText *string) bool) error
+	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
+		stillCurrent func(valueText *string) bool) error
 	ListTranslationBackfillTargets(
 		ctx context.Context, afterID uuid.UUID, limit int, defaultLang string,
 	) ([]models.TranslationBackfillTarget, error)
@@ -166,8 +169,12 @@ func (s *FeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.
 // SetTranslation persists the translated value_text and the target locale key for a
 // feedback record. It is the accessor the translation worker uses; the write is
 // tenant-write-locked in the repository and publishes no event (no enrichment loop).
+// stillCurrent (optional) is the repository's content-supersession guard: it is given the
+// record's current value_text atomically with the write, and a false return skips the write
+// with huberrors.ErrTranslationSuperseded (nil ⇒ unconditional).
 func (s *FeedbackRecordsService) SetTranslation(
 	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey string,
+	stillCurrent func(valueText *string) bool,
 ) error {
 	// A translation must carry the locale it was produced in; reject an inconsistent
 	// (translated, "") pair. Clearing (translated == nil) intentionally passes "".
@@ -175,7 +182,9 @@ func (s *FeedbackRecordsService) SetTranslation(
 		return ErrTranslationLangKeyRequired
 	}
 
-	if err := s.repo.SetTranslation(ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang); err != nil {
+	if err := s.repo.SetTranslation(
+		ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang, stillCurrent,
+	); err != nil {
 		return fmt.Errorf("set feedback record translation: %w", err)
 	}
 
@@ -184,14 +193,18 @@ func (s *FeedbackRecordsService) SetTranslation(
 
 // SetSentiment persists or clears the sentiment label and score for a feedback record. It is the
 // accessor the sentiment worker uses; the write is tenant-write-locked in the repository and
-// publishes no event (no enrichment loop). Passing a nil sentiment clears both columns; a
-// non-nil label must be valid and carry a score.
+// publishes no event (no enrichment loop). stillCurrent (optional) is the repository's
+// content-supersession guard: it is given the record's current value_text atomically with the
+// write, and a false return skips the write with huberrors.ErrClassificationSuperseded (nil ⇒
+// unconditional). Passing a nil sentiment clears both columns; a non-nil label must be valid and
+// carry a score.
 func (s *FeedbackRecordsService) SetSentiment(
 	ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
+	stillCurrent func(valueText *string) bool,
 ) error {
 	// Clearing nulls both columns: a score has no meaning without a label.
 	if sentiment == nil {
-		if err := s.repo.SetSentiment(ctx, feedbackRecordID, nil, nil); err != nil {
+		if err := s.repo.SetSentiment(ctx, feedbackRecordID, nil, nil, stillCurrent); err != nil {
 			return fmt.Errorf("clear feedback record sentiment: %w", err)
 		}
 
@@ -206,7 +219,7 @@ func (s *FeedbackRecordsService) SetSentiment(
 		return ErrSentimentScoreRequired
 	}
 
-	if err := s.repo.SetSentiment(ctx, feedbackRecordID, sentiment, score); err != nil {
+	if err := s.repo.SetSentiment(ctx, feedbackRecordID, sentiment, score, stillCurrent); err != nil {
 		return fmt.Errorf("set feedback record sentiment: %w", err)
 	}
 
@@ -215,14 +228,18 @@ func (s *FeedbackRecordsService) SetSentiment(
 
 // SetEmotions persists or clears the emotion labels for a feedback record. It is the accessor the
 // emotion worker uses; the write is tenant-write-locked in the repository and publishes no event
-// (no enrichment loop). Emotions are multi-label; an empty (or nil) set clears the column, so "no
-// emotion detected" and "not yet enriched" share the same NULL representation.
+// (no enrichment loop). stillCurrent (optional) is the repository's content-supersession guard:
+// it is given the record's current value_text atomically with the write, and a false return skips
+// the write with huberrors.ErrClassificationSuperseded (nil ⇒ unconditional). Emotions are
+// multi-label; an empty (or nil) set clears the column, so "no emotion detected" and "not yet
+// enriched" share the same NULL representation.
 func (s *FeedbackRecordsService) SetEmotions(
 	ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
+	stillCurrent func(valueText *string) bool,
 ) error {
 	// An empty set clears (stored as NULL, never an empty array).
 	if len(emotions) == 0 {
-		if err := s.repo.SetEmotions(ctx, feedbackRecordID, nil); err != nil {
+		if err := s.repo.SetEmotions(ctx, feedbackRecordID, nil, stillCurrent); err != nil {
 			return fmt.Errorf("clear feedback record emotions: %w", err)
 		}
 
@@ -235,7 +252,7 @@ func (s *FeedbackRecordsService) SetEmotions(
 		}
 	}
 
-	if err := s.repo.SetEmotions(ctx, feedbackRecordID, emotions); err != nil {
+	if err := s.repo.SetEmotions(ctx, feedbackRecordID, emotions, stillCurrent); err != nil {
 		return fmt.Errorf("set feedback record emotions: %w", err)
 	}
 
@@ -304,8 +321,15 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 	// read error, fall back to presence-based fields (conservative toward firing). One cheap PK
 	// lookup on the update path only; the hot create path is untouched.
 	var old *models.FeedbackRecord
+
 	if s.publisher != nil && len(req.ChangedFields()) > 0 {
-		old, _ = s.repo.GetByID(ctx, id)
+		var readErr error
+		if old, readErr = s.repo.GetByID(ctx, id); readErr != nil {
+			// Degraded, not fatal: presence-based fields over-fire (idempotent re-sends re-run
+			// enrichment) rather than under-fire, but the degradation should be observable.
+			slog.Warn("update feedback record: pre-update read failed, falling back to presence-based changed fields",
+				"feedback_record_id", id, "error", readErr)
+		}
 	}
 
 	record, err := s.repo.Update(ctx, id, req)
