@@ -116,6 +116,12 @@ jobs:
       - name: Install Schemathesis
         run: python -m pip install schemathesis==4.4.4
 
+      # Endpoints that depend on optional Hub features (embeddings, the taxonomy
+      # compute service) legitimately return a documented 503 when those features
+      # are not configured — and they are not configured in this CI job. They are
+      # excluded from this run (which enforces not_a_server_error) and validated in
+      # the next step with that check dropped, so their documented 503 still passes
+      # status/content/schema conformance without being flagged as a server error.
       - name: Run API contract tests
         env:
           SCHEMATHESIS_BASE_URL: http://localhost:8080
@@ -128,9 +134,14 @@ jobs:
             --phases examples \
             -H "Authorization: Bearer test-api-key-for-ci" \
             --exclude-operation-id semantic-search-feedback-records \
-            --exclude-operation-id similar-feedback-records
+            --exclude-operation-id similar-feedback-records \
+            --exclude-operation-id list-taxonomy-fields \
+            --exclude-operation-id create-taxonomy-run
 
-      - name: Run API contract tests (search endpoints)
+      # Embedding/taxonomy-service-dependent endpoints: not_a_server_error is dropped
+      # because a 503 (feature not configured in CI) is expected and documented; the
+      # remaining checks still enforce the response conforms to the spec.
+      - name: Run API contract tests (embedding-dependent endpoints)
         env:
           SCHEMATHESIS_BASE_URL: http://localhost:8080
           SCHEMATHESIS_WAIT_FOR_SCHEMA: '2'
@@ -142,7 +153,9 @@ jobs:
             --phases examples \
             -H "Authorization: Bearer test-api-key-for-ci" \
             --include-operation-id semantic-search-feedback-records \
-            --include-operation-id similar-feedback-records
+            --include-operation-id similar-feedback-records \
+            --include-operation-id list-taxonomy-fields \
+            --include-operation-id create-taxonomy-run
 
       - name: Stop API server
         if: always()
