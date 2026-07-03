@@ -2868,6 +2868,9 @@ components:
         TaxonomyRunData:
             type: object
             additionalProperties: false
+            # Reused across list/get/create/tree responses; declare a model so the SDK
+            # emits one shared TaxonomyRun type instead of duplicating it (Model/Recommended).
+            x-stainless-model: taxonomy.run
             description: A persisted taxonomy generation run.
             properties:
                 id:
@@ -2940,6 +2943,9 @@ components:
         TaxonomyNodeData:
             type: object
             additionalProperties: false
+            # Self-referential via `children`; a recursive schema must be a named model
+            # or Stainless drops the recursion (Schema/RecursiveMustBeModel error).
+            x-stainless-model: taxonomy.node
             description: A node in a taxonomy tree. Non-root nodes have a parent; leaf nodes reference the cluster they summarize.
             properties:
                 id:
