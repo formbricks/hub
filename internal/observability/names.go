@@ -32,6 +32,13 @@ const (
 	MetricNameTranslationWorkerErrors   = "hub_translation_worker_errors_total"
 	MetricNameTranslationDuration       = "hub_translation_duration_seconds"
 
+	// MetricNameSentimentJobsEnqueued and related sentiment pipeline metrics.
+	MetricNameSentimentJobsEnqueued   = "hub_sentiment_jobs_enqueued_total"
+	MetricNameSentimentProviderErrors = "hub_sentiment_provider_errors_total"
+	MetricNameSentimentOutcomes       = "hub_sentiment_outcomes_total"
+	MetricNameSentimentWorkerErrors   = "hub_sentiment_worker_errors_total"
+	MetricNameSentimentDuration       = "hub_sentiment_duration_seconds"
+
 	MetricNameCacheHits   = "hub_cache_hits_total"
 	MetricNameCacheMisses = "hub_cache_misses_total"
 )
@@ -145,6 +152,45 @@ func AllowedTranslationOutcomeStatus(status string) bool {
 // AllowedTranslationWorkerReason returns true if reason is allowed for translation worker errors.
 func AllowedTranslationWorkerReason(reason string) bool {
 	return allowedTranslationWorkerReasons[reason]
+}
+
+// allowedSentimentProviderReasons for hub_sentiment_provider_errors_total.
+var allowedSentimentProviderReasons = map[string]bool{
+	"settings_read_failed": true,
+	"enqueue_failed":       true,
+}
+
+// allowedSentimentOutcomeStatuses for hub_sentiment_outcomes_total and hub_sentiment_duration_seconds.
+var allowedSentimentOutcomeStatuses = map[string]bool{
+	"success":      true,
+	"retry":        true,
+	"failed_final": true,
+	"skipped":      true,
+}
+
+// allowedSentimentWorkerReasons for hub_sentiment_worker_errors_total.
+var allowedSentimentWorkerReasons = map[string]bool{
+	"sentiment_api_failed":  true,
+	"get_record_failed":     true,
+	"settings_read_failed":  true,
+	"update_failed":         true,
+	"tenant_write_conflict": true,
+	"rate_limited":          true,
+}
+
+// AllowedSentimentProviderReason returns true if reason is allowed for sentiment provider errors.
+func AllowedSentimentProviderReason(reason string) bool {
+	return allowedSentimentProviderReasons[reason]
+}
+
+// AllowedSentimentOutcomeStatus returns true if status is allowed for sentiment outcomes.
+func AllowedSentimentOutcomeStatus(status string) bool {
+	return allowedSentimentOutcomeStatuses[status]
+}
+
+// AllowedSentimentWorkerReason returns true if reason is allowed for sentiment worker errors.
+func AllowedSentimentWorkerReason(reason string) bool {
+	return allowedSentimentWorkerReasons[reason]
 }
 
 // AllowedProviderReason returns true if reason is an allowed provider error reason.

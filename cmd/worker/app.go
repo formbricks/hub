@@ -71,12 +71,14 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		webhookMetrics     observability.WebhookMetrics
 		embeddingMetrics   observability.EmbeddingMetrics
 		translationMetrics observability.TranslationMetrics
+		sentimentMetrics   observability.SentimentMetrics
 	)
 
 	if metrics != nil {
 		webhookMetrics = metrics.Webhooks
 		embeddingMetrics = metrics.Embeddings
 		translationMetrics = metrics.Translation
+		sentimentMetrics = metrics.Sentiment
 	}
 
 	webhookSender := service.NewWebhookSenderImpl(
@@ -161,6 +163,39 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.TranslationMetrics = translationMetrics
 		deps.TranslationBackfillService = translationRecordsService
 		deps.TranslationMaxAttempts = cfg.Translation.MaxAttempts
+	}
+
+	if cfg.Sentiment.Enabled() {
+		sentimentClient, err := service.NewSentimentClient(context.Background(), service.SentimentClientConfig{
+			Provider:            cfg.Sentiment.Provider,
+			ProviderAPIKey:      cfg.Sentiment.ProviderAPIKey,
+			Model:               cfg.Sentiment.Model,
+			BaseURL:             cfg.Sentiment.BaseURL,
+			GoogleCloudProject:  cfg.Sentiment.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Sentiment.GoogleCloudLocation,
+		})
+		if err != nil {
+			shutdownObservability(context.Background(), meterProvider, tracerProvider)
+
+			return nil, fmt.Errorf("sentiment config: %w", err)
+		}
+
+		// The sentiment worker only reads the record and writes the sentiment, so the
+		// embedding/translation-specific service params are unused here.
+		sentimentRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+		sentimentRecordsService := service.NewFeedbackRecordsService(
+			sentimentRecordsRepo, nil, "", nil, nil, "", 0, "")
+
+		// The worker re-checks the per-directory sentiment gate (the enqueue provider fails open on
+		// a settings-read error), so it needs its own tenant-settings reader. Read uncached so the
+		// gate stays authoritative: a toggle takes effect on the next job, and there is no
+		// settings-write cache-eviction hook in this process (writes go through hub-api).
+		sentimentSettingsService := service.NewTenantSettingsService(repository.NewTenantSettingsRepository(db))
+
+		deps.SentimentService = sentimentRecordsService
+		deps.SentimentResolver = sentimentSettingsService
+		deps.SentimentClient = sentimentClient
+		deps.SentimentMetrics = sentimentMetrics
 	}
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)

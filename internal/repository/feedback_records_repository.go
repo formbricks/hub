@@ -36,12 +36,55 @@ func NewFeedbackRecordsRepository(db *pgxpool.Pool) *FeedbackRecordsRepository {
 // the single source of truth for materializing a FeedbackRecord, so column order
 // and scan order cannot drift across the Create/Get/List/Update read paths (a
 // silent runtime scan error otherwise). It excludes derived rows like embeddings.
+//
+// NOTE: the taxonomy node-records query (taxonomy_repository.go) carries a parallel,
+// fr.-qualified copy of this list for its JOIN — keep that list, this const, and
+// scanFeedbackRecord in sync. (Follow-up: derive the qualified list from this const.)
 const feedbackRecordColumns = `id, collected_at, created_at, updated_at,
 	source_type, source_id, source_name,
 	field_id, field_label, field_type, field_group_id, field_group_label,
 	value_text, value_number, value_boolean, value_date,
 	metadata, language, user_id, tenant_id, submission_id,
-	value_text_translated, translation_lang_key`
+	value_text_translated, translation_lang_key,
+	sentiment, sentiment_score`
+
+// scanFeedbackRecord materializes a FeedbackRecord from a row, in the exact column order of
+// feedbackRecordColumns above. It lives beside that const so the SELECT/RETURNING order and
+// the scan order can never drift. Shared with the taxonomy repository (same package).
+func scanFeedbackRecord(row scanner) (*models.FeedbackRecord, error) {
+	var record models.FeedbackRecord
+	if err := row.Scan(
+		&record.ID,
+		&record.CollectedAt,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+		&record.SourceType,
+		&record.SourceID,
+		&record.SourceName,
+		&record.FieldID,
+		&record.FieldLabel,
+		&record.FieldType,
+		&record.FieldGroupID,
+		&record.FieldGroupLabel,
+		&record.ValueText,
+		&record.ValueNumber,
+		&record.ValueBoolean,
+		&record.ValueDate,
+		&record.Metadata,
+		&record.Language,
+		&record.UserID,
+		&record.TenantID,
+		&record.SubmissionID,
+		&record.ValueTextTranslated,
+		&record.TranslationLangKey,
+		&record.Sentiment,
+		&record.SentimentScore,
+	); err != nil {
+		return nil, fmt.Errorf("scan feedback record: %w", err)
+	}
+
+	return &record, nil
+}
 
 // Create inserts a new feedback record.
 func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
@@ -215,6 +258,56 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 		// differs): a newer-target write owns the row. Signal a benign skip.
 		if tag.RowsAffected() == 0 {
 			return huberrors.ErrTranslationSuperseded
+		}
+
+		return nil
+	})
+}
+
+// SetSentiment stores or clears the sentiment label and score for a feedback record. The write
+// is scoped to the record's tenant via the shared tenant write lock (so it cannot race a tenant
+// data purge) and does NOT publish a domain event: sentiment is a derived enrichment, not a
+// record edit, and re-publishing would loop the enrichment pipeline. A missing record (deleted
+// or purged between read and write) returns NotFound.
+//
+// Unlike SetTranslation the write is unconditional: sentiment has no per-tenant target that a
+// settings change could invalidate, so there is no supersession guard. Passing a nil sentiment
+// clears both columns (e.g. when value_text was emptied); a non-nil sentiment sets both. The
+// caller pairs label and score; the column CHECKs are the final guard.
+func (r *FeedbackRecordsRepository) SetSentiment(
+	ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
+) error {
+	// Encode the label as a plain nullable string for the driver: the column is a VARCHAR with a
+	// CHECK, not a Postgres enum type.
+	var label *string
+
+	if sentiment != nil {
+		text := string(*sentiment)
+		label = &text
+	}
+
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		// Sentiment rides the feedback record's tenant boundary; resolve and lock it so the
+		// write cannot race a tenant data purge.
+		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		tag, err := dbTx.Exec(ctx, `
+			UPDATE feedback_records
+			SET sentiment = $2, sentiment_score = $3, updated_at = NOW()
+			WHERE id = $1`,
+			feedbackRecordID, label, score,
+		)
+		if err != nil {
+			return fmt.Errorf("set feedback record sentiment: %w", err)
+		}
+
+		// The record was locked above, so zero rows means it was deleted between the lock and
+		// this write: surface NotFound so the worker treats it as a benign skip (matches the
+		// method's contract and the embedding/translation write paths).
+		if tag.RowsAffected() == 0 {
+			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 
 		return nil

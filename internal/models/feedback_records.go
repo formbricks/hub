@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -130,6 +131,70 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// SentimentValue is the discrete sentiment label produced by the sentiment-enrichment
+// worker (ENG-1529). It is server-generated and persisted only after enrichment. Keep this
+// set in sync with the feedback_records_sentiment_valid DB CHECK and the OpenAPI enum.
+type SentimentValue string
+
+// Valid SentimentValue labels: the five ordinal levels plus a distinct "mixed".
+const (
+	SentimentVeryNegative SentimentValue = "very_negative"
+	SentimentNegative     SentimentValue = "negative"
+	SentimentNeutral      SentimentValue = "neutral"
+	SentimentPositive     SentimentValue = "positive"
+	SentimentVeryPositive SentimentValue = "very_positive"
+	SentimentMixed        SentimentValue = "mixed"
+)
+
+// Sentiment score bounds (inclusive): a signed polarity from -1 (very_negative) to +1
+// (very_positive), with 0 for neutral/mixed — the conventional sentiment-polarity range (cf.
+// Google Cloud NL, TextBlob, VADER). They match the feedback_records_sentiment_score_range DB
+// CHECK and bound the score the sentiment worker persists (the classifier output is clamped).
+const (
+	SentimentScoreMin = -1.0
+	SentimentScoreMax = 1.0
+)
+
+// sentimentValues lists every valid SentimentValue in ordinal order (very_negative ..
+// very_positive) followed by the distinct "mixed". It is the single in-Go source of the label
+// set: validSentimentValues (membership) and the sentiment structured-output enum both derive
+// from it, so the order is stable. Keep it in sync with the feedback_records_sentiment_valid DB
+// CHECK and the OpenAPI enum. Unexported so the canonical ordering cannot be mutated; expose it
+// via SentimentValues().
+var sentimentValues = []SentimentValue{
+	SentimentVeryNegative,
+	SentimentNegative,
+	SentimentNeutral,
+	SentimentPositive,
+	SentimentVeryPositive,
+	SentimentMixed,
+}
+
+// SentimentValues returns the valid SentimentValue labels in ordinal order. It returns a fresh
+// copy each call so callers cannot mutate the canonical set out from under validSentimentValues
+// / IsValid / the structured-output enum.
+func SentimentValues() []SentimentValue {
+	return slices.Clone(sentimentValues)
+}
+
+// validSentimentValues backs IsValid (set membership), derived from sentimentValues.
+var validSentimentValues = func() map[SentimentValue]struct{} {
+	set := make(map[SentimentValue]struct{}, len(sentimentValues))
+	for _, value := range sentimentValues {
+		set[value] = struct{}{}
+	}
+
+	return set
+}()
+
+// IsValid reports whether s is a known sentiment label. The sentiment worker validates
+// with this before persisting; reads rely on the DB CHECK for the same guarantee.
+func (s SentimentValue) IsValid() bool {
+	_, ok := validSentimentValues[s]
+
+	return ok
+}
+
 // FeedbackRecord represents a single feedback record.
 type FeedbackRecord struct {
 	ID              uuid.UUID       `json:"id"`
@@ -157,6 +222,10 @@ type FeedbackRecord struct {
 	// the record is translated into the tenant's configured target language.
 	ValueTextTranslated *string `json:"value_text_translated,omitempty"`
 	TranslationLangKey  *string `json:"translation_lang_key,omitempty"`
+	// Sentiment-enrichment outputs (ENG-1529): server-generated, read-only. NULL until
+	// the record is enriched (or sentiment is disabled / the record is ineligible).
+	Sentiment      *SentimentValue `json:"sentiment,omitempty"`
+	SentimentScore *float64        `json:"sentiment_score,omitempty"`
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.

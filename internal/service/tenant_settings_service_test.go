@@ -88,8 +88,10 @@ func (m *mockSettingsChangeListener) OnSettingsChanged(_ context.Context, tenant
 	m.calls = append(m.calls, changedKeys)
 }
 
-func assertListenerFiredOnce(t *testing.T, listener *mockSettingsChangeListener, wantTenant, wantKey string) {
+func assertListenerFiredOnce(t *testing.T, listener *mockSettingsChangeListener, wantKey string) {
 	t.Helper()
+
+	const wantTenant = "org-1" // every settings test uses this tenant
 
 	if len(listener.calls) != 1 {
 		t.Fatalf("listener fired %d times, want 1", len(listener.calls))
@@ -105,18 +107,34 @@ func assertListenerFiredOnce(t *testing.T, listener *mockSettingsChangeListener,
 }
 
 func TestTenantSettingsService_NotifiesListenerOnChange(t *testing.T) {
-	t.Run("PUT fires target_language", func(t *testing.T) {
+	t.Run("PUT fires all settable keys", func(t *testing.T) {
 		repo := &mockTenantSettingsRepo{}
 		listener := &mockSettingsChangeListener{}
 		svc := NewTenantSettingsService(repo)
 		svc.SetSettingsChangeListener(listener)
 
-		_, err := svc.UpdateSettings(context.Background(), "org-1", &models.UpdateTenantSettingsRequest{TargetLanguage: "de-DE"})
+		disabled := false
+
+		_, err := svc.UpdateSettings(context.Background(), "org-1", &models.UpdateTenantSettingsRequest{
+			TargetLanguage: "de-DE", SentimentEnabled: &disabled,
+		})
 		if err != nil {
 			t.Fatalf("UpdateSettings() error = %v", err)
 		}
 
-		assertListenerFiredOnce(t, listener, "org-1", "target_language")
+		if len(listener.calls) != 1 || listener.tenantIDs[0] != "org-1" {
+			t.Fatalf("listener calls = %v tenants = %v, want one call for org-1", listener.calls, listener.tenantIDs)
+		}
+
+		// PUT is a full replace: it notifies every settable key, in a stable order.
+		if got := listener.calls[0]; len(got) != 2 || got[0] != "target_language" || got[1] != "sentiment_enabled" {
+			t.Fatalf("PUT changedKeys = %v, want [target_language sentiment_enabled]", got)
+		}
+
+		// The sentiment switch reaches the repo as part of the full-replace upsert.
+		if repo.upsertSettings.SentimentEnabled == nil || *repo.upsertSettings.SentimentEnabled {
+			t.Fatalf("upsert SentimentEnabled = %v, want explicit false", repo.upsertSettings.SentimentEnabled)
+		}
 	})
 
 	t.Run("PATCH with a value fires", func(t *testing.T) {
@@ -129,7 +147,7 @@ func TestTenantSettingsService_NotifiesListenerOnChange(t *testing.T) {
 			t.Fatalf("PatchSettings() error = %v", err)
 		}
 
-		assertListenerFiredOnce(t, listener, "org-1", "target_language")
+		assertListenerFiredOnce(t, listener, "target_language")
 	})
 
 	t.Run("PATCH null (removal) fires", func(t *testing.T) {
@@ -143,7 +161,57 @@ func TestTenantSettingsService_NotifiesListenerOnChange(t *testing.T) {
 			t.Fatalf("PatchSettings() error = %v", err)
 		}
 
-		assertListenerFiredOnce(t, listener, "org-1", "target_language")
+		assertListenerFiredOnce(t, listener, "target_language")
+	})
+
+	t.Run("PATCH sentiment_enabled value sets it", func(t *testing.T) {
+		repo := &mockTenantSettingsRepo{}
+		listener := &mockSettingsChangeListener{}
+		svc := NewTenantSettingsService(repo)
+		svc.SetSettingsChangeListener(listener)
+
+		disabled := false
+
+		req := &models.PatchTenantSettingsRequest{SentimentEnabled: models.Optional[bool]{Present: true, Value: &disabled}}
+		if _, err := svc.PatchSettings(context.Background(), "org-1", req); err != nil {
+			t.Fatalf("PatchSettings() error = %v", err)
+		}
+
+		assertListenerFiredOnce(t, listener, "sentiment_enabled")
+
+		if repo.patchSet.SentimentEnabled == nil || *repo.patchSet.SentimentEnabled {
+			t.Fatalf("patch set SentimentEnabled = %v, want explicit false", repo.patchSet.SentimentEnabled)
+		}
+
+		if len(repo.patchRemoveKeys) != 0 {
+			t.Fatalf("patch removeKeys = %v, want none", repo.patchRemoveKeys)
+		}
+	})
+
+	t.Run("PATCH sentiment_enabled null removes it", func(t *testing.T) {
+		repo := &mockTenantSettingsRepo{}
+		listener := &mockSettingsChangeListener{}
+		svc := NewTenantSettingsService(repo)
+		svc.SetSettingsChangeListener(listener)
+
+		req := &models.PatchTenantSettingsRequest{SentimentEnabled: models.Optional[bool]{Present: true, Value: nil}}
+		if _, err := svc.PatchSettings(context.Background(), "org-1", req); err != nil {
+			t.Fatalf("PatchSettings() error = %v", err)
+		}
+
+		assertListenerFiredOnce(t, listener, "sentiment_enabled")
+
+		removed := false
+
+		for _, key := range repo.patchRemoveKeys {
+			if key == "sentiment_enabled" {
+				removed = true
+			}
+		}
+
+		if !removed {
+			t.Fatalf("patch removeKeys = %v, want it to contain sentiment_enabled", repo.patchRemoveKeys)
+		}
 	})
 
 	t.Run("PATCH omitted does not fire", func(t *testing.T) {
@@ -549,13 +617,16 @@ func TestTenantSettingsService_PatchSettings_NullByteRejected(t *testing.T) {
 // EnrichmentSettings.TargetLanguage, so a tag rename can't silently break PATCH
 // null-removal (which deletes by that key string).
 func TestSettingKeyMatchesModelTag(t *testing.T) {
-	raw, err := json.Marshal(models.EnrichmentSettings{TargetLanguage: "en-US"})
+	enabled := true
+
+	raw, err := json.Marshal(models.EnrichmentSettings{TargetLanguage: "en-US", SentimentEnabled: &enabled})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	if want := `"` + settingKeyTargetLanguage + `":`; !strings.Contains(string(raw), want) {
-		t.Fatalf("settingKeyTargetLanguage %q is not the json key in %s — const and tag have drifted",
-			settingKeyTargetLanguage, raw)
+	for _, key := range []string{settingKeyTargetLanguage, settingKeySentimentEnabled} {
+		if want := `"` + key + `":`; !strings.Contains(string(raw), want) {
+			t.Fatalf("setting key %q is not a json key in %s — const and model tag have drifted", key, raw)
+		}
 	}
 }

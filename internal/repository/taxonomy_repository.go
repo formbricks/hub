@@ -789,7 +789,8 @@ func (r *TaxonomyRepository) ListNodeRecords(
 			fr.field_id, fr.field_label, fr.field_type, fr.field_group_id, fr.field_group_label,
 			fr.value_text, fr.value_number, fr.value_boolean, fr.value_date,
 			fr.metadata, fr.language, fr.user_id, fr.tenant_id, fr.submission_id,
-			fr.value_text_translated, fr.translation_lang_key
+			fr.value_text_translated, fr.translation_lang_key,
+			fr.sentiment, fr.sentiment_score
 		FROM visible_nodes vn
 		INNER JOIN taxonomy_runs tr ON tr.id = vn.run_id
 		INNER JOIN taxonomy_cluster_memberships tcm ON tcm.run_id = vn.run_id AND tcm.cluster_id = vn.cluster_id
@@ -1159,37 +1160,4 @@ func taxonomyRunRequestedBy(raw json.RawMessage) *string {
 	}
 
 	return &params.RequestedBy
-}
-
-func scanFeedbackRecord(row scanner) (*models.FeedbackRecord, error) {
-	var record models.FeedbackRecord
-	if err := row.Scan(
-		&record.ID,
-		&record.CollectedAt,
-		&record.CreatedAt,
-		&record.UpdatedAt,
-		&record.SourceType,
-		&record.SourceID,
-		&record.SourceName,
-		&record.FieldID,
-		&record.FieldLabel,
-		&record.FieldType,
-		&record.FieldGroupID,
-		&record.FieldGroupLabel,
-		&record.ValueText,
-		&record.ValueNumber,
-		&record.ValueBoolean,
-		&record.ValueDate,
-		&record.Metadata,
-		&record.Language,
-		&record.UserID,
-		&record.TenantID,
-		&record.SubmissionID,
-		&record.ValueTextTranslated,
-		&record.TranslationLangKey,
-	); err != nil {
-		return nil, fmt.Errorf("scan feedback record: %w", err)
-	}
-
-	return &record, nil
 }

@@ -49,6 +49,7 @@ type Config struct {
 	MessagePublisher    MessagePublisherConfig
 	Embedding           EmbeddingConfig
 	Translation         TranslationConfig
+	Sentiment           SentimentConfig
 	TenantSettingsCache TenantSettingsCacheConfig
 	Taxonomy            TaxonomyConfig
 	TenantData          TenantDataConfig
@@ -148,6 +149,25 @@ type TranslationConfig struct {
 	MaxAttempts         int    `env:"TRANSLATION_MAX_ATTEMPTS"          env-default:"3"`
 	GoogleCloudProject  string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
 	GoogleCloudLocation string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
+}
+
+// SentimentConfig holds the feedback sentiment-enrichment provider settings (ENG-1529).
+// Sentiment enrichment is disabled unless Provider and Model are both set — the same
+// provider+model gate embeddings and translation use (there is no separate enable flag).
+type SentimentConfig struct {
+	ProviderAPIKey      string `env:"SENTIMENT_PROVIDER_API_KEY"`
+	Provider            string `env:"SENTIMENT_PROVIDER"`
+	Model               string `env:"SENTIMENT_MODEL"`
+	BaseURL             string `env:"SENTIMENT_BASE_URL"`
+	MaxConcurrent       int    `env:"SENTIMENT_MAX_CONCURRENT"        env-default:"5"`
+	MaxAttempts         int    `env:"SENTIMENT_MAX_ATTEMPTS"          env-default:"3"`
+	GoogleCloudProject  string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
+}
+
+// Enabled reports whether sentiment enrichment is configured (provider and model both set).
+func (c SentimentConfig) Enabled() bool {
+	return c.Provider != "" && c.Model != ""
 }
 
 // TenantSettingsCacheConfig configures the per-process tenant-settings cache that

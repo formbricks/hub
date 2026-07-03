@@ -15,6 +15,7 @@ type Metrics struct {
 	Webhooks    WebhookMetrics
 	Embeddings  EmbeddingMetrics
 	Translation TranslationMetrics
+	Sentiment   SentimentMetrics
 	Cache       CacheMetrics
 }
 
@@ -46,6 +47,11 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("translation metrics: %w", err)
 	}
 
+	sentiment, err := NewSentimentMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("sentiment metrics: %w", err)
+	}
+
 	cache, err := NewCacheMetrics(meter)
 	if err != nil {
 		return nil, fmt.Errorf("cache metrics: %w", err)
@@ -56,6 +62,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		Webhooks:    webhooks,
 		Embeddings:  embeddings,
 		Translation: translation,
+		Sentiment:   sentiment,
 		Cache:       cache,
 	}, nil
 }

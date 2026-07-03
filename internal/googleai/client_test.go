@@ -2,6 +2,7 @@ package googleai
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/llm"
+	"github.com/formbricks/hub/internal/llm/llmtest"
 )
 
 func TestNewGoogleGeminiClient_emptyProject_returnsError(t *testing.T) {
@@ -128,4 +131,54 @@ func TestTranslate_RateLimitReturnsRateLimitError(t *testing.T) {
 	var rateLimited *huberrors.RateLimitError
 	require.ErrorAs(t, err, &rateLimited)
 	assert.Equal(t, 23*time.Second, rateLimited.RetryAfter, "the RetryInfo retryDelay is honored")
+}
+
+var sentimentTestSchema = llm.Schema{
+	Name: "sentiment",
+	Properties: []llm.Property{
+		{Name: "label", Type: llm.TypeString, Description: "polarity", Enum: []string{"negative", "neutral", "positive"}},
+		{Name: "score", Type: llm.TypeNumber, Description: "polarity score"},
+	},
+}
+
+func TestCompleteJSON_SendsResponseSchemaAndReturnsJSON(t *testing.T) {
+	ctx := context.Background()
+
+	var body map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model",` +
+			`"parts":[{"text":"  {\"label\":\"positive\",\"score\":1.5}  "}]}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:      "test-key",
+		Backend:     genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
+	})
+	require.NoError(t, err)
+
+	client := &Client{client: genaiClient, model: "gemini-2.5-flash"}
+
+	out, err := client.CompleteJSON(ctx, "classify", "great product", sentimentTestSchema)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"label":"positive","score":1.5}`, out, "the JSON text is returned trimmed")
+
+	// The request carries a JSON response MIME type and a standard JSON Schema (responseJsonSchema,
+	// not the OpenAPI-subset responseSchema), enforcing the closed-object contract.
+	generationConfig := llmtest.MustMap(t, body["generationConfig"], "generationConfig")
+	assert.Equal(t, "application/json", generationConfig["responseMimeType"])
+	assert.NotContains(t, generationConfig, "responseSchema", "responseSchema must be omitted when responseJsonSchema is set")
+
+	responseSchema := llmtest.MustMap(t, generationConfig["responseJsonSchema"], "responseJsonSchema")
+	assert.Equal(t, false, responseSchema["additionalProperties"], "the object is closed")
+	assert.ElementsMatch(t, []any{"label", "score"}, responseSchema["required"], "every property is required")
+
+	properties := llmtest.MustMap(t, responseSchema["properties"], "properties")
+	assert.Contains(t, properties, "label")
+	assert.Contains(t, properties, "score")
 }

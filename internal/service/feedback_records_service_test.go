@@ -24,6 +24,10 @@ type mockFeedbackRecordsRepo struct {
 	translationBackfillErr     error
 	tenantBackfillTargets      []models.TranslationBackfillTarget
 	tenantBackfillErr          error
+
+	setSentimentCalled bool
+	setSentimentLabel  *models.SentimentValue
+	setSentimentScore  *float64
 }
 
 func (m *mockFeedbackRecordsRepo) Create(
@@ -64,6 +68,16 @@ func (m *mockFeedbackRecordsRepo) Update(
 func (m *mockFeedbackRecordsRepo) SetTranslation(
 	_ context.Context, _ uuid.UUID, _ *string, _, _ string,
 ) error {
+	return nil
+}
+
+func (m *mockFeedbackRecordsRepo) SetSentiment(
+	_ context.Context, _ uuid.UUID, sentiment *models.SentimentValue, score *float64,
+) error {
+	m.setSentimentCalled = true
+	m.setSentimentLabel = sentiment
+	m.setSentimentScore = score
+
 	return nil
 }
 
@@ -332,6 +346,75 @@ func TestFeedbackRecordsService_SetTranslation_RequiresLangKey(t *testing.T) {
 	if err := svc.SetTranslation(context.Background(), uuid.New(), nil, ""); err != nil {
 		t.Fatalf("clear err = %v, want nil", err)
 	}
+}
+
+func TestFeedbackRecordsService_SetSentiment_Persists(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	label := models.SentimentPositive
+	score := 0.5
+
+	if err := svc.SetSentiment(context.Background(), uuid.New(), &label, &score); err != nil {
+		t.Fatalf("SetSentiment() error = %v", err)
+	}
+
+	if !repo.setSentimentCalled || repo.setSentimentLabel == nil || repo.setSentimentScore == nil {
+		t.Fatalf("repo not called with label+score: %+v", repo)
+	}
+
+	if *repo.setSentimentLabel != models.SentimentPositive || *repo.setSentimentScore != 0.5 {
+		t.Fatalf("repo got (%v, %v), want (positive, 0.5)", *repo.setSentimentLabel, *repo.setSentimentScore)
+	}
+}
+
+func TestFeedbackRecordsService_SetSentiment_ClearsWithNil(t *testing.T) {
+	repo := &mockFeedbackRecordsRepo{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	if err := svc.SetSentiment(context.Background(), uuid.New(), nil, nil); err != nil {
+		t.Fatalf("SetSentiment(clear) error = %v", err)
+	}
+
+	if !repo.setSentimentCalled {
+		t.Fatal("clearing must still write (nulls both columns)")
+	}
+
+	if repo.setSentimentLabel != nil || repo.setSentimentScore != nil {
+		t.Fatalf("clear passed (%v, %v), want (nil, nil)", repo.setSentimentLabel, repo.setSentimentScore)
+	}
+}
+
+func TestFeedbackRecordsService_SetSentiment_RejectsInvalidLabelAndMissingScore(t *testing.T) {
+	invalid := models.SentimentValue("furious")
+	valid := models.SentimentNeutral
+	score := 0.0
+
+	t.Run("invalid label is rejected before the repo", func(t *testing.T) {
+		repo := &mockFeedbackRecordsRepo{}
+		svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+		if err := svc.SetSentiment(context.Background(), uuid.New(), &invalid, &score); !errors.Is(err, ErrInvalidSentimentLabel) {
+			t.Fatalf("err = %v, want ErrInvalidSentimentLabel", err)
+		}
+
+		if repo.setSentimentCalled {
+			t.Fatal("an invalid label must not reach the repo")
+		}
+	})
+
+	t.Run("a label without a score is rejected", func(t *testing.T) {
+		repo := &mockFeedbackRecordsRepo{}
+		svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+		if err := svc.SetSentiment(context.Background(), uuid.New(), &valid, nil); !errors.Is(err, ErrSentimentScoreRequired) {
+			t.Fatalf("err = %v, want ErrSentimentScoreRequired", err)
+		}
+
+		if repo.setSentimentCalled {
+			t.Fatal("a label without a score must not reach the repo")
+		}
+	})
 }
 
 func TestFeedbackRecordsService_BackfillTranslationsForTenant(t *testing.T) {

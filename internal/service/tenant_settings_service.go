@@ -29,6 +29,11 @@ type TenantSettingsRepository interface {
 // this to the tag so a rename can't silently break null-removal.
 const settingKeyTargetLanguage = "target_language"
 
+// settingKeySentimentEnabled is the JSONB key for the per-directory sentiment switch. It must
+// match the json tag on models.EnrichmentSettings.SentimentEnabled; it is the key removed when a
+// PATCH sends sentiment_enabled as null. Pinned to the tag by TestSettingKeyMatchesModelTag.
+const settingKeySentimentEnabled = "sentiment_enabled"
+
 // maxTargetLanguageLen bounds a provided target_language value. It mirrors the
 // `max=35` struct tag on UpdateTenantSettingsRequest (the PUT path) and the
 // OpenAPI maxLength, so PUT and PATCH enforce the same limit.
@@ -94,13 +99,16 @@ func (s *TenantSettingsService) UpdateSettings(
 		return nil, err
 	}
 
-	settings, err := s.repo.Upsert(ctx, normalizedTenantID, models.EnrichmentSettings{TargetLanguage: targetLanguage})
+	settings, err := s.repo.Upsert(ctx, normalizedTenantID, models.EnrichmentSettings{
+		TargetLanguage:   targetLanguage,
+		SentimentEnabled: req.SentimentEnabled,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("update tenant settings: %w", err)
 	}
 
 	// PUT is a full replace, so every settable key is (re)written.
-	s.notifyChanged(ctx, normalizedTenantID, []string{settingKeyTargetLanguage})
+	s.notifyChanged(ctx, normalizedTenantID, []string{settingKeyTargetLanguage, settingKeySentimentEnabled})
 
 	return settings, nil
 }
@@ -138,6 +146,17 @@ func (s *TenantSettingsService) PatchSettings(
 			}
 
 			set.TargetLanguage = normalized
+		}
+	}
+
+	if req.SentimentEnabled.Present {
+		changedKeys = append(changedKeys, settingKeySentimentEnabled)
+
+		if req.SentimentEnabled.Value == nil {
+			// Explicit null: remove the setting, restoring the default (enabled) (RFC 7396).
+			removeKeys = append(removeKeys, settingKeySentimentEnabled)
+		} else {
+			set.SentimentEnabled = req.SentimentEnabled.Value
 		}
 	}
 

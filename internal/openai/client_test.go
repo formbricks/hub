@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/llm"
+	"github.com/formbricks/hub/internal/llm/llmtest"
 )
 
 type embeddingRequest struct {
@@ -188,4 +190,77 @@ func TestTranslate_Success(t *testing.T) {
 	out, err := client.Translate(context.Background(), "system prompt", "hello")
 	require.NoError(t, err)
 	assert.Equal(t, "Hola mundo", out, "the assistant message is returned trimmed")
+}
+
+var sentimentTestSchema = llm.Schema{
+	Name: "sentiment",
+	Properties: []llm.Property{
+		{Name: "label", Type: llm.TypeString, Description: "polarity", Enum: []string{"negative", "neutral", "positive"}},
+		{Name: "score", Type: llm.TypeNumber, Description: "polarity score"},
+	},
+}
+
+func TestCompleteJSON_SendsStrictSchemaAndReturnsJSON(t *testing.T) {
+	var body map[string]any
+
+	server := newChatCompletionServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"id":     "chatcmpl-test",
+			"object": "chat.completion",
+			"model":  "test-model",
+			"choices": []map[string]any{{
+				"index":         0,
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": `  {"label":"positive","score":1.5}  `},
+			}},
+		}); err != nil {
+			t.Errorf("encode response body: %v", err)
+		}
+	})
+
+	client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"))
+
+	out, err := client.CompleteJSON(context.Background(), "classify", "great product", sentimentTestSchema)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"label":"positive","score":1.5}`, out, "the JSON content is returned trimmed")
+
+	// The request carries response_format: a strict json_schema named after the schema.
+	responseFormat := llmtest.MustMap(t, body["response_format"], "response_format")
+	assert.Equal(t, "json_schema", responseFormat["type"])
+
+	jsonSchema := llmtest.MustMap(t, responseFormat["json_schema"], "json_schema")
+	assert.Equal(t, "sentiment", jsonSchema["name"])
+	assert.Equal(t, true, jsonSchema["strict"])
+
+	schema := llmtest.MustMap(t, jsonSchema["schema"], "schema")
+	assert.Equal(t, "object", schema["type"])
+	assert.Equal(t, false, schema["additionalProperties"], "strict mode requires a closed object")
+	assert.ElementsMatch(t, []any{"label", "score"}, schema["required"], "every property is required")
+}
+
+func TestCompleteJSON_RateLimitReturnsRateLimitError(t *testing.T) {
+	server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.Header().Set("X-Should-Retry", "false")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"))
+
+	_, err := client.CompleteJSON(context.Background(), "classify", "hello", sentimentTestSchema)
+
+	var rateLimited *huberrors.RateLimitError
+	require.ErrorAs(t, err, &rateLimited, "a 429 must surface as a rate-limit error so the worker can snooze")
+	assert.Equal(t, 7*time.Second, rateLimited.RetryAfter)
+}
+
+func TestCompleteJSON_EmptyInputReturnsErrEmptyInput(t *testing.T) {
+	client := NewClient("sk-test", WithModel("test-model"))
+
+	_, err := client.CompleteJSON(context.Background(), "classify", "   ", sentimentTestSchema)
+	require.ErrorIs(t, err, ErrEmptyInput)
 }
