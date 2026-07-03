@@ -1083,6 +1083,14 @@ func TestDeleteTenantData(t *testing.T) {
 	assert.Equal(t, int64(2), deleteResp.DeletedFeedbackRecords)
 	assert.Equal(t, int64(2), deleteResp.DeletedEmbeddings)
 	assert.Equal(t, int64(1), deleteResp.DeletedWebhooks)
+	// createTenantDataTaxonomyGraph builds one run with one cluster, one
+	// membership, three nodes (root/branch/leaf), one active run, and one event.
+	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyRuns)
+	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyClusters)
+	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyClusterMemberships)
+	assert.Equal(t, int64(3), deleteResp.DeletedTaxonomyNodes)
+	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyActiveRuns)
+	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyNodeEvents)
 	requireNoTenantDataDeleteEvents(t, eventRecorder)
 
 	requireTenantDataResourceStatus(
@@ -1110,6 +1118,12 @@ func TestDeleteTenantData(t *testing.T) {
 	assert.Equal(t, int64(0), repeatedResp.DeletedFeedbackRecords)
 	assert.Equal(t, int64(0), repeatedResp.DeletedEmbeddings)
 	assert.Equal(t, int64(0), repeatedResp.DeletedWebhooks)
+	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyRuns)
+	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyClusters)
+	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyClusterMemberships)
+	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyNodes)
+	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyActiveRuns)
+	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyNodeEvents)
 	requireNoTenantDataDeleteEvents(t, eventRecorder)
 }
 
@@ -1337,6 +1351,11 @@ func requireTenantDataTaxonomyRunPresent(ctx context.Context, t *testing.T, db *
 	t.Helper()
 
 	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_runs WHERE id = $1`, runID))
+	// taxonomy_clusters and taxonomy_nodes are scoped through their run via a
+	// taxonomy_runs subquery in the purge; assert they survive for the other
+	// tenant to prove the run-scoped deletes do not cross tenants.
+	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_clusters WHERE run_id = $1`, runID))
+	assert.Equal(t, int64(3), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_nodes WHERE run_id = $1`, runID))
 	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_cluster_memberships WHERE run_id = $1`, runID))
 	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_active_runs WHERE run_id = $1`, runID))
 	assert.Equal(t, int64(1), countTenantDataRows(ctx, t, db, `SELECT COUNT(*) FROM taxonomy_node_events WHERE run_id = $1`, runID))

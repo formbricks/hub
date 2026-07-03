@@ -99,7 +99,54 @@ func deleteTenantDataInTx(
 		return nil, fmt.Errorf("delete tenant embeddings: %w", err)
 	}
 
-	_, err = exec.Exec(ctx, `
+	// Taxonomy generation artifacts are run-scoped Hub data. Deleting
+	// feedback_records only cascades cluster memberships (via the membership ->
+	// feedback_records FK), leaving runs, clusters, nodes, active-run rows, and
+	// node events orphaned. Remove every taxonomy table explicitly here, children
+	// before parents, so each delete count is exact and the purge never relies on
+	// cascades. Ordering rules:
+	//   - node_events and cluster_memberships reference runs/nodes/clusters, so
+	//     they go first.
+	//   - taxonomy_clusters and taxonomy_nodes have no tenant_id column; they are
+	//     scoped through their run via a taxonomy_runs subquery, which means
+	//     taxonomy_runs MUST be deleted last (after nodes and clusters) or the
+	//     subquery would match nothing and orphan them.
+	taxonomyNodeEventsTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_node_events
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy node events: %w", err)
+	}
+
+	taxonomyClusterMembershipsTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_cluster_memberships
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy cluster memberships: %w", err)
+	}
+
+	taxonomyNodesTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_nodes
+		WHERE run_id IN (SELECT id FROM taxonomy_runs WHERE tenant_id = $1)`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy nodes: %w", err)
+	}
+
+	taxonomyClustersTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_clusters
+		WHERE run_id IN (SELECT id FROM taxonomy_runs WHERE tenant_id = $1)`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy clusters: %w", err)
+	}
+
+	taxonomyActiveRunsTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_active_runs
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy active runs: %w", err)
+	}
+
+	taxonomyRunsTag, err := exec.Exec(ctx, `
 		DELETE FROM taxonomy_runs
 		WHERE tenant_id = $1`, tenantID)
 	if err != nil {
@@ -129,8 +176,14 @@ func deleteTenantDataInTx(
 	}
 
 	return &models.TenantDataDeleteCounts{
-		DeletedFeedbackRecords: feedbackRecordsTag.RowsAffected(),
-		DeletedEmbeddings:      embeddingTag.RowsAffected(),
-		DeletedWebhooks:        webhooksTag.RowsAffected(),
+		DeletedFeedbackRecords:            feedbackRecordsTag.RowsAffected(),
+		DeletedEmbeddings:                 embeddingTag.RowsAffected(),
+		DeletedWebhooks:                   webhooksTag.RowsAffected(),
+		DeletedTaxonomyRuns:               taxonomyRunsTag.RowsAffected(),
+		DeletedTaxonomyClusters:           taxonomyClustersTag.RowsAffected(),
+		DeletedTaxonomyClusterMemberships: taxonomyClusterMembershipsTag.RowsAffected(),
+		DeletedTaxonomyNodes:              taxonomyNodesTag.RowsAffected(),
+		DeletedTaxonomyActiveRuns:         taxonomyActiveRunsTag.RowsAffected(),
+		DeletedTaxonomyNodeEvents:         taxonomyNodeEventsTag.RowsAffected(),
 	}, nil
 }
