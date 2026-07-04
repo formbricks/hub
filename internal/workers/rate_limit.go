@@ -25,10 +25,10 @@ const (
 // providers). A provider 429 surfaces as a *huberrors.RateLimitError; snoozing re-queues the job
 // without consuming a retry attempt, so a burst against a rate-limited model defers rather than
 // drops work. ok is false when err is not a rate-limit error, or when the job has been snoozing
-// past maxRateLimitSnoozeWindow — then it fails normally. Note the recovery story past the window
-// differs by pipeline: translation and embedding have backfills that pick failed records up, while
-// sentiment and emotions do not yet (their shared backfill is tracked P6 work), so a provider
-// outage longer than the window loses their enrichment for records ingested during it.
+// past maxRateLimitSnoozeWindow — then it fails normally. Recovery past the window: translation's
+// backfill runs automatically; sentiment and emotions are recovered by the one-off
+// cmd/backfill-classify (their outputs stay NULL, so they remain backfill targets); embedding's
+// backfill covers only records with no vector yet.
 func rateLimitSnoozeDelay(err error, jobCreatedAt time.Time) (time.Duration, bool) {
 	var rateLimited *huberrors.RateLimitError
 	if !errors.As(err, &rateLimited) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -144,8 +145,14 @@ func (m *MessagePublisherManager) startWorker() {
 				// let the other providers (and fanOut.Wait) complete.
 				defer func() {
 					if r := recover(); r != nil {
+						if m.metrics != nil {
+							m.metrics.RecordProviderPanic(ctx, event.Type.String())
+						}
+
 						slog.Error("message provider panicked; isolating failure from the fan-out",
-							"provider", fmt.Sprintf("%T", provider), "panic", r)
+							"provider", fmt.Sprintf("%T", provider),
+							"event_id", event.ID, "event_type", event.Type,
+							"panic", r, "stack", string(debug.Stack()))
 					}
 				}()
 

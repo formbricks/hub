@@ -339,7 +339,39 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 		}
 	}
 
+	// Make the eager-clear observable: which enrichment outputs this edit nulled (derived from
+	// the atomic previous/updated pair, so it costs no extra read). A cleared output that never
+	// re-enriches is the backfill-recovery case; without this line the clear rate is invisible.
+	if cleared := clearedEnrichmentFields(previous, record); len(cleared) > 0 {
+		slog.Info("update feedback record: enrichment outputs cleared by content edit",
+			"feedback_record_id", id, "tenant_id", record.TenantID, "cleared", cleared)
+	}
+
 	return record, nil
+}
+
+// clearedEnrichmentFields lists the enrichment outputs the update's eager-clear nulled — present
+// on the pre-update row, absent on the updated one.
+func clearedEnrichmentFields(previous, updated *models.FeedbackRecord) []string {
+	if previous == nil || updated == nil {
+		return nil
+	}
+
+	var cleared []string
+
+	if previous.Sentiment != nil && updated.Sentiment == nil {
+		cleared = append(cleared, "sentiment")
+	}
+
+	if previous.Emotions != nil && updated.Emotions == nil {
+		cleared = append(cleared, "emotions")
+	}
+
+	if previous.ValueTextTranslated != nil && updated.ValueTextTranslated == nil {
+		cleared = append(cleared, "translation")
+	}
+
+	return cleared
 }
 
 // DeleteFeedbackRecord deletes a feedback record by ID.

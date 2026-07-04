@@ -162,7 +162,7 @@ func (w *FeedbackEmbeddingWorker) handleEmbedError(
 
 		slog.Warn("embedding: provider rate limited, snoozing",
 			"feedback_record_id", job.Args.FeedbackRecordID,
-			"delay", delay,
+			"retry_after", delay,
 		)
 
 		//nolint:wrapcheck // river sentinel: JobSnooze must be returned unwrapped for River to detect the snooze

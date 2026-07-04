@@ -279,7 +279,7 @@ func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 	out := strings.TrimSpace(choice.Message.Content)
 	if out == "" {
 		if refusal := strings.TrimSpace(choice.Message.Refusal); refusal != "" {
-			return "", fmt.Errorf("%w: model refused: %s", ErrNoCompletionInResponse, refusal)
+			return "", fmt.Errorf("%w: model refused: %.256s", ErrNoCompletionInResponse, refusal)
 		}
 
 		if choice.FinishReason != "" && choice.FinishReason != "stop" {

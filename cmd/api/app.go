@@ -687,7 +687,7 @@ func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetric
 
 	update := func() {
 		rows, err := db.Query(ctx,
-			`SELECT queue, COUNT(*) FROM river_job
+			`SELECT queue, COUNT(*), EXTRACT(EPOCH FROM (now() - MIN(created_at)))::float8 FROM river_job
 			 WHERE queue = ANY($1) AND state IN ($2, $3, $4)
 			 GROUP BY queue`,
 			riverDepthQueues,
@@ -701,19 +701,22 @@ func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetric
 		defer rows.Close()
 
 		counts := make(map[string]int, len(riverDepthQueues))
+		ages := make(map[string]float64, len(riverDepthQueues))
 
 		for rows.Next() {
 			var (
 				queue string
 				count int
+				age   float64
 			)
-			if err := rows.Scan(&queue, &count); err != nil {
+			if err := rows.Scan(&queue, &count, &age); err != nil {
 				slog.WarnContext(ctx, "river queue depth scan failed", "error", err)
 
 				return
 			}
 
 			counts[queue] = count
+			ages[queue] = age
 		}
 
 		if err := rows.Err(); err != nil {
@@ -724,6 +727,7 @@ func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetric
 
 		for _, queue := range riverDepthQueues {
 			eventMetrics.SetRiverQueueDepth(queue, counts[queue])
+			eventMetrics.SetRiverQueueOldestAge(queue, ages[queue])
 		}
 	}
 

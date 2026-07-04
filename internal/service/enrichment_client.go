@@ -9,9 +9,9 @@ import (
 
 // structuredSpec is the per-type contract for a structured (JSON) classification: how to build the
 // prompt from the record's text and source language, the output schema, and how to parse and
-// validate the JSON into the typed result R. Sentiment provides one today; emotions will provide
-// another, both driven by classifyStructured so the provider call, error wrap, and parse flow live
-// in one place. (Translation is not structured — it keeps its own plain-text client.)
+// validate the JSON into the typed result R. Sentiment and emotions each provide one, both driven
+// by classifyStructured so the provider call, error wrap, and parse flow live in one place.
+// (Translation is not structured — it keeps its own plain-text client.)
 type structuredSpec[R any] struct {
 	// Name labels the enrichment in the classify error wrap (e.g. "sentiment").
 	Name        string

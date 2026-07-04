@@ -148,7 +148,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 
 	if cfg.eligible != nil && !cfg.eligible(record) {
 		w.recordOutcome(ctx, "skipped", start)
-		slog.Info(cfg.name+": skipped, record not eligible", "feedback_record_id", id)
+		slog.Info(cfg.name+": skipped, record not eligible", "feedback_record_id", id, "tenant_id", record.TenantID)
 
 		return nil
 	}
@@ -172,7 +172,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 
 		if !enabled {
 			w.recordOutcome(ctx, "skipped", start)
-			slog.Info(cfg.name+": skipped, disabled for tenant", "feedback_record_id", id)
+			slog.Info(cfg.name+": skipped, disabled for tenant", "feedback_record_id", id, "tenant_id", record.TenantID)
 
 			return nil
 		}
@@ -186,7 +186,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 		}
 
 		w.recordOutcome(ctx, "success", start)
-		slog.Info(cfg.name+": cleared (empty content)", "feedback_record_id", id)
+		slog.Info(cfg.name+": cleared (empty content)", "feedback_record_id", id, "tenant_id", record.TenantID)
 
 		return nil
 	}
@@ -202,7 +202,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 
 	w.recordOutcome(ctx, "success", start)
 
-	attrs := []any{"feedback_record_id", id}
+	attrs := []any{"feedback_record_id", id, "tenant_id", record.TenantID}
 	if cfg.logResult != nil {
 		attrs = append(attrs, cfg.logResult(result)...)
 	}

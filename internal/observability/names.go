@@ -11,6 +11,8 @@ const (
 	MetricNameFanOutDuration          = "hub_message_publisher_fan_out_duration_seconds"
 	MetricNameEventChannelDepth       = "hub_event_channel_depth"
 	MetricNameRiverQueueDepth         = "hub_river_queue_depth"
+	MetricNameRiverQueueOldestAge     = "hub_river_queue_oldest_age_seconds"
+	MetricNameProviderPanics          = "hub_provider_panics_total"
 	MetricNameWebhookJobsEnqueued     = "hub_webhook_jobs_enqueued_total"
 	MetricNameWebhookProviderErrors   = "hub_webhook_provider_errors_total"
 	MetricNameWebhookDeliveries       = "hub_webhook_deliveries_total"
@@ -95,7 +97,6 @@ var allowedDispatchReasons = map[string]bool{
 // allowedEmbeddingProviderReasons for hub_embedding_provider_errors_total.
 var allowedEmbeddingProviderReasons = map[string]bool{
 	"enqueue_failed": true,
-	"invalid_data":   true,
 }
 
 // allowedEmbeddingOutcomeStatuses for hub_embedding_outcomes_total and hub_embedding_duration_seconds.

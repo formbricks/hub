@@ -56,7 +56,7 @@ type enrichmentProviderConfig struct {
 
 // enrichmentProvider implements eventPublisher by enqueueing one enrichment job per eligible
 // feedback-record event, driven by an enrichmentProviderConfig. It is the shared enqueue path
-// behind the per-type providers (sentiment today; translation and embedding to follow) — the
+// behind the per-type providers (sentiment, emotions, and translation; embedding keeps its own) — the
 // per-type differences live entirely in the config hooks. Failures are logged and swallowed so
 // they never block ingestion.
 type enrichmentProvider struct {

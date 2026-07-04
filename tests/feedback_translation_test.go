@@ -318,7 +318,10 @@ func TestFeedbackRecords_ListTranslationBackfillTargets(t *testing.T) {
 	currentTranslation := "Hallo"
 	require.NoError(t, repo.SetTranslation(ctx, current.ID, &currentTranslation, "de-DE", "", nil)) // matches target
 
-	targets, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, 100, "")
+	// A large limit + membership lookup keeps the assertion robust to eligible rows already
+	// present in the shared test DB (mirrors tests/classify_backfill_test.go): with a small page,
+	// freshly created UUIDv7 rows sort past the first keyset page and fall off it.
+	targets, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, 100000, "")
 	require.NoError(t, err)
 
 	byID := make(map[uuid.UUID]string, len(targets))

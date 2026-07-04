@@ -86,7 +86,7 @@ var sentimentResponseSchema = llm.Schema{
 }
 
 // sentimentSpec is the structured-classification contract for sentiment, driving the shared
-// classifyStructured path (mirrored by the future emotions client).
+// classifyStructured path (mirrored by the emotions client).
 var sentimentSpec = structuredSpec[SentimentResult]{
 	Name:        "sentiment",
 	Schema:      sentimentResponseSchema,
@@ -133,7 +133,7 @@ func parseSentimentResult(raw string) (SentimentResult, error) {
 
 	label := models.SentimentValue(strings.TrimSpace(resp.Sentiment))
 	if !label.IsValid() {
-		return SentimentResult{}, fmt.Errorf("%w: unknown label %q", ErrSentimentResponseInvalid, resp.Sentiment)
+		return SentimentResult{}, fmt.Errorf("%w: unknown label %.64q", ErrSentimentResponseInvalid, resp.Sentiment)
 	}
 
 	if resp.Score == nil {

@@ -154,8 +154,13 @@ func guardEmbeddingSourceCurrent(
 
 	var fieldLabel, valueText *string
 
+	// FOR UPDATE row-locks the record until this write commits, so a concurrent PATCH Update
+	// (which does not take the per-record advisory lock) cannot change the content between this
+	// re-read and the embedding write — closing the check-then-write window like the classify
+	// sibling guardValueTextCurrent. Crucial here: embeddings have no eager-clear or NULL-rows
+	// backfill, so a stale vector that lands last is otherwise permanent.
 	err := dbTx.QueryRow(ctx,
-		`SELECT field_label, value_text FROM feedback_records WHERE id = $1`, feedbackRecordID,
+		`SELECT field_label, value_text FROM feedback_records WHERE id = $1 FOR UPDATE`, feedbackRecordID,
 	).Scan(&fieldLabel, &valueText)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

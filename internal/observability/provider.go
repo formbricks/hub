@@ -67,7 +67,7 @@ func NewMeterProvider(cfg *config.Config, serviceName string) (*sdkmetric.MeterP
 
 	// Duration histograms record in seconds; use second-based buckets so quantiles and SLOs
 	// (e.g. "95% under 300ms") are accurate. OTel default boundaries are millisecond-oriented.
-	durationHistogramBounds := []float64{0, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.3, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+	durationHistogramBounds := []float64{0, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.3, 0.5, 0.75, 1, 2.5, 5, 7.5, 10, 30, 60}
 	view := sdkmetric.NewView(
 		sdkmetric.Instrument{Name: "hub_*_duration_seconds"},
 		sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{Boundaries: durationHistogramBounds}},
