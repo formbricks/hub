@@ -50,7 +50,7 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 		ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
 	) ([]models.FeedbackRecord, bool, error)
-	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, *models.FeedbackRecord, error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
 		stillCurrent func(valueText *string) bool) error
 	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
@@ -315,37 +315,23 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, error) {
-	// Read the pre-update row so the event can carry the fields that ACTUALLY changed, not
-	// merely the fields present in the request: an integration idempotently re-PATCHing the
-	// same values must not re-fire webhooks or re-run every LLM enrichment. Best-effort — on a
-	// read error, fall back to presence-based fields (conservative toward firing). One cheap PK
-	// lookup on the update path only; the hot create path is untouched.
-	var old *models.FeedbackRecord
-
-	if s.publisher != nil && len(req.ChangedFields()) > 0 {
-		var readErr error
-		if old, readErr = s.repo.GetByID(ctx, id); readErr != nil {
-			// Degraded, not fatal: presence-based fields over-fire (idempotent re-sends re-run
-			// enrichment) rather than under-fire, but the degradation should be observable.
-			slog.Warn("update feedback record: pre-update read failed, falling back to presence-based changed fields",
-				"feedback_record_id", id, "error", readErr)
-		}
-	}
-
-	record, err := s.repo.Update(ctx, id, req)
+	// Update returns the pre-update ("previous") row captured atomically with the write, so the
+	// event carries the fields that ACTUALLY changed: an integration idempotently re-PATCHing the
+	// same values must not re-fire webhooks or re-run every LLM enrichment, and the diff is
+	// computed against state consistent with the write (no pre-lock snapshot race).
+	record, previous, err := s.repo.Update(ctx, id, req)
 	if err != nil {
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
 
 	// A no-op update (no fields set, or every set field equal to its current value) must not
-	// publish an "updated" event: the repository returns the current row for an empty PATCH
-	// without taking the tenant write lock, and firing tenant-owned side effects for a
-	// nothing-changed write would re-trigger webhooks and enrichment for free — including
-	// while the tenant is under a data purge.
+	// publish an "updated" event: firing tenant-owned side effects for a nothing-changed write
+	// would re-trigger webhooks and enrichment for free — including while the tenant is under a
+	// data purge.
 	if s.publisher != nil {
 		changed := req.ChangedFields()
-		if old != nil {
-			changed = req.FieldsChangedFrom(old)
+		if previous != nil {
+			changed = req.FieldsChangedFrom(previous)
 		}
 
 		if len(changed) > 0 {

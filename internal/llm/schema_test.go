@@ -67,17 +67,14 @@ func TestSchema_JSONSchema_ArrayOfEnum(t *testing.T) {
 	assert.NotContains(t, items, "items", "a scalar element has no nested items")
 }
 
-// A TypeArray property with no Items renders just {"type":"array"} rather than panicking on the
-// nil dereference — a defensive guard; well-formed callers always set Items.
+// A TypeArray property with no Items is a construction bug — an underspecified array schema the
+// OpenAI/Gemini strict decoders reject — so JSONSchema fails fast instead of emitting it.
 func TestSchema_JSONSchema_ArrayWithoutItems(t *testing.T) {
 	schema := llm.Schema{
 		Name:       "tags",
 		Properties: []llm.Property{{Name: "tags", Type: llm.TypeArray}},
 	}
 
-	properties := llmtest.MustMap(t, schema.JSONSchema()["properties"], "properties")
-	tags := llmtest.MustMap(t, properties["tags"], "tags")
-
-	assert.Equal(t, "array", tags["type"])
-	assert.NotContains(t, tags, "items", "no Items => no items key")
+	assert.Panics(t, func() { _ = schema.JSONSchema() },
+		"a TypeArray without Items must fail fast at schema construction")
 }

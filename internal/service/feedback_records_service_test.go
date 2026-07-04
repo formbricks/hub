@@ -68,12 +68,12 @@ func (m *mockFeedbackRecordsRepo) ListAfterCursor(
 
 func (m *mockFeedbackRecordsRepo) Update(
 	_ context.Context, _ uuid.UUID, _ *models.UpdateFeedbackRecordRequest,
-) (*models.FeedbackRecord, error) {
+) (*models.FeedbackRecord, *models.FeedbackRecord, error) {
 	if m.record != nil {
-		return m.record, nil
+		return m.record, m.record, nil
 	}
 
-	return nil, errors.New("not implemented")
+	return nil, nil, errors.New("not implemented")
 }
 
 func (m *mockFeedbackRecordsRepo) SetTranslation(

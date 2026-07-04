@@ -507,7 +507,7 @@ func TestFeedbackRecords_UpdateClearsTranslationOnlyOnContentChange(t *testing.T
 	// Re-sending the SAME value_text must NOT clear the translation — otherwise a deduped
 	// re-translation (identical content hash) would strand the record with no translation.
 	same := original
-	if _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &same}); err != nil {
+	if _, _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &same}); err != nil {
 		t.Fatalf("Update(same value_text) error = %v", err)
 	}
 
@@ -520,7 +520,7 @@ func TestFeedbackRecords_UpdateClearsTranslationOnlyOnContentChange(t *testing.T
 
 	// An actual value_text change clears the now-stale translation.
 	changed := "Goodbye, world"
-	if _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &changed}); err != nil {
+	if _, _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &changed}); err != nil {
 		t.Fatalf("Update(changed value_text) error = %v", err)
 	}
 
@@ -597,7 +597,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		id := seedEnriched(t, "clear-enrich-text", "Hello, world", "en-US")
 
 		changed := "Goodbye, world"
-		_, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &changed})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &changed})
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -613,7 +613,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		id := seedEnriched(t, "clear-enrich-ws", "Hello, world", "en-US")
 
 		padded := "  Hello, world  "
-		_, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &padded})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &padded})
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -625,7 +625,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		id := seedEnriched(t, "clear-enrich-noop", "Hello, world", "en-US")
 
 		same := "Hello, world"
-		_, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &same})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &same})
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -637,7 +637,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		id := seedEnriched(t, "clear-enrich-lang", "Hello, world", "en-US")
 
 		newLang := "fr-FR"
-		_, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{Language: &newLang})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{Language: &newLang})
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -657,7 +657,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 
 		same := "Hello, world"
 		newLang := "fr-FR"
-		_, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &same, Language: &newLang})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &same, Language: &newLang})
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)

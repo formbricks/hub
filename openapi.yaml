@@ -2571,6 +2571,7 @@ components:
                 emotions:
                     type: array
                     description: Emotions inferred from value_text (emotion enrichment); multi-label from a fixed set. Read-only; absent until the record is enriched, and never an empty array.
+                    minItems: 1
                     items:
                         type: string
                         enum:

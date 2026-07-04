@@ -84,16 +84,20 @@ var emotionsSpec = structuredSpec[EmotionsResult]{
 func buildEmotionsPrompt(text, sourceLang string) (systemPrompt, userText string) {
 	var builder strings.Builder
 
+	// Build the emotion list from the same source as the structured-output enum
+	// (emotionLabelStrings → models.EmotionValues) so the prompt cannot drift from the schema when
+	// the pool changes.
 	builder.WriteString(
 		"You are an emotion-analysis expert. Identify which of these basic emotions the user's " +
-			"feedback clearly expresses:\n" +
-			"- joy\n" +
-			"- anger\n" +
-			"- sadness\n" +
-			"- fear\n" +
-			"- surprise\n" +
-			"- disgust\n\n" +
-			"Return every emotion that clearly applies — a message may express several at once, or " +
+			"feedback clearly expresses:\n",
+	)
+
+	for _, label := range emotionLabelStrings() {
+		builder.WriteString("- " + label + "\n")
+	}
+
+	builder.WriteString(
+		"\nReturn every emotion that clearly applies — a message may express several at once, or " +
 			"none. Include an emotion only when it is genuinely present in the text; return an empty " +
 			"list when none clearly apply. Do not infer emotions that are not expressed.",
 	)

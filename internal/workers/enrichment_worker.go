@@ -136,11 +136,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 		// remain, so only the last attempt is a final failure — recording failed_final on every
 		// attempt overcounts it (matches the classify and persist branches).
 		isLastAttempt := job.Attempt >= job.MaxAttempts
-
-		outcome := "retry"
-		if isLastAttempt {
-			outcome = "failed_final"
-		}
+		outcome := retryOutcome(isLastAttempt)
 
 		cfg.metrics.workerError(ctx, "get_record_failed")
 		w.recordOutcome(ctx, outcome, start)
@@ -164,11 +160,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 		enabled, err := cfg.checkEnabled(ctx, record)
 		if err != nil {
 			isLastAttempt := job.Attempt >= job.MaxAttempts
-
-			outcome := "retry"
-			if isLastAttempt {
-				outcome = "failed_final"
-			}
+			outcome := retryOutcome(isLastAttempt)
 
 			cfg.metrics.workerError(ctx, "settings_read_failed")
 			w.recordOutcome(ctx, outcome, start)
@@ -280,10 +272,7 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 
 		return nil
 	case errors.Is(err, huberrors.ErrTenantWriteConflict):
-		outcome := "retry"
-		if isLastAttempt {
-			outcome = "failed_final"
-		}
+		outcome := retryOutcome(isLastAttempt)
 
 		cfg.metrics.workerError(ctx, "tenant_write_conflict")
 		w.recordOutcome(ctx, outcome, start)
@@ -297,10 +286,7 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 		// tenant-conflict branch. (The pre-scaffold workers recorded failed_final on every
 		// attempt here, double-counting a later success and falsely tripping final-failure
 		// alerts on one-off DB blips.)
-		outcome := "retry"
-		if isLastAttempt {
-			outcome = "failed_final"
-		}
+		outcome := retryOutcome(isLastAttempt)
 
 		cfg.metrics.workerError(ctx, "update_failed")
 		w.recordOutcome(ctx, outcome, start)
@@ -315,6 +301,17 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 func (w *enrichmentWorker[A, R]) recordOutcome(ctx context.Context, status string, start time.Time) {
 	w.cfg.metrics.outcome(ctx, status)
 	w.cfg.metrics.duration(ctx, time.Since(start), status)
+}
+
+// retryOutcome maps the final-attempt flag to the worker outcome label: a transient failure is a
+// retry until the last attempt, then a final failure. Centralized so the get-record, gate,
+// tenant-write-conflict, and persist branches can never drift from one another.
+func retryOutcome(isLastAttempt bool) string {
+	if isLastAttempt {
+		return "failed_final"
+	}
+
+	return "retry"
 }
 
 // valueTextStillCurrent returns a persist-time content guard bound to the Work-time value_text

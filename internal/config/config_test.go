@@ -656,32 +656,6 @@ func TestApplyDefaults(t *testing.T) {
 	}
 }
 
-func TestIsNotExist(t *testing.T) {
-	missingFileErr := &os.PathError{
-		Op:   "open",
-		Path: ".env",
-		Err:  os.ErrNotExist,
-	}
-
-	if !isNotExist(missingFileErr) {
-		t.Fatal("isNotExist(os.ErrNotExist path error) = false, want true")
-	}
-
-	permissionErr := &os.PathError{
-		Op:   "open",
-		Path: ".env",
-		Err:  os.ErrPermission,
-	}
-
-	if isNotExist(permissionErr) {
-		t.Fatal("isNotExist(permission path error) = true, want false")
-	}
-
-	if isNotExist(errors.New("boom")) {
-		t.Fatal("isNotExist(non-path error) = true, want false")
-	}
-}
-
 func TestValidateRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
 		name    string

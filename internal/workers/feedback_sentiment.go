@@ -3,7 +3,6 @@ package workers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,7 +45,9 @@ func NewFeedbackSentimentWorker(
 		checkEnabled: func(ctx context.Context, record *models.FeedbackRecord) (bool, error) {
 			settings, err := resolver.GetSettings(ctx, record.TenantID)
 			if err != nil {
-				return false, fmt.Errorf("resolve tenant settings: %w", err)
+				// Return raw: enrichmentWorker.Work adds the "resolve tenant settings" context
+				// once, so wrapping here too would duplicate the prefix.
+				return false, err //nolint:wrapcheck // Work wraps this once; wrapping here duplicates the prefix
 			}
 
 			return settings.Settings.SentimentEnrichmentEnabled(), nil

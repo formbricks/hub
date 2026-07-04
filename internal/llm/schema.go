@@ -82,6 +82,13 @@ func (s Schema) JSONSchema() map[string]any {
 // It recurses through Items so an array of enum strings renders as
 // {"type":"array","items":{"type":"string","enum":[…]}}.
 func renderProperty(p Property) map[string]any {
+	// Fail fast on a misconfigured array: an array without an element schema renders as an
+	// underspecified {"type":"array"} that OpenAI strict / Gemini responseJsonSchema reject at
+	// call time. Surface it at schema construction instead (mirrors the fail-fast config checks).
+	if p.Type == TypeArray && p.Items == nil {
+		panic("llm: property " + p.Name + ": TypeArray requires non-nil Items")
+	}
+
 	rendered := map[string]any{"type": string(p.Type)}
 	if p.Description != "" {
 		rendered["description"] = p.Description

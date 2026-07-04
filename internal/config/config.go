@@ -303,7 +303,7 @@ func Load() (*Config, error) {
 	// godotenv.Overload mirrors cleanenv's .env handling (parse + unconditional os.Setenv), so a
 	// value in .env still overrides a pre-existing environment variable, and a missing file is a
 	// no-op (env-only configuration).
-	if err := godotenv.Overload(".env"); err != nil && !errors.Is(err, os.ErrNotExist) && !isNotExist(err) {
+	if err := godotenv.Overload(".env"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, ErrDotEnvMalformed
 	}
 
@@ -427,15 +427,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.TenantData.PurgeLockTimeout.Duration() <= 0 {
 		cfg.TenantData.PurgeLockTimeout = DurationSec(time.Duration(defaultPurgeLockTimeoutSec) * time.Second)
 	}
-}
-
-func isNotExist(err error) bool {
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
-		return errors.Is(pathErr.Err, os.ErrNotExist)
-	}
-
-	return false
 }
 
 func validate(cfg *Config) error {

@@ -230,8 +230,11 @@ func guardValueTextCurrent(
 
 	var valueText *string
 
+	// FOR UPDATE row-locks the record until this write commits, so a concurrent PATCH Update
+	// (which does not take the per-record advisory lock) cannot change value_text between this
+	// re-read and the caller's UPDATE — closing the check-then-write window rather than narrowing it.
 	err := dbTx.QueryRow(ctx,
-		`SELECT value_text FROM feedback_records WHERE id = $1`, feedbackRecordID,
+		`SELECT value_text FROM feedback_records WHERE id = $1 FOR UPDATE`, feedbackRecordID,
 	).Scan(&valueText)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -918,43 +921,63 @@ func joinOr(conds ...string) string {
 	return strings.Join(nonEmpty, " OR ")
 }
 
-// Update updates an existing feedback record
-// Only value fields, metadata, language, and user_id can be updated.
+// Update updates an existing feedback record. Only value fields, metadata, language, and user_id
+// can be updated. It returns both the updated row and the pre-update ("previous") row so the
+// caller can compute the fields that ACTUALLY changed against state consistent with this write:
+// the previous snapshot is read FOR UPDATE inside the same transaction as the write, so a
+// concurrent Update cannot change the row between the read and the write and make the diff stale.
 func (r *FeedbackRecordsRepository) Update(
 	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
-) (*models.FeedbackRecord, error) {
+) (updated, previous *models.FeedbackRecord, err error) {
 	query, args, hasUpdates := buildUpdateQuery(req, id, time.Now())
 	if !hasUpdates {
-		// No write happens, so no tenant write lock is needed.
-		return r.GetByID(ctx, id)
+		// No write happens, so no tenant write lock is needed; nothing changed, so the previous
+		// state is the current row.
+		record, getErr := r.GetByID(ctx, id)
+
+		return record, record, getErr
 	}
 
-	var record *models.FeedbackRecord
-
-	err := withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
-		tenantID, err := lockFeedbackRecordTenantShared(ctx, dbTx, id)
-		if err != nil {
-			return err
+	err = withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		tenantID, lockErr := lockFeedbackRecordTenantShared(ctx, dbTx, id)
+		if lockErr != nil {
+			return lockErr
 		}
 
-		scanned, err := scanFeedbackRecord(dbTx.QueryRow(ctx, query, append(args, tenantID)...))
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+		// Capture the pre-update row atomically and row-locked (FOR UPDATE) so the caller's
+		// changed-field diff reflects exactly the state this write replaces — not a snapshot taken
+		// before the lock, which a concurrent Update could invalidate (dropping or inventing
+		// downstream webhook/enrichment triggers).
+		prev, prevErr := scanFeedbackRecord(dbTx.QueryRow(ctx,
+			`SELECT `+feedbackRecordColumns+` FROM feedback_records WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+			id, tenantID))
+		if prevErr != nil {
+			if errors.Is(prevErr, pgx.ErrNoRows) {
 				return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 			}
 
-			return fmt.Errorf("failed to update feedback record: %w", err)
+			return fmt.Errorf("failed to read feedback record before update: %w", prevErr)
 		}
 
-		record = scanned
+		scanned, scanErr := scanFeedbackRecord(dbTx.QueryRow(ctx, query, append(args, tenantID)...))
+		if scanErr != nil {
+			if errors.Is(scanErr, pgx.ErrNoRows) {
+				return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+			}
+
+			return fmt.Errorf("failed to update feedback record: %w", scanErr)
+		}
+
+		updated = scanned
+		previous = prev
 
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return record, nil
+	return updated, previous, nil
 }
 
 // Delete removes a feedback record.

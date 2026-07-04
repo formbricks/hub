@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -138,6 +139,16 @@ func (m *MessagePublisherManager) startWorker() {
 
 		for _, provider := range m.providers {
 			fanOut.Go(func() {
+				// Isolate a provider panic to its own goroutine: an unrecovered panic here would
+				// be process-fatal and take down the whole event pipeline, so recover, log, and
+				// let the other providers (and fanOut.Wait) complete.
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("message provider panicked; isolating failure from the fan-out",
+							"provider", fmt.Sprintf("%T", provider), "panic", r)
+					}
+				}()
+
 				provider.PublishEvent(ctx, event)
 			})
 		}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 
@@ -316,7 +317,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	if excludeID == nil {
 		rows, err = dbTx.Query(ctx, `
 			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
-				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ), fr.value_text
+				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
@@ -325,7 +326,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	} else {
 		rows, err = dbTx.Query(ctx, `
 			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
-				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ), fr.value_text
+				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
@@ -417,7 +418,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	if excludeID == nil {
 		rows, err = dbTx.Query(ctx, `
 			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
-				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ), fr.value_text
+				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
@@ -427,7 +428,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	} else {
 		rows, err = dbTx.Query(ctx, `
 			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
-				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ), fr.value_text
+				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
@@ -492,6 +493,12 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	return results, hasMore, nil
 }
 
+// hnswGUCUnsupportedSQLStates are the Postgres error codes for an unknown/invalid configuration
+// parameter name: an unrecognized GUC in a reserved prefix (hnsw.*) is reported as 42602
+// (invalid_name), and some versions use 42704 (undefined_object). Only these — a genuinely
+// version-unsupported GUC (pgvector < 0.8) — should permanently latch the iterative-scan fallback.
+var hnswGUCUnsupportedSQLStates = map[string]bool{"42602": true, "42704": true}
+
 // beginNearestTx starts the transaction for a nearest-neighbor query and applies the HNSW query
 // settings: ef_search, and iterative scan so the index keeps yielding candidates until LIMIT is
 // satisfied rather than stopping at ef_search pre-filter rows. On a server without the
@@ -512,14 +519,22 @@ func (r *EmbeddingsRepository) beginNearestTx(ctx context.Context) (pgx.Tx, erro
 
 	if !r.iterativeScanUnavailable.Load() {
 		if _, err := dbTx.Exec(ctx, "SET LOCAL hnsw.iterative_scan = "+hnswIterativeScanMode); err != nil {
+			rollbackQuietly(ctx, dbTx, "nearest feedback records: setup rollback failed")
+
+			// Only latch on a genuinely-unsupported GUC (pgvector < 0.8). A transient failure must
+			// not permanently degrade recall for the process's life — surface it so this query fails
+			// and the next call retries the iterative-scan path.
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || !hnswGUCUnsupportedSQLStates[pgErr.Code] {
+				return nil, fmt.Errorf("set hnsw.iterative_scan: %w", err)
+			}
+
 			r.iterativeScanUnavailable.Store(true)
 			r.iterativeScanWarn.Do(func() {
 				slog.Warn("hnsw.iterative_scan unavailable (pgvector < 0.8?); "+
 					"semantic search recall is capped at ef_search candidates per query",
 					"error", err)
 			})
-
-			rollbackQuietly(ctx, dbTx, "nearest feedback records: setup rollback failed")
 
 			return r.beginNearestTx(ctx)
 		}
