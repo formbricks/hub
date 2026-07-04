@@ -53,11 +53,9 @@ func NewFeedbackEmbeddingWorker(
 	}
 }
 
-const feedbackEmbeddingTimeout = 30 * time.Second
-
 // Timeout limits how long a single embedding job can run.
 func (w *FeedbackEmbeddingWorker) Timeout(*river.Job[service.FeedbackEmbeddingArgs]) time.Duration {
-	return feedbackEmbeddingTimeout
+	return enrichmentJobTimeout
 }
 
 // Work loads the record, generates or clears the embedding, and persists it.

@@ -34,12 +34,6 @@ type SentimentClient interface {
 	Classify(ctx context.Context, text, sourceLang string) (SentimentResult, error)
 }
 
-// rawStructuredCompleter is the low-level provider call (system prompt + user text + schema ->
-// JSON text), satisfied by *openai.Client and *googleai.Client. It mirrors rawTranslator.
-type rawStructuredCompleter interface {
-	CompleteJSON(ctx context.Context, systemPrompt, userText string, schema llm.Schema) (string, error)
-}
-
 // promptSentimentClient adapts a rawStructuredCompleter to SentimentClient by building the
 // prompt and schema, then parsing and validating the JSON response. The provider call stays
 // prompt-agnostic (the client owns the contract), mirroring promptTranslationClient.
@@ -74,7 +68,7 @@ var sentimentResponseSchema = llm.Schema{
 			Name:        "sentiment",
 			Type:        llm.TypeString,
 			Description: "Overall sentiment polarity of the feedback text.",
-			Enum:        sentimentLabelStrings(),
+			Enum:        labelStrings(models.SentimentValues()),
 		},
 		{
 			Name: "score",
@@ -154,17 +148,4 @@ func clampSentimentScore(score float64) float64 {
 	default:
 		return score
 	}
-}
-
-// sentimentLabelStrings returns the valid sentiment labels as strings, in models.SentimentValues
-// order, for the structured-output enum.
-func sentimentLabelStrings() []string {
-	values := models.SentimentValues()
-	labels := make([]string, len(values))
-
-	for i, value := range values {
-		labels[i] = string(value)
-	}
-
-	return labels
 }

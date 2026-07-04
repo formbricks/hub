@@ -26,6 +26,18 @@ type enrichmentWorkerMetrics struct {
 	workerError func(ctx context.Context, reason string)
 }
 
+// noopEnrichmentWorkerMetrics is installed by the per-type adapters when metrics are disabled,
+// so the worker never nil-checks.
+var noopEnrichmentWorkerMetrics = enrichmentWorkerMetrics{
+	outcome:     func(context.Context, string) {},
+	duration:    func(context.Context, time.Duration, string) {},
+	workerError: func(context.Context, string) {},
+}
+
+// enrichmentJobTimeout limits one enrichment job run; shared by all four pipelines (LLM and
+// embedding calls dominate, and every provider client keeps its own shorter HTTP timeout).
+const enrichmentJobTimeout = 30 * time.Second
+
 // enrichmentWorkerConfig configures an enrichmentWorker: how to read the record and extract its id,
 // decide eligibility and content, classify, and persist — plus the per-type behaviors (rate-limit
 // snooze, supersession skip) and metric labels. The shared Work body is identical across the
@@ -143,7 +155,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 		slog.Error(cfg.name+": get record failed",
 			"feedback_record_id", id, "final_attempt", isLastAttempt, "error", err)
 
-		return fmt.Errorf("get feedback record: %w", err)
+		return err // the getRecord hook (service) already wraps this context
 	}
 
 	if cfg.eligible != nil && !cfg.eligible(record) {
@@ -279,7 +291,7 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 		slog.Warn(cfg.name+": tenant data purge in progress, deferring write",
 			"feedback_record_id", id, "final_attempt", isLastAttempt)
 
-		return fmt.Errorf("set feedback record %s: %w", cfg.name, err)
+		return err // the persist hook (service Set*) already wraps this context
 	default:
 		// The returned error makes River retry, so a transient write failure is outcome
 		// "retry" until the final attempt — mirroring the classify path and the
@@ -293,7 +305,7 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 		slog.Error(cfg.name+": set result failed",
 			"feedback_record_id", id, "final_attempt", isLastAttempt, "error", err)
 
-		return fmt.Errorf("set feedback record %s: %w", cfg.name, err)
+		return err // the persist hook (service Set*) already wraps this context
 	}
 }
 
@@ -301,6 +313,22 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 func (w *enrichmentWorker[A, R]) recordOutcome(ctx context.Context, status string, start time.Time) {
 	w.cfg.metrics.outcome(ctx, status)
 	w.cfg.metrics.duration(ctx, time.Since(start), status)
+}
+
+// settingsGate builds the authoritative worker-side per-tenant gate for a gated classify type:
+// resolve the tenant's settings and apply the type's enabled predicate. A read error is returned
+// raw — enrichmentWorker.Work adds the "resolve tenant settings" context once.
+func settingsGate(
+	resolver tenantSettingsReader, enabled func(models.EnrichmentSettings) bool,
+) func(ctx context.Context, record *models.FeedbackRecord) (bool, error) {
+	return func(ctx context.Context, record *models.FeedbackRecord) (bool, error) {
+		settings, err := resolver.GetSettings(ctx, record.TenantID)
+		if err != nil {
+			return false, err //nolint:wrapcheck // Work wraps this once; wrapping here duplicates the prefix
+		}
+
+		return enabled(settings.Settings), nil
+	}
 }
 
 // retryOutcome maps the final-attempt flag to the worker outcome label: a transient failure is a

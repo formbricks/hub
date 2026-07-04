@@ -47,7 +47,7 @@ func TestValidateSentimentConfig(t *testing.T) {
 
 	for name, testCase := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := ValidateSentimentConfig(testCase.cfg)
+			err := sentimentClientRegistry.validate(testCase.cfg)
 			if testCase.wantErr != nil {
 				require.ErrorIs(t, err, testCase.wantErr)
 

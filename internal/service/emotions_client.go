@@ -63,7 +63,7 @@ var emotionsResponseSchema = llm.Schema{
 			Description: "Every basic emotion the feedback clearly expresses; an empty array when none apply.",
 			Items: &llm.Property{
 				Type: llm.TypeString,
-				Enum: emotionLabelStrings(),
+				Enum: labelStrings(models.EmotionValues()),
 			},
 		},
 	},
@@ -85,14 +85,14 @@ func buildEmotionsPrompt(text, sourceLang string) (systemPrompt, userText string
 	var builder strings.Builder
 
 	// Build the emotion list from the same source as the structured-output enum
-	// (emotionLabelStrings → models.EmotionValues) so the prompt cannot drift from the schema when
+	// (labelStrings over models.EmotionValues) so the prompt cannot drift from the schema when
 	// the pool changes.
 	builder.WriteString(
 		"You are an emotion-analysis expert. Identify which of these basic emotions the user's " +
 			"feedback clearly expresses:\n",
 	)
 
-	for _, label := range emotionLabelStrings() {
+	for _, label := range labelStrings(models.EmotionValues()) {
 		builder.WriteString("- " + label + "\n")
 	}
 
@@ -138,17 +138,4 @@ func parseEmotionsResult(raw string) (EmotionsResult, error) {
 	}
 
 	return EmotionsResult{Labels: labels}, nil
-}
-
-// emotionLabelStrings returns the valid emotion labels as strings, in models.EmotionValues order,
-// for the structured-output enum.
-func emotionLabelStrings() []string {
-	values := models.EmotionValues()
-	labels := make([]string, len(values))
-
-	for i, value := range values {
-		labels[i] = string(value)
-	}
-
-	return labels
 }

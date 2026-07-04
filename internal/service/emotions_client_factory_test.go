@@ -47,7 +47,7 @@ func TestValidateEmotionsConfig(t *testing.T) {
 
 	for name, testCase := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := ValidateEmotionsConfig(testCase.cfg)
+			err := emotionsClientRegistry.validate(testCase.cfg)
 			if testCase.wantErr != nil {
 				require.ErrorIs(t, err, testCase.wantErr)
 

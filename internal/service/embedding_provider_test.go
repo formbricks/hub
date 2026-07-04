@@ -47,7 +47,7 @@ func (m *mockEmbeddingInserter) Insert(
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	valueText := "Some feedback text"
@@ -75,7 +75,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPointer_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
 
 	// Pass value type (as was happening before the service fix) — provider should skip and not enqueue.
 	event := Event{
@@ -96,7 +96,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPoin
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
 
 	event := Event{
 		ID:        uuid.Must(uuid.NewV7()),
@@ -116,7 +116,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_ski
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -141,7 +141,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChanged
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_fieldLabelInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "sk-test", "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{

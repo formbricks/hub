@@ -9,14 +9,6 @@ import (
 	"github.com/formbricks/hub/internal/openai"
 )
 
-// Emotion provider names for NewEmotionsClient (same identifiers as the other enrichments;
-// emotions reuses the OpenAI and Google SDK wrappers).
-const (
-	EmotionsProviderOpenAI       = ProviderOpenAI
-	EmotionsProviderGoogle       = ProviderGoogle
-	EmotionsProviderGoogleGemini = ProviderGoogleGemini
-)
-
 var (
 	// ErrEmotionsConfigInvalid is returned when the emotions provider is unsupported.
 	ErrEmotionsConfigInvalid = errors.New("emotions config invalid")
@@ -29,21 +21,8 @@ var (
 		"google-gemini requires EMOTIONS_GOOGLE_CLOUD_PROJECT and EMOTIONS_GOOGLE_CLOUD_LOCATION")
 )
 
-// EmotionsClientConfig holds configuration for creating an emotions client.
-type EmotionsClientConfig struct {
-	Provider            string
-	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
-	Model               string
-	BaseURL             string
-	GoogleCloudProject  string
-	GoogleCloudLocation string
-}
-
-func (c EmotionsClientConfig) clientProvider() string            { return c.Provider }
-func (c EmotionsClientConfig) clientAPIKey() string              { return c.ProviderAPIKey }
-func (c EmotionsClientConfig) clientBaseURL() string             { return c.BaseURL }
-func (c EmotionsClientConfig) clientGoogleCloudProject() string  { return c.GoogleCloudProject }
-func (c EmotionsClientConfig) clientGoogleCloudLocation() string { return c.GoogleCloudLocation }
+// EmotionsClientConfig aliases the shared classify client config (see EnrichmentClientConfig).
+type EmotionsClientConfig = EnrichmentClientConfig
 
 // emotionsClientRegistry is the single source of truth for emotions provider capabilities and
 // client creation, backed by the shared generic registry. Like sentiment it does not accept the
@@ -55,9 +34,9 @@ var emotionsClientRegistry = clientRegistry[EmotionsClientConfig, EmotionsClient
 	errBaseURL:       ErrEmotionsBaseURLUnsupported,
 	errGoogleGemini:  ErrEmotionsGoogleGeminiConfig,
 	entries: map[string]providerFactory[EmotionsClientConfig, EmotionsClient]{
-		EmotionsProviderOpenAI:       {requiresAPIKey: true, build: openAIEmotionsFactory},
-		EmotionsProviderGoogle:       {requiresAPIKey: true, build: googleEmotionsFactory},
-		EmotionsProviderGoogleGemini: {requiresGoogleGeminiConfig: true, build: googleGeminiEmotionsFactory},
+		ProviderOpenAI:       {requiresAPIKey: true, build: openAIEmotionsFactory},
+		ProviderGoogle:       {requiresAPIKey: true, build: googleEmotionsFactory},
+		ProviderGoogleGemini: {requiresGoogleGeminiConfig: true, build: googleGeminiEmotionsFactory},
 	},
 }
 
@@ -87,17 +66,6 @@ func googleGeminiEmotionsFactory(ctx context.Context, cfg EmotionsClientConfig) 
 	}
 
 	return promptEmotionsClient{raw: raw}, nil
-}
-
-// NormalizeEmotionsProvider returns the canonical provider name (lowercase, trimmed).
-func NormalizeEmotionsProvider(provider string) string {
-	return emotionsClientRegistry.normalize(provider)
-}
-
-// ValidateEmotionsConfig checks provider support and provider-specific requirements.
-// Use before creating a client or at startup to fail fast with a clear error.
-func ValidateEmotionsConfig(cfg EmotionsClientConfig) error {
-	return emotionsClientRegistry.validate(cfg)
 }
 
 // NewEmotionsClient creates an EmotionsClient for the given config. It validates provider-specific

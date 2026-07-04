@@ -3,7 +3,6 @@ package workers
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -27,8 +26,6 @@ type sentimentWorkerService interface {
 		stillCurrent func(valueText *string) bool) error
 }
 
-const feedbackSentimentTimeout = 30 * time.Second
-
 // NewFeedbackSentimentWorker creates a worker that fetches the record, classifies its value_text,
 // and stores the result. metrics may be nil when metrics are disabled.
 func NewFeedbackSentimentWorker(
@@ -36,22 +33,13 @@ func NewFeedbackSentimentWorker(
 	client service.SentimentClient, metrics observability.SentimentMetrics,
 ) *FeedbackSentimentWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackSentimentArgs, service.SentimentResult]{
-		name:       "sentiment",
-		timeout:    feedbackSentimentTimeout,
-		recordID:   func(args service.FeedbackSentimentArgs) uuid.UUID { return args.FeedbackRecordID },
-		getRecord:  svc.GetFeedbackRecord,
-		eligible:   (*models.FeedbackRecord).IsTextField,
-		hasContent: (*models.FeedbackRecord).HasOpenText,
-		checkEnabled: func(ctx context.Context, record *models.FeedbackRecord) (bool, error) {
-			settings, err := resolver.GetSettings(ctx, record.TenantID)
-			if err != nil {
-				// Return raw: enrichmentWorker.Work adds the "resolve tenant settings" context
-				// once, so wrapping here too would duplicate the prefix.
-				return false, err //nolint:wrapcheck // Work wraps this once; wrapping here duplicates the prefix
-			}
-
-			return settings.Settings.SentimentEnrichmentEnabled(), nil
-		},
+		name:         "sentiment",
+		timeout:      enrichmentJobTimeout,
+		recordID:     func(args service.FeedbackSentimentArgs) uuid.UUID { return args.FeedbackRecordID },
+		getRecord:    svc.GetFeedbackRecord,
+		eligible:     (*models.FeedbackRecord).IsTextField,
+		hasContent:   (*models.FeedbackRecord).HasOpenText,
+		checkEnabled: settingsGate(resolver, models.EnrichmentSettings.SentimentEnrichmentEnabled),
 		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackSentimentArgs) (service.SentimentResult, error) {
 			sourceLang := ""
 			if record.Language != nil {
@@ -88,11 +76,7 @@ func NewFeedbackSentimentWorker(
 // installing no-ops when metrics are disabled so the worker never nil-checks.
 func sentimentWorkerMetrics(m observability.SentimentMetrics) enrichmentWorkerMetrics {
 	if m == nil {
-		return enrichmentWorkerMetrics{
-			outcome:     func(context.Context, string) {},
-			duration:    func(context.Context, time.Duration, string) {},
-			workerError: func(context.Context, string) {},
-		}
+		return noopEnrichmentWorkerMetrics
 	}
 
 	return enrichmentWorkerMetrics{

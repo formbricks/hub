@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/text/language"
@@ -30,8 +29,6 @@ type translationWorkerService interface {
 		stillCurrent func(valueText *string) bool) error
 }
 
-const feedbackTranslationTimeout = 30 * time.Second
-
 // NewFeedbackTranslationWorker creates a worker that fetches the record, translates its value_text
 // into the target language (or copies it when the source already matches), and stores the result.
 // metrics may be nil when metrics are disabled.
@@ -40,7 +37,7 @@ func NewFeedbackTranslationWorker(
 ) *FeedbackTranslationWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackTranslationArgs, string]{
 		name:       "translation",
-		timeout:    feedbackTranslationTimeout,
+		timeout:    enrichmentJobTimeout,
 		recordID:   func(args service.FeedbackTranslationArgs) uuid.UUID { return args.FeedbackRecordID },
 		getRecord:  svc.GetFeedbackRecord,
 		eligible:   (*models.FeedbackRecord).IsTextField,
@@ -103,11 +100,7 @@ func translate(
 // installing no-ops when metrics are disabled so the worker never nil-checks.
 func translationWorkerMetrics(m observability.TranslationMetrics) enrichmentWorkerMetrics {
 	if m == nil {
-		return enrichmentWorkerMetrics{
-			outcome:     func(context.Context, string) {},
-			duration:    func(context.Context, time.Duration, string) {},
-			workerError: func(context.Context, string) {},
-		}
+		return noopEnrichmentWorkerMetrics
 	}
 
 	return enrichmentWorkerMetrics{

@@ -9,14 +9,6 @@ import (
 	"github.com/formbricks/hub/internal/openai"
 )
 
-// Sentiment provider names for NewSentimentClient (same identifiers as the embedding and
-// translation providers; sentiment reuses the OpenAI and Google SDK wrappers).
-const (
-	SentimentProviderOpenAI       = ProviderOpenAI
-	SentimentProviderGoogle       = ProviderGoogle
-	SentimentProviderGoogleGemini = ProviderGoogleGemini
-)
-
 var (
 	// ErrSentimentConfigInvalid is returned when the sentiment provider is unsupported.
 	ErrSentimentConfigInvalid = errors.New("sentiment config invalid")
@@ -29,21 +21,8 @@ var (
 		"google-gemini requires SENTIMENT_GOOGLE_CLOUD_PROJECT and SENTIMENT_GOOGLE_CLOUD_LOCATION")
 )
 
-// SentimentClientConfig holds configuration for creating a sentiment client.
-type SentimentClientConfig struct {
-	Provider            string
-	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
-	Model               string
-	BaseURL             string
-	GoogleCloudProject  string
-	GoogleCloudLocation string
-}
-
-func (c SentimentClientConfig) clientProvider() string            { return c.Provider }
-func (c SentimentClientConfig) clientAPIKey() string              { return c.ProviderAPIKey }
-func (c SentimentClientConfig) clientBaseURL() string             { return c.BaseURL }
-func (c SentimentClientConfig) clientGoogleCloudProject() string  { return c.GoogleCloudProject }
-func (c SentimentClientConfig) clientGoogleCloudLocation() string { return c.GoogleCloudLocation }
+// SentimentClientConfig aliases the shared classify client config (see EnrichmentClientConfig).
+type SentimentClientConfig = EnrichmentClientConfig
 
 // sentimentClientRegistry is the single source of truth for sentiment provider capabilities and
 // client creation, backed by the shared generic registry. Sentiment does not accept the legacy
@@ -55,9 +34,9 @@ var sentimentClientRegistry = clientRegistry[SentimentClientConfig, SentimentCli
 	errBaseURL:       ErrSentimentBaseURLUnsupported,
 	errGoogleGemini:  ErrSentimentGoogleGeminiConfig,
 	entries: map[string]providerFactory[SentimentClientConfig, SentimentClient]{
-		SentimentProviderOpenAI:       {requiresAPIKey: true, build: openAISentimentFactory},
-		SentimentProviderGoogle:       {requiresAPIKey: true, build: googleSentimentFactory},
-		SentimentProviderGoogleGemini: {requiresGoogleGeminiConfig: true, build: googleGeminiSentimentFactory},
+		ProviderOpenAI:       {requiresAPIKey: true, build: openAISentimentFactory},
+		ProviderGoogle:       {requiresAPIKey: true, build: googleSentimentFactory},
+		ProviderGoogleGemini: {requiresGoogleGeminiConfig: true, build: googleGeminiSentimentFactory},
 	},
 }
 
@@ -87,17 +66,6 @@ func googleGeminiSentimentFactory(ctx context.Context, cfg SentimentClientConfig
 	}
 
 	return promptSentimentClient{raw: raw}, nil
-}
-
-// NormalizeSentimentProvider returns the canonical provider name (lowercase, trimmed).
-func NormalizeSentimentProvider(provider string) string {
-	return sentimentClientRegistry.normalize(provider)
-}
-
-// ValidateSentimentConfig checks provider support and provider-specific requirements.
-// Use before creating a client or at startup to fail fast with a clear error.
-func ValidateSentimentConfig(cfg SentimentClientConfig) error {
-	return sentimentClientRegistry.validate(cfg)
 }
 
 // NewSentimentClient creates a SentimentClient for the given config. It validates

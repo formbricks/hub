@@ -19,6 +19,24 @@ const (
 	providerGoogleVertexLegacy = "google-vertex"
 )
 
+// EnrichmentClientConfig is the provider/model configuration shared by the classify clients —
+// sentiment, emotions, and translation are structurally identical, so each exposes a readable
+// alias of this one struct (embedding keeps its own: it adds Normalize).
+type EnrichmentClientConfig struct {
+	Provider            string
+	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
+	Model               string
+	BaseURL             string
+	GoogleCloudProject  string
+	GoogleCloudLocation string
+}
+
+func (c EnrichmentClientConfig) clientProvider() string            { return c.Provider }
+func (c EnrichmentClientConfig) clientAPIKey() string              { return c.ProviderAPIKey }
+func (c EnrichmentClientConfig) clientBaseURL() string             { return c.BaseURL }
+func (c EnrichmentClientConfig) clientGoogleCloudProject() string  { return c.GoogleCloudProject }
+func (c EnrichmentClientConfig) clientGoogleCloudLocation() string { return c.GoogleCloudLocation }
+
 // enrichmentClientConfig is the common shape the generic registry reads to validate and
 // dispatch. Every per-type client config satisfies it via small accessors; per-type extras
 // (e.g. embedding's Normalize) are read by that type's build funcs, which receive the concrete

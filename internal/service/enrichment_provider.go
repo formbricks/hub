@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"slices"
 
 	"github.com/riverqueue/river"
 
@@ -195,7 +196,7 @@ func (p *enrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 // changedAny reports whether any of fields appears in changed.
 func changedAny(changed, fields []string) bool {
 	for _, f := range fields {
-		if contains(changed, f) {
+		if slices.Contains(changed, f) {
 			return true
 		}
 	}

@@ -33,7 +33,7 @@ func TestEmotionsClient_Live_Gemini(t *testing.T) {
 	}
 
 	client, err := NewEmotionsClient(context.Background(), EmotionsClientConfig{
-		Provider:       EmotionsProviderGoogle,
+		Provider:       ProviderGoogle,
 		ProviderAPIKey: key,
 		Model:          model,
 	})

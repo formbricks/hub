@@ -402,7 +402,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		docPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
 		embeddingProv := service.NewEmbeddingProvider(
 			riverClient,
-			cfg.Embedding.ProviderAPIKey,
 			embeddingModelForDB,
 			service.EmbeddingsQueueName,
 			cfg.Embedding.MaxAttempts,

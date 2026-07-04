@@ -10,14 +10,6 @@ import (
 	"github.com/formbricks/hub/internal/openai"
 )
 
-// Translation provider names for NewTranslationClient (same identifiers as the
-// embedding providers; translation reuses the OpenAI and Google SDK wrappers).
-const (
-	TranslationProviderOpenAI       = ProviderOpenAI
-	TranslationProviderGoogle       = ProviderGoogle
-	TranslationProviderGoogleGemini = ProviderGoogleGemini
-)
-
 var (
 	// ErrTranslationConfigInvalid is returned when the translation provider is unsupported.
 	ErrTranslationConfigInvalid = errors.New("translation config invalid")
@@ -79,21 +71,8 @@ func buildTranslationPrompt(req TranslateRequest) (systemPrompt, userText string
 	return systemPrompt, req.Text
 }
 
-// TranslationClientConfig holds configuration for creating a translation client.
-type TranslationClientConfig struct {
-	Provider            string
-	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
-	Model               string
-	BaseURL             string
-	GoogleCloudProject  string
-	GoogleCloudLocation string
-}
-
-func (c TranslationClientConfig) clientProvider() string            { return c.Provider }
-func (c TranslationClientConfig) clientAPIKey() string              { return c.ProviderAPIKey }
-func (c TranslationClientConfig) clientBaseURL() string             { return c.BaseURL }
-func (c TranslationClientConfig) clientGoogleCloudProject() string  { return c.GoogleCloudProject }
-func (c TranslationClientConfig) clientGoogleCloudLocation() string { return c.GoogleCloudLocation }
+// TranslationClientConfig aliases the shared classify client config (see EnrichmentClientConfig).
+type TranslationClientConfig = EnrichmentClientConfig
 
 // translationClientRegistry is the single source of truth for translation provider capabilities
 // and client creation, backed by the shared generic registry. Translation accepts the legacy
@@ -105,9 +84,9 @@ var translationClientRegistry = clientRegistry[TranslationClientConfig, Translat
 	errBaseURL:       ErrTranslationBaseURLUnsupported,
 	errGoogleGemini:  ErrTranslationGoogleGeminiConfig,
 	entries: map[string]providerFactory[TranslationClientConfig, TranslationClient]{
-		TranslationProviderOpenAI:       {requiresAPIKey: true, build: openAITranslationFactory},
-		TranslationProviderGoogle:       {requiresAPIKey: true, build: googleTranslationFactory},
-		TranslationProviderGoogleGemini: {requiresGoogleGeminiConfig: true, build: googleGeminiTranslationFactory},
+		ProviderOpenAI:       {requiresAPIKey: true, build: openAITranslationFactory},
+		ProviderGoogle:       {requiresAPIKey: true, build: googleTranslationFactory},
+		ProviderGoogleGemini: {requiresGoogleGeminiConfig: true, build: googleGeminiTranslationFactory},
 	},
 }
 
@@ -137,18 +116,6 @@ func googleGeminiTranslationFactory(ctx context.Context, cfg TranslationClientCo
 	}
 
 	return promptTranslationClient{raw: raw}, nil
-}
-
-// NormalizeTranslationProvider returns the canonical provider name (lowercase, trimmed),
-// mapping the legacy google-vertex alias to google-gemini.
-func NormalizeTranslationProvider(provider string) string {
-	return translationClientRegistry.normalize(provider)
-}
-
-// ValidateTranslationConfig checks provider support and provider-specific requirements.
-// Use before creating a client or at startup to fail fast with a clear error.
-func ValidateTranslationConfig(cfg TranslationClientConfig) error {
-	return translationClientRegistry.validate(cfg)
 }
 
 // NewTranslationClient creates a TranslationClient for the given config. It validates

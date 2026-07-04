@@ -12,6 +12,23 @@ import (
 // validate the JSON into the typed result R. Sentiment and emotions each provide one, both driven
 // by classifyStructured so the provider call, error wrap, and parse flow live in one place.
 // (Translation is not structured — it keeps its own plain-text client.)
+// rawStructuredCompleter is the low-level provider call (system prompt + user text + schema ->
+// JSON text), satisfied by *openai.Client and *googleai.Client. It mirrors rawTranslator.
+type rawStructuredCompleter interface {
+	CompleteJSON(ctx context.Context, systemPrompt, userText string, schema llm.Schema) (string, error)
+}
+
+// labelStrings converts an enum value set to its string labels in canonical order, for the
+// structured-output enums and prompts (shared by sentiment and emotions).
+func labelStrings[T ~string](values []T) []string {
+	labels := make([]string, len(values))
+	for i, value := range values {
+		labels[i] = string(value)
+	}
+
+	return labels
+}
+
 type structuredSpec[R any] struct {
 	// Name labels the enrichment in the classify error wrap (e.g. "sentiment").
 	Name        string

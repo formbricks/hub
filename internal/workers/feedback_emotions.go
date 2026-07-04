@@ -3,7 +3,6 @@ package workers
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -34,8 +33,6 @@ type tenantSettingsReader interface {
 	GetSettings(ctx context.Context, tenantID string) (*models.TenantSettings, error)
 }
 
-const feedbackEmotionsTimeout = 30 * time.Second
-
 // NewFeedbackEmotionsWorker creates a worker that fetches the record, classifies its value_text,
 // and stores the emotion labels. metrics may be nil when metrics are disabled.
 func NewFeedbackEmotionsWorker(
@@ -43,22 +40,13 @@ func NewFeedbackEmotionsWorker(
 	client service.EmotionsClient, metrics observability.EmotionsMetrics,
 ) *FeedbackEmotionsWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackEmotionsArgs, service.EmotionsResult]{
-		name:       "emotions",
-		timeout:    feedbackEmotionsTimeout,
-		recordID:   func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.FeedbackRecordID },
-		getRecord:  svc.GetFeedbackRecord,
-		eligible:   (*models.FeedbackRecord).IsTextField,
-		hasContent: (*models.FeedbackRecord).HasOpenText,
-		checkEnabled: func(ctx context.Context, record *models.FeedbackRecord) (bool, error) {
-			settings, err := resolver.GetSettings(ctx, record.TenantID)
-			if err != nil {
-				// Return raw: enrichmentWorker.Work adds the "resolve tenant settings" context
-				// once, so wrapping here too would duplicate the prefix.
-				return false, err //nolint:wrapcheck // Work wraps this once; wrapping here duplicates the prefix
-			}
-
-			return settings.Settings.EmotionsEnrichmentEnabled(), nil
-		},
+		name:         "emotions",
+		timeout:      enrichmentJobTimeout,
+		recordID:     func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.FeedbackRecordID },
+		getRecord:    svc.GetFeedbackRecord,
+		eligible:     (*models.FeedbackRecord).IsTextField,
+		hasContent:   (*models.FeedbackRecord).HasOpenText,
+		checkEnabled: settingsGate(resolver, models.EnrichmentSettings.EmotionsEnrichmentEnabled),
 		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackEmotionsArgs) (service.EmotionsResult, error) {
 			sourceLang := ""
 			if record.Language != nil {
@@ -94,11 +82,7 @@ func NewFeedbackEmotionsWorker(
 // installing no-ops when metrics are disabled so the worker never nil-checks.
 func emotionsWorkerMetrics(m observability.EmotionsMetrics) enrichmentWorkerMetrics {
 	if m == nil {
-		return enrichmentWorkerMetrics{
-			outcome:     func(context.Context, string) {},
-			duration:    func(context.Context, time.Duration, string) {},
-			workerError: func(context.Context, string) {},
-		}
+		return noopEnrichmentWorkerMetrics
 	}
 
 	return enrichmentWorkerMetrics{

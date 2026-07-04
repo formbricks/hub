@@ -131,7 +131,7 @@ func TestSentimentResponseSchema_EnumDerivesFromModelLabels(t *testing.T) {
 	}
 
 	require.NotNil(t, sentiment, "the schema must have a sentiment property")
-	assert.Equal(t, sentimentLabelStrings(), sentiment.Enum, "the enum is the model label set, in order")
+	assert.Equal(t, labelStrings(models.SentimentValues()), sentiment.Enum, "the enum is the model label set, in order")
 	assert.Len(t, sentiment.Enum, len(models.SentimentValues()))
 }
 

@@ -108,7 +108,7 @@ func TestEmotionsResponseSchema_EnumDerivesFromModelLabels(t *testing.T) {
 	require.NotNil(t, emotions, "the schema must have an emotions property")
 	assert.Equal(t, llm.TypeArray, emotions.Type, "emotions is an array")
 	require.NotNil(t, emotions.Items, "the array must declare its element schema")
-	assert.Equal(t, emotionLabelStrings(), emotions.Items.Enum, "the element enum is the model label set, in order")
+	assert.Equal(t, labelStrings(models.EmotionValues()), emotions.Items.Enum, "the element enum is the model label set, in order")
 	assert.Len(t, emotions.Items.Enum, len(models.EmotionValues()))
 }
 

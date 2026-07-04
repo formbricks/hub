@@ -20,7 +20,6 @@ import (
 // (with value_text in ChangedFields, including when value_text is now empty so the worker can clear).
 type EmbeddingProvider struct {
 	inserter    RiverJobInserter
-	apiKey      string
 	model       string
 	queueName   string
 	maxAttempts int
@@ -34,7 +33,6 @@ type EmbeddingProvider struct {
 // metrics may be nil when metrics are disabled.
 func NewEmbeddingProvider(
 	inserter RiverJobInserter,
-	apiKey string,
 	model string,
 	queueName string,
 	maxAttempts int,
@@ -43,7 +41,6 @@ func NewEmbeddingProvider(
 ) *EmbeddingProvider {
 	return &EmbeddingProvider{
 		inserter:    inserter,
-		apiKey:      apiKey,
 		model:       model,
 		queueName:   queueName,
 		maxAttempts: maxAttempts,
@@ -58,7 +55,7 @@ func NewEmbeddingProvider(
 // API key is required for openai and google (validated at startup).
 func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	if event.Type == datatypes.FeedbackRecordUpdated {
-		if !contains(event.ChangedFields, "value_text") && !contains(event.ChangedFields, "field_label") {
+		if !slices.Contains(event.ChangedFields, "value_text") && !slices.Contains(event.ChangedFields, "field_label") {
 			slog.Debug("embedding: skip, value_text/field_label not in changed fields",
 				"event_id", event.ID,
 				"feedback_record_id", recordIDFromEventData(event.Data),
@@ -124,10 +121,6 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	if p.metrics != nil {
 		p.metrics.RecordJobsEnqueued(ctx, 1)
 	}
-}
-
-func contains(s []string, v string) bool {
-	return slices.Contains(s, v)
 }
 
 func recordIDFromEventData(data any) uuid.UUID {

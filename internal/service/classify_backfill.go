@@ -89,39 +89,67 @@ func (s *FeedbackRecordsService) backfillClassifyPaged(
 	fetchPage func(afterID uuid.UUID) ([]uuid.UUID, error),
 	buildArgs func(recordID uuid.UUID, hash string) river.JobArgs,
 ) (int, error) {
+	hash := "backfill:" + runID
+
+	return backfillPaged(name, classifyBackfillPageSize, fetchPage,
+		func(id uuid.UUID) uuid.UUID { return id },
+		func(ids []uuid.UUID) (int, int, error) {
+			inserted, skipped := 0, 0
+
+			for _, id := range ids {
+				res, insErr := inserter.Insert(ctx, buildArgs(id, hash), opts)
+				if insErr != nil {
+					return inserted, skipped, fmt.Errorf("enqueue %s backfill job for %s: %w", name, id, insErr)
+				}
+
+				if res != nil && res.UniqueSkippedAsDuplicate {
+					skipped++
+
+					continue
+				}
+
+				inserted++
+			}
+
+			return inserted, skipped, nil
+		})
+}
+
+// backfillPaged is the one keyset-paged backfill loop shared by the classify and translation
+// backfills: stream pages, insert each, count duplicate-skips, advance the cursor by the last
+// item seen (so a fully-deduped page cannot livelock), and stop on the first short page.
+func backfillPaged[T any](
+	name string,
+	pageSize int,
+	fetchPage func(afterID uuid.UUID) ([]T, error),
+	cursorID func(item T) uuid.UUID,
+	insertPage func(items []T) (inserted, skipped int, err error),
+) (int, error) {
 	enqueued := 0
 	skipped := 0
 	afterID := uuid.Nil
-	hash := "backfill:" + runID
 
 	for {
-		ids, err := fetchPage(afterID)
+		items, err := fetchPage(afterID)
 		if err != nil {
 			return enqueued, err
 		}
 
-		if len(ids) == 0 {
+		if len(items) == 0 {
 			break
 		}
 
-		for _, id := range ids {
-			res, insErr := inserter.Insert(ctx, buildArgs(id, hash), opts)
-			if insErr != nil {
-				return enqueued, fmt.Errorf("enqueue %s backfill job for %s: %w", name, id, insErr)
-			}
+		inserted, duplicates, err := insertPage(items)
+		enqueued += inserted
+		skipped += duplicates
 
-			if res != nil && res.UniqueSkippedAsDuplicate {
-				skipped++
-
-				continue
-			}
-
-			enqueued++
+		if err != nil {
+			return enqueued, err
 		}
 
-		afterID = ids[len(ids)-1]
+		afterID = cursorID(items[len(items)-1])
 
-		if len(ids) < classifyBackfillPageSize {
+		if len(items) < pageSize {
 			break
 		}
 	}

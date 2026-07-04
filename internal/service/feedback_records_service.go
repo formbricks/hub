@@ -50,7 +50,8 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 		ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
 	) ([]models.FeedbackRecord, bool, error)
-	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, *models.FeedbackRecord, error)
+	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
+	) (updated, previous *models.FeedbackRecord, err error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
 		stillCurrent func(valueText *string) bool) error
 	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
@@ -605,41 +606,11 @@ func (s *FeedbackRecordsService) backfillTranslationsPaged(
 	runID string,
 	fetchPage func(afterID uuid.UUID) ([]models.TranslationBackfillTarget, error),
 ) (int, error) {
-	enqueued := 0
-	skipped := 0
-	afterID := uuid.Nil
-
-	for {
-		targets, err := fetchPage(afterID)
-		if err != nil {
-			return enqueued, err
-		}
-
-		if len(targets) == 0 {
-			break
-		}
-
-		inserted, duplicates, err := enqueueTranslationBackfillJobs(ctx, inserter, opts, runID, targets)
-		enqueued += inserted
-		skipped += duplicates
-
-		if err != nil {
-			return enqueued, err
-		}
-
-		afterID = targets[len(targets)-1].FeedbackRecordID
-
-		if len(targets) < translationBackfillPageSize {
-			break
-		}
-	}
-
-	if skipped > 0 {
-		slog.Info("translation backfill: duplicate jobs skipped by unique insert",
-			"skipped", skipped, "enqueued", enqueued)
-	}
-
-	return enqueued, nil
+	return backfillPaged("translation", translationBackfillPageSize, fetchPage,
+		func(target models.TranslationBackfillTarget) uuid.UUID { return target.FeedbackRecordID },
+		func(targets []models.TranslationBackfillTarget) (int, int, error) {
+			return enqueueTranslationBackfillJobs(ctx, inserter, opts, runID, targets)
+		})
 }
 
 // translationBackfillInsertOpts is the shared River insert config for backfill translation
