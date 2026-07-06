@@ -119,6 +119,7 @@ func TestSetupEmbeddingSearchHandler(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		river.NewWorkers(),
 	)
 	if err != nil {
@@ -137,6 +138,7 @@ func TestSetupEmbeddingSearchHandlerValidatesConfig(t *testing.T) {
 		service.EmbeddingProviderOpenAI,
 		"text-embedding-3-small",
 		"",
+		nil,
 		nil,
 		nil,
 		nil,

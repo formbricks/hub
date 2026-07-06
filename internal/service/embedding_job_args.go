@@ -17,6 +17,9 @@ const (
 // get a new job when value_text changes; same content within 24h is deduped; one job per record+model.
 type FeedbackEmbeddingArgs struct {
 	FeedbackRecordID uuid.UUID `json:"feedback_record_id" river:"unique"`
+	// EventID correlates this job to the domain event that enqueued it (uuid.Nil for backfill
+	// jobs, which have no originating event). Not part of the dedupe key — observability only.
+	EventID uuid.UUID `json:"event_id"`
 	// Model is the embedding model name; stored in embeddings.model.
 	Model string `json:"model" river:"unique"`
 	// ValueTextHash is a hash of the input (trimmed value_text, or "empty"/"backfill") for dedupe semantics.

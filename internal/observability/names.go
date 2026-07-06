@@ -7,18 +7,20 @@ import (
 
 // Metric names (OpenTelemetry).
 const (
-	MetricNameEventsDiscarded         = "hub_events_discarded_total"
-	MetricNameFanOutDuration          = "hub_message_publisher_fan_out_duration_seconds"
-	MetricNameEventChannelDepth       = "hub_event_channel_depth"
-	MetricNameRiverQueueDepth         = "hub_river_queue_depth"
-	MetricNameRiverQueueOldestAge     = "hub_river_queue_oldest_age_seconds"
-	MetricNameProviderPanics          = "hub_provider_panics_total"
-	MetricNameWebhookJobsEnqueued     = "hub_webhook_jobs_enqueued_total"
-	MetricNameWebhookProviderErrors   = "hub_webhook_provider_errors_total"
-	MetricNameWebhookDeliveries       = "hub_webhook_deliveries_total"
-	MetricNameWebhookDisabled         = "hub_webhook_disabled_total"
-	MetricNameWebhookDispatchErrors   = "hub_webhook_dispatch_errors_total"
-	MetricNameWebhookDeliveryDuration = "hub_webhook_delivery_duration_seconds"
+	MetricNameEventsDiscarded           = "hub_events_discarded_total"
+	MetricNameFanOutDuration            = "hub_message_publisher_fan_out_duration_seconds"
+	MetricNameEventChannelDepth         = "hub_event_channel_depth"
+	MetricNameRiverQueueDepth           = "hub_river_queue_depth"
+	MetricNameRiverQueueOldestAge       = "hub_river_queue_oldest_age_seconds"
+	MetricNameProviderPanics            = "hub_provider_panics_total"
+	MetricNameHNSWIterativeScanDegraded = "hub_hnsw_iterative_scan_degraded"
+	MetricNameEnrichmentOutputsCleared  = "hub_enrichment_outputs_cleared_total"
+	MetricNameWebhookJobsEnqueued       = "hub_webhook_jobs_enqueued_total"
+	MetricNameWebhookProviderErrors     = "hub_webhook_provider_errors_total"
+	MetricNameWebhookDeliveries         = "hub_webhook_deliveries_total"
+	MetricNameWebhookDisabled           = "hub_webhook_disabled_total"
+	MetricNameWebhookDispatchErrors     = "hub_webhook_dispatch_errors_total"
+	MetricNameWebhookDeliveryDuration   = "hub_webhook_delivery_duration_seconds"
 
 	// MetricNameEmbeddingJobsEnqueued and related embedding pipeline metrics.
 	MetricNameEmbeddingJobsEnqueued   = "hub_embedding_jobs_enqueued_total"
@@ -57,6 +59,9 @@ const (
 	AttrEventType = "event_type"
 	AttrReason    = "reason"
 	AttrStatus    = "status"
+	// AttrOutput labels the enrichment-cleared counter; values come from a fixed set
+	// (sentiment, emotions, translation), so cardinality is bounded.
+	AttrOutput = "output"
 	// AttrQueue labels the River queue-depth gauge; values come from the poller's fixed queue
 	// set, so cardinality is bounded.
 	AttrQueue = "queue"
@@ -276,6 +281,22 @@ func AllowedCacheName(name string) bool { return allowedCacheNames[name] }
 func NormalizeCacheName(name string) string {
 	if AllowedCacheName(name) {
 		return name
+	}
+
+	return "other"
+}
+
+// allowedClearedOutputs for hub_enrichment_outputs_cleared_total (bounded cardinality).
+var allowedClearedOutputs = map[string]bool{
+	"sentiment":   true,
+	"emotions":    true,
+	"translation": true,
+}
+
+// NormalizeClearedOutput bounds the enrichment-cleared output label; unknown values collapse to "other".
+func NormalizeClearedOutput(output string) string {
+	if allowedClearedOutputs[output] {
+		return output
 	}
 
 	return "other"

@@ -52,6 +52,14 @@ func NewEmbeddingsRepository(db *pgxpool.Pool) *EmbeddingsRepository {
 	return &EmbeddingsRepository{db: db}
 }
 
+// IterativeScanDegraded reports whether HNSW iterative_scan has been latched off after the server
+// rejected it (pgvector < 0.8). While true, nearest-neighbor recall is capped at ef_search until
+// the process restarts. Surfaced as a gauge so the silent degradation is alertable, not just a
+// one-time log line.
+func (r *EmbeddingsRepository) IterativeScanDegraded() bool {
+	return r.iterativeScanUnavailable.Load()
+}
+
 // rollbackQuietly rolls back tx, logging (rather than returning) an unexpected rollback error.
 func rollbackQuietly(ctx context.Context, tx pgx.Tx, msg string) {
 	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
@@ -322,7 +330,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	if excludeID == nil {
 		rows, err = dbTx.Query(ctx, `
 			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
-				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
+				COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
@@ -331,7 +339,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	} else {
 		rows, err = dbTx.Query(ctx, `
 			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
-				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
+				COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
@@ -359,13 +367,17 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 			row       models.FeedbackRecordWithScore
 			valueText *string
 		)
-		if err := rows.Scan(&row.FeedbackRecordID, &row.Distance, &row.Score, &row.FieldLabel, &valueText); err != nil {
+		if err := rows.Scan(&row.FeedbackRecordID, &row.Distance, &row.FieldLabel, &valueText); err != nil {
 			return nil, false, fmt.Errorf("scan feedback record with score: %w", err)
 		}
 
 		if valueText != nil {
 			row.ValueText = *valueText
 		}
+
+		// Derive the display score in Go rather than in SQL: computing it there evaluated the
+		// <=> distance operator a second time per row. Distance is what the query orders/cursors by.
+		row.Score = 1 - row.Distance
 
 		if row.Score >= minScore {
 			results = append(results, row)
@@ -423,7 +435,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	if excludeID == nil {
 		rows, err = dbTx.Query(ctx, `
 			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
-				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
+				COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
@@ -433,7 +445,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	} else {
 		rows, err = dbTx.Query(ctx, `
 			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
-				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
+				COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
@@ -462,13 +474,17 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 			row       models.FeedbackRecordWithScore
 			valueText *string
 		)
-		if err := rows.Scan(&row.FeedbackRecordID, &row.Distance, &row.Score, &row.FieldLabel, &valueText); err != nil {
+		if err := rows.Scan(&row.FeedbackRecordID, &row.Distance, &row.FieldLabel, &valueText); err != nil {
 			return nil, false, fmt.Errorf("scan feedback record with score: %w", err)
 		}
 
 		if valueText != nil {
 			row.ValueText = *valueText
 		}
+
+		// Derive the display score in Go rather than in SQL: computing it there evaluated the
+		// <=> distance operator a second time per row. Distance is what the query orders/cursors by.
+		row.Score = 1 - row.Distance
 
 		if row.Score >= minScore {
 			results = append(results, row)

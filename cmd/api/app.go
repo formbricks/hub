@@ -16,6 +16,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
@@ -84,6 +85,7 @@ func setupEmbeddingSearchHandler(
 	embeddingsRepo *repository.EmbeddingsRepository,
 	embeddingMetrics observability.EmbeddingMetrics,
 	metrics *observability.Metrics,
+	meterProvider *sdkmetric.MeterProvider,
 	riverWorkers *river.Workers,
 ) (*handlers.SearchHandler, error) {
 	embeddingCfg := service.EmbeddingClientConfig{
@@ -126,6 +128,17 @@ func setupEmbeddingSearchHandler(
 		CacheMetrics:    cacheMetrics,
 		Logger:          slog.Default(),
 	})
+
+	// Surface HNSW iterative-scan degradation (pgvector < 0.8 fallback) as a gauge so capped recall
+	// is alertable, not just a one-time log line. No-op meter when metrics are disabled.
+	var meter metric.Meter
+	if meterProvider != nil {
+		meter = meterProvider.Meter("hub")
+	}
+
+	if err := observability.RegisterHNSWIterativeScanGauge(meter, embeddingsRepo.IterativeScanDegraded); err != nil {
+		return nil, fmt.Errorf("register hnsw iterative scan gauge: %w", err)
+	}
 
 	return handlers.NewSearchHandler(searchService), nil
 }
@@ -250,6 +263,12 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.Translation.DefaultLanguage,
 	)
 
+	// The eager-clear (nulling stale enrichment outputs on a value_text edit) fires only on this
+	// API PATCH path, so wire its counter here; the worker/backfill service instances leave it unset.
+	if metrics != nil {
+		feedbackRecordsService.SetEnrichmentClearMetrics(metrics.EnrichmentClear)
+	}
+
 	// Tenant settings service: shared by the emotions worker's authoritative gate (registered
 	// below), the settings HTTP handler, and the enqueue-path settings cache.
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
@@ -269,7 +288,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			context.Background(), cfg,
 			embeddingProviderName, embeddingModel, embeddingDocPrefix,
 			feedbackRecordsService, embeddingsRepo, embeddingMetrics,
-			metrics, riverWorkers)
+			metrics, meterProvider, riverWorkers)
 		if err != nil {
 			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
 

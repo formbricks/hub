@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"slices"
 
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/datatypes"
@@ -52,7 +53,7 @@ type enrichmentProviderConfig struct {
 	// enrichment is disabled for the tenant, or has no resolvable target. Folding the per-tenant
 	// gate, the dedupe hash, and the args into one hook lets a settings-derived value (e.g.
 	// translation's target language) be resolved exactly once.
-	buildArgs func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool)
+	buildArgs func(record *models.FeedbackRecord, settings *models.TenantSettings, eventID uuid.UUID) (river.JobArgs, bool)
 }
 
 // enrichmentProvider implements eventPublisher by enqueueing one enrichment job per eligible
@@ -156,9 +157,9 @@ func (p *enrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 	// enrichment which is now disabled skips even the empty-content clear above — a stale result is
 	// left until the enrichment is re-enabled (this preserves the pre-refactor gate-before-enqueue
 	// behavior).
-	args, enqueue := cfg.buildArgs(record, settings)
+	args, enqueue := cfg.buildArgs(record, settings, event.ID)
 	if !enqueue {
-		slog.Debug(cfg.name+": skip, not enabled for tenant", "feedback_record_id", record.ID)
+		slog.Debug(cfg.name+": skip, not enabled for tenant", "event_id", event.ID, "feedback_record_id", record.ID)
 
 		return
 	}

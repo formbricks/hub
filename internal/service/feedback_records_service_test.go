@@ -16,6 +16,7 @@ import (
 
 type mockFeedbackRecordsRepo struct {
 	record                     *models.FeedbackRecord
+	previousRecord             *models.FeedbackRecord // pre-update row Update returns; falls back to record when nil
 	createReq                  *models.CreateFeedbackRecordRequest
 	deleteByUserGroups         []models.DeletedFeedbackRecordsByTenant
 	deletedID                  uuid.UUID
@@ -70,7 +71,12 @@ func (m *mockFeedbackRecordsRepo) Update(
 	_ context.Context, _ uuid.UUID, _ *models.UpdateFeedbackRecordRequest,
 ) (*models.FeedbackRecord, *models.FeedbackRecord, error) {
 	if m.record != nil {
-		return m.record, m.record, nil
+		previous := m.record
+		if m.previousRecord != nil {
+			previous = m.previousRecord
+		}
+
+		return m.record, previous, nil
 	}
 
 	return nil, nil, errors.New("not implemented")
@@ -795,6 +801,41 @@ func TestFeedbackRecordsService_UpdateFeedbackRecord_RealChangePublishesChangedF
 
 	if len(publisher.changedFields) != 1 || publisher.changedFields[0] != "value_text" {
 		t.Fatalf("changedFields = %v, want [value_text] (only what actually changed)", publisher.changedFields)
+	}
+}
+
+type mockClearMetrics struct{ cleared []string }
+
+func (m *mockClearMetrics) RecordOutputCleared(_ context.Context, output string) {
+	m.cleared = append(m.cleared, output)
+}
+
+// TestFeedbackRecordsService_UpdateFeedbackRecord_RecordsClearedEnrichmentMetric locks that a
+// value_text edit which nulls a derived output records the eager-clear counter for that output.
+func TestFeedbackRecordsService_UpdateFeedbackRecord_RecordsClearedEnrichmentMetric(t *testing.T) {
+	newText := "brand new text"
+	sentiment := models.SentimentPositive
+	score := 0.8
+
+	// updated row: sentiment cleared; previous row: sentiment was set → eager-clear nulled it.
+	updated := &models.FeedbackRecord{ID: uuid.Must(uuid.NewV7()), FieldType: models.FieldTypeText, ValueText: &newText}
+	previous := &models.FeedbackRecord{
+		ID: updated.ID, FieldType: models.FieldTypeText, ValueText: &newText,
+		Sentiment: &sentiment, SentimentScore: &score,
+	}
+
+	repo := &mockFeedbackRecordsRepo{record: updated, previousRecord: previous}
+	clearMetrics := &mockClearMetrics{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+	svc.SetEnrichmentClearMetrics(clearMetrics)
+
+	_, err := svc.UpdateFeedbackRecord(context.Background(), updated.ID, &models.UpdateFeedbackRecordRequest{ValueText: &newText})
+	if err != nil {
+		t.Fatalf("UpdateFeedbackRecord() error = %v", err)
+	}
+
+	if len(clearMetrics.cleared) != 1 || clearMetrics.cleared[0] != "sentiment" {
+		t.Fatalf("cleared outputs recorded = %v, want [sentiment]", clearMetrics.cleared)
 	}
 }
 

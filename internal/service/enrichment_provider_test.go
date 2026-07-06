@@ -3,6 +3,7 @@ package service
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/stretchr/testify/require"
 
@@ -14,7 +15,9 @@ import (
 // enrichment must have a resolver. All are enforced fail-fast at construction.
 func TestNewEnrichmentProvider_ValidatesConfig(t *testing.T) {
 	hasContent := func(*models.FeedbackRecord) bool { return true }
-	buildArgs := func(*models.FeedbackRecord, *models.TenantSettings) (river.JobArgs, bool) { return nil, false }
+	buildArgs := func(*models.FeedbackRecord, *models.TenantSettings, uuid.UUID) (river.JobArgs, bool) {
+		return nil, false
+	}
 
 	require.Panics(t, func() {
 		newEnrichmentProvider(enrichmentProviderConfig{name: "test", buildArgs: buildArgs})

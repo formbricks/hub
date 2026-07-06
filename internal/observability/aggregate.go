@@ -18,6 +18,8 @@ type Metrics struct {
 	Sentiment   SentimentMetrics
 	Emotions    EmotionsMetrics
 	Cache       CacheMetrics
+	// EnrichmentClear counts enrichment outputs nulled by an edit's eager-clear.
+	EnrichmentClear EnrichmentClearMetrics
 }
 
 // NewMetrics creates EventMetrics, WebhookMetrics, EmbeddingMetrics, TranslationMetrics, and CacheMetrics from the given meter.
@@ -63,13 +65,19 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("cache metrics: %w", err)
 	}
 
+	enrichmentClear, err := NewEnrichmentClearMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("enrichment clear metrics: %w", err)
+	}
+
 	return &Metrics{
-		Events:      events,
-		Webhooks:    webhooks,
-		Embeddings:  embeddings,
-		Translation: translation,
-		Sentiment:   sentiment,
-		Emotions:    emotions,
-		Cache:       cache,
+		Events:          events,
+		Webhooks:        webhooks,
+		Embeddings:      embeddings,
+		Translation:     translation,
+		Sentiment:       sentiment,
+		Emotions:        emotions,
+		Cache:           cache,
+		EnrichmentClear: enrichmentClear,
 	}, nil
 }

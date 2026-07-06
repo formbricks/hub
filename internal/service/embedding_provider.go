@@ -74,15 +74,18 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 		return
 	}
 
+	// Build the embedding input once and reuse it for both the create-time empty check and the
+	// dedupe hash; it was otherwise computed twice on the create path.
+	input := BuildEmbeddingInput(record.FieldLabel, record.ValueText, p.docPrefix)
+
 	// On create, only enqueue when there is embeddable text. On update we enqueue regardless so the worker can clear.
-	if event.Type == datatypes.FeedbackRecordCreated &&
-		BuildEmbeddingInput(record.FieldLabel, record.ValueText, p.docPrefix) == "" {
-		slog.Debug("embedding: skip, no value_text on create", "feedback_record_id", record.ID)
+	if event.Type == datatypes.FeedbackRecordCreated && input == "" {
+		slog.Debug("embedding: skip, no value_text on create", "event_id", event.ID, "feedback_record_id", record.ID)
 
 		return
 	}
 
-	valueTextHash := embeddingValueTextHash(record.FieldLabel, record.ValueText, p.docPrefix)
+	valueTextHash := hashContent(input)
 
 	// Deliberately no UniqueOpts on the event path — mirrors the classify providers: River's
 	// completed-state dedupe swallowed the re-embed after content transitioned away and back
@@ -96,6 +99,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	_, err := p.inserter.Insert(ctx, FeedbackEmbeddingArgs{
 		FeedbackRecordID: record.ID,
+		EventID:          event.ID,
 		Model:            p.model,
 		ValueTextHash:    valueTextHash,
 	}, opts)
@@ -186,10 +190,4 @@ func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 	builder.WriteString(val)
 
 	return builder.String()
-}
-
-// embeddingValueTextHash returns a hash of the embedding input for dedupe (same content => same job within window).
-// Uses BuildEmbeddingInput; empty content returns "empty".
-func embeddingValueTextHash(fieldLabel, valueText *string, prefix string) string {
-	return hashContent(BuildEmbeddingInput(fieldLabel, valueText, prefix))
 }
