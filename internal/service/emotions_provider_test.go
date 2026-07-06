@@ -47,15 +47,17 @@ func TestEmotionsProvider_PublishEvent_Created_withText_enqueues(t *testing.T) {
 	provider := NewEmotionsProvider(inserter, stubSettingsResolver{}, EmotionsQueueName, 3, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
+	eventID := uuid.Must(uuid.NewV7())
 	text := "I am thrilled and a little scared"
 	provider.PublishEvent(context.Background(), Event{
-		ID:   uuid.Must(uuid.NewV7()),
+		ID:   eventID,
 		Type: datatypes.FeedbackRecordCreated,
 		Data: emotionsTextRecord(recordID, &text),
 	})
 
 	require.Len(t, inserter.calls, 1)
 	assert.Equal(t, recordID, inserter.calls[0].args.FeedbackRecordID)
+	assert.Equal(t, eventID, inserter.calls[0].args.EventID, "event id is carried into the job args")
 	assert.NotEmpty(t, inserter.calls[0].args.ValueTextHash)
 	assert.NotEqual(t, "empty", inserter.calls[0].args.ValueTextHash)
 	assert.Equal(t, EmotionsQueueName, inserter.calls[0].opts.Queue)

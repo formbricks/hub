@@ -137,7 +137,9 @@ func TestTranslationProvider_UpdateWithValueTextChangeEnqueues(t *testing.T) {
 	inserter := &mockTranslationInserter{}
 	provider := newTestTranslationProvider(inserter, "de-DE", nil)
 
+	eventID := uuid.Must(uuid.NewV7())
 	provider.PublishEvent(context.Background(), Event{
+		ID:            eventID,
 		Type:          datatypes.FeedbackRecordUpdated,
 		Data:          textRecord("hi"),
 		ChangedFields: []string{"value_text"},
@@ -145,6 +147,10 @@ func TestTranslationProvider_UpdateWithValueTextChangeEnqueues(t *testing.T) {
 
 	if len(inserter.calls) != 1 {
 		t.Fatalf("enqueued %d jobs, want 1", len(inserter.calls))
+	}
+
+	if inserter.calls[0].EventID != eventID {
+		t.Fatalf("EventID = %v, want %v (event id carried into the job args)", inserter.calls[0].EventID, eventID)
 	}
 }
 

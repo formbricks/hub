@@ -66,6 +66,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
+	assert.Equal(t, event.ID, inserter.insertCalls[0].args.EventID, "event id is carried into the job args")
 	assert.Equal(t, "model-name", inserter.insertCalls[0].args.Model)
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash, "dedupe key should include input hash")
 	assert.NotNil(t, inserter.insertCalls[0].opts)
