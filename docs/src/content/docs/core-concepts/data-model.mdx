@@ -109,8 +109,11 @@ This enables:
   Feedback-record writes (`POST` / `PATCH /v1/feedback-records`) cap the request
   body at **512 KiB** (`413 content_too_large`) and `value_text` at **30,000
   characters** (`400`), bounding the payload before it fans out to the
-  enrichment pipelines. Records stored before these limits are unaffected —
-  responses are never truncated.
+  enrichment pipelines. The other string inputs are bounded too and reject NULL
+  bytes: identifier and name fields (`source_id`, `source_name`, `user_id`, and
+  the like) at **255** characters, and the display labels (`field_label`,
+  `field_group_label`) at **2,048** — over-limit values return `400`. Records
+  stored before these limits are unaffected — responses are never truncated.
 </Callout>
 
 #### Context & Metadata
