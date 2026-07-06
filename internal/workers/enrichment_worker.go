@@ -46,7 +46,10 @@ type enrichmentWorkerConfig[A river.JobArgs, R any] struct {
 	name    string // enrichment name, for log messages
 	timeout time.Duration
 
-	recordID   func(args A) uuid.UUID
+	recordID func(args A) uuid.UUID
+	// eventID, when set, adds the originating event id to every Work log line for correlation.
+	// nil ⇒ omitted (e.g. ungated/backfill-only paths).
+	eventID    func(args A) uuid.UUID
 	getRecord  func(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	eligible   func(record *models.FeedbackRecord) bool // nil ⇒ always eligible
 	hasContent func(record *models.FeedbackRecord) bool
@@ -133,13 +136,18 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 	start := time.Now()
 	id := cfg.recordID(job.Args)
 
+	log := slog.With("feedback_record_id", id)
+	if cfg.eventID != nil {
+		log = log.With("event_id", cfg.eventID(job.Args))
+	}
+
 	record, err := cfg.getRecord(ctx, id)
 	if err != nil {
 		// Not-found means the record was deleted or its tenant purged between enqueue and now: a
 		// benign race, recorded as skipped so it does not trip failure alerts.
 		if errors.Is(err, huberrors.ErrNotFound) {
 			w.recordOutcome(ctx, "skipped", start)
-			slog.Info(cfg.name+": record gone before classify, skipping", "feedback_record_id", id)
+			log.Info(cfg.name + ": record gone before classify, skipping")
 
 			return nil
 		}
@@ -152,15 +160,15 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 
 		cfg.metrics.workerError(ctx, "get_record_failed")
 		w.recordOutcome(ctx, outcome, start)
-		slog.Error(cfg.name+": get record failed",
-			"feedback_record_id", id, "final_attempt", isLastAttempt, "error", err)
+		log.Error(cfg.name+": get record failed",
+			"final_attempt", isLastAttempt, "error", err)
 
 		return err // the getRecord hook (service) already wraps this context
 	}
 
 	if cfg.eligible != nil && !cfg.eligible(record) {
 		w.recordOutcome(ctx, "skipped", start)
-		slog.Info(cfg.name+": skipped, record not eligible", "feedback_record_id", id, "tenant_id", record.TenantID)
+		log.Info(cfg.name+": skipped, record not eligible", "tenant_id", record.TenantID)
 
 		return nil
 	}
@@ -176,15 +184,15 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 
 			cfg.metrics.workerError(ctx, "settings_read_failed")
 			w.recordOutcome(ctx, outcome, start)
-			slog.Error(cfg.name+": resolve tenant settings failed",
-				"feedback_record_id", id, "final_attempt", isLastAttempt, "error", err)
+			log.Error(cfg.name+": resolve tenant settings failed",
+				"final_attempt", isLastAttempt, "error", err)
 
 			return fmt.Errorf("resolve tenant settings: %w", err)
 		}
 
 		if !enabled {
 			w.recordOutcome(ctx, "skipped", start)
-			slog.Info(cfg.name+": skipped, disabled for tenant", "feedback_record_id", id, "tenant_id", record.TenantID)
+			log.Info(cfg.name+": skipped, disabled for tenant", "tenant_id", record.TenantID)
 
 			return nil
 		}
@@ -194,32 +202,32 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 	// than classify empty text.
 	if !cfg.hasContent(record) {
 		if err := cfg.persist(ctx, record, job.Args, nil); err != nil {
-			return w.handlePersistError(ctx, err, id, start, job.Attempt >= job.MaxAttempts)
+			return w.handlePersistError(ctx, err, log, start, job.Attempt >= job.MaxAttempts)
 		}
 
 		w.recordOutcome(ctx, "success", start)
-		slog.Info(cfg.name+": cleared (empty content)", "feedback_record_id", id, "tenant_id", record.TenantID)
+		log.Info(cfg.name+": cleared (empty content)", "tenant_id", record.TenantID)
 
 		return nil
 	}
 
 	result, err := cfg.classify(ctx, record, job.Args)
 	if err != nil {
-		return w.handleClassifyError(ctx, err, id, start, job)
+		return w.handleClassifyError(ctx, err, log, start, job)
 	}
 
 	if err := cfg.persist(ctx, record, job.Args, &result); err != nil {
-		return w.handlePersistError(ctx, err, id, start, job.Attempt >= job.MaxAttempts)
+		return w.handlePersistError(ctx, err, log, start, job.Attempt >= job.MaxAttempts)
 	}
 
 	w.recordOutcome(ctx, "success", start)
 
-	attrs := []any{"feedback_record_id", id, "tenant_id", record.TenantID}
+	attrs := []any{"tenant_id", record.TenantID}
 	if cfg.logResult != nil {
 		attrs = append(attrs, cfg.logResult(result)...)
 	}
 
-	slog.Info(cfg.name+": stored", attrs...)
+	log.Info(cfg.name+": stored", attrs...)
 
 	return nil
 }
@@ -228,7 +236,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 // snoozes (re-queues without consuming an attempt, so a burst defers rather than drops work); any
 // other error retries until the attempts are spent, then fails.
 func (w *enrichmentWorker[A, R]) handleClassifyError(
-	ctx context.Context, err error, id uuid.UUID, start time.Time, job *river.Job[A],
+	ctx context.Context, err error, log *slog.Logger, start time.Time, job *river.Job[A],
 ) error {
 	cfg := w.cfg
 
@@ -236,8 +244,8 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 		if delay, ok := rateLimitSnoozeDelay(err, job.CreatedAt); ok {
 			cfg.metrics.workerError(ctx, "rate_limited")
 			w.recordOutcome(ctx, "retry", start)
-			slog.Warn(cfg.name+": provider rate-limited, snoozing",
-				"feedback_record_id", id, "retry_after", delay.String())
+			log.Warn(cfg.name+": provider rate-limited, snoozing",
+				"retry_after", delay.String())
 
 			//nolint:wrapcheck // river sentinel: JobSnooze must be returned unwrapped for River to detect the snooze
 			return river.JobSnooze(delay)
@@ -250,7 +258,7 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 
 	if isLastAttempt {
 		w.recordOutcome(ctx, "failed_final", start)
-		slog.Error(cfg.name+": provider failed (final attempt)", "feedback_record_id", id, "error", err)
+		log.Error(cfg.name+": provider failed (final attempt)", "error", err)
 
 		return fmt.Errorf("%s (final attempt): %w", cfg.classifyErrVerb, err)
 	}
@@ -264,14 +272,14 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 // completes the job (nothing to write), a tenant write conflict retries (the post-purge attempt
 // finds the record gone), and anything else fails the job.
 func (w *enrichmentWorker[A, R]) handlePersistError(
-	ctx context.Context, err error, id uuid.UUID, start time.Time, isLastAttempt bool,
+	ctx context.Context, err error, log *slog.Logger, start time.Time, isLastAttempt bool,
 ) error {
 	cfg := w.cfg
 
 	switch {
 	case errors.Is(err, huberrors.ErrNotFound):
 		w.recordOutcome(ctx, "skipped", start)
-		slog.Info(cfg.name+": record gone before write, skipping", "feedback_record_id", id)
+		log.Info(cfg.name + ": record gone before write, skipping")
 
 		return nil
 	case cfg.isSuperseded != nil && cfg.isSuperseded(err):
@@ -280,7 +288,7 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 		}
 
 		w.recordOutcome(ctx, "skipped", start)
-		slog.Info(cfg.name+": result superseded, skipping", "feedback_record_id", id)
+		log.Info(cfg.name + ": result superseded, skipping")
 
 		return nil
 	case errors.Is(err, huberrors.ErrTenantWriteConflict):
@@ -288,8 +296,8 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 
 		cfg.metrics.workerError(ctx, "tenant_write_conflict")
 		w.recordOutcome(ctx, outcome, start)
-		slog.Warn(cfg.name+": tenant data purge in progress, deferring write",
-			"feedback_record_id", id, "final_attempt", isLastAttempt)
+		log.Warn(cfg.name+": tenant data purge in progress, deferring write",
+			"final_attempt", isLastAttempt)
 
 		return err // the persist hook (service Set*) already wraps this context
 	default:
@@ -302,8 +310,8 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 
 		cfg.metrics.workerError(ctx, "update_failed")
 		w.recordOutcome(ctx, outcome, start)
-		slog.Error(cfg.name+": set result failed",
-			"feedback_record_id", id, "final_attempt", isLastAttempt, "error", err)
+		log.Error(cfg.name+": set result failed",
+			"final_attempt", isLastAttempt, "error", err)
 
 		return err // the persist hook (service Set*) already wraps this context
 	}

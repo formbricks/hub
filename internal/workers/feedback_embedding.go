@@ -76,6 +76,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 			slog.Info("embedding: record gone before embed, skipping",
 				"feedback_record_id", args.FeedbackRecordID,
+				"event_id", args.EventID,
 			)
 
 			return nil
@@ -99,6 +100,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 		slog.Error("embedding: get record failed",
 			"feedback_record_id", args.FeedbackRecordID,
+			"event_id", args.EventID,
 			"final_attempt", isLastAttempt,
 			"error", err,
 		)
@@ -134,6 +136,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	slog.Info("embedding: stored",
 		"feedback_record_id", args.FeedbackRecordID,
+		"event_id", args.EventID,
 	)
 
 	if w.metrics != nil {

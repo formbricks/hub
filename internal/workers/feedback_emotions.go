@@ -43,6 +43,7 @@ func NewFeedbackEmotionsWorker(
 		name:         "emotions",
 		timeout:      enrichmentJobTimeout,
 		recordID:     func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.FeedbackRecordID },
+		eventID:      func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.EventID },
 		getRecord:    svc.GetFeedbackRecord,
 		eligible:     (*models.FeedbackRecord).IsTextField,
 		hasContent:   (*models.FeedbackRecord).HasOpenText,

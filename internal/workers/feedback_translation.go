@@ -39,6 +39,7 @@ func NewFeedbackTranslationWorker(
 		name:       "translation",
 		timeout:    enrichmentJobTimeout,
 		recordID:   func(args service.FeedbackTranslationArgs) uuid.UUID { return args.FeedbackRecordID },
+		eventID:    func(args service.FeedbackTranslationArgs) uuid.UUID { return args.EventID },
 		getRecord:  svc.GetFeedbackRecord,
 		eligible:   (*models.FeedbackRecord).IsTextField,
 		hasContent: (*models.FeedbackRecord).HasOpenText,
