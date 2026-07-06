@@ -1,11 +1,16 @@
 // backfill-embeddings enqueues River embedding jobs for feedback records that have
 // non-empty value_text and null embedding. Run this when the API server is not
 // handling backfill (e.g. one-off or scheduled). Workers in the API process the jobs.
+//
+// With -prune-stale-models it instead deletes embedding rows left behind by previous
+// EMBEDDING_MODEL values. Run the prune only AFTER a model migration's backfill has
+// completed (stale rows are invisible to reads but bloat the shared HNSW index).
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -30,6 +35,9 @@ const (
 	defaultEmbeddingMaxAttempts = 3
 	exitSuccess                 = 0
 	exitFailure                 = 1
+	// pruneBatchSize bounds each DELETE while pruning stale-model rows, so a large prune
+	// never holds long row locks or produces one giant WAL burst.
+	pruneBatchSize = 5000
 )
 
 func main() {
@@ -37,6 +45,12 @@ func main() {
 }
 
 func run() int {
+	pruneStaleModels := flag.Bool("prune-stale-models", false,
+		"delete embedding rows whose model differs from EMBEDDING_MODEL instead of backfilling "+
+			"(run only after a model migration's backfill has completed)")
+
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
@@ -101,6 +115,20 @@ func run() int {
 
 	repo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+
+	if *pruneStaleModels {
+		deleted, pruneErr := embeddingsRepo.DeleteEmbeddingsForOtherModels(ctx, embeddingModelForDB, pruneBatchSize)
+		if pruneErr != nil {
+			slog.Error("Prune failed", "error", pruneErr, "deleted_before_failure", deleted)
+
+			return exitFailure
+		}
+
+		slog.Info("Prune complete", "deleted", deleted, "kept_model", embeddingModelForDB)
+		fmt.Printf("Deleted %d stale-model embedding row(s); kept model %q.\n", deleted, embeddingModelForDB)
+
+		return exitSuccess
+	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		repo,

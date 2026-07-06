@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
@@ -158,5 +159,105 @@ func TestBackfillEmbeddings_StreamsAllEligible(t *testing.T) {
 
 	for _, id := range mine {
 		assert.Truef(t, got[id], "record %s needing an embedding must be enqueued", id)
+	}
+}
+
+// TestEmbeddingsUpsert_StaleWriteGuard locks the concurrent-jobs guard: an upsert (or clear)
+// whose stillCurrent check fails against the record's current content is skipped with
+// ErrEmbeddingSuperseded, so a slower job that read older content can never clobber the vector
+// a newer job wrote — while a matching check writes normally.
+func TestEmbeddingsUpsert_StaleWriteGuard(t *testing.T) {
+	ctx := context.Background()
+	feedbackRepo, embeddingsRepo := embeddingBackfillRepos(t)
+
+	model := "stale-guard-" + uuid.NewString()
+	text := "current text"
+
+	rec, err := feedbackRepo.Create(ctx, &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		SubmissionID: uuid.NewString(),
+		TenantID:     uuid.NewString(),
+		FieldID:      "q1",
+		FieldType:    models.FieldTypeText,
+		ValueText:    &text,
+	})
+	require.NoError(t, err)
+
+	embedding := make([]float32, models.EmbeddingVectorDimensions)
+	embedding[0] = 0.5
+
+	// A stale job (its content no longer matches the row) is skipped and writes nothing.
+	staleErr := embeddingsRepo.Upsert(ctx, rec.ID, model, embedding,
+		func(_, valueText *string) bool { return valueText != nil && *valueText == "older text" })
+	require.ErrorIs(t, staleErr, huberrors.ErrEmbeddingSuperseded)
+
+	_, getErr := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, rec.ID, model)
+	require.ErrorIs(t, getErr, repository.ErrEmbeddingNotFound, "the stale upsert must not write")
+
+	// The job holding the current content writes normally.
+	require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, model, embedding,
+		func(_, valueText *string) bool { return valueText != nil && *valueText == text }))
+
+	stored, err := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, rec.ID, model)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.5, stored[0], 1e-6)
+
+	// A stale clear must not delete the current vector either.
+	require.ErrorIs(t,
+		embeddingsRepo.DeleteByFeedbackRecordAndModel(ctx, rec.ID, model,
+			func(_, valueText *string) bool { return valueText == nil }),
+		huberrors.ErrEmbeddingSuperseded)
+
+	_, err = embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, rec.ID, model)
+	require.NoError(t, err, "the guarded stale clear must leave the row")
+}
+
+// TestDeleteEmbeddingsForOtherModels locks the stale-model prune: rows for other models are
+// batch-deleted, rows for the current model survive.
+func TestDeleteEmbeddingsForOtherModels(t *testing.T) {
+	ctx := context.Background()
+	feedbackRepo, embeddingsRepo := embeddingBackfillRepos(t)
+
+	// Unique per-run model names so the assertion is immune to leftover rows from other tests.
+	currentModel := "prune-current-" + uuid.NewString()
+	staleModel := "prune-stale-" + uuid.NewString()
+	text := "prune me"
+
+	embedding := make([]float32, models.EmbeddingVectorDimensions)
+
+	keep := make([]uuid.UUID, 0, 3)
+	drop := make([]uuid.UUID, 0, 3)
+
+	for range 3 {
+		rec, err := feedbackRepo.Create(ctx, &models.CreateFeedbackRecordRequest{
+			SourceType:   "formbricks",
+			SubmissionID: uuid.NewString(),
+			TenantID:     uuid.NewString(),
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			ValueText:    &text,
+		})
+		require.NoError(t, err)
+
+		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, currentModel, embedding, nil))
+		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, staleModel, embedding, nil))
+
+		keep = append(keep, rec.ID)
+		drop = append(drop, rec.ID)
+	}
+
+	// batchSize 2 forces multiple delete rounds over the 3 stale rows.
+	deleted, err := embeddingsRepo.DeleteEmbeddingsForOtherModels(ctx, currentModel, 2)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, deleted, int64(3), "at least this test's stale rows are pruned")
+
+	for _, id := range keep {
+		_, err := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, id, currentModel)
+		require.NoError(t, err, "current-model rows must survive the prune")
+	}
+
+	for _, id := range drop {
+		_, err := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, id, staleModel)
+		require.ErrorIs(t, err, repository.ErrEmbeddingNotFound, "stale-model rows must be gone")
 	}
 }

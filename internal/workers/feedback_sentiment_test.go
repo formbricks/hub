@@ -75,6 +75,7 @@ func (m *mockSentimentWorkerService) GetFeedbackRecord(_ context.Context, _ uuid
 
 func (m *mockSentimentWorkerService) SetSentiment(
 	_ context.Context, _ uuid.UUID, sentiment *models.SentimentValue, score *float64,
+	_ func(valueText *string) bool,
 ) error {
 	m.setCalls = append(m.setCalls, sentimentSetCall{label: sentiment, score: score})
 
@@ -93,8 +94,8 @@ func (s *stubSentimentClient) Classify(_ context.Context, _, _ string) (service.
 	return s.result, s.err
 }
 
-// stubSentimentSettings is a sentimentSettingsReader for the worker's per-directory gate. A nil
-// enabled pointer means the tenant default (on); a non-nil err simulates a settings-read failure.
+// stubSentimentSettings is a tenantSettingsReader for the worker's per-directory gate. A nil enabled
+// pointer means the tenant default (on); a non-nil err simulates a settings-read failure.
 type stubSentimentSettings struct {
 	enabled *bool
 	err     error
@@ -207,6 +208,31 @@ func TestFeedbackSentimentWorker_RecordGoneSkips(t *testing.T) {
 	}
 }
 
+func TestFeedbackSentimentWorker_GetRecordFailsRetriesThenFailsFinal(t *testing.T) {
+	// A non-not-found read error is transient: the worker retries while attempts remain and only
+	// counts as failed_final on the last attempt, so failed_final is not overcounted.
+	metrics := newCountingSentimentMetrics()
+	svc := &mockSentimentWorkerService{getErr: errors.New("db unavailable")}
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{}, metrics)
+
+	if err := worker.Work(context.Background(), sentimentJob(1)); err == nil {
+		t.Fatal("Work() error = nil, want a get-record failure returned for retry")
+	}
+
+	if metrics.workerErr["get_record_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("get_record_failed=%d retry=%d failed_final=%d, want 1/1/0 (transient read blip must not read as final)",
+			metrics.workerErr["get_record_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+	}
+
+	if err := worker.Work(context.Background(), sentimentJob(3)); err == nil {
+		t.Fatal("Work() error = nil, want a failure on the final attempt")
+	}
+
+	if metrics.outcomes["failed_final"] != 1 {
+		t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
+	}
+}
+
 func TestFeedbackSentimentWorker_RateLimitSnoozes(t *testing.T) {
 	text := "Bonjour"
 	metrics := newCountingSentimentMetrics()
@@ -271,6 +297,21 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("content-superseded write is a benign skip", func(t *testing.T) {
+		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: huberrors.ErrClassificationSuperseded}
+		metrics := newCountingSentimentMetrics()
+		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics)
+
+		if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
+			t.Fatalf("Work() error = %v, want nil (superseded is a skip, not a failure)", err)
+		}
+
+		if metrics.outcomes["skipped"] != 1 || metrics.workerErr["superseded"] != 1 {
+			t.Fatalf("skipped=%d superseded=%d, want 1/1",
+				metrics.outcomes["skipped"], metrics.workerErr["superseded"])
+		}
+	})
+
 	t.Run("tenant write conflict retries", func(t *testing.T) {
 		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: huberrors.ErrTenantWriteConflict}
 		metrics := newCountingSentimentMetrics()
@@ -286,74 +327,28 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("generic write error retries then fails final", func(t *testing.T) {
-		// A generic (non-not-found, non-tenant-conflict) write failure retries while attempts
-		// remain and only counts as failed_final on the last attempt, so failed_final is not
-		// overcounted across the retries.
-		for _, testCase := range []struct {
-			name        string
-			attempt     int
-			wantOutcome string
-			otherZero   string
-		}{
-			{"retry while attempts remain", 1, "retry", "failed_final"},
-			{"final failure on last attempt", 3, "failed_final", "retry"},
-		} {
-			t.Run(testCase.name, func(t *testing.T) {
-				svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: errors.New("db unavailable")}
-				metrics := newCountingSentimentMetrics()
-				worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics)
+	t.Run("other write error retries, failing on the final attempt", func(t *testing.T) {
+		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: errors.New("db unavailable")}
+		metrics := newCountingSentimentMetrics()
+		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics)
 
-				if err := worker.Work(context.Background(), sentimentJob(testCase.attempt)); err == nil {
-					t.Fatal("Work() error = nil, want a write failure")
-				}
+		if err := worker.Work(context.Background(), sentimentJob(1)); err == nil {
+			t.Fatal("Work() error = nil, want a failure")
+		}
 
-				if metrics.workerErr["update_failed"] != 1 {
-					t.Fatalf("update_failed = %d, want 1", metrics.workerErr["update_failed"])
-				}
+		if metrics.workerErr["update_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+			t.Fatalf("update_failed=%d retry=%d failed_final=%d, want 1/1/0 (transient write blip must not read as final)",
+				metrics.workerErr["update_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+		}
 
-				if metrics.outcomes[testCase.wantOutcome] != 1 || metrics.outcomes[testCase.otherZero] != 0 {
-					t.Fatalf("%s=%d %s=%d, want 1/0",
-						testCase.wantOutcome, metrics.outcomes[testCase.wantOutcome],
-						testCase.otherZero, metrics.outcomes[testCase.otherZero])
-				}
-			})
+		if err := worker.Work(context.Background(), sentimentJob(3)); err == nil {
+			t.Fatal("Work() error = nil, want a failure on the final attempt")
+		}
+
+		if metrics.outcomes["failed_final"] != 1 {
+			t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
 		}
 	})
-}
-
-func TestFeedbackSentimentWorker_GetRecordErrorRetriesThenFailsFinal(t *testing.T) {
-	// A non-not-found read error retries while attempts remain and only counts as failed_final on
-	// the last attempt, so failed_final is not overcounted across the retries.
-	for _, testCase := range []struct {
-		name        string
-		attempt     int
-		wantOutcome string
-		otherZero   string
-	}{
-		{"retry while attempts remain", 1, "retry", "failed_final"},
-		{"final failure on last attempt", 3, "failed_final", "retry"},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			svc := &mockSentimentWorkerService{getErr: errors.New("db unavailable")}
-			metrics := newCountingSentimentMetrics()
-			worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{}, metrics)
-
-			if err := worker.Work(context.Background(), sentimentJob(testCase.attempt)); err == nil {
-				t.Fatal("Work() error = nil, want a get-record failure")
-			}
-
-			if metrics.workerErr["get_record_failed"] != 1 {
-				t.Fatalf("get_record_failed = %d, want 1", metrics.workerErr["get_record_failed"])
-			}
-
-			if metrics.outcomes[testCase.wantOutcome] != 1 || metrics.outcomes[testCase.otherZero] != 0 {
-				t.Fatalf("%s=%d %s=%d, want 1/0",
-					testCase.wantOutcome, metrics.outcomes[testCase.wantOutcome],
-					testCase.otherZero, metrics.outcomes[testCase.otherZero])
-			}
-		})
-	}
 }
 
 func TestFeedbackSentimentWorker_DisabledForTenantSkips(t *testing.T) {
@@ -381,8 +376,8 @@ func TestFeedbackSentimentWorker_DisabledForTenantSkips(t *testing.T) {
 
 func TestFeedbackSentimentWorker_SettingsReadErrorRetriesThenFailsFinal(t *testing.T) {
 	// A settings-read failure is transient: the worker retries while attempts remain (so a
-	// fail-open enqueue is not lost) and only fails final on the last attempt. It must not
-	// classify against an unknown gate state.
+	// fail-open enqueue is not lost) and only fails final on the last attempt. It must not classify
+	// against an unknown gate state.
 	text := "Great product"
 
 	for _, testCase := range []struct {

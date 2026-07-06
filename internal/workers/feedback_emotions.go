@@ -1,0 +1,93 @@
+package workers
+
+import (
+	"context"
+	"errors"
+
+	"github.com/google/uuid"
+
+	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
+	"github.com/formbricks/hub/internal/service"
+)
+
+// FeedbackEmotionsWorker classifies a feedback record's value_text into a set of emotion labels and
+// stores it — a configured enrichmentWorker. It borrows the shared rate-limit snooze (it, too,
+// calls a rate-limited LLM provider); it has no per-tenant target, but its persist is guarded
+// against content supersession (a job that read older text skips instead of landing its labels
+// last — stale non-NULL labels would escape the NULL-rows-only backfill forever).
+type FeedbackEmotionsWorker = enrichmentWorker[service.FeedbackEmotionsArgs, service.EmotionsResult]
+
+// emotionsWorkerService is the minimal interface the worker needs.
+type emotionsWorkerService interface {
+	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
+	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
+		stillCurrent func(valueText *string) bool) error
+}
+
+// tenantSettingsReader resolves a tenant's enrichment settings for the worker's authoritative
+// per-directory gate (the enqueue provider fails open on a settings-read error, so the worker is
+// the real gate before the LLM call).
+type tenantSettingsReader interface {
+	GetSettings(ctx context.Context, tenantID string) (*models.TenantSettings, error)
+}
+
+// NewFeedbackEmotionsWorker creates a worker that fetches the record, classifies its value_text,
+// and stores the emotion labels. metrics may be nil when metrics are disabled.
+func NewFeedbackEmotionsWorker(
+	svc emotionsWorkerService, resolver tenantSettingsReader,
+	client service.EmotionsClient, metrics observability.EmotionsMetrics,
+) *FeedbackEmotionsWorker {
+	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackEmotionsArgs, service.EmotionsResult]{
+		name:         "emotions",
+		timeout:      enrichmentJobTimeout,
+		recordID:     func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.FeedbackRecordID },
+		getRecord:    svc.GetFeedbackRecord,
+		eligible:     (*models.FeedbackRecord).IsTextField,
+		hasContent:   (*models.FeedbackRecord).HasOpenText,
+		checkEnabled: settingsGate(resolver, models.EnrichmentSettings.EmotionsEnrichmentEnabled),
+		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackEmotionsArgs) (service.EmotionsResult, error) {
+			sourceLang := ""
+			if record.Language != nil {
+				sourceLang = *record.Language
+			}
+
+			return client.Classify(ctx, *record.ValueText, sourceLang)
+		},
+		persist: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackEmotionsArgs, result *service.EmotionsResult) error {
+			// Guard the write against content churn since the Work-time read: a stale job's labels
+			// (or clear) must not land last over a newer job's write. A nil result (empty content)
+			// or an empty label set both clear the column: absence is NULL, never an empty array.
+			stillCurrent := valueTextStillCurrent(record.ValueText)
+			if result == nil {
+				return svc.SetEmotions(ctx, record.ID, nil, stillCurrent)
+			}
+
+			return svc.SetEmotions(ctx, record.ID, result.Labels, stillCurrent)
+		},
+		isSuperseded:     func(err error) bool { return errors.Is(err, huberrors.ErrClassificationSuperseded) },
+		supersededReason: "superseded",
+		rateLimited:      true,
+		apiErrorReason:   "emotions_api_failed",
+		classifyErrVerb:  "classify",
+		logResult: func(result service.EmotionsResult) []any {
+			return []any{"emotions", result.Labels}
+		},
+		metrics: emotionsWorkerMetrics(metrics),
+	})
+}
+
+// emotionsWorkerMetrics adapts EmotionsMetrics to the worker's type-agnostic metric hooks,
+// installing no-ops when metrics are disabled so the worker never nil-checks.
+func emotionsWorkerMetrics(m observability.EmotionsMetrics) enrichmentWorkerMetrics {
+	if m == nil {
+		return noopEnrichmentWorkerMetrics
+	}
+
+	return enrichmentWorkerMetrics{
+		outcome:     m.RecordEmotionsOutcome,
+		duration:    m.RecordEmotionsDuration,
+		workerError: m.RecordWorkerError,
+	}
+}

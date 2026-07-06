@@ -16,7 +16,7 @@ info:
     license:
         name: Apache-2.0
         url: https://www.apache.org/licenses/LICENSE-2.0
-    version: 1.0.0
+    version: 1.1.0
 servers:
     - url: "{scheme}://{host}{basePath}"
       description: Deployed Formbricks Hub instance (self-hosted or Formbricks Cloud)
@@ -581,7 +581,14 @@ paths:
             tags:
                 - Feedback Records
             summary: Update a feedback record
-            description: Updates specific fields of a feedback record data point
+            description: |-
+                Updates specific fields of a feedback record data point.
+
+                Changing `value_text` clears the server-generated enrichment fields computed from it
+                (`sentiment`, `sentiment_score`, `emotions`, `value_text_translated`,
+                `translation_lang_key`) and queues re-enrichment; changing `language` clears and
+                re-queues the translation pair only. The response reflects the cleared state — the
+                fields are absent until the asynchronous re-enrichment completes.
             operationId: update-feedback-record
             parameters:
                 - name: id
@@ -2135,6 +2142,13 @@ components:
                         tenant is enriched unless it has explicitly set this to false. The deployment-level
                         sentiment provider/model gate applies on top of this.
                     example: true
+                emotions_enabled:
+                    type: boolean
+                    description: |
+                        Per-directory switch for emotion enrichment. Absent means the default (enabled), so a
+                        tenant is enriched unless it has explicitly set this to false. The deployment-level
+                        emotions provider/model gate applies on top of this.
+                    example: true
         TenantSettingsOutputBody:
             type: object
             additionalProperties: false
@@ -2169,6 +2183,12 @@ components:
                         Enable or disable sentiment enrichment for this tenant. As a full replace, omitting it
                         clears the setting back to the default (enabled).
                     example: false
+                emotions_enabled:
+                    type: boolean
+                    description: |
+                        Enable or disable emotion enrichment for this tenant. As a full replace, omitting it
+                        clears the setting back to the default (enabled).
+                    example: false
         PatchTenantSettingsInputBody:
             type: object
             additionalProperties: false
@@ -2188,6 +2208,12 @@ components:
                     type: [boolean, "null"]
                     description: |
                         Enable or disable sentiment enrichment. Send null to restore the default (enabled); omit
+                        to leave it unchanged.
+                    example: false
+                emotions_enabled:
+                    type: [boolean, "null"]
+                    description: |
+                        Enable or disable emotion enrichment. Send null to restore the default (enabled); omit
                         to leave it unchanged.
                     example: false
         SemanticSearchInputBody:
@@ -2272,6 +2298,8 @@ components:
                     description: The actual question text
                     examples:
                         - How satisfied are you?
+                    maxLength: 2048
+                    pattern: '^[^\x00]*$'
                 field_group_id:
                     type: string
                     description: Stable identifier grouping related fields (for ranking, matrix, grid questions). NULL bytes not allowed.
@@ -2284,6 +2312,8 @@ components:
                     description: Human-readable question text for the group
                     examples:
                         - Rank these features by importance
+                    maxLength: 2048
+                    pattern: '^[^\x00]*$'
                 field_type:
                     type: string
                     description: 'Field type: text (enrichable), categorical, nps, csat, ces, rating, number, boolean, date'
@@ -2317,11 +2347,15 @@ components:
                     description: Reference to survey/form/ticket ID
                     examples:
                         - survey-123
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
                 source_name:
                     type: [string, "null"]
                     description: Human-readable name
                     examples:
                         - Q1 NPS Survey
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
                 source_type:
                     type: string
                     description: Type of feedback source (e.g., survey, review, feedback_form). NULL bytes not allowed.
@@ -2354,6 +2388,8 @@ components:
                     description: User ID (e.g., anonymous ID or email hash)
                     examples:
                         - user-abc-123
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
                 value_boolean:
                     type: boolean
                     description: For yes/no questions
@@ -2377,6 +2413,7 @@ components:
                     examples:
                         - Great service!
                     pattern: '^[^\x00]*$'
+                    maxLength: 30000
             required:
                 - source_type
                 - field_id
@@ -2541,6 +2578,19 @@ components:
                     format: double
                     minimum: -1.0
                     maximum: 1.0
+                emotions:
+                    type: array
+                    description: Emotions inferred from value_text (emotion enrichment); multi-label from a fixed set. Read-only; absent until the record is enriched, and never an empty array.
+                    minItems: 1
+                    items:
+                        type: string
+                        enum:
+                            - joy
+                            - anger
+                            - sadness
+                            - fear
+                            - surprise
+                            - disgust
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID
@@ -2894,6 +2944,8 @@ components:
                 user_id:
                     type: string
                     description: User ID (e.g., anonymous ID or email hash)
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
                 value_boolean:
                     type: boolean
                     description: Update boolean response
@@ -2911,6 +2963,7 @@ components:
                     type: string
                     description: Update text response. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
+                    maxLength: 30000
         TaxonomyRunStatus:
             type: string
             description: Lifecycle state of a taxonomy run. Allowed transitions are pending -> running|failed|canceled and running -> succeeded|failed|canceled.

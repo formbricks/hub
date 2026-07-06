@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -410,7 +411,16 @@ func (r *TaxonomyRepository) ListRuns(
 	return scanTaxonomyRuns(rows)
 }
 
-// GetRunInput returns feedback records and embeddings for a taxonomy run.
+// maxTaxonomyRunInputRows caps how many (record, embedding) rows one run-input fetch may
+// materialize. run.EmbeddingCount is simply "all embedded records in scope" with no upper
+// bound, and each row carries a 768-dim vector (~3 KB binary, ~8-10 KB as JSON) — a 200k-record
+// tenant would otherwise allocate multiple GB in the API process for a single internal request.
+// 10k rows ≈ 100 MB JSON keeps the endpoint safe while staying far above typical run sizes;
+// larger scopes are truncated to the most recent rows (the ORDER BY) and logged.
+const maxTaxonomyRunInputRows = 10_000
+
+// GetRunInput returns feedback records and embeddings for a taxonomy run, capped at
+// maxTaxonomyRunInputRows (most recent first).
 func (r *TaxonomyRepository) GetRunInput(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -420,6 +430,14 @@ func (r *TaxonomyRepository) GetRunInput(
 	run, err := r.GetRunForTenant(ctx, runID, tenantID)
 	if err != nil {
 		return nil, err
+	}
+
+	limit := run.EmbeddingCount
+	if limit > maxTaxonomyRunInputRows {
+		slog.Warn("taxonomy run input truncated to the row cap",
+			"run_id", runID, "embedding_count", run.EmbeddingCount, "cap", maxTaxonomyRunInputRows)
+
+		limit = maxTaxonomyRunInputRows
 	}
 
 	rows, err := r.db.Query(ctx, `
@@ -434,14 +452,14 @@ func (r *TaxonomyRepository) GetRunInput(
 		  AND btrim(fr.value_text) <> ''
 		ORDER BY fr.collected_at DESC, fr.id ASC
 		LIMIT $5`,
-		run.TenantID, run.SourceType, run.SourceID, run.FieldID, run.EmbeddingCount, embeddingModel,
+		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run input: %w", err)
 	}
 	defer rows.Close()
 
-	records := make([]models.TaxonomyRunInputRecord, 0, run.EmbeddingCount)
+	records := make([]models.TaxonomyRunInputRecord, 0, limit)
 
 	for rows.Next() {
 		var (
@@ -790,7 +808,8 @@ func (r *TaxonomyRepository) ListNodeRecords(
 			fr.value_text, fr.value_number, fr.value_boolean, fr.value_date,
 			fr.metadata, fr.language, fr.user_id, fr.tenant_id, fr.submission_id,
 			fr.value_text_translated, fr.translation_lang_key,
-			fr.sentiment, fr.sentiment_score
+			fr.sentiment, fr.sentiment_score,
+			fr.emotions
 		FROM visible_nodes vn
 		INNER JOIN taxonomy_runs tr ON tr.id = vn.run_id
 		INNER JOIN taxonomy_cluster_memberships tcm ON tcm.run_id = vn.run_id AND tcm.cluster_id = vn.cluster_id

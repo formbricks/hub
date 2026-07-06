@@ -2,6 +2,7 @@
 package models
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -195,6 +196,62 @@ func (s SentimentValue) IsValid() bool {
 	return ok
 }
 
+// EmotionValue is a single emotion label produced by the emotion-enrichment worker (ENG-1573).
+// Emotions are multi-label — a record carries zero or more — server-generated and persisted only
+// after enrichment. Keep this set in sync with the feedback_records_emotions_valid DB CHECK and
+// the OpenAPI enum.
+type EmotionValue string
+
+// Valid EmotionValue labels: the six basic emotions (Ekman). "Mixed" is not a label — it is two
+// or more of these present at once.
+const (
+	EmotionJoy      EmotionValue = "joy"
+	EmotionAnger    EmotionValue = "anger"
+	EmotionSadness  EmotionValue = "sadness"
+	EmotionFear     EmotionValue = "fear"
+	EmotionSurprise EmotionValue = "surprise"
+	EmotionDisgust  EmotionValue = "disgust"
+)
+
+// emotionValues lists every valid EmotionValue. It is the single in-Go source of the label set:
+// validEmotionValues (membership) and the emotions structured-output enum both derive from it, so
+// the order is stable. Keep it in sync with the feedback_records_emotions_valid DB CHECK and the
+// OpenAPI enum. Unexported so the canonical ordering cannot be mutated; expose it via
+// EmotionValues().
+var emotionValues = []EmotionValue{
+	EmotionJoy,
+	EmotionAnger,
+	EmotionSadness,
+	EmotionFear,
+	EmotionSurprise,
+	EmotionDisgust,
+}
+
+// EmotionValues returns the valid EmotionValue labels in canonical order. It returns a fresh copy
+// each call so callers cannot mutate the canonical set out from under validEmotionValues / IsValid
+// / the structured-output enum.
+func EmotionValues() []EmotionValue {
+	return slices.Clone(emotionValues)
+}
+
+// validEmotionValues backs IsValid (set membership), derived from emotionValues.
+var validEmotionValues = func() map[EmotionValue]struct{} {
+	set := make(map[EmotionValue]struct{}, len(emotionValues))
+	for _, value := range emotionValues {
+		set[value] = struct{}{}
+	}
+
+	return set
+}()
+
+// IsValid reports whether e is a known emotion label. The emotion worker validates with this
+// before persisting; reads rely on the DB CHECK for the same guarantee.
+func (e EmotionValue) IsValid() bool {
+	_, ok := validEmotionValues[e]
+
+	return ok
+}
+
 // FeedbackRecord represents a single feedback record.
 type FeedbackRecord struct {
 	ID              uuid.UUID       `json:"id"`
@@ -226,26 +283,42 @@ type FeedbackRecord struct {
 	// the record is enriched (or sentiment is disabled / the record is ineligible).
 	Sentiment      *SentimentValue `json:"sentiment,omitempty"`
 	SentimentScore *float64        `json:"sentiment_score,omitempty"`
+	// Emotion-enrichment output (ENG-1573): server-generated, read-only, multi-label. NULL until
+	// the record is enriched (or emotions is disabled / the record is ineligible / no emotion was
+	// detected). Never an empty array — absence is NULL.
+	Emotions *[]EmotionValue `json:"emotions,omitempty"`
+}
+
+// IsTextField reports whether this record is an open-text field — the eligibility gate the text
+// enrichments (sentiment, translation, and emotions) share.
+func (r *FeedbackRecord) IsTextField() bool {
+	return r.FieldType == FieldTypeText
+}
+
+// HasOpenText reports whether this record carries non-empty open text to enrich (value_text is
+// present and not just whitespace).
+func (r *FeedbackRecord) HasOpenText() bool {
+	return r.ValueText != nil && strings.TrimSpace(*r.ValueText) != ""
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.
 type CreateFeedbackRecordRequest struct {
 	CollectedAt     *time.Time      `json:"collected_at,omitempty"`
 	SourceType      string          `json:"source_type"                 validate:"required,no_null_bytes,min=1,max=255"`
-	SourceID        *string         `json:"source_id,omitempty"         validate:"omitempty,no_null_bytes"`
-	SourceName      *string         `json:"source_name,omitempty"`
+	SourceID        *string         `json:"source_id,omitempty"         validate:"omitempty,no_null_bytes,max=255"`
+	SourceName      *string         `json:"source_name,omitempty"       validate:"omitempty,no_null_bytes,max=255"`
 	FieldID         string          `json:"field_id"                    validate:"required,no_null_bytes,min=1,max=255"`
-	FieldLabel      *string         `json:"field_label,omitempty"`
+	FieldLabel      *string         `json:"field_label,omitempty"       validate:"omitempty,no_null_bytes,max=2048"`
 	FieldType       FieldType       `json:"field_type"                  validate:"required,field_type"`
 	FieldGroupID    *string         `json:"field_group_id,omitempty"    validate:"omitempty,no_null_bytes,max=255"`
-	FieldGroupLabel *string         `json:"field_group_label,omitempty"`
-	ValueText       *string         `json:"value_text,omitempty"        validate:"omitempty,no_null_bytes"`
+	FieldGroupLabel *string         `json:"field_group_label,omitempty" validate:"omitempty,no_null_bytes,max=2048"`
+	ValueText       *string         `json:"value_text,omitempty"        validate:"omitempty,no_null_bytes,max=30000"`
 	ValueNumber     *float64        `json:"value_number,omitempty"`
 	ValueBoolean    *bool           `json:"value_boolean,omitempty"`
 	ValueDate       *time.Time      `json:"value_date,omitempty"`
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 	Language        *string         `json:"language,omitempty"          validate:"omitempty,no_null_bytes,max=10"`
-	UserID          *string         `json:"user_id,omitempty"`
+	UserID          *string         `json:"user_id,omitempty"           validate:"omitempty,no_null_bytes,max=255"`
 	TenantID        string          `json:"tenant_id"                   validate:"required,no_null_bytes,max=255"`
 	SubmissionID    string          `json:"submission_id"               validate:"required,no_null_bytes,min=1,max=255"`
 }
@@ -260,13 +333,63 @@ type TranslationBackfillTarget struct {
 // UpdateFeedbackRecordRequest represents the request to update a feedback record
 // Only value fields, metadata, language, and user_id can be updated.
 type UpdateFeedbackRecordRequest struct {
-	ValueText    *string         `json:"value_text,omitempty"    validate:"omitempty,no_null_bytes"`
+	ValueText    *string         `json:"value_text,omitempty"    validate:"omitempty,no_null_bytes,max=30000"`
 	ValueNumber  *float64        `json:"value_number,omitempty"`
 	ValueBoolean *bool           `json:"value_boolean,omitempty"`
 	ValueDate    *time.Time      `json:"value_date,omitempty"`
 	Metadata     json.RawMessage `json:"metadata,omitempty"`
 	Language     *string         `json:"language,omitempty"      validate:"omitempty,no_null_bytes,max=10"`
-	UserID       *string         `json:"user_id,omitempty"`
+	UserID       *string         `json:"user_id,omitempty"       validate:"omitempty,no_null_bytes,max=255"`
+}
+
+// FieldsChangedFrom returns the names of fields that are set in the update request AND differ
+// from old's current values. Unlike ChangedFields (presence only), this is comparison-based, so
+// an idempotent re-send — an integration re-PATCHing the same value_text every sync — produces
+// an empty result and fires no update event, instead of re-triggering webhooks and re-running
+// every LLM enrichment on unchanged content.
+func (r *UpdateFeedbackRecordRequest) FieldsChangedFrom(old *FeedbackRecord) []string {
+	var fields []string
+
+	if r.ValueText != nil && !stringPtrEqual(old.ValueText, r.ValueText) {
+		fields = append(fields, "value_text")
+	}
+
+	if r.ValueNumber != nil && (old.ValueNumber == nil || *old.ValueNumber != *r.ValueNumber) {
+		fields = append(fields, "value_number")
+	}
+
+	if r.ValueBoolean != nil && (old.ValueBoolean == nil || *old.ValueBoolean != *r.ValueBoolean) {
+		fields = append(fields, "value_boolean")
+	}
+
+	if r.ValueDate != nil && (old.ValueDate == nil || !old.ValueDate.Equal(*r.ValueDate)) {
+		fields = append(fields, "value_date")
+	}
+
+	// Byte-level comparison: a re-serialized metadata object (key order, whitespace) counts as
+	// a change — conservative toward firing the event.
+	if r.Metadata != nil && !bytes.Equal(old.Metadata, r.Metadata) {
+		fields = append(fields, "metadata")
+	}
+
+	if r.Language != nil && !stringPtrEqual(old.Language, r.Language) {
+		fields = append(fields, "language")
+	}
+
+	if r.UserID != nil && !stringPtrEqual(old.UserID, r.UserID) {
+		fields = append(fields, "user_id")
+	}
+
+	return fields
+}
+
+// stringPtrEqual reports whether two optional strings hold the same value (nil equals only nil).
+func stringPtrEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+
+	return *a == *b
 }
 
 // ChangedFields returns the names of fields that are set (non-nil) in the update request.

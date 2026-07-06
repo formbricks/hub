@@ -60,9 +60,10 @@ func TestSentimentProvider_PublishEvent_Created_withText_enqueues(t *testing.T) 
 	assert.NotEqual(t, "empty", inserter.calls[0].args.ValueTextHash)
 	assert.Equal(t, SentimentsQueueName, inserter.calls[0].opts.Queue)
 	assert.Equal(t, 3, inserter.calls[0].opts.MaxAttempts)
-	// Dedupe contract: identical (record, value_text) within the window is one job.
-	assert.True(t, inserter.calls[0].opts.UniqueOpts.ByArgs, "dedupe by args")
-	assert.Equal(t, uniqueByPeriodSentiment, inserter.calls[0].opts.UniqueOpts.ByPeriod)
+	// Event-path jobs are deliberately NOT unique: River dedupes against completed jobs, which
+	// swallowed re-enrichment after content reverted within the dedupe bucket. Comparison-based
+	// update events keep idempotent re-sends from reaching this path at all.
+	assert.False(t, inserter.calls[0].opts.UniqueOpts.ByArgs, "no completed-state dedupe on the event path")
 }
 
 func TestSentimentProvider_PublishEvent_Created_skips(t *testing.T) {

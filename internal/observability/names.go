@@ -11,6 +11,8 @@ const (
 	MetricNameFanOutDuration          = "hub_message_publisher_fan_out_duration_seconds"
 	MetricNameEventChannelDepth       = "hub_event_channel_depth"
 	MetricNameRiverQueueDepth         = "hub_river_queue_depth"
+	MetricNameRiverQueueOldestAge     = "hub_river_queue_oldest_age_seconds"
+	MetricNameProviderPanics          = "hub_provider_panics_total"
 	MetricNameWebhookJobsEnqueued     = "hub_webhook_jobs_enqueued_total"
 	MetricNameWebhookProviderErrors   = "hub_webhook_provider_errors_total"
 	MetricNameWebhookDeliveries       = "hub_webhook_deliveries_total"
@@ -39,6 +41,13 @@ const (
 	MetricNameSentimentWorkerErrors   = "hub_sentiment_worker_errors_total"
 	MetricNameSentimentDuration       = "hub_sentiment_duration_seconds"
 
+	// MetricNameEmotionsJobsEnqueued and related emotion pipeline metrics.
+	MetricNameEmotionsJobsEnqueued   = "hub_emotions_jobs_enqueued_total"
+	MetricNameEmotionsProviderErrors = "hub_emotions_provider_errors_total"
+	MetricNameEmotionsOutcomes       = "hub_emotions_outcomes_total"
+	MetricNameEmotionsWorkerErrors   = "hub_emotions_worker_errors_total"
+	MetricNameEmotionsDuration       = "hub_emotions_duration_seconds"
+
 	MetricNameCacheHits   = "hub_cache_hits_total"
 	MetricNameCacheMisses = "hub_cache_misses_total"
 )
@@ -48,6 +57,9 @@ const (
 	AttrEventType = "event_type"
 	AttrReason    = "reason"
 	AttrStatus    = "status"
+	// AttrQueue labels the River queue-depth gauge; values come from the poller's fixed queue
+	// set, so cardinality is bounded.
+	AttrQueue = "queue"
 )
 
 // AllowedEventTypes returns event type strings allowed for metric attributes (bounded cardinality).
@@ -85,7 +97,6 @@ var allowedDispatchReasons = map[string]bool{
 // allowedEmbeddingProviderReasons for hub_embedding_provider_errors_total.
 var allowedEmbeddingProviderReasons = map[string]bool{
 	"enqueue_failed": true,
-	"invalid_data":   true,
 }
 
 // allowedEmbeddingOutcomeStatuses for hub_embedding_outcomes_total and hub_embedding_duration_seconds.
@@ -98,9 +109,12 @@ var allowedEmbeddingOutcomeStatuses = map[string]bool{
 
 // allowedEmbeddingWorkerReasons for hub_embedding_worker_errors_total.
 var allowedEmbeddingWorkerReasons = map[string]bool{
-	"embedding_api_failed": true,
-	"get_record_failed":    true,
-	"update_failed":        true,
+	"embedding_api_failed":  true,
+	"get_record_failed":     true,
+	"update_failed":         true,
+	"tenant_write_conflict": true,
+	"rate_limited":          true,
+	"superseded":            true,
 }
 
 // AllowedEmbeddingProviderReason returns true if reason is allowed for embedding provider errors.
@@ -137,6 +151,9 @@ var allowedTranslationWorkerReasons = map[string]bool{
 	"update_failed":          true,
 	"tenant_write_conflict":  true,
 	"rate_limited":           true,
+	// A stale-target write skipped by the supersession guard: benign, but kept under its own
+	// label (not folded into "other") so target churn / cache staleness stays observable.
+	"superseded": true,
 }
 
 // AllowedTranslationProviderReason returns true if reason is allowed for translation provider errors.
@@ -173,6 +190,7 @@ var allowedSentimentWorkerReasons = map[string]bool{
 	"sentiment_api_failed":  true,
 	"get_record_failed":     true,
 	"settings_read_failed":  true,
+	"superseded":            true,
 	"update_failed":         true,
 	"tenant_write_conflict": true,
 	"rate_limited":          true,
@@ -191,6 +209,46 @@ func AllowedSentimentOutcomeStatus(status string) bool {
 // AllowedSentimentWorkerReason returns true if reason is allowed for sentiment worker errors.
 func AllowedSentimentWorkerReason(reason string) bool {
 	return allowedSentimentWorkerReasons[reason]
+}
+
+// allowedEmotionsProviderReasons for hub_emotions_provider_errors_total.
+var allowedEmotionsProviderReasons = map[string]bool{
+	"settings_read_failed": true,
+	"enqueue_failed":       true,
+}
+
+// allowedEmotionsOutcomeStatuses for hub_emotions_outcomes_total and hub_emotions_duration_seconds.
+var allowedEmotionsOutcomeStatuses = map[string]bool{
+	"success":      true,
+	"retry":        true,
+	"failed_final": true,
+	"skipped":      true,
+}
+
+// allowedEmotionsWorkerReasons for hub_emotions_worker_errors_total.
+var allowedEmotionsWorkerReasons = map[string]bool{
+	"emotions_api_failed":   true,
+	"get_record_failed":     true,
+	"settings_read_failed":  true,
+	"superseded":            true,
+	"update_failed":         true,
+	"tenant_write_conflict": true,
+	"rate_limited":          true,
+}
+
+// AllowedEmotionsProviderReason returns true if reason is allowed for emotion provider errors.
+func AllowedEmotionsProviderReason(reason string) bool {
+	return allowedEmotionsProviderReasons[reason]
+}
+
+// AllowedEmotionsOutcomeStatus returns true if status is allowed for emotion outcomes.
+func AllowedEmotionsOutcomeStatus(status string) bool {
+	return allowedEmotionsOutcomeStatuses[status]
+}
+
+// AllowedEmotionsWorkerReason returns true if reason is allowed for emotion worker errors.
+func AllowedEmotionsWorkerReason(reason string) bool {
+	return allowedEmotionsWorkerReasons[reason]
 }
 
 // AllowedProviderReason returns true if reason is an allowed provider error reason.

@@ -39,7 +39,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	)
 
 	if cfg.Observability.MetricsExporter == "otlp" {
-		meterProvider, err = observability.NewMeterProvider(cfg)
+		meterProvider, err = observability.NewMeterProvider(cfg, "hub-worker")
 		if err != nil {
 			return nil, fmt.Errorf("create meter provider: %w", err)
 		}
@@ -55,7 +55,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	}
 
 	if cfg.Observability.TracesExporter != "" {
-		tracerProvider, err = observability.NewTracerProvider(cfg)
+		tracerProvider, err = observability.NewTracerProvider(cfg, "hub-worker")
 		if err != nil {
 			if meterProvider != nil {
 				_ = observability.ShutdownMeterProvider(context.Background(), meterProvider)
@@ -72,6 +72,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		embeddingMetrics   observability.EmbeddingMetrics
 		translationMetrics observability.TranslationMetrics
 		sentimentMetrics   observability.SentimentMetrics
+		emotionsMetrics    observability.EmotionsMetrics
 	)
 
 	if metrics != nil {
@@ -79,6 +80,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		embeddingMetrics = metrics.Embeddings
 		translationMetrics = metrics.Translation
 		sentimentMetrics = metrics.Sentiment
+		emotionsMetrics = metrics.Emotions
 	}
 
 	webhookSender := service.NewWebhookSenderImpl(
@@ -186,16 +188,49 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		sentimentRecordsService := service.NewFeedbackRecordsService(
 			sentimentRecordsRepo, nil, "", nil, nil, "", 0, "")
 
-		// The worker re-checks the per-directory sentiment gate (the enqueue provider fails open on
-		// a settings-read error), so it needs its own tenant-settings reader. Read uncached so the
-		// gate stays authoritative: a toggle takes effect on the next job, and there is no
-		// settings-write cache-eviction hook in this process (writes go through hub-api).
+		// The worker re-checks the per-directory sentiment gate (the enqueue provider fails open on a
+		// settings-read error), so it needs its own tenant-settings reader. Read uncached so the gate
+		// stays authoritative: a toggle takes effect on the next job, and there is no settings-write
+		// cache-eviction hook in this process (writes go through hub-api).
 		sentimentSettingsService := service.NewTenantSettingsService(repository.NewTenantSettingsRepository(db))
 
 		deps.SentimentService = sentimentRecordsService
 		deps.SentimentResolver = sentimentSettingsService
 		deps.SentimentClient = sentimentClient
 		deps.SentimentMetrics = sentimentMetrics
+	}
+
+	if cfg.Emotions.Enabled() {
+		emotionsClient, err := service.NewEmotionsClient(context.Background(), service.EmotionsClientConfig{
+			Provider:            cfg.Emotions.Provider,
+			ProviderAPIKey:      cfg.Emotions.ProviderAPIKey,
+			Model:               cfg.Emotions.Model,
+			BaseURL:             cfg.Emotions.BaseURL,
+			GoogleCloudProject:  cfg.Emotions.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Emotions.GoogleCloudLocation,
+		})
+		if err != nil {
+			shutdownObservability(context.Background(), meterProvider, tracerProvider)
+
+			return nil, fmt.Errorf("emotions config: %w", err)
+		}
+
+		// The emotions worker only reads the record and writes the emotions, so the
+		// embedding/translation-specific service params are unused here.
+		emotionsRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+		emotionsRecordsService := service.NewFeedbackRecordsService(
+			emotionsRecordsRepo, nil, "", nil, nil, "", 0, "")
+
+		// The worker re-checks the per-directory emotions gate (the enqueue provider fails open on a
+		// settings-read error), so it needs its own tenant-settings reader. Read uncached so the gate
+		// stays authoritative: a toggle takes effect on the next job, and there is no settings-write
+		// cache-eviction hook in this process (writes go through hub-api).
+		emotionsSettingsService := service.NewTenantSettingsService(repository.NewTenantSettingsRepository(db))
+
+		deps.EmotionsService = emotionsRecordsService
+		deps.EmotionsResolver = emotionsSettingsService
+		deps.EmotionsClient = emotionsClient
+		deps.EmotionsMetrics = emotionsMetrics
 	}
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)
@@ -273,13 +308,29 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.cfg.Server.ShutdownTimeout.Duration())
 		defer cancel()
 
-		_ = a.river.Stop(stopCtx)
+		// River's documented two-phase shutdown: give running jobs the grace period to finish,
+		// then escalate to StopAndCancel (cancels job contexts) so the process exits before the
+		// orchestrator's SIGKILL. Without the escalation, jobs still running at the deadline were
+		// killed mid-flight with their rows left in `running` until the rescuer reclaimed them
+		// (~1h by default) — an enrichment latency hole after every unlucky deploy.
+		if err := a.river.Stop(stopCtx); err != nil {
+			slog.Warn("river graceful stop did not finish in time; cancelling running jobs", "error", err)
+
+			cancelCtx, cancelHard := context.WithTimeout(context.WithoutCancel(ctx), riverStopAndCancelTimeout)
+			defer cancelHard()
+
+			_ = a.river.StopAndCancel(cancelCtx)
+		}
 	}()
 
 	<-a.river.Stopped()
 
 	return nil
 }
+
+// riverStopAndCancelTimeout bounds the escalated (job-cancelling) stop after the graceful stop
+// timed out; kept short so the pod exits within the orchestrator's termination grace period.
+const riverStopAndCancelTimeout = 5 * time.Second
 
 func shutdownObservability(ctx context.Context, meter *sdkmetric.MeterProvider, tracer *sdktrace.TracerProvider) {
 	if tracer != nil {

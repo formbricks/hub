@@ -34,6 +34,11 @@ const settingKeyTargetLanguage = "target_language"
 // PATCH sends sentiment_enabled as null. Pinned to the tag by TestSettingKeyMatchesModelTag.
 const settingKeySentimentEnabled = "sentiment_enabled"
 
+// settingKeyEmotionsEnabled is the JSONB key for the per-directory emotion switch. It must match
+// the json tag on models.EnrichmentSettings.EmotionsEnabled; it is the key removed when a PATCH
+// sends an explicit null.
+const settingKeyEmotionsEnabled = "emotions_enabled"
+
 // maxTargetLanguageLen bounds a provided target_language value. It mirrors the
 // `max=35` struct tag on UpdateTenantSettingsRequest (the PUT path) and the
 // OpenAPI maxLength, so PUT and PATCH enforce the same limit.
@@ -102,13 +107,15 @@ func (s *TenantSettingsService) UpdateSettings(
 	settings, err := s.repo.Upsert(ctx, normalizedTenantID, models.EnrichmentSettings{
 		TargetLanguage:   targetLanguage,
 		SentimentEnabled: req.SentimentEnabled,
+		EmotionsEnabled:  req.EmotionsEnabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("update tenant settings: %w", err)
 	}
 
 	// PUT is a full replace, so every settable key is (re)written.
-	s.notifyChanged(ctx, normalizedTenantID, []string{settingKeyTargetLanguage, settingKeySentimentEnabled})
+	s.notifyChanged(ctx, normalizedTenantID,
+		[]string{settingKeyTargetLanguage, settingKeySentimentEnabled, settingKeyEmotionsEnabled})
 
 	return settings, nil
 }
@@ -157,6 +164,17 @@ func (s *TenantSettingsService) PatchSettings(
 			removeKeys = append(removeKeys, settingKeySentimentEnabled)
 		} else {
 			set.SentimentEnabled = req.SentimentEnabled.Value
+		}
+	}
+
+	if req.EmotionsEnabled.Present {
+		changedKeys = append(changedKeys, settingKeyEmotionsEnabled)
+
+		if req.EmotionsEnabled.Value == nil {
+			// Explicit null: remove the setting, restoring the default (enabled) (RFC 7396).
+			removeKeys = append(removeKeys, settingKeyEmotionsEnabled)
+		} else {
+			set.EmotionsEnabled = req.EmotionsEnabled.Value
 		}
 	}
 

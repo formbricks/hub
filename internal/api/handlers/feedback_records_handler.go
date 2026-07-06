@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -34,22 +35,51 @@ func NewFeedbackRecordsHandler(service FeedbackRecordsService) *FeedbackRecordsH
 	return &FeedbackRecordsHandler{service: service}
 }
 
-// Create handles POST /v1/feedback-records.
-func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var req models.CreateFeedbackRecordRequest
+// maxFeedbackRecordBodyBytes caps the create and update request bodies. Nothing else bounds
+// the payload end to end, and every accepted byte of value_text is re-sent to the LLM and
+// embedding providers by up to four enrichment pipelines (× retry attempts, re-triggered per
+// edit) — so an unbounded body is an unbounded provider bill. 512 KiB comfortably fits any
+// legitimate record (value_text is separately capped at 30k characters; the rest is metadata)
+// while blocking multi-megabyte abuse before it is read into memory.
+const maxFeedbackRecordBodyBytes = 512 << 10
+
+// decodeRecordBody bounds, decodes (rejecting unknown fields), and validates a feedback-record
+// request body. It writes the matching problem response — 413 for an oversized body, 400 for
+// malformed JSON, unknown fields, or invalid values — and returns false when it has already
+// responded, so callers just `return`. Mirrors decodeSettingsBody.
+func decodeRecordBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFeedbackRecordBodyBytes)
 
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 
-	if err := decoder.Decode(&req); err != nil {
+	if err := decoder.Decode(dst); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
+
+			return false
+		}
+
 		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
 
-		return
+		return false
 	}
 
-	if err := validation.ValidateStruct(&req); err != nil {
+	if err := validation.ValidateStruct(dst); err != nil {
 		response.RespondError(w, r, err)
 
+		return false
+	}
+
+	return true
+}
+
+// Create handles POST /v1/feedback-records.
+func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var req models.CreateFeedbackRecordRequest
+
+	if !decodeRecordBody(w, r, &req) {
 		return
 	}
 
@@ -127,18 +157,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 
 	var req models.UpdateFeedbackRecordRequest
 
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
-
-		return
-	}
-
-	if err := validation.ValidateStruct(&req); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeRecordBody(w, r, &req) {
 		return
 	}
 

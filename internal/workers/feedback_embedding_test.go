@@ -55,6 +55,7 @@ func (m *mockEmbeddingService) GetFeedbackRecord(_ context.Context, _ uuid.UUID)
 
 func (m *mockEmbeddingService) SetEmbedding(
 	_ context.Context, _ uuid.UUID, _ string, embedding []float32,
+	_ func(fieldLabel, valueText *string) bool,
 ) error {
 	m.setCalls++
 	m.setEmbeddingNil = embedding == nil
@@ -113,6 +114,35 @@ func TestFeedbackEmbeddingWorker_GetNotFoundRecordsSkipped(t *testing.T) {
 
 	if metrics.workerErr["get_record_failed"] != 0 {
 		t.Fatalf("get_record_failed=%d, want 0 (not-found is not a worker error)", metrics.workerErr["get_record_failed"])
+	}
+}
+
+func TestFeedbackEmbeddingWorker_GetRecordErrorRetriesThenFailsFinal(t *testing.T) {
+	// A non-not-found read error is transient: the worker retries while attempts remain and only
+	// counts as failed_final on the last attempt, so failed_final is not overcounted.
+	metrics := newCountingEmbeddingMetrics()
+	svc := &mockEmbeddingService{getErr: errors.New("db unavailable")}
+	worker := NewFeedbackEmbeddingWorker(svc, &mockEmbeddingClient{}, "", metrics)
+
+	if err := worker.Work(context.Background(), embeddingJob()); err == nil { // attempt 1 of 3
+		t.Fatal("Work() error = nil, want a get-record failure returned for retry")
+	}
+
+	if metrics.workerErr["get_record_failed"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("get_record_failed=%d retry=%d failed_final=%d, want 1/1/0 (transient read blip must not read as final)",
+			metrics.workerErr["get_record_failed"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+	}
+
+	finalJob := &river.Job[service.FeedbackEmbeddingArgs]{
+		JobRow: &rivertype.JobRow{Attempt: 3, MaxAttempts: 3},
+		Args:   service.FeedbackEmbeddingArgs{FeedbackRecordID: uuid.Must(uuid.NewV7()), Model: "test-model"},
+	}
+	if err := worker.Work(context.Background(), finalJob); err == nil {
+		t.Fatal("Work() error = nil, want a failure on the final attempt")
+	}
+
+	if metrics.outcomes["failed_final"] != 1 {
+		t.Fatalf("failed_final=%d after the final attempt, want 1", metrics.outcomes["failed_final"])
 	}
 }
 
@@ -199,4 +229,48 @@ func TestFeedbackEmbeddingWorker_Work_EmptyTextConflict(t *testing.T) {
 			t.Fatalf("Work() error = %v, want nil (record purged, nothing to clear)", err)
 		}
 	})
+}
+
+func TestFeedbackEmbeddingWorker_RateLimitSnoozes(t *testing.T) {
+	metrics := newCountingEmbeddingMetrics()
+	svc := &mockEmbeddingService{record: textRecord("Great product")}
+	client := &mockEmbeddingClient{err: huberrors.NewRateLimitError(45*time.Second, errors.New("429"))}
+	worker := NewFeedbackEmbeddingWorker(svc, client, "", metrics)
+
+	err := worker.Work(context.Background(), embeddingJob())
+
+	var snooze *river.JobSnoozeError
+	if !errors.As(err, &snooze) {
+		t.Fatalf("Work() error = %v, want a river snooze error (429 must defer, not burn attempts)", err)
+	}
+
+	if snooze.Duration != 45*time.Second {
+		t.Fatalf("snooze duration = %v, want 45s (provider retry-after)", snooze.Duration)
+	}
+
+	if svc.setCalls != 0 {
+		t.Fatalf("set called %d times on rate limit, want 0 (work deferred)", svc.setCalls)
+	}
+
+	if metrics.workerErr["rate_limited"] != 1 || metrics.outcomes["retry"] != 1 || metrics.outcomes["failed_final"] != 0 {
+		t.Fatalf("rate_limited=%d retry=%d failed_final=%d, want 1/1/0",
+			metrics.workerErr["rate_limited"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
+	}
+}
+
+func TestFeedbackEmbeddingWorker_SupersededWriteSkips(t *testing.T) {
+	// The record's content changed while the job ran: the guarded write reports superseded, and
+	// the worker treats it as a benign skip (the job holding the current content owns the row).
+	metrics := newCountingEmbeddingMetrics()
+	svc := &mockEmbeddingService{record: textRecord("Great product"), setErr: huberrors.ErrEmbeddingSuperseded}
+	client := &mockEmbeddingClient{embedding: make([]float32, models.EmbeddingVectorDimensions)}
+	worker := NewFeedbackEmbeddingWorker(svc, client, "", metrics)
+
+	if err := worker.Work(context.Background(), embeddingJob()); err != nil {
+		t.Fatalf("Work() error = %v, want nil (superseded is a benign skip)", err)
+	}
+
+	if metrics.outcomes["skipped"] != 1 || metrics.workerErr["superseded"] != 1 {
+		t.Fatalf("skipped=%d superseded=%d, want 1/1", metrics.outcomes["skipped"], metrics.workerErr["superseded"])
+	}
 }

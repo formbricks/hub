@@ -47,7 +47,7 @@ func TestValidateTranslationConfig(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			err := ValidateTranslationConfig(testCase.cfg)
+			err := translationClientRegistry.validate(testCase.cfg)
 
 			switch {
 			case testCase.wantErr == nil && err != nil:

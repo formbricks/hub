@@ -5,19 +5,29 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
 const (
 	// hnswEfSearch increases HNSW graph traversal candidates (default 40); higher improves recall.
 	hnswEfSearch = 200
+	// hnswIterativeScanMode makes the HNSW scan resume past ef_search candidates until the query's
+	// LIMIT is satisfied (pgvector >= 0.8). Without it, the index emits at most ef_search rows
+	// BEFORE the model/tenant post-filters, so a tenant sharing an index with larger tenants gets
+	// short or empty pages and pagination silently caps at ~ef_search total results. strict_order
+	// preserves exact distance ordering, which the keyset cursor relies on.
+	hnswIterativeScanMode = "strict_order"
 	// nearestOverFetchFactor: request this many times the requested limit, then filter by minScore in Go,
 	// so that after tenant/minScore filtering we still have enough results (avoids iterative scan being blocked by WHERE score threshold).
 	nearestOverFetchFactor = 3
@@ -31,6 +41,10 @@ var ErrEmbeddingDimensionMismatch = errors.New("embedding dimension mismatch")
 // EmbeddingsRepository handles data access for the embeddings table.
 type EmbeddingsRepository struct {
 	db *pgxpool.Pool
+	// iterativeScanUnavailable latches when the server rejects hnsw.iterative_scan (pgvector
+	// < 0.8), so searches fall back to the plain ef_search-bounded scan instead of failing.
+	iterativeScanUnavailable atomic.Bool
+	iterativeScanWarn        sync.Once
 }
 
 // NewEmbeddingsRepository creates a new embeddings repository.
@@ -38,11 +52,26 @@ func NewEmbeddingsRepository(db *pgxpool.Pool) *EmbeddingsRepository {
 	return &EmbeddingsRepository{db: db}
 }
 
+// rollbackQuietly rolls back tx, logging (rather than returning) an unexpected rollback error.
+func rollbackQuietly(ctx context.Context, tx pgx.Tx, msg string) {
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		slog.Error(msg, "error", err)
+	}
+}
+
 // Upsert inserts or updates the embedding for (feedback_record_id, model). On conflict updates embedding and updated_at.
 // Uses halfvec storage (2 bytes per dimension); pgvector-go converts float32 to float16 when encoding.
 // embedding must have length models.EmbeddingVectorDimensions (fixed 768).
+//
+// stillCurrent (optional) guards against the concurrent-jobs race: two jobs for the same record
+// run in parallel and the one that read OLDER content lands its write LAST, permanently attaching
+// a stale vector (the missing-rows-only backfill can never repair it). Under a per-record
+// advisory lock the record's current content is re-read and compared; a mismatch returns
+// huberrors.ErrEmbeddingSuperseded — a benign skip, since the job holding the current content
+// writes the row.
 func (r *EmbeddingsRepository) Upsert(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
+	stillCurrent func(fieldLabel, valueText *string) bool,
 ) error {
 	if len(embedding) != models.EmbeddingVectorDimensions {
 		return fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(embedding), models.EmbeddingVectorDimensions)
@@ -56,6 +85,10 @@ func (r *EmbeddingsRepository) Upsert(
 		// record; resolve and lock it so embedding writes cannot race a tenant
 		// data purge. A missing parent means the record was deleted or purged.
 		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		if err := guardEmbeddingSourceCurrent(ctx, dbTx, feedbackRecordID, stillCurrent); err != nil {
 			return err
 		}
 
@@ -75,11 +108,18 @@ func (r *EmbeddingsRepository) Upsert(
 }
 
 // DeleteByFeedbackRecordAndModel removes the embedding row for the given feedback record and model.
+// stillCurrent (optional) has the same stale-write guard semantics as Upsert: a clear enqueued for
+// since-changed content must not delete the vector a newer job wrote.
 func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string,
+	stillCurrent func(fieldLabel, valueText *string) bool,
 ) error {
 	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		if err := guardEmbeddingSourceCurrent(ctx, dbTx, feedbackRecordID, stillCurrent); err != nil {
 			return err
 		}
 
@@ -93,6 +133,78 @@ func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 
 		return nil
 	})
+}
+
+// guardEmbeddingSourceCurrent serializes same-record embedding writes (per-record advisory
+// transaction lock — a hash collision merely over-serializes) and re-reads the record's current
+// content for the stillCurrent check. Returns ErrEmbeddingSuperseded when the content moved on,
+// NotFound when the record vanished mid-transaction, and nil (no-op) when stillCurrent is nil.
+func guardEmbeddingSourceCurrent(
+	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID, stillCurrent func(fieldLabel, valueText *string) bool,
+) error {
+	if stillCurrent == nil {
+		return nil
+	}
+
+	if _, err := dbTx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, feedbackRecordID,
+	); err != nil {
+		return fmt.Errorf("lock feedback record for embedding write: %w", err)
+	}
+
+	var fieldLabel, valueText *string
+
+	// FOR UPDATE row-locks the record until this write commits, so a concurrent PATCH Update
+	// (which does not take the per-record advisory lock) cannot change the content between this
+	// re-read and the embedding write — closing the check-then-write window like the classify
+	// sibling guardValueTextCurrent. Crucial here: embeddings have no eager-clear or NULL-rows
+	// backfill, so a stale vector that lands last is otherwise permanent.
+	err := dbTx.QueryRow(ctx,
+		`SELECT field_label, value_text FROM feedback_records WHERE id = $1 FOR UPDATE`, feedbackRecordID,
+	).Scan(&fieldLabel, &valueText)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+		}
+
+		return fmt.Errorf("read feedback record content for embedding write: %w", err)
+	}
+
+	if !stillCurrent(fieldLabel, valueText) {
+		return huberrors.ErrEmbeddingSuperseded
+	}
+
+	return nil
+}
+
+// DeleteEmbeddingsForOtherModels batch-deletes embedding rows whose model differs from
+// currentModel. Reads only ever join on the current model, so such rows are dead weight — but
+// they sit inside the single shared HNSW index, where every stale vector consumes candidate
+// budget on every search (worsening recall) and storage grows with each model migration. Batched
+// (batchSize rows per DELETE) so a large prune never holds long row locks or produces one giant
+// WAL burst. Returns the total deleted. Run only after a model migration's backfill has
+// completed, or search goes dark until the new model's vectors exist.
+func (r *EmbeddingsRepository) DeleteEmbeddingsForOtherModels(
+	ctx context.Context, currentModel string, batchSize int,
+) (int64, error) {
+	var total int64
+
+	for {
+		tag, err := r.db.Exec(ctx, `
+			DELETE FROM embeddings WHERE id IN (
+				SELECT id FROM embeddings WHERE model <> $1 LIMIT $2
+			)`, currentModel, batchSize)
+		if err != nil {
+			return total, fmt.Errorf("delete stale-model embeddings: %w", err)
+		}
+
+		deleted := tag.RowsAffected()
+		total += deleted
+
+		if deleted < int64(batchSize) {
+			return total, nil
+		}
+	}
 }
 
 // ListFeedbackRecordIDsForBackfill returns one keyset page (fr.id > afterID, ordered by id,
@@ -180,37 +292,14 @@ func (r *EmbeddingsRepository) GetEmbeddingAndTenantByFeedbackRecordAndModel(
 	return vec.Slice(), tenantID, nil
 }
 
-// GetEmbeddingByFeedbackRecordAndModelAndTenant returns the stored embedding only when the feedback record
-// belongs to the given tenant. Used by SimilarFeedback to enforce tenant isolation (source record must match tenant).
-// Returns ErrEmbeddingNotFound when no row exists or tenant does not match.
-func (r *EmbeddingsRepository) GetEmbeddingByFeedbackRecordAndModelAndTenant(
-	ctx context.Context, feedbackRecordID uuid.UUID, model, tenantID string,
-) ([]float32, error) {
-	var vec pgvector.HalfVector
-
-	err := r.db.QueryRow(ctx,
-		`SELECT e.embedding FROM embeddings e
-		 INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
-		 WHERE e.feedback_record_id = $1 AND e.model = $2 AND fr.tenant_id = $3`,
-		feedbackRecordID, model, tenantID,
-	).Scan(&vec)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrEmbeddingNotFound
-		}
-
-		return nil, fmt.Errorf("get embedding by tenant: %w", err)
-	}
-
-	return vec.Slice(), nil
-}
-
 // NearestFeedbackRecordsByEmbedding returns feedback record IDs and similarity scores (0..1) for the
 // nearest neighbors to queryEmbedding, filtered by model and tenant. Rows with score < minScore are
-// filtered in application code (not in WHERE) so pgvector's iterative index scan can run. Uses
-// full-precision query vector (no quantization); sets hnsw.ef_search for better recall. Over-fetches
-// then trims to limit to account for tenant/minScore filtering. excludeID optionally excludes one
-// feedback record (e.g. for "similar" endpoint). First page only; use NearestFeedbackRecordsByEmbeddingAfterCursor for next pages.
+// filtered in application code (not in WHERE) so pgvector's iterative index scan can run. The query
+// vector is sent full-precision and implicitly cast to halfvec by the <=> operator (that cast is
+// what makes the halfvec index usable). Sets hnsw.ef_search and iterative scan for recall.
+// Over-fetches then trims to limit to account for tenant/minScore filtering. excludeID optionally
+// excludes one feedback record (e.g. for "similar" endpoint). First page only; use
+// NearestFeedbackRecordsByEmbeddingAfterCursor for next pages.
 func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int, excludeID *uuid.UUID, minScore float64,
 ) ([]models.FeedbackRecordWithScore, bool, error) {
@@ -218,31 +307,22 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 		return nil, false, fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(queryEmbedding), models.EmbeddingVectorDimensions)
 	}
 
-	// Full-precision query vector (ephemeral); pgvector compares vector vs halfvec natively.
 	queryVec := pgvector.NewVector(queryEmbedding)
 
 	fetchLimit := min(limit*nearestOverFetchFactor, maxNearestFetchLimit)
 
-	dbTx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	dbTx, err := r.beginNearestTx(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("begin tx: %w", err)
+		return nil, false, err
 	}
 
-	defer func() {
-		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			slog.Error("nearest feedback records: rollback failed", "error", err)
-		}
-	}()
-
-	// SET LOCAL does not support bound parameters; value is a package constant.
-	if _, err := dbTx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", hnswEfSearch)); err != nil {
-		return nil, false, fmt.Errorf("set hnsw.ef_search: %w", err)
-	}
+	defer rollbackQuietly(ctx, dbTx, "nearest feedback records: rollback failed")
 
 	var rows pgx.Rows
 	if excludeID == nil {
 		rows, err = dbTx.Query(ctx, `
-			SELECT e.feedback_record_id, (1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
+			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
+				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
@@ -250,7 +330,8 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 			LIMIT $4`, queryVec, model, tenantID, fetchLimit)
 	} else {
 		rows, err = dbTx.Query(ctx, `
-			SELECT e.feedback_record_id, (1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
+			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
+				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
@@ -278,7 +359,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 			row       models.FeedbackRecordWithScore
 			valueText *string
 		)
-		if err := rows.Scan(&row.FeedbackRecordID, &row.Score, &row.FieldLabel, &valueText); err != nil {
+		if err := rows.Scan(&row.FeedbackRecordID, &row.Distance, &row.Score, &row.FieldLabel, &valueText); err != nil {
 			return nil, false, fmt.Errorf("scan feedback record with score: %w", err)
 		}
 
@@ -316,7 +397,9 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 
 // NearestFeedbackRecordsByEmbeddingAfterCursor returns the next page of nearest neighbors after the given
 // cursor (lastDistance, lastFeedbackRecordID). Order is by (distance ASC, feedback_record_id ASC). minScore
-// is applied in application code; query uses full-precision vector and hnsw.ef_search like NearestFeedbackRecordsByEmbedding.
+// is applied in application code; query settings match NearestFeedbackRecordsByEmbedding. The cursor's
+// lastDistance is the exact distance the previous page selected (not re-derived from the score), so the
+// keyset comparison matches the stored ordering bit-for-bit.
 func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	ctx context.Context, model string, queryEmbedding []float32, tenantID string, limit int,
 	lastDistance float64, lastFeedbackRecordID uuid.UUID, excludeID *uuid.UUID, minScore float64,
@@ -329,26 +412,18 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 
 	fetchLimit := min(limit*nearestOverFetchFactor, maxNearestFetchLimit)
 
-	dbTx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	dbTx, err := r.beginNearestTx(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("begin tx: %w", err)
+		return nil, false, err
 	}
 
-	defer func() {
-		if err := dbTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			slog.Error("nearest feedback records after cursor: rollback failed", "error", err)
-		}
-	}()
-
-	// SET LOCAL does not support bound parameters; value is a package constant.
-	if _, err := dbTx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", hnswEfSearch)); err != nil {
-		return nil, false, fmt.Errorf("set hnsw.ef_search: %w", err)
-	}
+	defer rollbackQuietly(ctx, dbTx, "nearest feedback records after cursor: rollback failed")
 
 	var rows pgx.Rows
 	if excludeID == nil {
 		rows, err = dbTx.Query(ctx, `
-			SELECT e.feedback_record_id, (1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
+			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
+				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
@@ -357,7 +432,8 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 			LIMIT $6`, queryVec, model, tenantID, lastDistance, lastFeedbackRecordID, fetchLimit)
 	} else {
 		rows, err = dbTx.Query(ctx, `
-			SELECT e.feedback_record_id, (1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
+			SELECT e.feedback_record_id, (e.embedding <=> $1) AS distance,
+				(1 - (e.embedding <=> $1)) AS score, COALESCE(fr.field_label, ''), fr.value_text
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
@@ -386,7 +462,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 			row       models.FeedbackRecordWithScore
 			valueText *string
 		)
-		if err := rows.Scan(&row.FeedbackRecordID, &row.Score, &row.FieldLabel, &valueText); err != nil {
+		if err := rows.Scan(&row.FeedbackRecordID, &row.Distance, &row.Score, &row.FieldLabel, &valueText); err != nil {
 			return nil, false, fmt.Errorf("scan feedback record with score: %w", err)
 		}
 
@@ -420,4 +496,54 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 	hasMore := brokeWithFullPage || rowCount >= fetchLimit
 
 	return results, hasMore, nil
+}
+
+// hnswGUCUnsupportedSQLStates are the Postgres error codes for an unknown/invalid configuration
+// parameter name: an unrecognized GUC in a reserved prefix (hnsw.*) is reported as 42602
+// (invalid_name), and some versions use 42704 (undefined_object). Only these — a genuinely
+// version-unsupported GUC (pgvector < 0.8) — should permanently latch the iterative-scan fallback.
+var hnswGUCUnsupportedSQLStates = map[string]bool{"42602": true, "42704": true}
+
+// beginNearestTx starts the transaction for a nearest-neighbor query and applies the HNSW query
+// settings: ef_search, and iterative scan so the index keeps yielding candidates until LIMIT is
+// satisfied rather than stopping at ef_search pre-filter rows. On a server without the
+// iterative-scan GUC (pgvector < 0.8) the failed SET aborts the transaction, so it latches the
+// fallback, rolls back, and rebuilds the transaction without it (warning once).
+func (r *EmbeddingsRepository) beginNearestTx(ctx context.Context) (pgx.Tx, error) {
+	dbTx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+
+	// SET LOCAL does not support bound parameters; values are package constants.
+	if _, err := dbTx.Exec(ctx, fmt.Sprintf("SET LOCAL hnsw.ef_search = %d", hnswEfSearch)); err != nil {
+		rollbackQuietly(ctx, dbTx, "nearest feedback records: setup rollback failed")
+
+		return nil, fmt.Errorf("set hnsw.ef_search: %w", err)
+	}
+
+	if !r.iterativeScanUnavailable.Load() {
+		if _, err := dbTx.Exec(ctx, "SET LOCAL hnsw.iterative_scan = "+hnswIterativeScanMode); err != nil {
+			rollbackQuietly(ctx, dbTx, "nearest feedback records: setup rollback failed")
+
+			// Only latch on a genuinely-unsupported GUC (pgvector < 0.8). A transient failure must
+			// not permanently degrade recall for the process's life — surface it so this query fails
+			// and the next call retries the iterative-scan path.
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || !hnswGUCUnsupportedSQLStates[pgErr.Code] {
+				return nil, fmt.Errorf("set hnsw.iterative_scan: %w", err)
+			}
+
+			r.iterativeScanUnavailable.Store(true)
+			r.iterativeScanWarn.Do(func() {
+				slog.Warn("hnsw.iterative_scan unavailable (pgvector < 0.8?); "+
+					"semantic search recall is capped at ef_search candidates per query",
+					"error", err)
+			})
+
+			return r.beginNearestTx(ctx)
+		}
+	}
+
+	return dbTx, nil
 }

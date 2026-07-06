@@ -4,18 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/formbricks/hub/internal/googleai"
 	"github.com/formbricks/hub/internal/openai"
-)
-
-// Sentiment provider names for NewSentimentClient (same identifiers as the embedding and
-// translation providers; sentiment reuses the OpenAI and Google SDK wrappers).
-const (
-	SentimentProviderOpenAI       = "openai"
-	SentimentProviderGoogle       = "google"
-	SentimentProviderGoogleGemini = "google-gemini"
 )
 
 var (
@@ -30,26 +21,22 @@ var (
 		"google-gemini requires SENTIMENT_GOOGLE_CLOUD_PROJECT and SENTIMENT_GOOGLE_CLOUD_LOCATION")
 )
 
-// sentimentProviderEntry describes capabilities and construction for one provider.
-type sentimentProviderEntry struct {
-	RequiresAPIKey             bool
-	RequiresGoogleGeminiConfig bool
-	Factory                    func(context.Context, SentimentClientConfig) (SentimentClient, error)
-}
+// SentimentClientConfig aliases the shared classify client config (see EnrichmentClientConfig).
+type SentimentClientConfig = EnrichmentClientConfig
 
-// sentimentProviderRegistry is the single source of truth for provider capabilities and client creation.
-var sentimentProviderRegistry = map[string]sentimentProviderEntry{
-	SentimentProviderOpenAI: {
-		RequiresAPIKey: true,
-		Factory:        openAISentimentFactory,
-	},
-	SentimentProviderGoogle: {
-		RequiresAPIKey: true,
-		Factory:        googleSentimentFactory,
-	},
-	SentimentProviderGoogleGemini: {
-		RequiresGoogleGeminiConfig: true,
-		Factory:                    googleGeminiSentimentFactory,
+// sentimentClientRegistry is the single source of truth for sentiment provider capabilities and
+// client creation, backed by the shared generic registry. Sentiment does not accept the legacy
+// google-vertex alias (it is a newer surface).
+var sentimentClientRegistry = clientRegistry[SentimentClientConfig, SentimentClient]{
+	allowVertexAlias: false,
+	errConfigInvalid: ErrSentimentConfigInvalid,
+	errAPIKey:        ErrSentimentProviderAPIKey,
+	errBaseURL:       ErrSentimentBaseURLUnsupported,
+	errGoogleGemini:  ErrSentimentGoogleGeminiConfig,
+	entries: map[string]providerFactory[SentimentClientConfig, SentimentClient]{
+		ProviderOpenAI:       {requiresAPIKey: true, build: openAISentimentFactory},
+		ProviderGoogle:       {requiresAPIKey: true, build: googleSentimentFactory},
+		ProviderGoogleGemini: {requiresGoogleGeminiConfig: true, build: googleGeminiSentimentFactory},
 	},
 }
 
@@ -81,59 +68,8 @@ func googleGeminiSentimentFactory(ctx context.Context, cfg SentimentClientConfig
 	return promptSentimentClient{raw: raw}, nil
 }
 
-// NormalizeSentimentProvider returns the canonical provider name (lowercase, trimmed).
-func NormalizeSentimentProvider(provider string) string {
-	return strings.ToLower(strings.TrimSpace(provider))
-}
-
-// SentimentClientConfig holds configuration for creating a sentiment client.
-type SentimentClientConfig struct {
-	Provider            string
-	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
-	Model               string
-	BaseURL             string
-	GoogleCloudProject  string
-	GoogleCloudLocation string
-}
-
-// ValidateSentimentConfig checks provider support and provider-specific requirements.
-// Use before creating a client or at startup to fail fast with a clear error.
-func ValidateSentimentConfig(cfg SentimentClientConfig) error {
-	provider := NormalizeSentimentProvider(cfg.Provider)
-
-	entry, ok := sentimentProviderRegistry[provider]
-	if !ok {
-		return fmt.Errorf("%w: unsupported provider %q", ErrSentimentConfigInvalid, provider)
-	}
-
-	if entry.RequiresAPIKey && cfg.ProviderAPIKey == "" {
-		return fmt.Errorf("%w: %s", ErrSentimentProviderAPIKey, provider)
-	}
-
-	if cfg.BaseURL != "" && provider != SentimentProviderOpenAI {
-		return fmt.Errorf("%w: %s", ErrSentimentBaseURLUnsupported, provider)
-	}
-
-	if entry.RequiresGoogleGeminiConfig && (cfg.GoogleCloudProject == "" || cfg.GoogleCloudLocation == "") {
-		return ErrSentimentGoogleGeminiConfig
-	}
-
-	return nil
-}
-
 // NewSentimentClient creates a SentimentClient for the given config. It validates
 // provider-specific requirements via the registry, then calls the registry factory.
 func NewSentimentClient(ctx context.Context, cfg SentimentClientConfig) (SentimentClient, error) {
-	provider := NormalizeSentimentProvider(cfg.Provider)
-
-	entry, ok := sentimentProviderRegistry[provider]
-	if !ok {
-		return nil, fmt.Errorf("%w: unsupported provider %q", ErrSentimentConfigInvalid, provider)
-	}
-
-	if err := ValidateSentimentConfig(cfg); err != nil {
-		return nil, err
-	}
-
-	return entry.Factory(ctx, cfg)
+	return sentimentClientRegistry.newClient(ctx, cfg)
 }

@@ -316,7 +316,8 @@ func seedEmbeddedFeedback(
 		embedding := make([]float32, models.EmbeddingVectorDimensions)
 		embedding[0] = 0.25
 
-		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, recordID, taxonomyEmbeddingModel, embedding))
+		// nil stillCurrent: unconditional write (test setup, no concurrent-job race to guard).
+		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, recordID, taxonomyEmbeddingModel, embedding, nil))
 	}
 
 	t.Cleanup(func() {

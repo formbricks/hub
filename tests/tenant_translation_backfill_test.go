@@ -95,7 +95,7 @@ func TestListTranslationBackfillTargetsForTenant(t *testing.T) {
 	// Tenant A: one already translated to the current target (de-DE) → must be excluded.
 	recCurrent := makeText(tenantA, "current")
 	currentTranslation := "Aktuell"
-	require.NoError(t, repo.SetTranslation(ctx, recCurrent.ID, &currentTranslation, "de-DE", ""))
+	require.NoError(t, repo.SetTranslation(ctx, recCurrent.ID, &currentTranslation, "de-DE", "", nil))
 
 	// Tenant B: one untranslated record → must never appear for tenant A.
 	recB := makeText(tenantB, "bee")
@@ -169,7 +169,7 @@ func TestListTranslationBackfillTargetsForTenant_UsesDefaultLanguage(t *testing.
 	// Seed the stale record's translation to its former target — de-DE is the effective target
 	// for this write because we pass de-DE as the default.
 	oldTranslation := "Eins (alt)"
-	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &oldTranslation, "de-DE", "de-DE"))
+	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &oldTranslation, "de-DE", "de-DE", nil))
 
 	// With no default configured, a tenant with no target has no effective target → no targets.
 	none, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenant, uuid.Nil, 100, "")
@@ -218,7 +218,7 @@ func TestBackfillTranslationsForTenant_Isolation(t *testing.T) {
 	inserter := &countingTranslationInserter{}
 	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
 
-	enqueued, err := svc.BackfillTranslationsForTenant(ctx, inserter, service.TranslationsQueueName, 3, tenantA)
+	enqueued, err := svc.BackfillTranslationsForTenant(ctx, inserter, service.TranslationsQueueName, 3, tenantA, "run-1")
 	require.NoError(t, err)
 	assert.Equal(t, 2, enqueued)
 
@@ -226,7 +226,7 @@ func TestBackfillTranslationsForTenant_Isolation(t *testing.T) {
 	for _, job := range inserter.args {
 		enqueuedIDs[job.FeedbackRecordID] = job.TargetLang
 
-		assert.Equal(t, "backfill", job.ValueTextHash, "backfill jobs carry the constant hash")
+		assert.Equal(t, "backfill:run-1", job.ValueTextHash, "backfill jobs carry the per-run marker")
 	}
 
 	assert.Equal(t, map[uuid.UUID]string{recA1.ID: "de-DE", recA2.ID: "de-DE"}, enqueuedIDs,

@@ -131,7 +131,7 @@ func TestSentimentResponseSchema_EnumDerivesFromModelLabels(t *testing.T) {
 	}
 
 	require.NotNil(t, sentiment, "the schema must have a sentiment property")
-	assert.Equal(t, sentimentLabelStrings(), sentiment.Enum, "the enum is the model label set, in order")
+	assert.Equal(t, labelStrings(models.SentimentValues()), sentiment.Enum, "the enum is the model label set, in order")
 	assert.Len(t, sentiment.Enum, len(models.SentimentValues()))
 }
 
@@ -149,7 +149,7 @@ func TestParseSentimentResult_ConsumesSchemaPropertyNames(t *testing.T) {
 			values[property.Name] = string(models.SentimentPositive)
 		case llm.TypeNumber:
 			values[property.Name] = 0.5
-		case llm.TypeInteger, llm.TypeBoolean:
+		case llm.TypeInteger, llm.TypeBoolean, llm.TypeArray:
 			t.Fatalf("unexpected schema property type %q for %q", property.Type, property.Name)
 		default:
 			t.Fatalf("unhandled schema property type %q for %q", property.Type, property.Name)

@@ -1,4 +1,4 @@
-.PHONY: all test help tests mcp-smoke tests-coverage check-coverage build build-api build-worker build-backfill-embeddings run run-api run-worker run-backfill-embeddings init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
+.PHONY: all test help tests mcp-smoke tests-coverage check-coverage build build-api build-worker build-backfill-embeddings build-backfill-translations build-backfill-classify run run-api run-worker run-backfill-embeddings run-backfill-translations run-backfill-classify init-db clean docker-up docker-down docker-clean deps install-tools fmt lint lint-new lint-openapi dev-setup test-all test-unit schemathesis install-hooks migrate-status migrate-validate river-migrate
 
 # Aliases for checkmake/lint expectations
 all: build
@@ -13,10 +13,14 @@ help:
 	@echo "  make build-api                - Build hub-api only (bin/hub-api)"
 	@echo "  make build-worker             - Build hub-worker only (bin/hub-worker)"
 	@echo "  make build-backfill-embeddings - Build the backfill-embeddings command"
+	@echo "  make build-backfill-translations - Build the backfill-translations command"
+	@echo "  make build-backfill-classify - Build the backfill-classify command"
 	@echo "  make run              - Run River migrations, then hub-api and hub-worker"
 	@echo "  make run-api          - Run the API server only (hub-api)"
 	@echo "  make run-worker       - Run the worker only (hub-worker)"
 	@echo "  make run-backfill-embeddings - Run the backfill-embeddings command (enqueues embedding jobs; loads .env)"
+	@echo "  make run-backfill-translations - Run the backfill-translations command (enqueues translation jobs; loads .env)"
+	@echo "  make run-backfill-classify TYPE=sentiment|emotions - Run the classify backfill (enqueues jobs for NULL rows; loads .env)"
 	@echo "  make test-unit        - Run unit tests (fast, no database)"
 	@echo "  make tests            - Run integration tests"
 	@echo "  make mcp-smoke        - Run the live MCP package smoke test (requires Hub env vars)"
@@ -113,10 +117,34 @@ build-backfill-embeddings:
 	go build -o bin/backfill-embeddings ./cmd/backfill-embeddings
 	@echo "Binary created: bin/backfill-embeddings"
 
+# Build the backfill-translations command (enqueues translation jobs; requires DATABASE_URL)
+build-backfill-translations:
+	@echo "Building backfill-translations..."
+	go build -o bin/backfill-translations ./cmd/backfill-translations
+	@echo "Binary created: bin/backfill-translations"
+
+# Build the backfill-classify command (enqueues sentiment/emotions jobs for NULL rows; requires DATABASE_URL)
+build-backfill-classify:
+	@echo "Building backfill-classify..."
+	go build -o bin/backfill-classify ./cmd/backfill-classify
+	@echo "Binary created: bin/backfill-classify"
+
 # Run the backfill-embeddings command (loads .env for DATABASE_URL etc.). Requires .env; fails fast if missing.
 run-backfill-embeddings:
 	@if [ ! -f .env ]; then echo "Error: .env file required. Copy .env.example to .env and configure."; exit 1; fi && \
 	(set -a && . ./.env && set +a && go run ./cmd/backfill-embeddings)
+
+# Run the backfill-translations command (loads .env for DATABASE_URL etc.). Requires .env; fails fast if missing.
+run-backfill-translations:
+	@if [ ! -f .env ]; then echo "Error: .env file required. Copy .env.example to .env and configure."; exit 1; fi && \
+	(set -a && . ./.env && set +a && go run ./cmd/backfill-translations)
+
+# Run the backfill-classify command for one enrichment type (loads .env).
+# Usage: make run-backfill-classify TYPE=sentiment|emotions
+run-backfill-classify:
+	@if [ ! -f .env ]; then echo "Error: .env file required. Copy .env.example to .env and configure."; exit 1; fi
+	@if [ -z "$(TYPE)" ]; then echo "Error: TYPE is required. Usage: make run-backfill-classify TYPE=sentiment|emotions"; exit 1; fi
+	@set -a && . ./.env && set +a && go run ./cmd/backfill-classify -type $(TYPE)
 
 define RUN_LOCAL_APP
 set -Eeuo pipefail

@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"log/slog"
 	"slices"
 	"strings"
@@ -22,7 +20,6 @@ import (
 // (with value_text in ChangedFields, including when value_text is now empty so the worker can clear).
 type EmbeddingProvider struct {
 	inserter    RiverJobInserter
-	apiKey      string
 	model       string
 	queueName   string
 	maxAttempts int
@@ -36,7 +33,6 @@ type EmbeddingProvider struct {
 // metrics may be nil when metrics are disabled.
 func NewEmbeddingProvider(
 	inserter RiverJobInserter,
-	apiKey string,
 	model string,
 	queueName string,
 	maxAttempts int,
@@ -45,7 +41,6 @@ func NewEmbeddingProvider(
 ) *EmbeddingProvider {
 	return &EmbeddingProvider{
 		inserter:    inserter,
-		apiKey:      apiKey,
 		model:       model,
 		queueName:   queueName,
 		maxAttempts: maxAttempts,
@@ -60,7 +55,7 @@ func NewEmbeddingProvider(
 // API key is required for openai and google (validated at startup).
 func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	if event.Type == datatypes.FeedbackRecordUpdated {
-		if !contains(event.ChangedFields, "value_text") && !contains(event.ChangedFields, "field_label") {
+		if !slices.Contains(event.ChangedFields, "value_text") && !slices.Contains(event.ChangedFields, "field_label") {
 			slog.Debug("embedding: skip, value_text/field_label not in changed fields",
 				"event_id", event.ID,
 				"feedback_record_id", recordIDFromEventData(event.Data),
@@ -89,10 +84,14 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	valueTextHash := embeddingValueTextHash(record.FieldLabel, record.ValueText, p.docPrefix)
 
+	// Deliberately no UniqueOpts on the event path — mirrors the classify providers: River's
+	// completed-state dedupe swallowed the re-embed after content transitioned away and back
+	// within the dedupe bucket, leaving the record without an embedding (the clear path deletes
+	// the row). Update events fire only on actual field changes, so each event is a real
+	// transition worth embedding.
 	opts := &river.InsertOpts{
 		Queue:       p.queueName,
 		MaxAttempts: p.maxAttempts,
-		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: uniqueByPeriodEmbedding},
 	}
 
 	_, err := p.inserter.Insert(ctx, FeedbackEmbeddingArgs{
@@ -122,10 +121,6 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	if p.metrics != nil {
 		p.metrics.RecordJobsEnqueued(ctx, 1)
 	}
-}
-
-func contains(s []string, v string) bool {
-	return slices.Contains(s, v)
 }
 
 func recordIDFromEventData(data any) uuid.UUID {
@@ -196,12 +191,5 @@ func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 // embeddingValueTextHash returns a hash of the embedding input for dedupe (same content => same job within window).
 // Uses BuildEmbeddingInput; empty content returns "empty".
 func embeddingValueTextHash(fieldLabel, valueText *string, prefix string) string {
-	content := BuildEmbeddingInput(fieldLabel, valueText, prefix)
-	if content == "" {
-		return "empty"
-	}
-
-	sum := sha256.Sum256([]byte(content))
-
-	return hex.EncodeToString(sum[:])
+	return hashContent(BuildEmbeddingInput(fieldLabel, valueText, prefix))
 }

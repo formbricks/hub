@@ -380,3 +380,111 @@ func TestFeedbackRecordsHandler_DeleteByUser(t *testing.T) {
 		assert.Equal(t, "Successfully deleted 0 feedback records", resp.Message)
 	})
 }
+
+// TestFeedbackRecordsHandler_BodyBounds locks the ingest cost bounds: an oversized body is
+// rejected with 413 before being read into memory, and an over-long value_text with 400 — both
+// before any service call, since every accepted value_text byte is later re-sent to the LLM and
+// embedding providers by up to four enrichment pipelines.
+func TestFeedbackRecordsHandler_BodyBounds(t *testing.T) {
+	t.Run("oversized body returns 413", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		huge := strings.Repeat("a", maxFeedbackRecordBodyBytes+1024)
+		body := []byte(`{"source_type":"survey","field_id":"q1","field_type":"text",` +
+			`"tenant_id":"t","submission_id":"s","value_text":"` + huge + `"}`)
+
+		req := httptest.NewRequestWithContext(
+			context.Background(), http.MethodPost, "http://test/v1/feedback-records", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+
+		handler.Create(rec, req)
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	})
+
+	t.Run("over-long value_text returns 400", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		tooLong := strings.Repeat("a", 30001)
+		body := []byte(`{"source_type":"survey","field_id":"q1","field_type":"text",` +
+			`"tenant_id":"t","submission_id":"s","value_text":"` + tooLong + `"}`)
+
+		req := httptest.NewRequestWithContext(
+			context.Background(), http.MethodPost, "http://test/v1/feedback-records", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+
+		handler.Create(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("value_text at the cap is accepted", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{
+			createFunc: func(_ context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+				return &models.FeedbackRecord{TenantID: req.TenantID}, nil
+			},
+		}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		atCap := strings.Repeat("a", 30000)
+		body := []byte(`{"source_type":"survey","field_id":"q1","field_type":"text",` +
+			`"tenant_id":"t","submission_id":"s","value_text":"` + atCap + `"}`)
+
+		req := httptest.NewRequestWithContext(
+			context.Background(), http.MethodPost, "http://test/v1/feedback-records", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+
+		handler.Create(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+	})
+
+	t.Run("over-long optional string fields return 400", func(t *testing.T) {
+		base := `"source_type":"survey","field_id":"q1","field_type":"text","tenant_id":"t","submission_id":"s"`
+		over256 := strings.Repeat("a", 256)
+		over2049 := strings.Repeat("a", 2049)
+
+		cases := map[string]string{
+			"source_id":         `"source_id":"` + over256 + `"`,
+			"source_name":       `"source_name":"` + over256 + `"`,
+			"user_id":           `"user_id":"` + over256 + `"`,
+			"field_label":       `"field_label":"` + over2049 + `"`,
+			"field_group_label": `"field_group_label":"` + over2049 + `"`,
+		}
+
+		for field, fragment := range cases {
+			t.Run(field, func(t *testing.T) {
+				handler := NewFeedbackRecordsHandler(&mockFeedbackRecordsService{})
+				body := []byte("{" + base + "," + fragment + "}")
+
+				req := httptest.NewRequestWithContext(
+					context.Background(), http.MethodPost, "http://test/v1/feedback-records", bytes.NewReader(body))
+				rec := httptest.NewRecorder()
+
+				handler.Create(rec, req)
+
+				assert.Equal(t, http.StatusBadRequest, rec.Code, "%s over its cap must be rejected", field)
+			})
+		}
+	})
+
+	t.Run("update body is bounded too", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		huge := strings.Repeat("a", maxFeedbackRecordBodyBytes+1024)
+		req := httptest.NewRequestWithContext(
+			context.Background(), http.MethodPatch,
+			"http://test/v1/feedback-records/"+uuid.Must(uuid.NewV7()).String(),
+			bytes.NewReader([]byte(`{"value_text":"`+huge+`"}`)))
+		req.SetPathValue("id", uuid.Must(uuid.NewV7()).String())
+
+		rec := httptest.NewRecorder()
+
+		handler.Update(rec, req)
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	})
+}

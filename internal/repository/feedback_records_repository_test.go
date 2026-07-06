@@ -20,23 +20,44 @@ func TestFeedbackRecordsRepository_Package(_ *testing.T) {
 	// No DB in unit tests; DeleteByUser coverage is in tests/.
 }
 
-// TestBuildUpdateQuery_ClearsStaleTranslationOnContentChange asserts that an update touching
-// value_text or language also nulls value_text_translated / translation_lang_key — so the now-stale
-// translation falls back to the original and the row is recoverable by a backfill — while a
-// non-content update leaves the translation columns untouched.
-func TestBuildUpdateQuery_ClearsStaleTranslationOnContentChange(t *testing.T) {
+// TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange locks the eager-clear trigger scope in
+// buildUpdateQuery, which must MIRROR each enrichment provider's `triggers` (internal/service):
+// sentiment/emotions are invalidated by a value_text change alone, translation by value_text OR
+// language. A non-content update (metadata, user_id) must clear nothing. Asserting on the emitted
+// SQL keeps this a fast, DB-free guard against the two sides drifting apart.
+func TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange(t *testing.T) {
 	text := "updated text"
 	lang := "de-DE"
+	user := "user-1"
 	meta := json.RawMessage(`{"k":"v"}`)
 
+	// Enrichment output columns, grouped by what invalidates them.
+	translationCols := []string{"value_text_translated", "translation_lang_key"}
+	textOnlyCols := []string{"sentiment", "sentiment_score", "emotions"}
+	allCols := append(append([]string{}, translationCols...), textOnlyCols...)
+
 	cases := []struct {
-		name      string
-		req       *models.UpdateFeedbackRecordRequest
-		wantClear bool
+		name  string
+		req   *models.UpdateFeedbackRecordRequest
+		clear []string // columns whose stale-clear CASE must be emitted
 	}{
-		{"value_text change clears translation", &models.UpdateFeedbackRecordRequest{ValueText: &text}, true},
-		{"language change clears translation", &models.UpdateFeedbackRecordRequest{Language: &lang}, true},
-		{"non-content change keeps translation", &models.UpdateFeedbackRecordRequest{Metadata: meta}, false},
+		{
+			"value_text change clears translation and sentiment/emotions",
+			&models.UpdateFeedbackRecordRequest{ValueText: &text},
+			allCols,
+		},
+		{
+			"language change clears only translation",
+			&models.UpdateFeedbackRecordRequest{Language: &lang},
+			translationCols,
+		},
+		{
+			"value_text and language change clears everything",
+			&models.UpdateFeedbackRecordRequest{ValueText: &text, Language: &lang},
+			allCols,
+		},
+		{"metadata-only change clears nothing", &models.UpdateFeedbackRecordRequest{Metadata: meta}, nil},
+		{"user_id-only change clears nothing", &models.UpdateFeedbackRecordRequest{UserID: &user}, nil},
 	}
 
 	for _, testCase := range cases {
@@ -46,11 +67,22 @@ func TestBuildUpdateQuery_ClearsStaleTranslationOnContentChange(t *testing.T) {
 				t.Fatal("buildUpdateQuery hasUpdates = false, want true")
 			}
 
-			gotClear := strings.Contains(query, "value_text_translated = CASE WHEN") &&
-				strings.Contains(query, "translation_lang_key = CASE WHEN")
-			if gotClear != testCase.wantClear {
-				t.Fatalf("clears translation = %v, want %v\nquery: %s", gotClear, testCase.wantClear, query)
+			wantClear := make(map[string]bool, len(testCase.clear))
+			for _, col := range testCase.clear {
+				wantClear[col] = true
+			}
+
+			for _, col := range allCols {
+				if got := clearsColumn(query, col); got != wantClear[col] {
+					t.Fatalf("clears %s = %v, want %v\nquery: %s", col, got, wantClear[col], query)
+				}
 			}
 		})
 	}
+}
+
+// clearsColumn reports whether the query nulls col via the eager-clear CASE emitted by
+// clearColumnWhen. The " = CASE WHEN" suffix makes "sentiment" not match "sentiment_score".
+func clearsColumn(query, col string) bool {
+	return strings.Contains(query, col+" = CASE WHEN")
 }

@@ -1067,9 +1067,9 @@ func TestDeleteTenantData(t *testing.T) {
 
 	embedding := make([]float32, models.EmbeddingVectorDimensions)
 	embedding[0] = 0.25
-	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantARecord1.ID, modelName, embedding))
-	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantARecord2.ID, modelName, embedding))
-	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantBRecord.ID, modelName, embedding))
+	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantARecord1.ID, modelName, embedding, nil))
+	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantARecord2.ID, modelName, embedding, nil))
+	require.NoError(t, embeddingsRepo.Upsert(ctx, tenantBRecord.ID, modelName, embedding, nil))
 
 	tenantATaxonomyRunID := createTenantDataTaxonomyGraph(
 		ctx, t, db, tenantA, tenantARecord1.ID, "tenant-data-delete-a-taxonomy-"+uuid.NewString(), tenantARecord1.FieldID,

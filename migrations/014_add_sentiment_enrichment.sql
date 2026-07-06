@@ -17,10 +17,15 @@
 --     rows) and VALIDATEd as a separate, auto-committed step that takes only SHARE UPDATE
 --     EXCLUSIVE, so reads and writes proceed during the verification scan.
 --   * the index is built CONCURRENTLY.
+-- Every statement is also RE-RUNNABLE: under NO TRANSACTION each statement auto-commits while
+-- goose records the version only at the end, so an interrupted deploy re-runs the whole file —
+-- the guards keep that from crash-looping on "already exists".
 ALTER TABLE feedback_records
-  ADD COLUMN sentiment VARCHAR(16),
-  ADD COLUMN sentiment_score DOUBLE PRECISION;
+  ADD COLUMN IF NOT EXISTS sentiment VARCHAR(16),
+  ADD COLUMN IF NOT EXISTS sentiment_score DOUBLE PRECISION;
 
+ALTER TABLE feedback_records
+  DROP CONSTRAINT IF EXISTS feedback_records_sentiment_valid;
 ALTER TABLE feedback_records
   ADD CONSTRAINT feedback_records_sentiment_valid CHECK (
     sentiment IS NULL OR sentiment IN
@@ -28,12 +33,16 @@ ALTER TABLE feedback_records
   ) NOT VALID;
 
 ALTER TABLE feedback_records
+  DROP CONSTRAINT IF EXISTS feedback_records_sentiment_score_range;
+ALTER TABLE feedback_records
   ADD CONSTRAINT feedback_records_sentiment_score_range CHECK (
     sentiment_score IS NULL OR (sentiment_score >= -1.0 AND sentiment_score <= 1.0)
   ) NOT VALID;
 
 -- sentiment and sentiment_score are populated together: both set (enriched) or both NULL (not
 -- yet enriched). Defense-in-depth against a half-populated write slipping past the service.
+ALTER TABLE feedback_records
+  DROP CONSTRAINT IF EXISTS feedback_records_sentiment_pairing;
 ALTER TABLE feedback_records
   ADD CONSTRAINT feedback_records_sentiment_pairing CHECK (
     (sentiment IS NULL) = (sentiment_score IS NULL)
@@ -46,6 +55,9 @@ ALTER TABLE feedback_records VALIDATE CONSTRAINT feedback_records_sentiment_pair
 -- Sentiment is sparse (NULL until enriched) and Hub reads are always tenant-scoped, so a
 -- partial composite index serves filter/group-by-sentiment while keeping the index small and
 -- the ingestion-path write overhead minimal (NULL rows are not indexed).
+-- DROP-then-CREATE (not IF NOT EXISTS) so a re-run after an interrupted build replaces the
+-- INVALID leftover instead of keeping it.
+DROP INDEX CONCURRENTLY IF EXISTS idx_feedback_records_tenant_sentiment;
 CREATE INDEX CONCURRENTLY idx_feedback_records_tenant_sentiment
   ON feedback_records (tenant_id, sentiment) WHERE sentiment IS NOT NULL;
 

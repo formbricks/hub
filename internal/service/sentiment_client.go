@@ -34,12 +34,6 @@ type SentimentClient interface {
 	Classify(ctx context.Context, text, sourceLang string) (SentimentResult, error)
 }
 
-// rawStructuredCompleter is the low-level provider call (system prompt + user text + schema ->
-// JSON text), satisfied by *openai.Client and *googleai.Client. It mirrors rawTranslator.
-type rawStructuredCompleter interface {
-	CompleteJSON(ctx context.Context, systemPrompt, userText string, schema llm.Schema) (string, error)
-}
-
 // promptSentimentClient adapts a rawStructuredCompleter to SentimentClient by building the
 // prompt and schema, then parsing and validating the JSON response. The provider call stays
 // prompt-agnostic (the client owns the contract), mirroring promptTranslationClient.
@@ -56,16 +50,10 @@ type sentimentResponse struct {
 	Score *float64 `json:"score"`
 }
 
-// Classify builds the prompt and schema, calls the provider, and parses the result.
+// Classify builds the sentiment prompt and schema, calls the provider, and parses the result via
+// the shared structured-classification path.
 func (c promptSentimentClient) Classify(ctx context.Context, text, sourceLang string) (SentimentResult, error) {
-	systemPrompt, userText := buildSentimentPrompt(text, sourceLang)
-
-	raw, err := c.raw.CompleteJSON(ctx, systemPrompt, userText, sentimentResponseSchema)
-	if err != nil {
-		return SentimentResult{}, fmt.Errorf("classify sentiment: %w", err)
-	}
-
-	return parseSentimentResult(raw)
+	return classifyStructured(ctx, c.raw, sentimentSpec, text, sourceLang)
 }
 
 // sentimentResponseSchema is the structured-output contract: the sentiment label (one of
@@ -80,7 +68,7 @@ var sentimentResponseSchema = llm.Schema{
 			Name:        "sentiment",
 			Type:        llm.TypeString,
 			Description: "Overall sentiment polarity of the feedback text.",
-			Enum:        sentimentLabelStrings(),
+			Enum:        labelStrings(models.SentimentValues()),
 		},
 		{
 			Name: "score",
@@ -89,6 +77,15 @@ var sentimentResponseSchema = llm.Schema{
 				"Use 0 for neutral or mixed.",
 		},
 	},
+}
+
+// sentimentSpec is the structured-classification contract for sentiment, driving the shared
+// classifyStructured path (mirrored by the emotions client).
+var sentimentSpec = structuredSpec[SentimentResult]{
+	Name:        "sentiment",
+	Schema:      sentimentResponseSchema,
+	BuildPrompt: buildSentimentPrompt,
+	Parse:       parseSentimentResult,
 }
 
 // buildSentimentPrompt renders the system prompt and user text. The system prompt fixes the
@@ -130,7 +127,7 @@ func parseSentimentResult(raw string) (SentimentResult, error) {
 
 	label := models.SentimentValue(strings.TrimSpace(resp.Sentiment))
 	if !label.IsValid() {
-		return SentimentResult{}, fmt.Errorf("%w: unknown label %q", ErrSentimentResponseInvalid, resp.Sentiment)
+		return SentimentResult{}, fmt.Errorf("%w: unknown label %.64q", ErrSentimentResponseInvalid, resp.Sentiment)
 	}
 
 	if resp.Score == nil {
@@ -151,17 +148,4 @@ func clampSentimentScore(score float64) float64 {
 	default:
 		return score
 	}
-}
-
-// sentimentLabelStrings returns the valid sentiment labels as strings, in models.SentimentValues
-// order, for the structured-output enum.
-func sentimentLabelStrings() []string {
-	values := models.SentimentValues()
-	labels := make([]string, len(values))
-
-	for i, value := range values {
-		labels[i] = string(value)
-	}
-
-	return labels
 }

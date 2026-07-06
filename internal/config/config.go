@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
+	"github.com/joho/godotenv"
 	"golang.org/x/text/language"
 
 	"github.com/formbricks/hub/pkg/database"
@@ -19,17 +20,24 @@ import (
 
 // Sentinel errors for configuration validation (err113).
 var (
-	ErrWebhookDeliveryMaxConcurrent      = errors.New("WEBHOOK_DELIVERY_MAX_CONCURRENT must be a positive integer")
-	ErrWebhookDeliveryMaxAttempts        = errors.New("WEBHOOK_DELIVERY_MAX_ATTEMPTS must be a positive integer")
-	ErrWebhookMaxFanOutPerEvent          = errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
-	ErrMessagePublisherQueueMaxSize      = errors.New("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE must be a positive integer")
-	ErrMessagePublisherPerEventTimeout   = errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
-	ErrShutdownTimeoutSeconds            = errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
-	ErrWebhookMaxCount                   = errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
-	ErrDatabaseMinConnsExceedsMax        = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
-	ErrInvalidPublicBaseURL              = errors.New("PUBLIC_BASE_URL must be an absolute http(s) URL without query or fragment")
-	ErrInvalidEmbeddingBaseURL           = errors.New("EMBEDDING_BASE_URL must be an absolute http(s) URL without query or fragment")
-	ErrInvalidTranslationBaseURL         = errors.New("TRANSLATION_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrWebhookDeliveryMaxConcurrent    = errors.New("WEBHOOK_DELIVERY_MAX_CONCURRENT must be a positive integer")
+	ErrWebhookDeliveryMaxAttempts      = errors.New("WEBHOOK_DELIVERY_MAX_ATTEMPTS must be a positive integer")
+	ErrWebhookMaxFanOutPerEvent        = errors.New("WEBHOOK_MAX_FAN_OUT_PER_EVENT must be a positive integer")
+	ErrMessagePublisherQueueMaxSize    = errors.New("MESSAGE_PUBLISHER_QUEUE_MAX_SIZE must be a positive integer")
+	ErrMessagePublisherPerEventTimeout = errors.New("MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS must be a positive integer")
+	ErrShutdownTimeoutSeconds          = errors.New("SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
+	ErrWebhookMaxCount                 = errors.New("WEBHOOK_MAX_COUNT must be a positive integer")
+	ErrDatabaseMinConnsExceedsMax      = errors.New("DATABASE_MIN_CONNS must not exceed DATABASE_MAX_CONNS")
+	ErrInvalidPublicBaseURL            = errors.New("PUBLIC_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidEmbeddingBaseURL         = errors.New("EMBEDDING_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidTranslationBaseURL       = errors.New("TRANSLATION_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidSentimentBaseURL         = errors.New("SENTIMENT_BASE_URL must be an absolute http(s) URL without query or fragment")
+	ErrInvalidEmotionsBaseURL          = errors.New("EMOTIONS_BASE_URL must be an absolute http(s) URL without query or fragment")
+	// ErrDotEnvMalformed deliberately withholds the parser's own message: godotenv error strings
+	// echo raw file content (up to the whole remainder of the file), which for a .env means
+	// secrets — API keys, the database password — straight into startup logs.
+	ErrDotEnvMalformed = errors.New(
+		".env file is malformed (fix quoting/characters; parse detail withheld to avoid logging secrets)")
 	ErrInvalidTranslationDefaultLanguage = errors.New("TRANSLATION_DEFAULT_LANGUAGE must be a valid BCP-47 locale (e.g. en-US)")
 	ErrInvalidTaxonomyServiceURL         = errors.New("TAXONOMY_SERVICE_URL must be an absolute http(s) URL without query or fragment")
 )
@@ -50,6 +58,7 @@ type Config struct {
 	Embedding           EmbeddingConfig
 	Translation         TranslationConfig
 	Sentiment           SentimentConfig
+	Emotions            EmotionsConfig
 	TenantSettingsCache TenantSettingsCacheConfig
 	Taxonomy            TaxonomyConfig
 	TenantData          TenantDataConfig
@@ -170,6 +179,25 @@ func (c SentimentConfig) Enabled() bool {
 	return c.Provider != "" && c.Model != ""
 }
 
+// EmotionsConfig holds the feedback emotion-enrichment provider settings (ENG-1573).
+// Emotion enrichment is disabled unless Provider and Model are both set — the same
+// provider+model gate the other enrichments use (there is no separate enable flag).
+type EmotionsConfig struct {
+	ProviderAPIKey      string `env:"EMOTIONS_PROVIDER_API_KEY"`
+	Provider            string `env:"EMOTIONS_PROVIDER"`
+	Model               string `env:"EMOTIONS_MODEL"`
+	BaseURL             string `env:"EMOTIONS_BASE_URL"`
+	MaxConcurrent       int    `env:"EMOTIONS_MAX_CONCURRENT"        env-default:"5"`
+	MaxAttempts         int    `env:"EMOTIONS_MAX_ATTEMPTS"          env-default:"3"`
+	GoogleCloudProject  string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
+}
+
+// Enabled reports whether emotion enrichment is configured (provider and model both set).
+func (c EmotionsConfig) Enabled() bool {
+	return c.Provider != "" && c.Model != ""
+}
+
 // TenantSettingsCacheConfig configures the per-process tenant-settings cache that
 // the translation enqueue gate and worker use to resolve a tenant's target
 // language without hitting the database on every feedback event. A short TTL
@@ -261,15 +289,26 @@ func parseBlacklist(s string) map[string]struct{} {
 func Load() (*Config, error) {
 	cfg := &Config{}
 
-	err := cleanenv.ReadConfig(".env", cfg)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || isNotExist(err) {
-			if readErr := cleanenv.ReadEnv(cfg); readErr != nil {
-				return nil, fmt.Errorf("read env: %w", readErr)
-			}
-		} else {
-			return nil, fmt.Errorf("read config: %w", err)
-		}
+	// cleanenv.ReadConfig(".env", cfg) is split here into its two phases on purpose, to
+	// discriminate the error SOURCE:
+	//   - A .env *parse* failure (godotenv) is formatted with the offending file content (e.g.
+	//     `unexpected character %q in variable name near %q`, the second value being the rest of
+	//     the file), and main logs the returned error — surfacing it would put API keys and the
+	//     database password into stdout and the log aggregator. It is masked as the static
+	//     ErrDotEnvMalformed.
+	//   - A struct *coercion* failure from ReadEnv (e.g. a non-numeric SENTIMENT_MAX_ATTEMPTS)
+	//     names only the field and env var plus the type error; it carries no file content, so it
+	//     is surfaced to point the operator at the actual problem instead of a misleading
+	//     "malformed .env".
+	// godotenv.Overload mirrors cleanenv's .env handling (parse + unconditional os.Setenv), so a
+	// value in .env still overrides a pre-existing environment variable, and a missing file is a
+	// no-op (env-only configuration).
+	if err := godotenv.Overload(".env"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, ErrDotEnvMalformed
+	}
+
+	if err := cleanenv.ReadEnv(cfg); err != nil {
+		return nil, fmt.Errorf("read env: %w", err)
 	}
 
 	applyDefaults(cfg)
@@ -326,28 +365,41 @@ func applyDefaults(cfg *Config) {
 	}
 
 	// Google Cloud fallbacks: EMBEDDING_* can fall back to GOOGLE_CLOUD_*
-	if cfg.Embedding.GoogleCloudProject == "" {
-		cfg.Embedding.GoogleCloudProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	// The global GOOGLE_CLOUD_PROJECT/LOCATION pair backs every enrichment's per-type override
+	// (as .env.example documents): one gcloud project setting serves all four pipelines unless a
+	// type overrides it.
+	for _, pair := range []struct{ project, location *string }{
+		{&cfg.Embedding.GoogleCloudProject, &cfg.Embedding.GoogleCloudLocation},
+		{&cfg.Translation.GoogleCloudProject, &cfg.Translation.GoogleCloudLocation},
+		{&cfg.Sentiment.GoogleCloudProject, &cfg.Sentiment.GoogleCloudLocation},
+		{&cfg.Emotions.GoogleCloudProject, &cfg.Emotions.GoogleCloudLocation},
+	} {
+		if *pair.project == "" {
+			*pair.project = os.Getenv("GOOGLE_CLOUD_PROJECT")
+		}
+
+		if *pair.location == "" {
+			*pair.location = os.Getenv("GOOGLE_CLOUD_LOCATION")
+		}
 	}
 
-	if cfg.Embedding.GoogleCloudLocation == "" {
-		cfg.Embedding.GoogleCloudLocation = os.Getenv("GOOGLE_CLOUD_LOCATION")
-	}
+	// Coerce unset/nonsensical worker tunables back to their defaults for every enrichment
+	// type. An explicit 0 would otherwise fail hub-worker startup (river rejects MaxWorkers 0)
+	// or, worse, flow into InsertOpts where River substitutes its default of 25 attempts — 25
+	// LLM calls per failing job instead of the intended 3.
+	for _, tunables := range []struct{ maxConcurrent, maxAttempts *int }{
+		{&cfg.Embedding.MaxConcurrent, &cfg.Embedding.MaxAttempts},
+		{&cfg.Translation.MaxConcurrent, &cfg.Translation.MaxAttempts},
+		{&cfg.Sentiment.MaxConcurrent, &cfg.Sentiment.MaxAttempts},
+		{&cfg.Emotions.MaxConcurrent, &cfg.Emotions.MaxAttempts},
+	} {
+		if *tunables.maxConcurrent <= 0 {
+			*tunables.maxConcurrent = 5
+		}
 
-	if cfg.Embedding.MaxConcurrent <= 0 {
-		cfg.Embedding.MaxConcurrent = 5
-	}
-
-	if cfg.Embedding.MaxAttempts <= 0 {
-		cfg.Embedding.MaxAttempts = 3
-	}
-
-	if cfg.Translation.MaxConcurrent <= 0 {
-		cfg.Translation.MaxConcurrent = 5
-	}
-
-	if cfg.Translation.MaxAttempts <= 0 {
-		cfg.Translation.MaxAttempts = 3
+		if *tunables.maxAttempts <= 0 {
+			*tunables.maxAttempts = 3
+		}
 	}
 
 	// Default the cache size only when the operator did not set it. An explicit 0 (or
@@ -375,15 +427,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.TenantData.PurgeLockTimeout.Duration() <= 0 {
 		cfg.TenantData.PurgeLockTimeout = DurationSec(time.Duration(defaultPurgeLockTimeoutSec) * time.Second)
 	}
-}
-
-func isNotExist(err error) bool {
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
-		return errors.Is(pathErr.Err, os.ErrNotExist)
-	}
-
-	return false
 }
 
 func validate(cfg *Config) error {
@@ -444,6 +487,24 @@ func validate(cfg *Config) error {
 		}
 
 		cfg.Translation.BaseURL = normalized
+	}
+
+	if cfg.Sentiment.BaseURL != "" {
+		normalized, err := normalizeHTTPBaseURL(cfg.Sentiment.BaseURL, ErrInvalidSentimentBaseURL)
+		if err != nil {
+			return err
+		}
+
+		cfg.Sentiment.BaseURL = normalized
+	}
+
+	if cfg.Emotions.BaseURL != "" {
+		normalized, err := normalizeHTTPBaseURL(cfg.Emotions.BaseURL, ErrInvalidEmotionsBaseURL)
+		if err != nil {
+			return err
+		}
+
+		cfg.Emotions.BaseURL = normalized
 	}
 
 	// Canonicalize the fallback target language so it compares equal to tenant targets (which

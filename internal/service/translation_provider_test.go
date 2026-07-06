@@ -59,6 +59,9 @@ var _ observability.TranslationMetrics = (*countingTranslationMetrics)(nil)
 type mockTranslationInserter struct {
 	calls []FeedbackTranslationArgs
 	err   error
+	// skipEvery > 0 marks every skipEvery-th insert as UniqueSkippedAsDuplicate, for
+	// exercising the backfill's truthful enqueued-vs-skipped accounting.
+	skipEvery int
 }
 
 func (m *mockTranslationInserter) Insert(
@@ -68,7 +71,12 @@ func (m *mockTranslationInserter) Insert(
 		m.calls = append(m.calls, a)
 	}
 
-	return &rivertype.JobInsertResult{}, m.err
+	result := &rivertype.JobInsertResult{}
+	if m.skipEvery > 0 && len(m.calls)%m.skipEvery == 0 {
+		result.UniqueSkippedAsDuplicate = true
+	}
+
+	return result, m.err
 }
 
 type mockTargetResolver struct {

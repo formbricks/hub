@@ -133,7 +133,7 @@ func setupEmbeddingSearchHandler(
 // setupMetrics creates meter provider and hub metrics when metrics are enabled.
 // When NewMeterProvider returns nil (unsupported or disabled exporter), returns (nil, nil, nil) (metrics disabled).
 func setupMetrics(cfg *config.Config) (*sdkmetric.MeterProvider, *observability.Metrics, error) {
-	mp, err := observability.NewMeterProvider(cfg)
+	mp, err := observability.NewMeterProvider(cfg, "hub-api")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create meter provider: %w", err)
 	}
@@ -179,6 +179,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		embeddingMetrics   observability.EmbeddingMetrics
 		translationMetrics observability.TranslationMetrics
 		sentimentMetrics   observability.SentimentMetrics
+		emotionsMetrics    observability.EmotionsMetrics
 	)
 	if metrics != nil {
 		eventMetrics = metrics.Events
@@ -186,6 +187,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		embeddingMetrics = metrics.Embeddings
 		translationMetrics = metrics.Translation
 		sentimentMetrics = metrics.Sentiment
+		emotionsMetrics = metrics.Emotions
 	}
 
 	var tracerProvider *sdktrace.TracerProvider
@@ -193,7 +195,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	if cfg.Observability.TracesExporter == "" {
 		slog.Warn("tracing not enabled (OTEL_TRACES_EXPORTER empty or unset)")
 	} else {
-		tracerProvider, err = observability.NewTracerProvider(cfg)
+		tracerProvider, err = observability.NewTracerProvider(cfg, "hub-api")
 		if err != nil {
 			if meterProvider != nil {
 				if err2 := observability.ShutdownMeterProvider(context.Background(), meterProvider); err2 != nil {
@@ -248,7 +250,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.Translation.DefaultLanguage,
 	)
 
-	// Tenant settings service: shared by the sentiment worker's authoritative gate (registered
+	// Tenant settings service: shared by the emotions worker's authoritative gate (registered
 	// below), the settings HTTP handler, and the enqueue-path settings cache.
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
@@ -346,6 +348,31 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
 
+	// Register the emotions worker and declare its queue so the River client can enqueue emotion
+	// jobs (kind + queue must be known at insert time); the jobs are processed by hub-worker, not
+	// in this process. Gated on EMOTIONS_PROVIDER+MODEL; the enqueue provider is registered below,
+	// after the River client exists.
+	if cfg.Emotions.Enabled() {
+		emotionsClient, emotionsErr := service.NewEmotionsClient(context.Background(), service.EmotionsClientConfig{
+			Provider:            cfg.Emotions.Provider,
+			ProviderAPIKey:      cfg.Emotions.ProviderAPIKey,
+			Model:               cfg.Emotions.Model,
+			BaseURL:             cfg.Emotions.BaseURL,
+			GoogleCloudProject:  cfg.Emotions.GoogleCloudProject,
+			GoogleCloudLocation: cfg.Emotions.GoogleCloudLocation,
+		})
+		if emotionsErr != nil {
+			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
+
+			return nil, fmt.Errorf("emotions config: %w", emotionsErr)
+		}
+
+		river.AddWorker(riverWorkers, workers.NewFeedbackEmotionsWorker(
+			feedbackRecordsService, tenantSettingsService, emotionsClient, emotionsMetrics))
+
+		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: 1}
+	}
+
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues:  queues,
 		Workers: riverWorkers,
@@ -375,7 +402,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		docPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
 		embeddingProv := service.NewEmbeddingProvider(
 			riverClient,
-			cfg.Embedding.ProviderAPIKey,
 			embeddingModelForDB,
 			service.EmbeddingsQueueName,
 			cfg.Embedding.MaxAttempts,
@@ -392,15 +418,15 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
 
-	// Translation and sentiment enqueue providers both resolve a per-tenant setting on the
-	// enqueue path (translation's target language; sentiment's per-directory switch), so they
-	// share one short-TTL cache over tenant settings. The cache is evicted on a settings write
-	// (below) so a toggle is visible to the gates immediately, not after TTL expiry.
+	// Translation, sentiment, and emotion enqueue providers all resolve a per-tenant setting on
+	// the enqueue path (translation's target language; the sentiment and emotion per-directory
+	// switches), so they share one short-TTL cache over tenant settings. The cache is evicted on a
+	// settings write (below) so a toggle is visible to the gates immediately, not after TTL expiry.
 	translationEnabled := cfg.Translation.Provider != "" && cfg.Translation.Model != ""
 
 	var tenantSettingsCache *service.CachedTenantSettings
 
-	if translationEnabled || cfg.Sentiment.Enabled() {
+	if translationEnabled || cfg.Sentiment.Enabled() || cfg.Emotions.Enabled() {
 		var cacheMetrics observability.CacheMetrics
 		if metrics != nil {
 			cacheMetrics = metrics.Cache
@@ -427,6 +453,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		messageManager.RegisterProvider(service.NewSentimentProvider(
 			riverClient, tenantSettingsCache, service.SentimentsQueueName, cfg.Sentiment.MaxAttempts,
 			sentimentMetrics))
+	}
+
+	// Emotions enqueue provider: on a create/update with open text it enqueues an emotion job,
+	// skipping tenants that have switched emotions off. Gated on EMOTIONS_PROVIDER+MODEL.
+	if cfg.Emotions.Enabled() {
+		messageManager.RegisterProvider(service.NewEmotionsProvider(
+			riverClient, tenantSettingsCache, service.EmotionsQueueName, cfg.Emotions.MaxAttempts,
+			emotionsMetrics))
 	}
 
 	// On a settings write: evict the shared cache (so a changed setting is visible to the enqueue
@@ -631,26 +665,69 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
-// runRiverQueueDepthPoller periodically updates the River default-queue depth gauge.
+// riverDepthQueues is the fixed queue set the depth poller reports — every queue the Hub
+// declares. The list bounds the gauge's queue-label cardinality; a queue with no backlog is
+// reported as 0 so dashboards see the series exist.
+var riverDepthQueues = []string{
+	river.QueueDefault,
+	service.EmbeddingsQueueName,
+	service.TranslationsQueueName,
+	service.TranslationBackfillsQueueName,
+	service.SentimentsQueueName,
+	service.EmotionsQueueName,
+}
+
+// runRiverQueueDepthPoller periodically updates the per-queue River backlog gauge. Covering
+// every declared queue (not just default) means a provider outage or a backfill piling tens of
+// thousands of jobs into an enrichment queue is visible in metrics before users notice the lag.
 func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetrics observability.EventMetrics) {
 	ticker := time.NewTicker(riverQueueDepthInterval)
 	defer ticker.Stop()
 
 	update := func() {
-		var count int
-
-		err := db.QueryRow(ctx,
-			`SELECT COUNT(*) FROM river_job WHERE queue = $1 AND state IN ($2, $3, $4)`,
-			river.QueueDefault,
+		rows, err := db.Query(ctx,
+			`SELECT queue, COUNT(*), EXTRACT(EPOCH FROM (now() - MIN(created_at)))::float8 FROM river_job
+			 WHERE queue = ANY($1) AND state IN ($2, $3, $4)
+			 GROUP BY queue`,
+			riverDepthQueues,
 			rivertype.JobStateAvailable, rivertype.JobStateRetryable, rivertype.JobStateScheduled,
-		).Scan(&count)
+		)
 		if err != nil {
 			slog.WarnContext(ctx, "river queue depth poll failed", "error", err)
 
 			return
 		}
+		defer rows.Close()
 
-		eventMetrics.SetRiverQueueDepth(count)
+		counts := make(map[string]int, len(riverDepthQueues))
+		ages := make(map[string]float64, len(riverDepthQueues))
+
+		for rows.Next() {
+			var (
+				queue string
+				count int
+				age   float64
+			)
+			if err := rows.Scan(&queue, &count, &age); err != nil {
+				slog.WarnContext(ctx, "river queue depth scan failed", "error", err)
+
+				return
+			}
+
+			counts[queue] = count
+			ages[queue] = age
+		}
+
+		if err := rows.Err(); err != nil {
+			slog.WarnContext(ctx, "river queue depth poll failed", "error", err)
+
+			return
+		}
+
+		for _, queue := range riverDepthQueues {
+			eventMetrics.SetRiverQueueDepth(queue, counts[queue])
+			eventMetrics.SetRiverQueueOldestAge(queue, ages[queue])
+		}
 	}
 
 	update()

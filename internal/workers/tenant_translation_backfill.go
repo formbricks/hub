@@ -15,7 +15,7 @@ import (
 // tenantTranslationBackfillService is the minimal interface the worker needs.
 type tenantTranslationBackfillService interface {
 	BackfillTranslationsForTenant(
-		ctx context.Context, inserter service.RiverJobInserter, queueName string, maxAttempts int, tenantID string,
+		ctx context.Context, inserter service.RiverJobInserter, queueName string, maxAttempts int, tenantID, runID string,
 	) (int, error)
 }
 
@@ -56,8 +56,14 @@ func (w *TenantTranslationBackfillWorker) Work(
 ) error {
 	client := river.ClientFromContext[pgx.Tx](ctx)
 
+	// The run discriminator is derived from this backfill job's ID: stable across the job's own
+	// retries (so a rescued fan-out still dedupes its re-inserted pages) but distinct from any
+	// earlier fan-out for the same tenant, so a previous run's completed jobs cannot swallow
+	// this run's re-translations (e.g. a same-day target flip-flop).
+	runID := fmt.Sprintf("job-%d", job.ID)
+
 	enqueued, err := w.service.BackfillTranslationsForTenant(
-		ctx, client, service.TranslationsQueueName, w.maxAttempts, job.Args.TenantID)
+		ctx, client, service.TranslationsQueueName, w.maxAttempts, job.Args.TenantID, runID)
 	if err != nil {
 		return fmt.Errorf("backfill translations for tenant %s: %w", job.Args.TenantID, err)
 	}
