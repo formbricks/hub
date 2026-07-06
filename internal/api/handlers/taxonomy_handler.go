@@ -275,6 +275,7 @@ func parseUUIDPathValue(w http.ResponseWriter, r *http.Request, name string) (uu
 
 func taxonomyScopeFromQuery(w http.ResponseWriter, r *http.Request) (models.TaxonomyScope, bool) {
 	scope := models.TaxonomyScope{
+		ScopeType:  models.TaxonomyScopeType(r.URL.Query().Get("scope_type")),
 		TenantID:   r.URL.Query().Get("tenant_id"),
 		SourceType: r.URL.Query().Get("source_type"),
 		SourceID:   r.URL.Query().Get("source_id"),

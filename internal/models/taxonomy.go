@@ -53,16 +53,26 @@ const (
 	TaxonomyNodeTypeLeaf   TaxonomyNodeType = "leaf"
 )
 
-// TaxonomyScope identifies the feedback field that a taxonomy run covers.
+// TaxonomyScopeType identifies how broadly a taxonomy run reads feedback input.
+type TaxonomyScopeType string
+
+// Taxonomy scope types.
+const (
+	TaxonomyScopeTypeField     TaxonomyScopeType = "field"
+	TaxonomyScopeTypeDirectory TaxonomyScopeType = "directory"
+)
+
+// TaxonomyScope identifies the feedback input that a taxonomy run covers.
 //
 // SourceID is optional: feedback_records.source_id is nullable, so feedback may have no
 // attributed source. An empty SourceID is the canonical "no source" bucket and matches
 // feedback records whose source_id is NULL or blank.
 type TaxonomyScope struct {
-	TenantID   string `json:"tenant_id"   validate:"required,no_null_bytes,min=1,max=255"`
-	SourceType string `json:"source_type" validate:"required,no_null_bytes,min=1,max=255"`
-	SourceID   string `json:"source_id"   validate:"omitempty,no_null_bytes,max=255"`
-	FieldID    string `json:"field_id"    validate:"required,no_null_bytes,min=1,max=255"`
+	ScopeType  TaxonomyScopeType `json:"scope_type,omitempty" validate:"omitempty,oneof=field directory"`
+	TenantID   string            `json:"tenant_id"   validate:"required,no_null_bytes,min=1,max=255"`
+	SourceType string            `json:"source_type" validate:"omitempty,no_null_bytes,min=1,max=255"`
+	SourceID   string            `json:"source_id"   validate:"omitempty,no_null_bytes,max=255"`
+	FieldID    string            `json:"field_id"    validate:"omitempty,no_null_bytes,min=1,max=255"`
 }
 
 // TaxonomyFieldOption describes a feedback field that can be used for taxonomy generation.
@@ -85,6 +95,7 @@ type TaxonomyFieldsResponse struct {
 // TaxonomyRun is a persisted taxonomy generation run.
 type TaxonomyRun struct {
 	ID             uuid.UUID               `json:"id"`
+	ScopeType      TaxonomyScopeType       `json:"scope_type"`
 	TenantID       string                  `json:"tenant_id"`
 	SourceType     string                  `json:"source_type"`
 	SourceID       string                  `json:"source_id"`
@@ -126,11 +137,12 @@ type CreateTaxonomyRunResponse struct {
 // scopes history to the canonical "no source" bucket — runs whose source_id is "" —
 // which a plain string filter cannot express (it cannot tell "unset" from "empty").
 type ListTaxonomyRunsFilters struct {
-	TenantID   string  `form:"tenant_id"   validate:"required,no_null_bytes,min=1,max=255"`
-	SourceType string  `form:"source_type" validate:"omitempty,no_null_bytes,min=1,max=255"`
-	SourceID   *string `form:"source_id"   validate:"omitempty,no_null_bytes,max=255"`
-	FieldID    string  `form:"field_id"    validate:"omitempty,no_null_bytes,min=1,max=255"`
-	Limit      int     `form:"limit"       validate:"omitempty,min=1,max=100"`
+	ScopeType  TaxonomyScopeType `form:"scope_type"  validate:"omitempty,oneof=field directory"`
+	TenantID   string            `form:"tenant_id"   validate:"required,no_null_bytes,min=1,max=255"`
+	SourceType string            `form:"source_type" validate:"omitempty,no_null_bytes,min=1,max=255"`
+	SourceID   *string           `form:"source_id"   validate:"omitempty,no_null_bytes,max=255"`
+	FieldID    string            `form:"field_id"    validate:"omitempty,no_null_bytes,min=1,max=255"`
+	Limit      int               `form:"limit"       validate:"omitempty,min=1,max=100"`
 }
 
 // ListTaxonomyRunsResponse contains taxonomy run history.
@@ -182,6 +194,9 @@ type TaxonomyTreeResponse struct {
 // TaxonomyRunInputRecord is a feedback record and embedding used by the taxonomy service.
 type TaxonomyRunInputRecord struct {
 	FeedbackRecordID uuid.UUID `json:"feedback_record_id"`
+	SourceType       string    `json:"source_type,omitempty"`
+	SourceID         string    `json:"source_id,omitempty"`
+	FieldID          string    `json:"field_id,omitempty"`
 	FieldLabel       string    `json:"field_label,omitempty"`
 	ValueText        string    `json:"value_text"`
 	Embedding        []float32 `json:"embedding"`

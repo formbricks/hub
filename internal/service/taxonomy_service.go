@@ -25,6 +25,8 @@ var (
 
 const defaultMinimumTaxonomyEmbeddingCount = 20
 
+const directoryTaxonomyFieldLabel = "All feedback"
+
 // TaxonomyRepository persists taxonomy run state and generated artifacts.
 type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service coordinates one cohesive repository boundary.
 	ListFieldOptions(ctx context.Context, tenantID, embeddingModel string) ([]models.TaxonomyFieldOption, error)
@@ -142,17 +144,25 @@ func (s *TaxonomyService) StartManualRun(
 	}
 
 	if recordCount == 0 {
-		return nil, huberrors.NewValidationError("field_id", "no text feedback records found for this field scope")
+		return nil, huberrors.NewValidationError(scopeValidationField(scope), "no text feedback records found for this taxonomy scope")
 	}
 
 	if embeddingCount < s.minimumEmbeddingCount {
 		return nil, huberrors.NewValidationError(
-			"field_id",
+			scopeValidationField(scope),
 			fmt.Sprintf("at least %d embedded text feedback records are required; found %d", s.minimumEmbeddingCount, embeddingCount),
 		)
 	}
 
 	fieldLabel := req.FieldLabel
+	if fieldLabel != nil {
+		trimmed := strings.TrimSpace(*fieldLabel)
+		fieldLabel = &trimmed
+	}
+	if (fieldLabel == nil || *fieldLabel == "") && scope.ScopeType == models.TaxonomyScopeTypeDirectory {
+		label := directoryTaxonomyFieldLabel
+		fieldLabel = &label
+	}
 	if fieldLabel == nil {
 		fieldLabel = discoveredFieldLabel
 	}
@@ -448,6 +458,28 @@ func normalizeTaxonomyScope(scope models.TaxonomyScope) (models.TaxonomyScope, e
 		return models.TaxonomyScope{}, err
 	}
 
+	scopeType := scope.ScopeType
+	if scopeType == "" {
+		scopeType = models.TaxonomyScopeTypeField
+	}
+
+	if scopeType == models.TaxonomyScopeTypeDirectory {
+		if strings.TrimSpace(scope.SourceType) != "" {
+			return models.TaxonomyScope{}, huberrors.NewValidationError("source_type", "must be empty for directory taxonomy scope")
+		}
+		if strings.TrimSpace(scope.SourceID) != "" {
+			return models.TaxonomyScope{}, huberrors.NewValidationError("source_id", "must be empty for directory taxonomy scope")
+		}
+		if strings.TrimSpace(scope.FieldID) != "" {
+			return models.TaxonomyScope{}, huberrors.NewValidationError("field_id", "must be empty for directory taxonomy scope")
+		}
+
+		return models.TaxonomyScope{
+			ScopeType: models.TaxonomyScopeTypeDirectory,
+			TenantID:  tenantID,
+		}, nil
+	}
+
 	sourceType, err := normalizeRequiredIdentifier("source_type", scope.SourceType)
 	if err != nil {
 		return models.TaxonomyScope{}, err
@@ -465,11 +497,20 @@ func normalizeTaxonomyScope(scope models.TaxonomyScope) (models.TaxonomyScope, e
 	}
 
 	return models.TaxonomyScope{
+		ScopeType:  models.TaxonomyScopeTypeField,
 		TenantID:   tenantID,
 		SourceType: sourceType,
 		SourceID:   sourceID,
 		FieldID:    fieldID,
 	}, nil
+}
+
+func scopeValidationField(scope models.TaxonomyScope) string {
+	if scope.ScopeType == models.TaxonomyScopeTypeDirectory {
+		return "tenant_id"
+	}
+
+	return "field_id"
 }
 
 func taxonomyRunParams(actorID *string, embeddingModel string) json.RawMessage {

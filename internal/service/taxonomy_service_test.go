@@ -14,6 +14,7 @@ import (
 type mockTaxonomyRepo struct {
 	countRecordCount     int
 	countEmbeddingCount  int
+	createRunParams      repository.CreateTaxonomyRunParams
 	createRun            *models.TaxonomyRun
 	createRunCreated     bool
 	internalRun          *models.TaxonomyRun
@@ -41,8 +42,10 @@ func (m *mockTaxonomyRepo) CountScopeInput(
 
 func (m *mockTaxonomyRepo) CreateRunIfAvailable(
 	_ context.Context,
-	_ repository.CreateTaxonomyRunParams,
+	params repository.CreateTaxonomyRunParams,
 ) (*models.TaxonomyRun, bool, error) {
+	m.createRunParams = params
+
 	return m.createRun, m.createRunCreated, nil
 }
 
@@ -163,6 +166,43 @@ type failingTaxonomyStarter struct{}
 
 func (f failingTaxonomyStarter) StartRun(_ context.Context, _ string) error {
 	return errors.New("taxonomy service unavailable")
+}
+
+type successfulTaxonomyStarter struct{}
+
+func (s successfulTaxonomyStarter) StartRun(_ context.Context, _ string) error {
+	return nil
+}
+
+func TestTaxonomyService_StartManualRunUsesDirectoryFallbackLabel(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-333333333333")
+	blankLabel := "   "
+	repo := &mockTaxonomyRepo{
+		countRecordCount:    20,
+		countEmbeddingCount: 20,
+		createRun:           &models.TaxonomyRun{ID: runID, Status: models.TaxonomyRunStatusPending},
+		createRunCreated:    true,
+	}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{
+		Repo:           repo,
+		Starter:        successfulTaxonomyStarter{},
+		EmbeddingModel: "text-embedding-004",
+	})
+
+	_, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
+		TaxonomyScope: models.TaxonomyScope{
+			ScopeType: models.TaxonomyScopeTypeDirectory,
+			TenantID:  "tenant-1",
+		},
+		FieldLabel: &blankLabel,
+	})
+	if err != nil {
+		t.Fatalf("StartManualRun() error = %v", err)
+	}
+
+	if repo.createRunParams.FieldLabel == nil || *repo.createRunParams.FieldLabel != directoryTaxonomyFieldLabel {
+		t.Fatalf("FieldLabel = %v, want %q", repo.createRunParams.FieldLabel, directoryTaxonomyFieldLabel)
+	}
 }
 
 func TestTaxonomyService_StartManualRunMarksServiceUnavailableFailure(t *testing.T) {

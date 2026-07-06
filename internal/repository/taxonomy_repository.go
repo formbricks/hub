@@ -117,6 +117,25 @@ func (r *TaxonomyRepository) CountScopeInput(
 		fieldLabel     *string
 	)
 
+	if taxonomyScopeType(scope) == models.TaxonomyScopeTypeDirectory {
+		err := r.db.QueryRow(ctx, `
+			SELECT
+				COUNT(*)::int,
+				COUNT(e.feedback_record_id)::int
+			FROM feedback_records fr
+			LEFT JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $2
+			WHERE fr.tenant_id = $1
+			  AND fr.value_text IS NOT NULL
+			  AND btrim(fr.value_text) <> ''`,
+			scope.TenantID, embeddingModel,
+		).Scan(&recordCount, &embeddingCount)
+		if err != nil {
+			return 0, 0, nil, fmt.Errorf("count directory taxonomy input: %w", err)
+		}
+
+		return recordCount, embeddingCount, nil, nil
+	}
+
 	err := r.db.QueryRow(ctx, `
 		SELECT
 			COUNT(*)::int,
@@ -150,6 +169,7 @@ func (r *TaxonomyRepository) CreateRunIfAvailable(
 	)
 
 	err := withTenantWritePoolTx(ctx, r.db, []string{params.TenantID}, func(dbTx tenantWriteTx) error {
+		scopeType := taxonomyScopeType(params.TaxonomyScope)
 		// Scope lock comes second, after the shared tenant write lock, per the
 		// tenant write lock-order convention (see tenant_write_lock.go). Scope
 		// waiters already hold the tenant lock in shared mode, so they never
@@ -162,13 +182,14 @@ func (r *TaxonomyRepository) CreateRunIfAvailable(
 		existing, err := queryTaxonomyRun(ctx, dbTx, taxonomyRunSelect+`
 			FROM taxonomy_runs
 			WHERE tenant_id = $1
-			  AND source_type = $2
-			  AND source_id = $3
-			  AND field_id = $4
+			  AND scope_type = $2
+			  AND source_type = $3
+			  AND source_id = $4
+			  AND field_id = $5
 			  AND status IN ('pending', 'running')
 			ORDER BY created_at DESC, id DESC
 			LIMIT 1`,
-			params.TenantID, params.SourceType, params.SourceID, params.FieldID,
+			params.TenantID, scopeType, params.SourceType, params.SourceID, params.FieldID,
 		)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("find in-progress taxonomy run: %w", err)
@@ -183,13 +204,14 @@ func (r *TaxonomyRepository) CreateRunIfAvailable(
 		inserted, err := queryTaxonomyRun(ctx, dbTx, `
 			WITH taxonomy_runs AS (
 				INSERT INTO taxonomy_runs (
-					tenant_id, source_type, source_id, field_id, field_label,
+					tenant_id, scope_type, source_type, source_id, field_id, field_label,
 					status, params, record_count, embedding_count
 				)
-				VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8)
+				VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9)
 				RETURNING *
 			)`+taxonomyRunSelect+` FROM taxonomy_runs`,
 			params.TenantID,
+			scopeType,
 			params.SourceType,
 			params.SourceID,
 			params.FieldID,
@@ -216,12 +238,21 @@ func (r *TaxonomyRepository) CreateRunIfAvailable(
 
 func taxonomyScopeLockKey(scope models.TaxonomyScope) string {
 	return fmt.Sprintf(
-		"%d:%s|%d:%s|%d:%s|%d:%s",
+		"%d:%s|%d:%s|%d:%s|%d:%s|%d:%s",
+		len(taxonomyScopeType(scope)), taxonomyScopeType(scope),
 		len(scope.TenantID), scope.TenantID,
 		len(scope.SourceType), scope.SourceType,
 		len(scope.SourceID), scope.SourceID,
 		len(scope.FieldID), scope.FieldID,
 	)
+}
+
+func taxonomyScopeType(scope models.TaxonomyScope) models.TaxonomyScopeType {
+	if scope.ScopeType == "" {
+		return models.TaxonomyScopeTypeField
+	}
+
+	return scope.ScopeType
 }
 
 // MarkRunRunning transitions a taxonomy run to running.
@@ -341,14 +372,16 @@ func (r *TaxonomyRepository) GetRunForTenant(
 
 // GetActiveRun returns the active taxonomy run for a scope.
 func (r *TaxonomyRepository) GetActiveRun(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyRun, error) {
+	scopeType := taxonomyScopeType(scope)
 	run, err := queryTaxonomyRun(ctx, r.db, taxonomyRunSelect+`
 		FROM taxonomy_active_runs ar
 		INNER JOIN taxonomy_runs ON taxonomy_runs.id = ar.run_id
 		WHERE ar.tenant_id = $1
-		  AND ar.source_type = $2
-		  AND ar.source_id = $3
-		  AND ar.field_id = $4`,
-		scope.TenantID, scope.SourceType, scope.SourceID, scope.FieldID,
+		  AND ar.scope_type = $2
+		  AND ar.source_type = $3
+		  AND ar.source_id = $4
+		  AND ar.field_id = $5`,
+		scope.TenantID, scopeType, scope.SourceType, scope.SourceID, scope.FieldID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -395,6 +428,9 @@ func (r *TaxonomyRepository) ListRuns(
 		query += fmt.Sprintf(" AND %s = $%d", column, len(args))
 	}
 
+	if filters.ScopeType != "" {
+		addFilter("scope_type", string(filters.ScopeType))
+	}
 	addFilter("source_type", filters.SourceType)
 	addFilter("field_id", filters.FieldID)
 	addFilterPtr("source_id", filters.SourceID)
@@ -440,20 +476,7 @@ func (r *TaxonomyRepository) GetRunInput(
 		limit = maxTaxonomyRunInputRows
 	}
 
-	rows, err := r.db.Query(ctx, `
-		SELECT fr.id, COALESCE(fr.field_label, ''), fr.value_text, e.embedding
-		FROM feedback_records fr
-		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
-		WHERE fr.tenant_id = $1
-		  AND fr.source_type = $2
-		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
-		  AND fr.field_id = $4
-		  AND fr.value_text IS NOT NULL
-		  AND btrim(fr.value_text) <> ''
-		ORDER BY fr.collected_at DESC, fr.id ASC
-		LIMIT $5`,
-		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
-	)
+	rows, err := r.queryRunInputRows(ctx, run, limit, embeddingModel)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run input: %w", err)
 	}
@@ -466,7 +489,15 @@ func (r *TaxonomyRepository) GetRunInput(
 			record models.TaxonomyRunInputRecord
 			vec    pgvector.HalfVector
 		)
-		if err := rows.Scan(&record.FeedbackRecordID, &record.FieldLabel, &record.ValueText, &vec); err != nil {
+		if err := rows.Scan(
+			&record.FeedbackRecordID,
+			&record.SourceType,
+			&record.SourceID,
+			&record.FieldID,
+			&record.FieldLabel,
+			&record.ValueText,
+			&vec,
+		); err != nil {
 			return nil, fmt.Errorf("scan taxonomy run input record: %w", err)
 		}
 
@@ -479,6 +510,56 @@ func (r *TaxonomyRepository) GetRunInput(
 	}
 
 	return &models.TaxonomyRunInputResponse{Run: *run, Records: records}, nil
+}
+
+func (r *TaxonomyRepository) queryRunInputRows(
+	ctx context.Context,
+	run *models.TaxonomyRun,
+	limit int,
+	embeddingModel string,
+) (pgx.Rows, error) {
+	if run.ScopeType == models.TaxonomyScopeTypeDirectory {
+		return r.db.Query(ctx, `
+			SELECT
+				fr.id,
+				fr.source_type,
+				COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
+				fr.field_id,
+				COALESCE(fr.field_label, ''),
+				fr.value_text,
+				e.embedding
+			FROM feedback_records fr
+			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $3
+			WHERE fr.tenant_id = $1
+			  AND fr.value_text IS NOT NULL
+			  AND btrim(fr.value_text) <> ''
+			ORDER BY fr.collected_at DESC, fr.id ASC
+			LIMIT $2`,
+			run.TenantID, limit, embeddingModel,
+		)
+	}
+
+	return r.db.Query(ctx, `
+		SELECT
+			fr.id,
+			fr.source_type,
+			COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
+			fr.field_id,
+			COALESCE(fr.field_label, ''),
+			fr.value_text,
+			e.embedding
+		FROM feedback_records fr
+		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
+		WHERE fr.tenant_id = $1
+		  AND fr.source_type = $2
+		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
+		  AND fr.field_id = $4
+		  AND fr.value_text IS NOT NULL
+		  AND btrim(fr.value_text) <> ''
+		ORDER BY fr.collected_at DESC, fr.id ASC
+		LIMIT $5`,
+		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
+	)
 }
 
 // StoreResultAndActivate stores generated taxonomy artifacts and activates the run.
@@ -635,16 +716,17 @@ func storeResultAndActivateInTx(
 
 	activatedBy := taxonomyRunRequestedBy(run.Params)
 	if _, err := transaction.Exec(ctx, `
-		INSERT INTO taxonomy_active_runs (
-			tenant_id, source_type, source_id, field_id, run_id, activated_by
-		)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (tenant_id, source_type, source_id, field_id)
-		DO UPDATE SET
-			run_id = EXCLUDED.run_id,
-			activated_by = EXCLUDED.activated_by,
-			activated_at = NOW()`,
+			INSERT INTO taxonomy_active_runs (
+				tenant_id, scope_type, source_type, source_id, field_id, run_id, activated_by
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (tenant_id, scope_type, source_type, source_id, field_id)
+			DO UPDATE SET
+				run_id = EXCLUDED.run_id,
+				activated_by = EXCLUDED.activated_by,
+				activated_at = NOW()`,
 		run.TenantID,
+		run.ScopeType,
 		run.SourceType,
 		run.SourceID,
 		run.FieldID,
@@ -924,10 +1006,10 @@ type queryer interface {
 }
 
 const taxonomyRunSelect = `
-		SELECT taxonomy_runs.id, taxonomy_runs.tenant_id, taxonomy_runs.source_type,
-			taxonomy_runs.source_id, taxonomy_runs.field_id, taxonomy_runs.field_label,
-			taxonomy_runs.status, taxonomy_runs.params, taxonomy_runs.metrics,
-			taxonomy_runs.record_count, taxonomy_runs.embedding_count,
+			SELECT taxonomy_runs.id, taxonomy_runs.scope_type, taxonomy_runs.tenant_id, taxonomy_runs.source_type,
+				taxonomy_runs.source_id, taxonomy_runs.field_id, taxonomy_runs.field_label,
+				taxonomy_runs.status, taxonomy_runs.params, taxonomy_runs.metrics,
+				taxonomy_runs.record_count, taxonomy_runs.embedding_count,
 			taxonomy_runs.cluster_count, taxonomy_runs.node_count, taxonomy_runs.error, taxonomy_runs.error_code,
 			taxonomy_runs.started_at, taxonomy_runs.finished_at,
 			taxonomy_runs.created_at, taxonomy_runs.updated_at`
@@ -944,6 +1026,7 @@ func scanTaxonomyRun(row scanner) (*models.TaxonomyRun, error) {
 
 	if err := row.Scan(
 		&run.ID,
+		&run.ScopeType,
 		&run.TenantID,
 		&run.SourceType,
 		&run.SourceID,
@@ -1093,11 +1176,12 @@ func insertNodeEvent(
 
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO taxonomy_node_events (
-			tenant_id, source_type, source_id, field_id, run_id, node_id,
+			tenant_id, scope_type, source_type, source_id, field_id, run_id, node_id,
 			event_type, actor_id, old_value, new_value
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		run.TenantID,
+		run.ScopeType,
 		run.SourceType,
 		run.SourceID,
 		run.FieldID,
