@@ -127,6 +127,34 @@ func TestEnrichmentWorker_ClassifyNonFinalRetries(t *testing.T) {
 	}
 }
 
+// TestEnrichmentWorker_RateLimitedClassifySnoozes locks the shared backpressure path: a provider
+// 429 (RateLimitError) from classify must return river.JobSnooze — re-queuing without consuming a
+// retry attempt — honoring the provider's retry-after, rather than a plain retry/failure. This is
+// the single path every rate-limited enrichment (sentiment, emotions, translation, embedding)
+// relies on to defer a burst instead of mass-discarding jobs as failed_final.
+func TestEnrichmentWorker_RateLimitedClassifySnoozes(t *testing.T) {
+	metrics := newCountingWorkerMetrics()
+	cfg := baseFakeConfig(metrics)
+	cfg.classify = func(context.Context, *models.FeedbackRecord, fakeEnrichmentArgs) (string, error) {
+		return "", huberrors.NewRateLimitError(20*time.Second, errors.New("provider 429"))
+	}
+
+	err := newEnrichmentWorker(cfg).Work(context.Background(), fakeJob(1))
+
+	var snooze *river.JobSnoozeError
+	if !errors.As(err, &snooze) {
+		t.Fatalf("Work() error = %v, want *river.JobSnoozeError (rate limit must snooze, not consume an attempt)", err)
+	}
+
+	if snooze.Duration != 20*time.Second {
+		t.Fatalf("snooze duration = %s, want 20s (provider retry-after honored)", snooze.Duration)
+	}
+
+	if metrics.outcomes["retry"] != 1 || metrics.workerErr["rate_limited"] != 1 {
+		t.Fatalf("retry=%d rate_limited=%d, want 1/1", metrics.outcomes["retry"], metrics.workerErr["rate_limited"])
+	}
+}
+
 func TestEnrichmentWorker_ClearPathPersistErrorFails(t *testing.T) {
 	metrics := newCountingWorkerMetrics()
 	cfg := baseFakeConfig(metrics)
