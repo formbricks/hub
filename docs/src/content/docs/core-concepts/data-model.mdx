@@ -125,7 +125,7 @@ These fields are populated automatically by Hub's asynchronous enrichments, on o
 | `sentiment_score`       | Number          | Auto     | Signed sentiment polarity, from `-1.0` (negative) to `1.0` (positive)                                                     |
 | `emotions`              | Array of String | Auto     | Emotion labels expressed in the open text (empty when none apply → stored as `null`)                                      |
 
-Translation is gated by the tenant's `target_language`; sentiment and emotions by the per-tenant [`sentiment_enabled` / `emotions_enabled`](/core-concepts/tenant-settings) switches. See the [API Reference](/api) for the exact `sentiment` and `emotions` value sets.
+Translation is gated by the tenant's `target_language`; sentiment and emotions by the per-tenant [`sentiment_enabled` / `emotions_enabled`](/core-concepts/tenant-settings) switches. See [Translated Feedback](/core-concepts/translated-feedback) and [Sentiment & Emotions](/core-concepts/sentiment-and-emotions) for how each works, and the [API Reference](/api) for the exact `sentiment` and `emotions` value sets.
 
 ### Field Types
 

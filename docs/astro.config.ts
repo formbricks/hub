@@ -150,6 +150,10 @@ export default defineConfig({
                   label: "Translated Feedback",
                   slug: "core-concepts/translated-feedback",
                 },
+                {
+                  label: "Sentiment & Emotions",
+                  slug: "core-concepts/sentiment-and-emotions",
+                },
               ],
             },
             {

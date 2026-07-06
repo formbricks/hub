@@ -134,10 +134,11 @@ This is distinct from the per-record [`language`](/core-concepts/data-model) fie
 - Setting a switch to `false` stops Hub producing that enrichment for the tenant going forward; turning it back on resumes it for newly created or edited records.
 - Clear a switch by sending `null` (PATCH) to return it to the default (on).
 
-The results land as read-only fields on each [feedback record](/core-concepts/data-model): `sentiment` and `sentiment_score` for sentiment, `emotions` for emotions.
+The results land as read-only fields on each [feedback record](/core-concepts/data-model): `sentiment` and `sentiment_score` for sentiment, `emotions` for emotions — see [Sentiment & Emotions](/core-concepts/sentiment-and-emotions) for how they are produced.
 
 ## Next Steps
 
 - [Translated Feedback](/core-concepts/translated-feedback) - How `target_language` drives translation
+- [Sentiment & Emotions](/core-concepts/sentiment-and-emotions) - What the `sentiment_enabled` / `emotions_enabled` switches control
 - [Data Model](/core-concepts/data-model) - How feedback records are stored, including enrichment fields
 - [Authentication](/core-concepts/authentication) - Secure your API
