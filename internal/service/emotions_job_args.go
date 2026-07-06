@@ -21,6 +21,9 @@ const (
 // are classified directly from the text, independent of language.
 type FeedbackEmotionsArgs struct {
 	FeedbackRecordID uuid.UUID `json:"feedback_record_id" river:"unique"`
+	// EventID correlates this job to the domain event that enqueued it (uuid.Nil for backfill
+	// jobs, which have no originating event). Not part of the dedupe key — observability only.
+	EventID uuid.UUID `json:"event_id"`
 	// ValueTextHash is a hash of the normalized value_text, or "empty" when value_text is blank.
 	ValueTextHash string `json:"value_text_hash" river:"unique"`
 }

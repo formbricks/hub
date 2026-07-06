@@ -99,6 +99,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	_, err := p.inserter.Insert(ctx, FeedbackEmbeddingArgs{
 		FeedbackRecordID: record.ID,
+		EventID:          event.ID,
 		Model:            p.model,
 		ValueTextHash:    valueTextHash,
 	}, opts)

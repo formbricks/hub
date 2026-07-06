@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/models"
@@ -41,7 +42,7 @@ func NewSentimentProvider(
 			hasContent:              (*models.FeedbackRecord).HasOpenText,
 			gated:                   true,
 			failOpenOnSettingsError: true,
-			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool) {
+			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings, eventID uuid.UUID) (river.JobArgs, bool) {
 				// Per-directory gate: skip tenants that switched sentiment enrichment off. settings is
 				// nil when the read failed and we are failing open — enqueue and let the worker
 				// re-check the gate (the authoritative check before the LLM call).
@@ -51,6 +52,7 @@ func NewSentimentProvider(
 
 				return FeedbackSentimentArgs{
 					FeedbackRecordID: record.ID,
+					EventID:          eventID,
 					ValueTextHash:    sentimentContentHash(record.ValueText),
 				}, true
 			},

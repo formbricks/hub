@@ -17,6 +17,9 @@ const (
 // new job, while identical content for the same target within the window is deduped.
 type FeedbackTranslationArgs struct {
 	FeedbackRecordID uuid.UUID `json:"feedback_record_id" river:"unique"`
+	// EventID correlates this job to the domain event that enqueued it (uuid.Nil for backfill
+	// jobs, which have no originating event). Not part of the dedupe key — observability only.
+	EventID uuid.UUID `json:"event_id"`
 	// TargetLang is the tenant's configured target language (BCP-47) at enqueue time.
 	TargetLang string `json:"target_lang" river:"unique"`
 	// ValueTextHash is a hash of the inputs that determine the translation — the

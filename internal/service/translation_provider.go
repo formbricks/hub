@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/models"
@@ -52,7 +53,7 @@ func NewTranslationProvider(
 			eligible:   (*models.FeedbackRecord).IsTextField,
 			hasContent: (*models.FeedbackRecord).HasOpenText,
 			gated:      true,
-			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings) (river.JobArgs, bool) {
+			buildArgs: func(record *models.FeedbackRecord, settings *models.TenantSettings, eventID uuid.UUID) (river.JobArgs, bool) {
 				// Gate on a resolvable target language (resolved once, then reused in the args):
 				// the tenant's own target wins, else the configured default; an empty result keeps
 				// translation per-tenant opt-in (skip).
@@ -68,6 +69,7 @@ func NewTranslationProvider(
 
 				return FeedbackTranslationArgs{
 					FeedbackRecordID: record.ID,
+					EventID:          eventID,
 					TargetLang:       target,
 					ValueTextHash:    translationContentHash(record.ValueText, sourceLang),
 				}, true
