@@ -101,11 +101,35 @@ make run
 ```
 
 `make run` applies River queue migrations and starts both `hub-api` and
-`hub-worker` for local webhook delivery and embedding jobs. Use `make run-api`
+`hub-worker` for local webhook delivery and enrichment jobs. Use `make run-api`
 or `make run-worker` only when you intentionally want to run one process on its
 own. `make dev-setup` also runs the local Hub schema migrations through
 `make init-db`, which is useful when you are changing migration files in this
 repository.
+
+#### Enrichment and backfills
+
+`hub-worker` runs Hub's asynchronous text enrichments — embeddings, translation,
+sentiment, and emotions. Each is configured with its own `*_PROVIDER` / `*_MODEL`
+environment variables (see the [Environment Variables](https://hub.formbricks.com/reference/environment-variables/)
+reference and `.env.example`) and stays disabled unless both are set.
+
+Enrichment runs automatically on ingest and whenever a record's `value_text`
+changes. To (re)enrich an existing backlog, run the matching one-off backfill; it
+enqueues jobs for the affected records and `hub-worker` processes them:
+
+```bash
+make run-backfill-embeddings                # records with no embedding
+make run-backfill-translations              # records missing/stale in their tenant's target language
+make run-backfill-classify TYPE=sentiment   # records with sentiment IS NULL
+make run-backfill-classify TYPE=emotions    # records with emotions IS NULL
+```
+
+Reach for `backfill-classify` after enabling `SENTIMENT_*` / `EMOTIONS_*` on a
+deployment with existing data, or when records were edited while the enrichment
+was toggled off — re-enabling does not re-enrich by itself. `backfill-translations`
+is the equivalent after enabling translation or changing a tenant's target
+language.
 
 The public Docker quickstart at [hub.formbricks.com/quickstart](https://hub.formbricks.com/quickstart/)
 is maintained outside this repository. Its Compose example should use the same
