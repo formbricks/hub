@@ -1,17 +1,19 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `cmd/api/` holds the API server (hub-api): HTTP API, ingestion, record retrieval, tenant/auth; enqueues jobs to River (insert-only). Build/run: `go run ./cmd/api` or `make run`.
-- `cmd/worker/` holds the worker (hub-worker): runs River job workers (webhook delivery, embeddings). No HTTP. Build/run: `go run ./cmd/worker` or `make run-worker`.
-- `internal/` contains core application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, `config`, and `workers`.
-- `pkg/` provides shared utilities (currently `pkg/database`).
+- `cmd/api/` holds the API server (hub-api): HTTP API, ingestion, record retrieval, tenant/auth, semantic search; enqueues jobs to River (insert-only). Build/run: `go run ./cmd/api` or `make run`.
+- `cmd/worker/` holds the worker (hub-worker): runs River job workers — webhook delivery and the enrichment pipelines (embeddings, translation, sentiment, emotions). No HTTP. Build/run: `go run ./cmd/worker` or `make run-worker`.
+- `cmd/backfill-*/` are one-off enqueue commands that (re)enrich an existing backlog: `backfill-embeddings`, `backfill-translations`, and `backfill-classify -type sentiment|emotions`. hub-worker processes the jobs they enqueue.
+- `internal/` contains the application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, `config`, `workers`, `observability` (OTel metrics/tracing), the LLM seam (`llm`, `openai`, `googleai`), `datatypes`, and `huberrors`.
+- `pkg/` provides shared utilities: `database`, `cursor` (keyset pagination), and `embeddings`.
 - `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.
-- `tests/` contains integration tests.
+- `tests/` contains integration tests (they require a pgvector database — see Testing Guidelines).
 
 ## Build, Test, and Development Commands
 - `make dev-setup`: start Postgres via Docker, install Go deps/tools, and initialize database schema.
-- `make run`: run hub-api (config from `.env` if present and environment variables; copy `.env.example` to `.env` or set env vars).
-- `make run-worker`: run hub-worker (requires DATABASE_URL from `.env` or environment variables).
+- `make run`: apply River migrations, then run both hub-api and hub-worker (config from `.env` if present, else environment variables; copy `.env.example` to `.env` or set env vars).
+- `make run-api` / `make run-worker`: run a single process (worker requires DATABASE_URL from `.env` or environment variables).
+- `make run-backfill-embeddings` / `make run-backfill-translations` / `make run-backfill-classify TYPE=sentiment|emotions`: enqueue a one-off (re)enrichment of the existing backlog (loads `.env`). `make build-backfill-*` build the corresponding binaries.
 - `make build`: build both `bin/hub-api` and `bin/hub-worker`. Use `make build-api` or `make build-worker` for a single binary.
 - `make tests`: run integration tests in `tests/`.
 - `make tests-coverage`: generate `coverage.html`.
@@ -24,6 +26,18 @@
 - Language: Go; format with `make fmt` (golangci-lint applies gofumpt/gci).
 - Prefer Go naming conventions (CamelCase for exported, lowerCamel for unexported).
 - Keep package names short and domain-focused (e.g., `repository`, `service`).
+
+## Enrichment Framework
+
+Sentiment, emotions, and translation are "classify" enrichments (`text → structured result` via an LLM) that share one scaffold; embedding is a separate pipeline that reuses only the light shared layer (client registry, metrics, content-hash). **Do not copy an existing enrichment to add a new one** — reuse the shared pieces:
+
+- `internal/service/enrichment_client_factory.go` — provider registry + validation and the shared `EnrichmentClientConfig` (per-type configs are aliases of it).
+- `internal/service/enrichment_client.go` — `classifyStructured` + `structuredSpec[R]` (prompt/schema/parse); the single place that calls the provider.
+- `internal/service/enrichment_provider.go` — `EnrichmentProvider` (eligibility, per-type `triggers`, per-tenant gate, dedupe, `buildArgs`).
+- `internal/workers/enrichment_worker.go` — the generic `enrichmentWorker[A, R]` Work body (load → clear-on-empty or classify → persist, with all outcome/error mapping).
+- `internal/observability/enrichment_metrics.go` — one metrics impl behind the per-type interfaces.
+
+A new enrichment is then a thin per-type spec: an enum/result type in `models`, a `*_client.go` (prompt + parse + `structuredSpec`), a `*_provider.go` (config for `EnrichmentProvider`), a `*_job_args.go`, a one-line `*_worker.go` (a configured `enrichmentWorker`), a metrics adapter, a config struct, and wiring in `cmd/*`. Enrichment outputs are read-only, server-generated columns — `NULL` until enriched, cleared and re-enqueued when `value_text` changes (translation also on `language`). Writes are guarded against content supersession, so a job that read older text skips rather than overwriting a newer result; carry `tenant_id` (and, for correlation, the originating `event_id`) through job args and log lines.
 
 ## Multi-Tenancy & Data Isolation
 
@@ -40,9 +54,11 @@
 - For any tenant-scoping change, include verification at the boundary where the leak could happen: database query behavior, service fan-out, worker execution, and API behavior when relevant. Include at least one alternate-path regression test proving that data allowed through the primary path cannot leak through async dispatch, bulk operations, derived indexes, exports, or background workers. Tests are the evidence; the invariant belongs in the architecture.
 
 ## Testing Guidelines
-- Tests live under `tests/` and are run with `go test ./tests/...`.
+- Unit tests live beside the code in `internal/**` and need no database: `make test-unit`.
+- Integration tests live under `tests/` and require a pgvector-enabled Postgres (`DATABASE_URL` pointing at a `test_db` with migrations applied): `make tests`. `make test-all` runs both.
 - Name test files `*_test.go` and test functions `TestXxx`.
-- Use `make tests-coverage` when adding meaningful logic to track coverage output.
+- Use `make tests-coverage` / `make check-coverage` when adding meaningful logic (the threshold excludes the `cmd/*` main packages).
+- Tenant-isolation changes must include an alternate-path regression test (see Multi-Tenancy & Data Isolation).
 
 ## Commit & Pull Request Guidelines
 - Always create a pull request for changes and don't commit directly to main.
@@ -52,4 +68,5 @@
 
 ## Security & Configuration Tips
 - Configure `API_KEY` and `DATABASE_URL` via `.env` or environment variables.
+- Enrichment providers and other runtime options are env-configured (`EMBEDDING_*`, `TRANSLATION_*`, `SENTIMENT_*`, `EMOTIONS_*`, `TENANT_SETTINGS_CACHE_*`, `OTEL_*`); `.env.example` is the full, documented set.
 - Do not commit `.env` or secrets; use `.env.example` as the base.
