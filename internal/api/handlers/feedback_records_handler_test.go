@@ -441,6 +441,35 @@ func TestFeedbackRecordsHandler_BodyBounds(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, rec.Code)
 	})
 
+	t.Run("over-long optional string fields return 400", func(t *testing.T) {
+		base := `"source_type":"survey","field_id":"q1","field_type":"text","tenant_id":"t","submission_id":"s"`
+		over256 := strings.Repeat("a", 256)
+		over2049 := strings.Repeat("a", 2049)
+
+		cases := map[string]string{
+			"source_id":         `"source_id":"` + over256 + `"`,
+			"source_name":       `"source_name":"` + over256 + `"`,
+			"user_id":           `"user_id":"` + over256 + `"`,
+			"field_label":       `"field_label":"` + over2049 + `"`,
+			"field_group_label": `"field_group_label":"` + over2049 + `"`,
+		}
+
+		for field, fragment := range cases {
+			t.Run(field, func(t *testing.T) {
+				handler := NewFeedbackRecordsHandler(&mockFeedbackRecordsService{})
+				body := []byte("{" + base + "," + fragment + "}")
+
+				req := httptest.NewRequestWithContext(
+					context.Background(), http.MethodPost, "http://test/v1/feedback-records", bytes.NewReader(body))
+				rec := httptest.NewRecorder()
+
+				handler.Create(rec, req)
+
+				assert.Equal(t, http.StatusBadRequest, rec.Code, "%s over its cap must be rejected", field)
+			})
+		}
+	})
+
 	t.Run("update body is bounded too", func(t *testing.T) {
 		mock := &mockFeedbackRecordsService{}
 		handler := NewFeedbackRecordsHandler(mock)

@@ -305,20 +305,20 @@ func (r *FeedbackRecord) HasOpenText() bool {
 type CreateFeedbackRecordRequest struct {
 	CollectedAt     *time.Time      `json:"collected_at,omitempty"`
 	SourceType      string          `json:"source_type"                 validate:"required,no_null_bytes,min=1,max=255"`
-	SourceID        *string         `json:"source_id,omitempty"         validate:"omitempty,no_null_bytes"`
-	SourceName      *string         `json:"source_name,omitempty"`
+	SourceID        *string         `json:"source_id,omitempty"         validate:"omitempty,no_null_bytes,max=255"`
+	SourceName      *string         `json:"source_name,omitempty"       validate:"omitempty,no_null_bytes,max=255"`
 	FieldID         string          `json:"field_id"                    validate:"required,no_null_bytes,min=1,max=255"`
-	FieldLabel      *string         `json:"field_label,omitempty"`
+	FieldLabel      *string         `json:"field_label,omitempty"       validate:"omitempty,no_null_bytes,max=2048"`
 	FieldType       FieldType       `json:"field_type"                  validate:"required,field_type"`
 	FieldGroupID    *string         `json:"field_group_id,omitempty"    validate:"omitempty,no_null_bytes,max=255"`
-	FieldGroupLabel *string         `json:"field_group_label,omitempty"`
+	FieldGroupLabel *string         `json:"field_group_label,omitempty" validate:"omitempty,no_null_bytes,max=2048"`
 	ValueText       *string         `json:"value_text,omitempty"        validate:"omitempty,no_null_bytes,max=30000"`
 	ValueNumber     *float64        `json:"value_number,omitempty"`
 	ValueBoolean    *bool           `json:"value_boolean,omitempty"`
 	ValueDate       *time.Time      `json:"value_date,omitempty"`
 	Metadata        json.RawMessage `json:"metadata,omitempty"`
 	Language        *string         `json:"language,omitempty"          validate:"omitempty,no_null_bytes,max=10"`
-	UserID          *string         `json:"user_id,omitempty"`
+	UserID          *string         `json:"user_id,omitempty"           validate:"omitempty,no_null_bytes,max=255"`
 	TenantID        string          `json:"tenant_id"                   validate:"required,no_null_bytes,max=255"`
 	SubmissionID    string          `json:"submission_id"               validate:"required,no_null_bytes,min=1,max=255"`
 }
@@ -339,7 +339,7 @@ type UpdateFeedbackRecordRequest struct {
 	ValueDate    *time.Time      `json:"value_date,omitempty"`
 	Metadata     json.RawMessage `json:"metadata,omitempty"`
 	Language     *string         `json:"language,omitempty"      validate:"omitempty,no_null_bytes,max=10"`
-	UserID       *string         `json:"user_id,omitempty"`
+	UserID       *string         `json:"user_id,omitempty"       validate:"omitempty,no_null_bytes,max=255"`
 }
 
 // FieldsChangedFrom returns the names of fields that are set in the update request AND differ
