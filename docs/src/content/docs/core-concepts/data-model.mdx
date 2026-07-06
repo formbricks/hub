@@ -113,6 +113,20 @@ This enables:
 | `language` | String | Optional | ISO 639-1 language code (for example, "en", "de", "fr")      |
 | `user_id`  | String | Optional | Anonymous user ID for tracking (hashed, never PII)           |
 
+#### Enrichment
+
+These fields are populated automatically by Hub's asynchronous enrichments, on open-text (`field_type: text`) records, wherever the deployment has the matching provider configured. They are read-only (server-generated) and `null` until a record is enriched.
+
+| Field                   | Type            | Required | Description                                                                                                               |
+| ----------------------- | --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `value_text_translated` | String          | Auto     | `value_text` translated into the tenant's target language (see [Translated Feedback](/core-concepts/translated-feedback)) |
+| `translation_lang_key`  | String          | Auto     | BCP-47 locale the translation was produced in                                                                             |
+| `sentiment`             | String          | Auto     | Overall sentiment label of the open text                                                                                  |
+| `sentiment_score`       | Number          | Auto     | Signed sentiment polarity, from `-1.0` (negative) to `1.0` (positive)                                                     |
+| `emotions`              | Array of String | Auto     | Emotion labels expressed in the open text (empty when none apply → stored as `null`)                                      |
+
+Translation is gated by the tenant's `target_language`; sentiment and emotions by the per-tenant [`sentiment_enabled` / `emotions_enabled`](/core-concepts/tenant-settings) switches. See the [API Reference](/api) for the exact `sentiment` and `emotions` value sets.
+
 ### Field Types
 
 The `field_type` field uses validated enums to categorize responses and determine which `value_*` field to use. Hub enforces these 9 standardized types optimized for analytics:

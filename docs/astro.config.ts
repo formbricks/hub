@@ -142,6 +142,14 @@ export default defineConfig({
                   label: "Webhooks",
                   slug: "core-concepts/webhooks",
                 },
+                {
+                  label: "Tenant Settings",
+                  slug: "core-concepts/tenant-settings",
+                },
+                {
+                  label: "Translated Feedback",
+                  slug: "core-concepts/translated-feedback",
+                },
               ],
             },
             {

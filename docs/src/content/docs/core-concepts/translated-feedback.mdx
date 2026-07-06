@@ -1,0 +1,105 @@
+---
+title: Translated Feedback
+description: Hub can automatically translate open-text feedback into a tenant's target language and store it on the feedback record, so multilingual feedback can be read and analyzed in one language.
+---
+
+import { Callout } from "@stainless-api/docs/components";
+
+Hub can enrich open-text feedback with a translation into the tenant's configured target language. When enabled, each text answer is translated asynchronously and stored on the same feedback record, next to the original — so a multilingual feedback set can be read, searched, and analyzed in a single language.
+
+This is the **translation** half of Hub's language enrichment, driven by the per-tenant [`target_language`](/core-concepts/tenant-settings) setting.
+
+<Callout variant="note">
+  Translation is additive and asynchronous: the original `value_text` is never
+  changed, ingestion is never blocked, and translated text appears shortly after
+  a record is created or updated.
+</Callout>
+
+## The fields
+
+Translation adds two read-only fields to every [feedback record](/core-concepts/data-model). Both are server-generated — you never set them when creating or updating a record — and are `null` until the record is enriched.
+
+| Field                   | Type   | Description                                                                   |
+| ----------------------- | ------ | ----------------------------------------------------------------------------- |
+| `value_text_translated` | String | The `value_text` translated into the target language.                         |
+| `translation_lang_key`  | String | The BCP-47 locale the translation was produced in (the target actually used). |
+
+A translated text record looks like this:
+
+```json
+{
+  "tenant_id": "org-123",
+  "field_type": "text",
+  "value_text": "Die Anmeldung war verwirrend.",
+  "language": "de",
+  "value_text_translated": "The sign-up was confusing.",
+  "translation_lang_key": "en-US"
+}
+```
+
+## Enabling translation
+
+Translation runs only when **both** of these are true:
+
+1. **The deployment has a translation provider configured.** An operator sets `TRANSLATION_PROVIDER` and `TRANSLATION_MODEL` (plus provider credentials) — see [Environment Variables](/reference/environment-variables#translation). With no provider, translation is off for the whole deployment.
+2. **A target language is resolved.** Either the tenant sets its own [`target_language`](/core-concepts/tenant-settings), or the deployment provides a fallback via `TRANSLATION_DEFAULT_LANGUAGE`. A tenant with neither is never translated.
+
+<Callout variant="note">
+  Both conditions are required. With `TRANSLATION_DEFAULT_LANGUAGE` set, a
+  configured provider translates every tenant by default; without it, each
+  tenant must set its own `target_language` or its records stay untranslated —
+  by design.
+</Callout>
+
+## How it works
+
+When a text feedback record is created, or its text changes, Hub checks whether a target language is resolved — the tenant's own `target_language`, or the deployment's `TRANSLATION_DEFAULT_LANGUAGE` fallback — and, if so, enqueues a translation job. A background worker performs the translation and writes the result back to the record. The work happens off the ingestion path, so creating feedback is never slowed down or blocked by translation.
+
+- **Only open text is translated** — records whose `field_type` is `text` with a non-empty `value_text`. Numeric, boolean, date, and categorical answers are left untouched.
+- **The source language** comes from the record's [`language`](/core-concepts/data-model) field. When it's absent, the provider detects the source language automatically.
+- **Same-language answers are copied, not translated.** If a record's source language already matches the target (same base language and script, for example `en-GB` into `en-US`), Hub copies `value_text` verbatim into `value_text_translated` and still sets `translation_lang_key` — no provider call.
+- **Edits re-translate.** Changing `value_text`, or correcting the source `language`, re-runs the translation. Emptying `value_text` clears the stored translation.
+
+<Callout variant="note">
+  Translation is **eventually consistent**. `value_text_translated` is populated
+  shortly after ingestion, not synchronously — read it defensively and treat
+  `null` as "not translated yet".
+</Callout>
+
+### Changing a tenant's target language
+
+Changing `target_language` automatically re-translates that tenant's existing feedback: the change enqueues a per-tenant backfill that re-translates every record whose stored translation no longer matches the new target. It is asynchronous and eventually consistent — records update shortly after the change, not instantly — and `translation_lang_key` records the locale each translation was produced in, so mid-backfill you can always tell which target a given row used. Clearing `target_language` removes the tenant's own target and enqueues the same per-tenant backfill a change does: with a deployment `TRANSLATION_DEFAULT_LANGUAGE` set, the tenant falls back to that default and its existing records are re-translated to it; with no default configured there is no effective target, so existing translations are left in place (they keep their `translation_lang_key`) and are not erased.
+
+## Backfilling existing records
+
+A per-tenant `target_language` change re-translates that tenant automatically (see above). The bundled backfill command covers the cases that aren't driven by a per-tenant settings change — most importantly the pre-existing backlog **after first enabling translation for a deployment** — and serves as a guaranteed, all-tenant fallback. It enqueues translation jobs for every eligible record whose stored translation is missing or no longer matches its effective target (the tenant's own `target_language`, or the deployment default):
+
+```bash
+# Run inside the Hub deployment, with TRANSLATION_* and DATABASE_URL configured
+./backfill-translations
+```
+
+It is safe to re-run: records already translated into the current target are skipped.
+
+## Relationship to embeddings
+
+Translation is independent of the embeddings used for [semantic search](/guides/hub-self-hosted-embeddings). Embeddings are still generated from the original, source-language `value_text`; translation only adds `value_text_translated` alongside it. Enabling or disabling one does not affect the other.
+
+## Querying translated feedback
+
+Because the translation lives on the record, you can read everything in one language straight from SQL or any connected BI tool, falling back to the original wherever a translation isn't present yet:
+
+```sql
+SELECT
+  COALESCE(value_text_translated, value_text) AS text,
+  translation_lang_key
+FROM feedback_records
+WHERE field_type = 'text'
+  AND tenant_id = 'org-123';
+```
+
+## Next Steps
+
+- [Tenant Settings](/core-concepts/tenant-settings) - Configure a tenant's `target_language`
+- [Data Model](/core-concepts/data-model) - How feedback records are stored
+- [Environment Variables](/reference/environment-variables) - Configure a translation provider

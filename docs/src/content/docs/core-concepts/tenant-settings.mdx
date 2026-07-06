@@ -1,0 +1,143 @@
+---
+title: Tenant Settings
+description: Per-tenant configuration for Hub. Settings are scoped to a single tenant and never shared across tenants — a target language for translation and per-directory switches for sentiment and emotion enrichment.
+---
+
+import { Callout } from "@stainless-api/docs/components";
+
+Tenant settings store per-tenant configuration for Hub. Each tenant has a single settings object, addressed by its `tenant_id`. The object is open-ended — new settings are added over time — and today holds a target language for [translation](/core-concepts/translated-feedback) (`target_language`) and per-directory switches that turn sentiment and emotion enrichment on or off (`sentiment_enabled`, `emotions_enabled`).
+
+<Callout variant="note">
+  Settings are tenant-scoped: a tenant can only ever read or write its own
+  settings, and they are removed when the tenant's data is purged.
+</Callout>
+
+## The settings resource
+
+| Method  | Path                               | Purpose                               |
+| ------- | ---------------------------------- | ------------------------------------- |
+| `GET`   | `/v1/tenants/{tenant_id}/settings` | Read a tenant's settings              |
+| `PUT`   | `/v1/tenants/{tenant_id}/settings` | Create or replace a tenant's settings |
+| `PATCH` | `/v1/tenants/{tenant_id}/settings` | Partially update a tenant's settings  |
+
+The `tenant_id` always comes from the path. See the [API Reference](/api) for the full request and response schemas.
+
+A settings object looks like this:
+
+```json
+{
+  "tenant_id": "org-123",
+  "settings": {
+    "target_language": "en-US",
+    "sentiment_enabled": true,
+    "emotions_enabled": false
+  }
+}
+```
+
+Every field is optional. An unset field takes its default (an unconfigured tenant returns `{}`), so you only send the settings you want to change.
+
+## Reading settings
+
+`GET /v1/tenants/{tenant_id}/settings` returns the tenant's settings. A tenant that has never configured anything returns `200` with an empty settings object — **not** a `404`:
+
+```json
+{
+  "tenant_id": "org-123",
+  "settings": {}
+}
+```
+
+This makes settings safe to read unconditionally: an unconfigured tenant is a valid state, and your integration decides the fallback.
+
+```bash
+curl https://your-hub.example.com/v1/tenants/org-123/settings \
+  -H "Authorization: Bearer $HUB_API_KEY"
+```
+
+## Updating settings
+
+There are two ways to write settings:
+
+- **`PUT`** — full replace. Send the complete settings object you want; any field you omit is cleared.
+- **`PATCH`** — partial update following [JSON Merge Patch (RFC 7396)](https://www.rfc-editor.org/rfc/rfc7396): a field you send sets that setting, a field sent as `null` removes it, and a field you omit is left unchanged. Reach for `PATCH` to change one setting without disturbing the others.
+
+### Replace everything (PUT)
+
+`PUT /v1/tenants/{tenant_id}/settings` replaces the settings object and returns the stored result.
+
+```bash
+curl -X PUT https://your-hub.example.com/v1/tenants/org-123/settings \
+  -H "Authorization: Bearer $HUB_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"target_language": "de-DE"}'
+```
+
+```json
+{
+  "tenant_id": "org-123",
+  "settings": { "target_language": "de-DE" }
+}
+```
+
+### Change one setting (PATCH)
+
+`PATCH /v1/tenants/{tenant_id}/settings` applies a [JSON Merge Patch (RFC 7396)](https://www.rfc-editor.org/rfc/rfc7396): the fields you send are merged into the tenant's existing settings, settings you don't mention are preserved, and a field sent as `null` is removed. Send the body as `application/merge-patch+json` (plain `application/json` is also accepted). `PATCH` also works when the tenant has no settings yet — it creates them.
+
+To clear `target_language`, send `null` — **not** an empty string. `target_language` must be a valid locale, so `""` is rejected with `400`.
+
+```bash
+# Set or update target_language, leaving any other settings untouched
+curl -X PATCH https://your-hub.example.com/v1/tenants/org-123/settings \
+  -H "Authorization: Bearer $HUB_API_KEY" \
+  -H "Content-Type: application/merge-patch+json" \
+  -d '{"target_language": "fr-FR"}'
+
+# Remove target_language (send null, not "")
+curl -X PATCH https://your-hub.example.com/v1/tenants/org-123/settings \
+  -H "Authorization: Bearer $HUB_API_KEY" \
+  -H "Content-Type: application/merge-patch+json" \
+  -d '{"target_language": null}'
+```
+
+<Callout variant="note">
+  Both `PUT` and `PATCH` cap the request body at 8 KB; a larger body is rejected
+  with `413` (`content_too_large`). A write attempted while a tenant data purge
+  is running for the same tenant returns `409` (`tenant_write_conflict`) and can
+  be retried.
+</Callout>
+
+## target_language
+
+`target_language` is the locale Hub uses for [translation](/core-concepts/translated-feedback) — the target language open-text feedback is translated into.
+
+- It is a **normalized BCP-47 locale** (for example `en-US`, `de-DE`, `fr-FR`).
+- Hub canonicalizes what you send: `en-us` is stored as `en-US`.
+- An invalid locale is rejected with `400` and a `validation` error.
+- An empty value — or no settings at all — means **not configured**.
+
+<Callout variant="note">
+  `target_language` drives translation only when the deployment has a
+  translation provider configured (`TRANSLATION_PROVIDER` /
+  `TRANSLATION_MODEL`). With no provider, the setting is stored but has no
+  effect. A deployment-wide `TRANSLATION_DEFAULT_LANGUAGE` can supply a target
+  for tenants that set none of their own.
+</Callout>
+
+This is distinct from the per-record [`language`](/core-concepts/data-model) field, which records the _source_ language of an individual feedback record. `target_language` is the _target_ locale a tenant's content is translated into.
+
+## sentiment_enabled and emotions_enabled
+
+`sentiment_enabled` and `emotions_enabled` are per-directory switches for the sentiment and emotion enrichments. Each is a boolean that **defaults to on**: when the field is absent (or `null`) the enrichment runs for the tenant; set it to `false` to turn that enrichment off.
+
+- They take effect **only where the deployment runs the enrichment** — a sentiment or emotion provider must be configured (`SENTIMENT_PROVIDER` / `SENTIMENT_MODEL`, `EMOTIONS_PROVIDER` / `EMOTIONS_MODEL`; see [Environment Variables](/reference/environment-variables#enrichment)). With no provider configured, the switch is stored but has no effect.
+- Setting a switch to `false` stops Hub producing that enrichment for the tenant going forward; turning it back on resumes it for newly created or edited records.
+- Clear a switch by sending `null` (PATCH) to return it to the default (on).
+
+The results land as read-only fields on each [feedback record](/core-concepts/data-model): `sentiment` and `sentiment_score` for sentiment, `emotions` for emotions.
+
+## Next Steps
+
+- [Translated Feedback](/core-concepts/translated-feedback) - How `target_language` drives translation
+- [Data Model](/core-concepts/data-model) - How feedback records are stored, including enrichment fields
+- [Authentication](/core-concepts/authentication) - Secure your API
