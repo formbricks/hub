@@ -16,7 +16,7 @@ info:
     license:
         name: Apache-2.0
         url: https://www.apache.org/licenses/LICENSE-2.0
-    version: 1.0.0
+    version: 1.1.0
 servers:
     - url: "{scheme}://{host}{basePath}"
       description: Deployed Formbricks Hub instance (self-hosted or Formbricks Cloud)
