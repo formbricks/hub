@@ -107,11 +107,11 @@ This enables:
 
 #### Context & Metadata
 
-| Field      | Type   | Required | Description                                                  |
-| ---------- | ------ | -------- | ------------------------------------------------------------ |
-| `metadata` | JSONB  | Optional | Flexible context (device, location, campaign, custom fields) |
-| `language` | String | Optional | ISO 639-1 language code (for example, "en", "de", "fr")      |
-| `user_id`  | String | Optional | Anonymous user ID for tracking (hashed, never PII)           |
+| Field      | Type   | Required | Description                                                                                                            |
+| ---------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `metadata` | JSONB  | Optional | Flexible context (device, location, campaign, custom fields)                                                           |
+| `language` | String | Optional | Source language of the response — an ISO language code, optionally region-qualified (for example, "en", "de", "en-US") |
+| `user_id`  | String | Optional | Anonymous user ID for tracking (hashed, never PII)                                                                     |
 
 #### Enrichment
 
