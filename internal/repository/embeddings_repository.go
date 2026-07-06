@@ -52,6 +52,14 @@ func NewEmbeddingsRepository(db *pgxpool.Pool) *EmbeddingsRepository {
 	return &EmbeddingsRepository{db: db}
 }
 
+// IterativeScanDegraded reports whether HNSW iterative_scan has been latched off after the server
+// rejected it (pgvector < 0.8). While true, nearest-neighbor recall is capped at ef_search until
+// the process restarts. Surfaced as a gauge so the silent degradation is alertable, not just a
+// one-time log line.
+func (r *EmbeddingsRepository) IterativeScanDegraded() bool {
+	return r.iterativeScanUnavailable.Load()
+}
+
 // rollbackQuietly rolls back tx, logging (rather than returning) an unexpected rollback error.
 func rollbackQuietly(ctx context.Context, tx pgx.Tx, msg string) {
 	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {

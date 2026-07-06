@@ -7,18 +7,19 @@ import (
 
 // Metric names (OpenTelemetry).
 const (
-	MetricNameEventsDiscarded         = "hub_events_discarded_total"
-	MetricNameFanOutDuration          = "hub_message_publisher_fan_out_duration_seconds"
-	MetricNameEventChannelDepth       = "hub_event_channel_depth"
-	MetricNameRiverQueueDepth         = "hub_river_queue_depth"
-	MetricNameRiverQueueOldestAge     = "hub_river_queue_oldest_age_seconds"
-	MetricNameProviderPanics          = "hub_provider_panics_total"
-	MetricNameWebhookJobsEnqueued     = "hub_webhook_jobs_enqueued_total"
-	MetricNameWebhookProviderErrors   = "hub_webhook_provider_errors_total"
-	MetricNameWebhookDeliveries       = "hub_webhook_deliveries_total"
-	MetricNameWebhookDisabled         = "hub_webhook_disabled_total"
-	MetricNameWebhookDispatchErrors   = "hub_webhook_dispatch_errors_total"
-	MetricNameWebhookDeliveryDuration = "hub_webhook_delivery_duration_seconds"
+	MetricNameEventsDiscarded           = "hub_events_discarded_total"
+	MetricNameFanOutDuration            = "hub_message_publisher_fan_out_duration_seconds"
+	MetricNameEventChannelDepth         = "hub_event_channel_depth"
+	MetricNameRiverQueueDepth           = "hub_river_queue_depth"
+	MetricNameRiverQueueOldestAge       = "hub_river_queue_oldest_age_seconds"
+	MetricNameProviderPanics            = "hub_provider_panics_total"
+	MetricNameHNSWIterativeScanDegraded = "hub_hnsw_iterative_scan_degraded"
+	MetricNameWebhookJobsEnqueued       = "hub_webhook_jobs_enqueued_total"
+	MetricNameWebhookProviderErrors     = "hub_webhook_provider_errors_total"
+	MetricNameWebhookDeliveries         = "hub_webhook_deliveries_total"
+	MetricNameWebhookDisabled           = "hub_webhook_disabled_total"
+	MetricNameWebhookDispatchErrors     = "hub_webhook_dispatch_errors_total"
+	MetricNameWebhookDeliveryDuration   = "hub_webhook_delivery_duration_seconds"
 
 	// MetricNameEmbeddingJobsEnqueued and related embedding pipeline metrics.
 	MetricNameEmbeddingJobsEnqueued   = "hub_embedding_jobs_enqueued_total"
