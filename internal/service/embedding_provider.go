@@ -80,7 +80,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	// On create, only enqueue when there is embeddable text. On update we enqueue regardless so the worker can clear.
 	if event.Type == datatypes.FeedbackRecordCreated && input == "" {
-		slog.Debug("embedding: skip, no value_text on create", "feedback_record_id", record.ID)
+		slog.Debug("embedding: skip, no value_text on create", "event_id", event.ID, "feedback_record_id", record.ID)
 
 		return
 	}

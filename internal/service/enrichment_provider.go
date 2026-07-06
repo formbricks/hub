@@ -159,7 +159,7 @@ func (p *enrichmentProvider) PublishEvent(ctx context.Context, event Event) {
 	// behavior).
 	args, enqueue := cfg.buildArgs(record, settings, event.ID)
 	if !enqueue {
-		slog.Debug(cfg.name+": skip, not enabled for tenant", "feedback_record_id", record.ID)
+		slog.Debug(cfg.name+": skip, not enabled for tenant", "event_id", event.ID, "feedback_record_id", record.ID)
 
 		return
 	}
