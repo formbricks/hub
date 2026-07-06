@@ -26,7 +26,7 @@ type enqueueMetrics interface {
 type enrichmentProviderConfig struct {
 	name        string // enrichment name, used only in log messages ("sentiment", ...)
 	inserter    RiverJobInserter
-	resolver    TenantSettingsReader // required iff enabled != nil; otherwise unused
+	resolver    TenantSettingsReader // required when gated is true; otherwise unused
 	metrics     enqueueMetrics       // may be nil when metrics are disabled
 	queueName   string
 	maxAttempts int
