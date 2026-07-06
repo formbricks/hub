@@ -85,6 +85,13 @@ type EmbeddingsRepository interface {
 	) ([]uuid.UUID, error)
 }
 
+// EnrichmentClearMetrics records enrichment outputs nulled by an edit's eager-clear, labeled by
+// output. Optional: nil disables it; set via SetEnrichmentClearMetrics (the clear fires only on
+// the API's UpdateFeedbackRecord path).
+type EnrichmentClearMetrics interface {
+	RecordOutputCleared(ctx context.Context, output string)
+}
+
 // FeedbackRecordsService handles business logic for feedback records.
 type FeedbackRecordsService struct {
 	repo                   FeedbackRecordsRepository
@@ -95,6 +102,7 @@ type FeedbackRecordsService struct {
 	embeddingQueueName     string
 	embeddingMaxAttempts   int
 	translationDefaultLang string
+	clearMetrics           EnrichmentClearMetrics
 }
 
 // NewFeedbackRecordsService creates a new feedback records service.
@@ -131,6 +139,12 @@ func NewFeedbackRecordsService(
 // This allows a single service instance to be used by both handlers and the embedding worker.
 func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter RiverJobInserter) {
 	s.embeddingInserter = inserter
+}
+
+// SetEnrichmentClearMetrics enables the eager-clear counter. Wire it on the API service instance
+// (the eager-clear fires on UpdateFeedbackRecord); leaving it unset disables the metric.
+func (s *FeedbackRecordsService) SetEnrichmentClearMetrics(m EnrichmentClearMetrics) {
+	s.clearMetrics = m
 }
 
 // CreateFeedbackRecord creates a new feedback record.
@@ -346,6 +360,12 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 	if cleared := clearedEnrichmentFields(previous, record); len(cleared) > 0 {
 		slog.Info("update feedback record: enrichment outputs cleared by content edit",
 			"feedback_record_id", id, "tenant_id", record.TenantID, "cleared", cleared)
+
+		if s.clearMetrics != nil {
+			for _, output := range cleared {
+				s.clearMetrics.RecordOutputCleared(ctx, output)
+			}
+		}
 	}
 
 	return record, nil

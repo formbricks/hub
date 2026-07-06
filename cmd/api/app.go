@@ -263,6 +263,12 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.Translation.DefaultLanguage,
 	)
 
+	// The eager-clear (nulling stale enrichment outputs on a value_text edit) fires only on this
+	// API PATCH path, so wire its counter here; the worker/backfill service instances leave it unset.
+	if metrics != nil {
+		feedbackRecordsService.SetEnrichmentClearMetrics(metrics.EnrichmentClear)
+	}
+
 	// Tenant settings service: shared by the emotions worker's authoritative gate (registered
 	// below), the settings HTTP handler, and the enqueue-path settings cache.
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
