@@ -44,7 +44,7 @@ func NewFeedbackTranslationWorker(
 		eligible:   (*models.FeedbackRecord).IsTextField,
 		hasContent: (*models.FeedbackRecord).HasOpenText,
 		classify: func(ctx context.Context, record *models.FeedbackRecord, args service.FeedbackTranslationArgs) (string, error) {
-			return translate(ctx, client, record, args.TargetLang)
+			return translate(ctx, client, record, args.TargetLang, args.EventID)
 		},
 		persist: func(ctx context.Context, record *models.FeedbackRecord, args service.FeedbackTranslationArgs, translated *string) error {
 			// Guard the write against content churn since the Work-time read: a stale job's
@@ -71,7 +71,7 @@ func NewFeedbackTranslationWorker(
 // translate returns the translated value_text, short-circuiting (copying the original) when the
 // record's source language already matches the target language.
 func translate(
-	ctx context.Context, client service.TranslationClient, record *models.FeedbackRecord, targetLang string,
+	ctx context.Context, client service.TranslationClient, record *models.FeedbackRecord, targetLang string, eventID uuid.UUID,
 ) (string, error) {
 	sourceLang := ""
 	if record.Language != nil {
@@ -80,7 +80,7 @@ func translate(
 
 	if sameLanguageAndScript(sourceLang, targetLang) {
 		slog.Info("translation: source already in target language, copying value_text",
-			"feedback_record_id", record.ID)
+			"feedback_record_id", record.ID, "event_id", eventID)
 
 		return *record.ValueText, nil
 	}
