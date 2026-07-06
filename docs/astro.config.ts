@@ -192,6 +192,10 @@ export default defineConfig({
                   label: "Environment Variables",
                   slug: "reference/environment-variables",
                 },
+                {
+                  label: "Metrics",
+                  slug: "reference/metrics",
+                },
               ],
             },
           ],
