@@ -98,12 +98,20 @@ This enables:
 
 #### Response Values
 
-| Field           | Type      | Required | Description                                             |
-| --------------- | --------- | -------- | ------------------------------------------------------- |
-| `value_text`    | String    | Optional | Text responses (feedback, comments, open-ended answers) |
-| `value_number`  | Float64   | Optional | Numeric responses (ratings, scores, NPS, CSAT)          |
-| `value_boolean` | Boolean   | Optional | Yes/no responses                                        |
-| `value_date`    | Timestamp | Optional | Date/datetime responses                                 |
+| Field           | Type      | Required | Description                                                                             |
+| --------------- | --------- | -------- | --------------------------------------------------------------------------------------- |
+| `value_text`    | String    | Optional | Text responses (feedback, comments, open-ended answers); max 30,000 characters on write |
+| `value_number`  | Float64   | Optional | Numeric responses (ratings, scores, NPS, CSAT)                                          |
+| `value_boolean` | Boolean   | Optional | Yes/no responses                                                                        |
+| `value_date`    | Timestamp | Optional | Date/datetime responses                                                                 |
+
+<Callout variant="note">
+  Feedback-record writes (`POST` / `PATCH /v1/feedback-records`) cap the request
+  body at **512 KiB** (`413 content_too_large`) and `value_text` at **30,000
+  characters** (`400`), bounding the payload before it fans out to the
+  enrichment pipelines. Records stored before these limits are unaffected —
+  responses are never truncated.
+</Callout>
 
 #### Context & Metadata
 
