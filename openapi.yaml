@@ -1483,10 +1483,10 @@ paths:
                 - Taxonomy
             summary: List taxonomy runs
             description: |
-                Returns taxonomy run history for a tenant, most recent first. Optionally filter by source_type,
-                field_id, and source_id. source_id is a tri-state filter: omit it for no source filter, pass an
-                empty string to scope to the canonical "no source" bucket, or pass a concrete value to match that
-                source.
+                Returns taxonomy run history for a tenant, most recent first. Optionally filter by scope_type,
+                source_type, field_id, and source_id. source_id is a tri-state filter: omit it for no source
+                filter, pass an empty string to scope to the canonical "no source" bucket, or pass a concrete
+                value to match that source.
             operationId: list-taxonomy-runs
             parameters:
                 - name: tenant_id
@@ -1499,6 +1499,12 @@ paths:
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
+                - name: scope_type
+                  in: query
+                  required: false
+                  description: Optional scope type filter. Omitted means no scope type filter.
+                  schema:
+                    $ref: '#/components/schemas/TaxonomyScopeType'
                 - name: source_type
                   in: query
                   required: false
@@ -1564,9 +1570,11 @@ paths:
                 - Taxonomy
             summary: Start a taxonomy run
             description: |
-                Starts a manual taxonomy generation run for a field scope. Hub validates that the field has enough
-                embedded text feedback (below the configured minimum returns 400 with an "insufficient data"
-                validation error), creates the run, and hands it to the taxonomy compute service.
+                Starts a manual taxonomy generation run for a field or directory scope. Hub validates that the
+                scope has enough embedded text feedback (below the configured minimum returns 400 with an
+                "insufficient data" validation error), creates the run, and hands it to the taxonomy compute
+                service. Omit scope_type for the existing field scope behavior; use scope_type=directory with
+                tenant_id only to generate one taxonomy over all text feedback in the directory.
 
                 Idempotent per scope: if a run is already pending or running for the same scope, the existing run
                 is returned with `in_progress: true` (HTTP 200) instead of starting a new one; a newly created run
@@ -1585,9 +1593,16 @@ paths:
                                 summary: Start a run for a survey field
                                 value:
                                     tenant_id: "org-123"
+                                    scope_type: "field"
                                     source_type: "formbricks"
                                     source_id: "survey-abc"
                                     field_id: "feedback"
+                                    actor_id: "user-42"
+                            directory:
+                                summary: Start a run for all text feedback in a directory
+                                value:
+                                    tenant_id: "org-123"
+                                    scope_type: "directory"
                                     actor_id: "user-42"
             responses:
                 "202":
@@ -1604,8 +1619,8 @@ paths:
                                 $ref: '#/components/schemas/CreateTaxonomyRunOutputBody'
                 "400":
                     description: |
-                        Bad Request – invalid scope, or insufficient input (no text feedback for the field, or
-                        fewer embedded records than the configured minimum).
+                            Bad Request – invalid scope, or insufficient input (no text feedback for the scope, or
+                            fewer embedded records than the configured minimum).
                     content:
                         application/problem+json:
                             schema:
@@ -1644,7 +1659,7 @@ paths:
                 - Taxonomy
             summary: Get the active taxonomy tree for a scope
             description: |
-                Returns the currently active taxonomy run and its tree for a field scope. Exactly one run is
+                Returns the currently active taxonomy run and its tree for a field or directory scope. Exactly one run is
                 active per scope at a time. Returns 404 when no run has been activated for the scope.
             operationId: get-active-taxonomy-tree
             parameters:
@@ -1658,10 +1673,16 @@ paths:
                     maxLength: 255
                     pattern: '^[^\x00]*$'
                     example: "org-123"
+                - name: scope_type
+                  in: query
+                  required: false
+                  description: Scope type. Omit for field scope; use directory with tenant_id only for directory taxonomy.
+                  schema:
+                    $ref: '#/components/schemas/TaxonomyScopeType'
                 - name: source_type
                   in: query
-                  required: true
-                  description: Source type of the scope.
+                  required: false
+                  description: Source type of a field scope. Must be omitted for directory scope.
                   schema:
                     type: string
                     minLength: 1
@@ -1677,8 +1698,8 @@ paths:
                     pattern: '^[^\x00]*$'
                 - name: field_id
                   in: query
-                  required: true
-                  description: Field ID of the scope.
+                  required: false
+                  description: Field ID of a field scope. Must be omitted for directory scope.
                   schema:
                     type: string
                     minLength: 1
@@ -2982,6 +3003,15 @@ components:
                 - generation_failed
                 - invalid_output
                 - internal_error
+        TaxonomyScopeType:
+            type: string
+            description: |
+                Taxonomy input scope. `field` covers one (source_type, source_id, field_id) field scope.
+                `directory` covers all text feedback records for the tenant/directory and must not include
+                source_type, source_id, or field_id.
+            enum:
+                - field
+                - directory
         TaxonomyNodeType:
             type: string
             description: Position of a node within the taxonomy tree.
@@ -3000,6 +3030,8 @@ components:
                 id:
                     type: string
                     format: uuid
+                scope_type:
+                    $ref: '#/components/schemas/TaxonomyScopeType'
                 tenant_id:
                     type: string
                 source_type:
@@ -3053,6 +3085,7 @@ components:
                     format: date-time
             required:
                 - id
+                - scope_type
                 - tenant_id
                 - source_type
                 - source_id
@@ -3178,8 +3211,13 @@ components:
         CreateTaxonomyRunInputBody:
             type: object
             additionalProperties: false
-            description: Request to start a manual taxonomy run for a field scope.
+            description: |
+                Request to start a manual taxonomy run. Omit scope_type or set it to `field` for the existing
+                field-scoped behavior. Set scope_type to `directory` with only tenant_id to generate one
+                taxonomy over all text feedback in the directory.
             properties:
+                scope_type:
+                    $ref: '#/components/schemas/TaxonomyScopeType'
                 tenant_id:
                     type: string
                     minLength: 1
@@ -3190,16 +3228,18 @@ components:
                     minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
+                    description: Required for field scope; omit for directory scope.
                 source_id:
                     type: string
                     maxLength: 255
                     pattern: '^[^\x00]*$'
-                    description: Optional; empty or omitted is the canonical "no source" bucket.
+                    description: Optional for field scope; empty or omitted is the canonical "no source" bucket. Omit for directory scope.
                 field_id:
                     type: string
                     minLength: 1
                     maxLength: 255
                     pattern: '^[^\x00]*$'
+                    description: Required for field scope; omit for directory scope.
                 field_label:
                     type: string
                     pattern: '^[^\x00]*$'
@@ -3212,8 +3252,6 @@ components:
                     description: Optional identifier of the actor starting the run.
             required:
                 - tenant_id
-                - source_type
-                - field_id
         CreateTaxonomyRunOutputBody:
             type: object
             additionalProperties: false

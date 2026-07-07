@@ -371,3 +371,10 @@ func uniqueTaxonomyScope(prefix string) models.TaxonomyScope {
 		FieldID:    "feedback",
 	}
 }
+
+func uniqueDirectoryTaxonomyScope(prefix string) models.TaxonomyScope {
+	return models.TaxonomyScope{
+		ScopeType: models.TaxonomyScopeTypeDirectory,
+		TenantID:  prefix + "-" + uuid.NewString(),
+	}
+}

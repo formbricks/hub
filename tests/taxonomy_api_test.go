@@ -254,6 +254,14 @@ func TestTaxonomyAPI_CreateRun(t *testing.T) {
 		requestTaxonomyJSON(ctx, t, http.MethodPost, runsURL, harness.apiKey, body, http.StatusBadRequest, nil)
 	})
 
+	t.Run("directory scope rejects field selectors", func(t *testing.T) {
+		scope := uniqueDirectoryTaxonomyScope("tax-api-create-directory-invalid")
+		scope.SourceType = "formbricks"
+
+		body := models.CreateTaxonomyRunRequest{TaxonomyScope: scope}
+		requestTaxonomyJSON(ctx, t, http.MethodPost, runsURL, harness.apiKey, body, http.StatusBadRequest, nil)
+	})
+
 	t.Run("accepts a new run and reuses an in-progress one", func(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-api-create-ok")
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
@@ -268,6 +276,46 @@ func TestTaxonomyAPI_CreateRun(t *testing.T) {
 		assert.Contains(t, harness.starter.startedRunIDs(), first.Run.ID.String())
 
 		// A second request for the same scope reuses the running run (200, in_progress).
+		var second models.CreateTaxonomyRunResponse
+		requestTaxonomyJSON(ctx, t, http.MethodPost, runsURL, harness.apiKey, body, http.StatusOK, &second)
+		require.True(t, second.InProgress)
+		assert.Equal(t, first.Run.ID, second.Run.ID)
+	})
+
+	t.Run("accepts a directory run across sources and fields", func(t *testing.T) {
+		directoryScope := uniqueDirectoryTaxonomyScope("tax-api-create-directory")
+		cleanupTaxonomyTenant(ctx, t, harness.db, directoryScope.TenantID)
+
+		firstFieldScope := models.TaxonomyScope{
+			TenantID:   directoryScope.TenantID,
+			SourceType: "formbricks",
+			SourceID:   "survey-" + uuid.NewString(),
+			FieldID:    "ces_comment",
+		}
+		secondFieldScope := models.TaxonomyScope{
+			TenantID:   directoryScope.TenantID,
+			SourceType: "support",
+			SourceID:   "ticket-" + uuid.NewString(),
+			FieldID:    "support_comment",
+		}
+
+		seedEmbeddedFeedback(ctx, t, harness, firstFieldScope, taxonomyMinEmbeddedRecords)
+		seedEmbeddedFeedback(ctx, t, harness, secondFieldScope, taxonomyMinEmbeddedRecords+1)
+
+		body := models.CreateTaxonomyRunRequest{TaxonomyScope: directoryScope}
+
+		var first models.CreateTaxonomyRunResponse
+		requestTaxonomyJSON(ctx, t, http.MethodPost, runsURL, harness.apiKey, body, http.StatusAccepted, &first)
+		require.False(t, first.InProgress)
+		assert.Equal(t, models.TaxonomyScopeTypeDirectory, first.Run.ScopeType)
+		assert.Empty(t, first.Run.SourceType)
+		assert.Empty(t, first.Run.SourceID)
+		assert.Empty(t, first.Run.FieldID)
+		require.NotNil(t, first.Run.FieldLabel)
+		assert.Equal(t, "All feedback", *first.Run.FieldLabel)
+		assert.Equal(t, taxonomyMinEmbeddedRecords*2+1, first.Run.RecordCount)
+		assert.Equal(t, taxonomyMinEmbeddedRecords*2+1, first.Run.EmbeddingCount)
+
 		var second models.CreateTaxonomyRunResponse
 		requestTaxonomyJSON(ctx, t, http.MethodPost, runsURL, harness.apiKey, body, http.StatusOK, &second)
 		require.True(t, second.InProgress)
@@ -299,6 +347,50 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		require.NotEmpty(t, input.Records)
 		assert.NotEmpty(t, input.Records[0].Embedding)
 		assert.NotEmpty(t, input.Records[0].ValueText)
+	})
+
+	t.Run("directory run input spans sources and fields", func(t *testing.T) {
+		directoryScope := uniqueDirectoryTaxonomyScope("tax-internal-directory-input")
+		cleanupTaxonomyTenant(ctx, t, harness.db, directoryScope.TenantID)
+
+		firstFieldScope := models.TaxonomyScope{
+			TenantID:   directoryScope.TenantID,
+			SourceType: "formbricks",
+			SourceID:   "survey-" + uuid.NewString(),
+			FieldID:    "ces_comment",
+		}
+		secondFieldScope := models.TaxonomyScope{
+			TenantID:   directoryScope.TenantID,
+			SourceType: "support",
+			SourceID:   "ticket-" + uuid.NewString(),
+			FieldID:    "support_comment",
+		}
+
+		seedEmbeddedFeedback(ctx, t, harness, firstFieldScope, taxonomyMinEmbeddedRecords)
+		seedEmbeddedFeedback(ctx, t, harness, secondFieldScope, taxonomyMinEmbeddedRecords+1)
+
+		runID := startRunForScope(ctx, t, harness, directoryScope)
+		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"
+
+		var input models.TaxonomyRunInputResponse
+		requestTaxonomyJSON(ctx, t, http.MethodGet, inputURL, harness.internalToken, nil, http.StatusOK, &input)
+		assert.Equal(t, models.TaxonomyScopeTypeDirectory, input.Run.ScopeType)
+		require.Len(t, input.Records, taxonomyMinEmbeddedRecords*2+1)
+
+		fieldIDs := map[string]bool{}
+		sourceTypes := map[string]bool{}
+
+		for _, record := range input.Records {
+			fieldIDs[record.FieldID] = true
+			sourceTypes[record.SourceType] = true
+			assert.NotEmpty(t, record.Embedding)
+			assert.NotEmpty(t, record.ValueText)
+		}
+
+		assert.True(t, fieldIDs["ces_comment"])
+		assert.True(t, fieldIDs["support_comment"])
+		assert.True(t, sourceTypes["formbricks"])
+		assert.True(t, sourceTypes["support"])
 	})
 
 	t.Run("complete run stores artifacts and activates", func(t *testing.T) {
