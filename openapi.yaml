@@ -597,14 +597,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                type: object
-                                required:
-                                    - count
-                                properties:
-                                    count:
-                                        type: integer
-                                        description: Number of feedback records matching the filters
-                                        example: 42
+                                $ref: '#/components/schemas/CountFeedbackRecordsOutputBody'
                 "400":
                     description: Bad Request (e.g. validation error)
                     content:
@@ -2207,6 +2200,17 @@ components:
             required:
                 - deleted_count
                 - message
+        CountFeedbackRecordsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                count:
+                    type: integer
+                    description: Number of feedback records matching the filters
+                    format: int64
+                    example: 42
+            required:
+                - count
         TenantDataDeleteOutputBody:
             type: object
             additionalProperties: false

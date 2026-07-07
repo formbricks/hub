@@ -249,5 +249,5 @@ func (h *FeedbackRecordsHandler) Count(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, map[string]int{"count": count})
+	response.RespondJSON(w, http.StatusOK, models.CountFeedbackRecordsResponse{Count: int64(count)})
 }
