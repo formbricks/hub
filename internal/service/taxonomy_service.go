@@ -159,10 +159,12 @@ func (s *TaxonomyService) StartManualRun(
 		trimmed := strings.TrimSpace(*fieldLabel)
 		fieldLabel = &trimmed
 	}
+
 	if (fieldLabel == nil || *fieldLabel == "") && scope.ScopeType == models.TaxonomyScopeTypeDirectory {
 		label := directoryTaxonomyFieldLabel
 		fieldLabel = &label
 	}
+
 	if fieldLabel == nil {
 		fieldLabel = discoveredFieldLabel
 	}
@@ -467,9 +469,11 @@ func normalizeTaxonomyScope(scope models.TaxonomyScope) (models.TaxonomyScope, e
 		if strings.TrimSpace(scope.SourceType) != "" {
 			return models.TaxonomyScope{}, huberrors.NewValidationError("source_type", "must be empty for directory taxonomy scope")
 		}
+
 		if strings.TrimSpace(scope.SourceID) != "" {
 			return models.TaxonomyScope{}, huberrors.NewValidationError("source_id", "must be empty for directory taxonomy scope")
 		}
+
 		if strings.TrimSpace(scope.FieldID) != "" {
 			return models.TaxonomyScope{}, huberrors.NewValidationError("field_id", "must be empty for directory taxonomy scope")
 		}

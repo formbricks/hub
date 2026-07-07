@@ -69,10 +69,10 @@ const (
 // feedback records whose source_id is NULL or blank.
 type TaxonomyScope struct {
 	ScopeType  TaxonomyScopeType `json:"scope_type,omitempty" validate:"omitempty,oneof=field directory"`
-	TenantID   string            `json:"tenant_id"   validate:"required,no_null_bytes,min=1,max=255"`
-	SourceType string            `json:"source_type" validate:"omitempty,no_null_bytes,min=1,max=255"`
-	SourceID   string            `json:"source_id"   validate:"omitempty,no_null_bytes,max=255"`
-	FieldID    string            `json:"field_id"    validate:"omitempty,no_null_bytes,min=1,max=255"`
+	TenantID   string            `json:"tenant_id"            validate:"required,no_null_bytes,min=1,max=255"`
+	SourceType string            `json:"source_type"          validate:"omitempty,no_null_bytes,min=1,max=255"`
+	SourceID   string            `json:"source_id"            validate:"omitempty,no_null_bytes,max=255"`
+	FieldID    string            `json:"field_id"             validate:"omitempty,no_null_bytes,min=1,max=255"`
 }
 
 // TaxonomyFieldOption describes a feedback field that can be used for taxonomy generation.

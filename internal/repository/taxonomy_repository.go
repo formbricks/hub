@@ -373,6 +373,7 @@ func (r *TaxonomyRepository) GetRunForTenant(
 // GetActiveRun returns the active taxonomy run for a scope.
 func (r *TaxonomyRepository) GetActiveRun(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyRun, error) {
 	scopeType := taxonomyScopeType(scope)
+
 	run, err := queryTaxonomyRun(ctx, r.db, taxonomyRunSelect+`
 		FROM taxonomy_active_runs ar
 		INNER JOIN taxonomy_runs ON taxonomy_runs.id = ar.run_id
@@ -431,6 +432,7 @@ func (r *TaxonomyRepository) ListRuns(
 	if filters.ScopeType != "" {
 		addFilter("scope_type", string(filters.ScopeType))
 	}
+
 	addFilter("source_type", filters.SourceType)
 	addFilter("field_id", filters.FieldID)
 	addFilterPtr("source_id", filters.SourceID)
@@ -510,56 +512,6 @@ func (r *TaxonomyRepository) GetRunInput(
 	}
 
 	return &models.TaxonomyRunInputResponse{Run: *run, Records: records}, nil
-}
-
-func (r *TaxonomyRepository) queryRunInputRows(
-	ctx context.Context,
-	run *models.TaxonomyRun,
-	limit int,
-	embeddingModel string,
-) (pgx.Rows, error) {
-	if run.ScopeType == models.TaxonomyScopeTypeDirectory {
-		return r.db.Query(ctx, `
-			SELECT
-				fr.id,
-				fr.source_type,
-				COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
-				fr.field_id,
-				COALESCE(fr.field_label, ''),
-				fr.value_text,
-				e.embedding
-			FROM feedback_records fr
-			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $3
-			WHERE fr.tenant_id = $1
-			  AND fr.value_text IS NOT NULL
-			  AND btrim(fr.value_text) <> ''
-			ORDER BY fr.collected_at DESC, fr.id ASC
-			LIMIT $2`,
-			run.TenantID, limit, embeddingModel,
-		)
-	}
-
-	return r.db.Query(ctx, `
-		SELECT
-			fr.id,
-			fr.source_type,
-			COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
-			fr.field_id,
-			COALESCE(fr.field_label, ''),
-			fr.value_text,
-			e.embedding
-		FROM feedback_records fr
-		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
-		WHERE fr.tenant_id = $1
-		  AND fr.source_type = $2
-		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
-		  AND fr.field_id = $4
-		  AND fr.value_text IS NOT NULL
-		  AND btrim(fr.value_text) <> ''
-		ORDER BY fr.collected_at DESC, fr.id ASC
-		LIMIT $5`,
-		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
-	)
 }
 
 // StoreResultAndActivate stores generated taxonomy artifacts and activates the run.
@@ -922,6 +874,66 @@ func (r *TaxonomyRepository) ListNodeRecords(
 	}
 
 	return records, limit, nil
+}
+
+func (r *TaxonomyRepository) queryRunInputRows(
+	ctx context.Context,
+	run *models.TaxonomyRun,
+	limit int,
+	embeddingModel string,
+) (pgx.Rows, error) {
+	if run.ScopeType == models.TaxonomyScopeTypeDirectory {
+		rows, err := r.db.Query(ctx, `
+			SELECT
+				fr.id,
+				fr.source_type,
+				COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
+				fr.field_id,
+				COALESCE(fr.field_label, ''),
+				fr.value_text,
+				e.embedding
+			FROM feedback_records fr
+			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $3
+			WHERE fr.tenant_id = $1
+			  AND fr.value_text IS NOT NULL
+			  AND btrim(fr.value_text) <> ''
+			ORDER BY fr.collected_at DESC, fr.id ASC
+			LIMIT $2`,
+			run.TenantID, limit, embeddingModel,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query directory taxonomy run input rows: %w", err)
+		}
+
+		return rows, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT
+			fr.id,
+			fr.source_type,
+			COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
+			fr.field_id,
+			COALESCE(fr.field_label, ''),
+			fr.value_text,
+			e.embedding
+		FROM feedback_records fr
+		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
+		WHERE fr.tenant_id = $1
+		  AND fr.source_type = $2
+		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
+		  AND fr.field_id = $4
+		  AND fr.value_text IS NOT NULL
+		  AND btrim(fr.value_text) <> ''
+		ORDER BY fr.collected_at DESC, fr.id ASC
+		LIMIT $5`,
+		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query field taxonomy run input rows: %w", err)
+	}
+
+	return rows, nil
 }
 
 func (r *TaxonomyRepository) listVisibleNodes(ctx context.Context, runID uuid.UUID) ([]models.TaxonomyNode, error) {

@@ -298,6 +298,7 @@ func TestTaxonomyAPI_CreateRun(t *testing.T) {
 			SourceID:   "ticket-" + uuid.NewString(),
 			FieldID:    "support_comment",
 		}
+
 		seedEmbeddedFeedback(ctx, t, harness, firstFieldScope, taxonomyMinEmbeddedRecords)
 		seedEmbeddedFeedback(ctx, t, harness, secondFieldScope, taxonomyMinEmbeddedRecords+1)
 
@@ -364,6 +365,7 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 			SourceID:   "ticket-" + uuid.NewString(),
 			FieldID:    "support_comment",
 		}
+
 		seedEmbeddedFeedback(ctx, t, harness, firstFieldScope, taxonomyMinEmbeddedRecords)
 		seedEmbeddedFeedback(ctx, t, harness, secondFieldScope, taxonomyMinEmbeddedRecords+1)
 
@@ -377,12 +379,14 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 
 		fieldIDs := map[string]bool{}
 		sourceTypes := map[string]bool{}
+
 		for _, record := range input.Records {
 			fieldIDs[record.FieldID] = true
 			sourceTypes[record.SourceType] = true
 			assert.NotEmpty(t, record.Embedding)
 			assert.NotEmpty(t, record.ValueText)
 		}
+
 		assert.True(t, fieldIDs["ces_comment"])
 		assert.True(t, fieldIDs["support_comment"])
 		assert.True(t, sourceTypes["formbricks"])
