@@ -575,6 +575,7 @@ func newHTTPServer(
 	protected := http.NewServeMux()
 	protected.HandleFunc("POST /v1/feedback-records", feedback.Create)
 	protected.HandleFunc("GET /v1/feedback-records", feedback.List)
+	protected.HandleFunc("GET /v1/feedback-records/count", feedback.Count)
 	protected.HandleFunc("GET /v1/feedback-records/{id}", feedback.Get)
 	protected.HandleFunc("PATCH /v1/feedback-records/{id}", feedback.Update)
 	protected.HandleFunc("DELETE /v1/feedback-records/{id}", feedback.Delete)

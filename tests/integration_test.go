@@ -127,6 +127,7 @@ func setupTestServerWithEventProviders(
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("POST /v1/feedback-records", feedbackRecordsHandler.Create)
 	protectedMux.HandleFunc("GET /v1/feedback-records", feedbackRecordsHandler.List)
+	protectedMux.HandleFunc("GET /v1/feedback-records/count", feedbackRecordsHandler.Count)
 	protectedMux.HandleFunc("GET /v1/feedback-records/{id}", feedbackRecordsHandler.Get)
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
@@ -1813,4 +1814,128 @@ func TestWebhooksInvalidSigningKey(t *testing.T) {
 	require.NoError(t, updateResp.Body.Close())
 	require.Len(t, updateProblem.InvalidParams, 1)
 	assert.Equal(t, "signing_key", updateProblem.InvalidParams[0].Name)
+}
+
+// TestCountFeedbackRecords verifies the GET /v1/feedback-records/count endpoint returns accurate
+// counts with and without filters, using real seeded data.
+func TestCountFeedbackRecords(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+	authHeader := "Bearer " + testAPIKey
+	tenantID := "count-test-" + uuid.New().String()
+	otherTenantID := "count-test-other-" + uuid.New().String()
+
+	// Seed feedback records across two tenants.
+	createRecord := func(t *testing.T, tenant, sourceType, userID string) {
+		t.Helper()
+
+		body, err := json.Marshal(map[string]any{
+			"source_type":   sourceType,
+			"submission_id": uuid.New().String(),
+			"field_id":      "feedback",
+			"field_type":    "text",
+			"value_text":    "count test feedback",
+			"tenant_id":     tenant,
+			"user_id":       userID,
+		})
+		require.NoError(t, err)
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+			server.URL+"/v1/feedback-records", bytes.NewBuffer(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", authHeader)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	createRecord(t, tenantID, "formbricks", "user-a")
+	createRecord(t, tenantID, "formbricks", "user-b")
+	createRecord(t, tenantID, "api", "user-a")
+	createRecord(t, otherTenantID, "formbricks", "user-c")
+
+	t.Run("returns all records for tenant", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records/count?tenant_id="+tenantID, http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", authHeader)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body map[string]int
+
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		assert.Equal(t, 3, body["count"])
+	})
+
+	t.Run("filters by source_type", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records/count?tenant_id="+tenantID+"&source_type=api", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", authHeader)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body map[string]int
+
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		assert.Equal(t, 1, body["count"])
+	})
+
+	t.Run("returns 0 for tenant with no records", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records/count?tenant_id=nonexistent", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", authHeader)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body map[string]int
+
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		assert.Equal(t, 0, body["count"])
+	})
+
+	t.Run("missing tenant_id returns 400", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records/count", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", authHeader)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	})
+
+	t.Run("unauthorized without auth", func(t *testing.T) {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records/count?tenant_id="+tenantID, http.NoBody)
+		require.NoError(t, err)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	})
 }

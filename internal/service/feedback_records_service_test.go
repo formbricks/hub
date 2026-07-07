@@ -30,6 +30,10 @@ type mockFeedbackRecordsRepo struct {
 	emotionsBackfillTargets    []uuid.UUID
 	emotionsBackfillErr        error
 
+	countErr    error
+	countResult int
+	countCalled bool
+
 	setSentimentCalled bool
 	setSentimentLabel  *models.SentimentValue
 	setSentimentScore  *float64
@@ -179,6 +183,80 @@ func (m *mockFeedbackRecordsRepo) DeleteByUser(
 	m.deleteByUserFilters = filters
 
 	return m.deleteByUserGroups, nil
+}
+
+func (m *mockFeedbackRecordsRepo) Count(
+	_ context.Context, _ *models.ListFeedbackRecordsFilters,
+) (int, error) {
+	m.countCalled = true
+
+	return m.countResult, m.countErr
+}
+
+// TestFeedbackRecordsService_CountFeedbackRecords locks the count behaviour:
+// the service layer passes filters through to the repo and propagates its result or error.
+func TestFeedbackRecordsService_CountFeedbackRecords(t *testing.T) {
+	t.Run("returns count from repo", func(t *testing.T) {
+		repo := &mockFeedbackRecordsRepo{countResult: 42}
+		svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+		tenantID := "org-123"
+
+		count, err := svc.CountFeedbackRecords(context.Background(), &models.ListFeedbackRecordsFilters{
+			TenantID: &tenantID,
+		})
+		if err != nil {
+			t.Fatalf("CountFeedbackRecords() error = %v", err)
+		}
+
+		if count != 42 {
+			t.Fatalf("count = %d, want 42", count)
+		}
+
+		if !repo.countCalled {
+			t.Fatal("repo Count was not called")
+		}
+	})
+
+	t.Run("propagates nil filters as empty", func(t *testing.T) {
+		repo := &mockFeedbackRecordsRepo{countResult: 7}
+		svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+		count, err := svc.CountFeedbackRecords(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("CountFeedbackRecords(nil) error = %v", err)
+		}
+
+		if count != 7 {
+			t.Fatalf("count = %d, want 7", count)
+		}
+
+		if !repo.countCalled {
+			t.Fatal("repo Count was not called with nil filters")
+		}
+	})
+
+	t.Run("propagates repo error", func(t *testing.T) {
+		repo := &mockFeedbackRecordsRepo{countErr: errors.New("db error")}
+		svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+		tenantID := "org-123"
+
+		_, err := svc.CountFeedbackRecords(context.Background(), &models.ListFeedbackRecordsFilters{
+			TenantID: &tenantID,
+		})
+		if err == nil {
+			t.Fatal("CountFeedbackRecords() = nil error, want propagated error")
+		}
+
+		if !strings.Contains(err.Error(), "db error") {
+			t.Fatalf("error = %v, want to contain 'db error'", err)
+		}
+
+		if !repo.countCalled {
+			t.Fatal("repo Count was not called on error path")
+		}
+	})
 }
 
 func TestFeedbackRecordsService_DeleteFeedbackRecord_PublishesTenantAwareDeletedEvent(t *testing.T) {

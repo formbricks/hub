@@ -492,6 +492,50 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/feedback-records/count:
+        get:
+            tags:
+                - Feedback Records
+            summary: Count feedback records
+            description: Returns the total number of feedback records matching the given filters. Supports the same query parameters as the list endpoint.
+            operationId: count-feedback-records
+            parameters:
+                - $ref: '#/components/parameters/QueryParamTenantID'
+                - $ref: '#/components/parameters/QueryParamSubmissionID'
+                - $ref: '#/components/parameters/QueryParamSourceType'
+                - $ref: '#/components/parameters/QueryParamSourceID'
+                - $ref: '#/components/parameters/QueryParamFieldID'
+                - $ref: '#/components/parameters/QueryParamFieldGroupID'
+                - $ref: '#/components/parameters/QueryParamFieldType'
+                - $ref: '#/components/parameters/QueryParamUserID'
+                - $ref: '#/components/parameters/QueryParamSince'
+                - $ref: '#/components/parameters/QueryParamUntil'
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required:
+                                    - count
+                                properties:
+                                    count:
+                                        type: integer
+                                        description: Number of feedback records matching the filters
+                                        example: 42
+                "400":
+                    description: Bad Request (e.g. validation error)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
     /v1/feedback-records/{id}:
         get:
             tags:

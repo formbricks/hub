@@ -66,6 +66,7 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 	) ([]models.TranslationBackfillTarget, error)
 	ListSentimentBackfillTargets(ctx context.Context, afterID uuid.UUID, limit int) ([]uuid.UUID, error)
 	ListEmotionsBackfillTargets(ctx context.Context, afterID uuid.UUID, limit int) ([]uuid.UUID, error)
+	Count(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	DeleteByUser(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) ([]models.DeletedFeedbackRecordsByTenant, error)
 }
@@ -324,6 +325,22 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 		Limit:      meta.Limit,
 		NextCursor: meta.NextCursor,
 	}, nil
+}
+
+// CountFeedbackRecords returns the count of feedback records matching the given filters.
+func (s *FeedbackRecordsService) CountFeedbackRecords(
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
+) (int, error) {
+	if filters == nil {
+		filters = &models.ListFeedbackRecordsFilters{}
+	}
+
+	count, err := s.repo.Count(ctx, filters)
+	if err != nil {
+		return 0, fmt.Errorf("count feedback records: %w", err)
+	}
+
+	return count, nil
 }
 
 // UpdateFeedbackRecord updates an existing feedback record.
