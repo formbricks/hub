@@ -1,6 +1,6 @@
 ---
 title: Environment Variables
-description: Runtime configuration for the Hub API, worker, database pool, webhooks, embeddings, and observability.
+description: Runtime configuration for the Hub API, worker, database pool, webhooks, enrichment (embeddings, translation, sentiment, emotions), and observability.
 ---
 
 ## Required
@@ -72,19 +72,95 @@ strings, fragments, or credentials. Hub serves runtime OpenAPI specs at
 | `MESSAGE_PUBLISHER_QUEUE_MAX_SIZE`            | `16384` | In-memory event channel buffer size.  |
 | `MESSAGE_PUBLISHER_PER_EVENT_TIMEOUT_SECONDS` | `10`    | Per-event publish timeout in seconds. |
 
-## Embeddings
+## Enrichment
 
-| Variable                          | Default | Description                                                        |
-| --------------------------------- | ------- | ------------------------------------------------------------------ |
-| `EMBEDDING_PROVIDER`              | -       | Embedding provider. One of `openai`, `google`, or `google-vertex`. |
-| `EMBEDDING_PROVIDER_API_KEY`      | -       | API key for the embedding provider.                                |
-| `EMBEDDING_MODEL`                 | -       | Embedding model name.                                              |
+Hub runs four independent text enrichments — embeddings, translation, sentiment,
+and emotions — processed asynchronously by `hub-worker`. Each is enabled per type
+by setting its `*_PROVIDER` and `*_MODEL`; if either is unset, that enrichment is
+disabled and no jobs are enqueued.
+
+All four accept the same providers: `openai`, `google` (Gemini Developer API /
+Google AI Studio), and `google-gemini` (Gemini Enterprise Agent Platform API).
+`openai` and `google` authenticate with the enrichment's `*_PROVIDER_API_KEY`;
+`google-gemini` uses Google Cloud Application Default Credentials and reads
+`*_GOOGLE_CLOUD_PROJECT` / `*_GOOGLE_CLOUD_LOCATION`, falling back to the global
+`GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` (set `GOOGLE_APPLICATION_CREDENTIALS`
+to a service-account key path when running outside Google Cloud). A custom
+`*_BASE_URL` is honored only with `openai`.
+
+### Embeddings
+
+| Variable                          | Default | Description                                                                                                                                                                     |
+| --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EMBEDDING_PROVIDER`              | -       | Embedding provider (`openai`, `google`, or `google-gemini`; legacy `google-vertex` maps to `google-gemini`). Set with `EMBEDDING_MODEL` to enable.                              |
+| `EMBEDDING_PROVIDER_API_KEY`      | -       | API key for `openai` / `google`.                                                                                                                                                |
+| `EMBEDDING_MODEL`                 | -       | Embedding model name.                                                                                                                                                           |
 | `EMBEDDING_BASE_URL`              | -       | OpenAI-compatible embeddings root URL. Use with `EMBEDDING_PROVIDER=openai` to target a self-hosted endpoint. See [Self-Hosted Embeddings](/guides/hub-self-hosted-embeddings). |
-| `EMBEDDING_MAX_CONCURRENT`        | `5`     | Max concurrent embedding jobs.                                     |
-| `EMBEDDING_MAX_ATTEMPTS`          | `3`     | Max embedding attempts.                                            |
-| `EMBEDDING_NORMALIZE`             | `false` | Whether to normalize embeddings before storage.                    |
-| `EMBEDDING_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project for supported providers.                      |
-| `EMBEDDING_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location for supported providers.                     |
+| `EMBEDDING_MAX_CONCURRENT`        | `5`     | Max concurrent embedding jobs.                                                                                                                                                  |
+| `EMBEDDING_MAX_ATTEMPTS`          | `3`     | Max embedding attempts.                                                                                                                                                         |
+| `EMBEDDING_NORMALIZE`             | `false` | Whether to normalize embeddings before storage.                                                                                                                                 |
+| `EMBEDDING_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                                                                                                     |
+| `EMBEDDING_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                                                                                                    |
+
+### Translation
+
+| Variable                            | Default | Description                                                                                                                                            |
+| ----------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TRANSLATION_PROVIDER`              | -       | Translation provider (`openai`, `google`, or `google-gemini`; legacy `google-vertex` maps to `google-gemini`). Set with `TRANSLATION_MODEL` to enable. |
+| `TRANSLATION_PROVIDER_API_KEY`      | -       | API key for `openai` / `google`.                                                                                                                       |
+| `TRANSLATION_MODEL`                 | -       | Translation model name.                                                                                                                                |
+| `TRANSLATION_BASE_URL`              | -       | OpenAI-compatible base URL; honored only with `openai`.                                                                                                |
+| `TRANSLATION_DEFAULT_LANGUAGE`      | -       | Fallback target language (BCP-47, e.g. `en-US`) for tenants with no `target_language`. Empty makes translation per-tenant opt-in.                      |
+| `TRANSLATION_MAX_CONCURRENT`        | `5`     | Max concurrent translation jobs.                                                                                                                       |
+| `TRANSLATION_MAX_ATTEMPTS`          | `3`     | Max translation attempts.                                                                                                                              |
+| `TRANSLATION_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                                                                            |
+| `TRANSLATION_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                                                                           |
+
+Each record is translated into its tenant's `target_language` (set via the tenant
+settings API); `TRANSLATION_DEFAULT_LANGUAGE` supplies the target for tenants that
+have not set one.
+
+### Sentiment
+
+| Variable                          | Default | Description                                                                                        |
+| --------------------------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `SENTIMENT_PROVIDER`              | -       | Sentiment provider (`openai`, `google`, or `google-gemini`). Set with `SENTIMENT_MODEL` to enable. |
+| `SENTIMENT_PROVIDER_API_KEY`      | -       | API key for `openai` / `google`.                                                                   |
+| `SENTIMENT_MODEL`                 | -       | Sentiment model name.                                                                              |
+| `SENTIMENT_BASE_URL`              | -       | OpenAI-compatible base URL; honored only with `openai`.                                            |
+| `SENTIMENT_MAX_CONCURRENT`        | `5`     | Max concurrent sentiment jobs.                                                                     |
+| `SENTIMENT_MAX_ATTEMPTS`          | `3`     | Max sentiment attempts.                                                                            |
+| `SENTIMENT_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                        |
+| `SENTIMENT_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                       |
+
+### Emotions
+
+| Variable                         | Default | Description                                                                                     |
+| -------------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `EMOTIONS_PROVIDER`              | -       | Emotion provider (`openai`, `google`, or `google-gemini`). Set with `EMOTIONS_MODEL` to enable. |
+| `EMOTIONS_PROVIDER_API_KEY`      | -       | API key for `openai` / `google`.                                                                |
+| `EMOTIONS_MODEL`                 | -       | Emotion model name.                                                                             |
+| `EMOTIONS_BASE_URL`              | -       | OpenAI-compatible base URL; honored only with `openai`.                                         |
+| `EMOTIONS_MAX_CONCURRENT`        | `5`     | Max concurrent emotion jobs.                                                                    |
+| `EMOTIONS_MAX_ATTEMPTS`          | `3`     | Max emotion attempts.                                                                           |
+| `EMOTIONS_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                     |
+| `EMOTIONS_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                    |
+
+Sentiment and emotions additionally honor per-directory switches (`sentiment_enabled`,
+`emotions_enabled`) set through the [tenant settings API](/core-concepts/tenant-settings);
+both default to on when the enrichment is configured.
+
+## Tenant Settings Cache
+
+The translation, sentiment, and emotion enqueue providers each resolve a per-tenant setting
+(`target_language`, `sentiment_enabled`, `emotions_enabled`) on every feedback event. They share a
+small in-process LRU cache over tenant settings so that resolution does not hit the database on each
+event; a settings write evicts the tenant's entry so a change is visible immediately.
+
+| Variable                            | Default | Description                                                              |
+| ----------------------------------- | ------- | ------------------------------------------------------------------------ |
+| `TENANT_SETTINGS_CACHE_SIZE`        | `2048`  | Maximum number of tenants cached (LRU). Set to `0` to disable the cache. |
+| `TENANT_SETTINGS_CACHE_TTL_SECONDS` | `60`    | How long a cached settings entry stays fresh, in seconds.                |
 
 ## Observability
 
@@ -92,6 +168,8 @@ strings, fragments, or credentials. Hub serves runtime OpenAPI specs at
 | ----------------------- | ------- | ------------------------------- |
 | `OTEL_METRICS_EXPORTER` | -       | OpenTelemetry metrics exporter. |
 | `OTEL_TRACES_EXPORTER`  | -       | OpenTelemetry traces exporter.  |
+
+With `OTEL_METRICS_EXPORTER` set, Hub emits the metrics listed in the [Metrics](/reference/metrics) reference.
 
 ## MCP Client Package
 

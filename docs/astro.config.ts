@@ -142,6 +142,18 @@ export default defineConfig({
                   label: "Webhooks",
                   slug: "core-concepts/webhooks",
                 },
+                {
+                  label: "Tenant Settings",
+                  slug: "core-concepts/tenant-settings",
+                },
+                {
+                  label: "Translated Feedback",
+                  slug: "core-concepts/translated-feedback",
+                },
+                {
+                  label: "Sentiment & Emotions",
+                  slug: "core-concepts/sentiment-and-emotions",
+                },
               ],
             },
             {
@@ -179,6 +191,10 @@ export default defineConfig({
                 {
                   label: "Environment Variables",
                   slug: "reference/environment-variables",
+                },
+                {
+                  label: "Metrics",
+                  slug: "reference/metrics",
                 },
               ],
             },
