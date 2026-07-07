@@ -500,16 +500,97 @@ paths:
             description: Returns the total number of feedback records matching the given filters. Supports the same query parameters as the list endpoint.
             operationId: count-feedback-records
             parameters:
-                - $ref: '#/components/parameters/QueryParamTenantID'
-                - $ref: '#/components/parameters/QueryParamSubmissionID'
-                - $ref: '#/components/parameters/QueryParamSourceType'
-                - $ref: '#/components/parameters/QueryParamSourceID'
-                - $ref: '#/components/parameters/QueryParamFieldID'
-                - $ref: '#/components/parameters/QueryParamFieldGroupID'
-                - $ref: '#/components/parameters/QueryParamFieldType'
-                - $ref: '#/components/parameters/QueryParamUserID'
-                - $ref: '#/components/parameters/QueryParamSince'
-                - $ref: '#/components/parameters/QueryParamUntil'
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant ID (required for isolation). NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Tenant ID (required for isolation). NULL bytes not allowed.
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                - name: submission_id
+                  in: query
+                  description: Filter by submission ID to group records belonging to one logical submission. NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by submission ID (e.g. UUID from webhook idempotency). NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+                - name: source_type
+                  in: query
+                  description: Filter by source type. NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by source type. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                    example: "survey"
+                - name: source_id
+                  in: query
+                  description: Filter by source ID (NULL bytes not allowed)
+                  schema:
+                    type: string
+                    description: Filter by source ID (NULL bytes not allowed)
+                    pattern: '^[^\x00]*$'
+                    example: "survey-123"
+                - name: field_id
+                  in: query
+                  description: Filter by field ID. NULL bytes not allowed.
+                  schema:
+                    type: string
+                    pattern: '^[^\x00]*$'
+                    example: "q1"
+                - name: field_group_id
+                  in: query
+                  description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                    example: "feature_priority"
+                - name: field_type
+                  in: query
+                  description: Filter by field type. NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by field type. NULL bytes not allowed.
+                    enum:
+                        - text
+                        - categorical
+                        - nps
+                        - csat
+                        - ces
+                        - rating
+                        - number
+                        - boolean
+                        - date
+                    pattern: '^[^\x00]*$'
+                - name: user_id
+                  in: query
+                  description: Filter by user ID. NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by user ID. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                    example: "user-abc-123"
+                - name: since
+                  in: query
+                  description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+                  schema:
+                    type: string
+                    format: date-time
+                    description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+                    example: "2024-01-01T00:00:00Z"
+                - name: until
+                  in: query
+                  description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+                  schema:
+                    type: string
+                    format: date-time
+                    description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+                    example: "2024-12-31T23:59:59Z"
             responses:
                 "200":
                     description: OK
