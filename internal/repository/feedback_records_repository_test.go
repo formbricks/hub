@@ -29,6 +29,7 @@ func TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange(t *testing.T) {
 	text := "updated text"
 	lang := "de-DE"
 	user := "user-1"
+	valueID := "opt_a"
 	meta := json.RawMessage(`{"k":"v"}`)
 
 	// Enrichment output columns, grouped by what invalidates them.
@@ -58,6 +59,11 @@ func TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange(t *testing.T) {
 		},
 		{"metadata-only change clears nothing", &models.UpdateFeedbackRecordRequest{Metadata: meta}, nil},
 		{"user_id-only change clears nothing", &models.UpdateFeedbackRecordRequest{UserID: &user}, nil},
+		{
+			"value_id-only change clears nothing",
+			&models.UpdateFeedbackRecordRequest{ValueID: &valueID},
+			nil,
+		},
 	}
 
 	for _, testCase := range cases {
@@ -85,4 +91,29 @@ func TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange(t *testing.T) {
 // clearColumnWhen. The " = CASE WHEN" suffix makes "sentiment" not match "sentiment_score".
 func clearsColumn(query, col string) bool {
 	return strings.Contains(query, col+" = CASE WHEN")
+}
+
+// TestBuildUpdateQuery_ValueID verifies value_id is a plain assignable column: an
+// update carrying it emits a direct "value_id = $N" SET clause (not an eager-clear CASE),
+// since it is caller-supplied data rather than a derived enrichment.
+func TestBuildUpdateQuery_ValueID(t *testing.T) {
+	valueID := "opt_very_satisfied"
+	req := &models.UpdateFeedbackRecordRequest{ValueID: &valueID}
+
+	query, args, hasUpdates := buildUpdateQuery(req, uuid.New(), time.Now())
+	if !hasUpdates {
+		t.Fatal("buildUpdateQuery hasUpdates = false, want true")
+	}
+
+	if !strings.Contains(query, "value_id = $1") {
+		t.Fatalf("query missing direct value_id assignment\nquery: %s", query)
+	}
+
+	if clearsColumn(query, "value_id") {
+		t.Fatalf("value_id must not be an eager-clear column\nquery: %s", query)
+	}
+
+	if len(args) == 0 || args[0] != valueID {
+		t.Fatalf("args = %v, want first arg %q", args, valueID)
+	}
 }

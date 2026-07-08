@@ -839,7 +839,7 @@ func (r *TaxonomyRepository) ListNodeRecords(
 		SELECT fr.id, fr.collected_at, fr.created_at, fr.updated_at,
 			fr.source_type, fr.source_id, fr.source_name,
 			fr.field_id, fr.field_label, fr.field_type, fr.field_group_id, fr.field_group_label,
-			fr.value_text, fr.value_number, fr.value_boolean, fr.value_date,
+			fr.value_text, fr.value_id, fr.value_number, fr.value_boolean, fr.value_date,
 			fr.metadata, fr.language, fr.user_id, fr.tenant_id, fr.submission_id,
 			fr.value_text_translated, fr.translation_lang_key,
 			fr.sentiment, fr.sentiment_score,
