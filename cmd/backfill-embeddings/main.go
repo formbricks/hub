@@ -20,6 +20,7 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
 	"github.com/formbricks/hub/internal/workers"
@@ -48,6 +49,8 @@ func run() int {
 	pruneStaleModels := flag.Bool("prune-stale-models", false,
 		"delete embedding rows whose model differs from EMBEDDING_MODEL instead of backfilling "+
 			"(run only after a model migration's backfill has completed)")
+	taxonomyMode := flag.Bool("taxonomy", false,
+		"backfill taxonomy embeddings from translated text using TAXONOMY_EMBEDDING_MODEL or taxonomy:<EMBEDDING_MODEL>:translated-v1")
 
 	flag.Parse()
 
@@ -112,11 +115,24 @@ func run() int {
 	}
 
 	embeddingModelForDB := embeddingModel
+	targetModel := embeddingModelForDB
+	inputKind := models.EmbeddingInputKindRaw
+
+	if *taxonomyMode {
+		targetModel = service.TaxonomyEmbeddingModel(embeddingModelForDB, cfg.Taxonomy.EmbeddingModel)
+		inputKind = models.EmbeddingInputKindTaxonomyTranslated
+	}
 
 	repo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 
 	if *pruneStaleModels {
+		if *taxonomyMode {
+			slog.Error("-taxonomy cannot be combined with -prune-stale-models")
+
+			return exitFailure
+		}
+
 		deleted, pruneErr := embeddingsRepo.DeleteEmbeddingsForOtherModels(ctx, embeddingModelForDB, pruneBatchSize)
 		if pruneErr != nil {
 			slog.Error("Prune failed", "error", pruneErr, "deleted_before_failure", deleted)
@@ -169,16 +185,20 @@ func run() int {
 
 	feedbackRecordsService.SetEmbeddingInserter(riverClient)
 
-	enqueued, err := feedbackRecordsService.BackfillEmbeddings(ctx, embeddingModelForDB)
+	enqueued, err := feedbackRecordsService.BackfillEmbeddingsWithInputKind(ctx, targetModel, inputKind)
 	if err != nil {
 		slog.Error("Backfill failed", "error", err)
 
 		return exitFailure
 	}
 
-	slog.Info("Backfill complete", "enqueued", enqueued) // #nosec G706 -- enqueued is an int, not user input
+	slog.Info("Backfill complete",
+		"enqueued", enqueued,
+		"model", targetModel,
+		"input_kind", inputKind,
+	) // #nosec G706 -- enqueued is an int, not user input
 
-	fmt.Printf("Enqueued %d embedding job(s).\n", enqueued)
+	fmt.Printf("Enqueued %d embedding job(s) for model %q.\n", enqueued, targetModel)
 
 	return exitSuccess
 }

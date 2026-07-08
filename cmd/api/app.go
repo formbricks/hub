@@ -23,6 +23,7 @@ import (
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
@@ -251,6 +252,13 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantDataRepo := repository.NewTenantDataRepository(db, cfg.TenantData.PurgeLockTimeout.Duration())
 	embeddingProviderName, embeddingModel := embeddingProviderAndModel(cfg)
 	embeddingModelForDB := embeddingModel
+	taxonomyEmbeddingModel := service.TaxonomyEmbeddingModel(embeddingModelForDB, cfg.Taxonomy.EmbeddingModel)
+
+	taxonomyEmbeddingEnqueueModel := taxonomyEmbeddingModel
+
+	if embeddingProviderName == "" {
+		taxonomyEmbeddingEnqueueModel = ""
+	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
 		feedbackRecordsRepo,
@@ -262,6 +270,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.Embedding.MaxAttempts,
 		cfg.Translation.DefaultLanguage,
 	)
+	feedbackRecordsService.SetTaxonomyEmbeddingModel(taxonomyEmbeddingEnqueueModel)
 
 	// The eager-clear (nulling stale enrichment outputs on a value_text edit) fires only on this
 	// API PATCH path, so wire its counter here; the worker/backfill service instances leave it unset.
@@ -428,6 +437,19 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			embeddingMetrics,
 		)
 		messageManager.RegisterProvider(embeddingProv)
+
+		if taxonomyEmbeddingEnqueueModel != "" {
+			taxonomyEmbeddingProv := service.NewEmbeddingProviderForInputKind(
+				riverClient,
+				taxonomyEmbeddingEnqueueModel,
+				service.EmbeddingsQueueName,
+				cfg.Embedding.MaxAttempts,
+				docPrefix,
+				embeddingMetrics,
+				models.EmbeddingInputKindTaxonomyTranslated,
+			)
+			messageManager.RegisterProvider(taxonomyEmbeddingProv)
+		}
 	}
 
 	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)
@@ -516,7 +538,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	taxonomyService := service.NewTaxonomyService(service.NewTaxonomyServiceParams{
 		Repo:                  taxonomyRepo,
 		Starter:               taxonomyStarter,
-		EmbeddingModel:        embeddingModelForDB,
+		EmbeddingModel:        taxonomyEmbeddingModel,
 		MinimumEmbeddingCount: cfg.Taxonomy.MinimumEmbeddedRecords,
 	})
 	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService)

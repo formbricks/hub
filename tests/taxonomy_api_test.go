@@ -349,6 +349,39 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		assert.NotEmpty(t, input.Records[0].ValueText)
 	})
 
+	t.Run("run input returns translated text when present", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-translated-input")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+
+		original := "La machine ne demarre pas"
+		translated := "The machine does not start"
+
+		var recordID uuid.UUID
+
+		err := harness.db.QueryRow(ctx, `
+			INSERT INTO feedback_records (
+				source_type, source_id, field_id, field_label, field_type,
+				value_text, value_text_translated, translation_lang_key, tenant_id, submission_id
+			)
+			VALUES ($1, $2, $3, 'Feedback', 'text'::field_type_enum, $4, $5, 'en-US', $6, $7)
+			RETURNING id`,
+			scope.SourceType, scope.SourceID, scope.FieldID, original, translated, scope.TenantID, "submission-"+uuid.NewString(),
+		).Scan(&recordID)
+		require.NoError(t, err)
+
+		embedding := make([]float32, models.EmbeddingVectorDimensions)
+		embedding[0] = 0.25
+		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, recordID, taxonomyEmbeddingModel, embedding, nil))
+
+		runID := startRunForScope(ctx, t, harness, scope)
+		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"
+
+		var input models.TaxonomyRunInputResponse
+		requestTaxonomyJSON(ctx, t, http.MethodGet, inputURL, harness.internalToken, nil, http.StatusOK, &input)
+		require.Len(t, input.Records, 1)
+		assert.Equal(t, translated, input.Records[0].ValueText)
+	})
+
 	t.Run("directory run input spans sources and fields", func(t *testing.T) {
 		directoryScope := uniqueDirectoryTaxonomyScope("tax-internal-directory-input")
 		cleanupTaxonomyTenant(ctx, t, harness.db, directoryScope.TenantID)

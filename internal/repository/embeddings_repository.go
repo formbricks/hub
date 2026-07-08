@@ -79,7 +79,7 @@ func rollbackQuietly(ctx context.Context, tx pgx.Tx, msg string) {
 // writes the row.
 func (r *EmbeddingsRepository) Upsert(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-	stillCurrent func(fieldLabel, valueText *string) bool,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	if len(embedding) != models.EmbeddingVectorDimensions {
 		return fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(embedding), models.EmbeddingVectorDimensions)
@@ -120,7 +120,7 @@ func (r *EmbeddingsRepository) Upsert(
 // since-changed content must not delete the vector a newer job wrote.
 func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string,
-	stillCurrent func(fieldLabel, valueText *string) bool,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
@@ -148,7 +148,8 @@ func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 // content for the stillCurrent check. Returns ErrEmbeddingSuperseded when the content moved on,
 // NotFound when the record vanished mid-transaction, and nil (no-op) when stillCurrent is nil.
 func guardEmbeddingSourceCurrent(
-	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID, stillCurrent func(fieldLabel, valueText *string) bool,
+	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	if stillCurrent == nil {
 		return nil
@@ -160,7 +161,7 @@ func guardEmbeddingSourceCurrent(
 		return fmt.Errorf("lock feedback record for embedding write: %w", err)
 	}
 
-	var fieldLabel, valueText *string
+	var fieldLabel, valueText, valueTextTranslated *string
 
 	// FOR UPDATE row-locks the record until this write commits, so a concurrent PATCH Update
 	// (which does not take the per-record advisory lock) cannot change the content between this
@@ -168,8 +169,8 @@ func guardEmbeddingSourceCurrent(
 	// sibling guardValueTextCurrent. Crucial here: embeddings have no eager-clear or NULL-rows
 	// backfill, so a stale vector that lands last is otherwise permanent.
 	err := dbTx.QueryRow(ctx,
-		`SELECT field_label, value_text FROM feedback_records WHERE id = $1 FOR UPDATE`, feedbackRecordID,
-	).Scan(&fieldLabel, &valueText)
+		`SELECT field_label, value_text, value_text_translated FROM feedback_records WHERE id = $1 FOR UPDATE`, feedbackRecordID,
+	).Scan(&fieldLabel, &valueText, &valueTextTranslated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
@@ -178,7 +179,7 @@ func guardEmbeddingSourceCurrent(
 		return fmt.Errorf("read feedback record content for embedding write: %w", err)
 	}
 
-	if !stillCurrent(fieldLabel, valueText) {
+	if !stillCurrent(fieldLabel, valueText, valueTextTranslated) {
 		return huberrors.ErrEmbeddingSuperseded
 	}
 
@@ -222,7 +223,19 @@ func (r *EmbeddingsRepository) DeleteEmbeddingsForOtherModels(
 func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfill(
 	ctx context.Context, model string, afterID uuid.UUID, limit int,
 ) ([]uuid.UUID, error) {
-	rows, err := r.db.Query(ctx, `
+	return r.ListFeedbackRecordIDsForBackfillByInputKind(ctx, model, models.EmbeddingInputKindRaw, afterID, limit)
+}
+
+// ListFeedbackRecordIDsForBackfillByInputKind returns feedback-record IDs missing an embedding
+// for model and eligible for the requested embedding input kind.
+func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfillByInputKind(
+	ctx context.Context,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	afterID uuid.UUID,
+	limit int,
+) ([]uuid.UUID, error) {
+	query := `
 		SELECT fr.id FROM feedback_records fr
 		WHERE fr.value_text IS NOT NULL AND trim(fr.value_text) != ''
 		  AND fr.id > $2
@@ -232,7 +245,22 @@ func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfill(
 		  )
 		ORDER BY fr.id
 		LIMIT $3
-	`, model, afterID, limit)
+	`
+	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
+		query = `
+			SELECT fr.id FROM feedback_records fr
+			WHERE COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+			  AND fr.id > $2
+			  AND NOT EXISTS (
+			    SELECT 1 FROM embeddings e
+			    WHERE e.feedback_record_id = fr.id AND e.model = $1
+			  )
+			ORDER BY fr.id
+			LIMIT $3
+		`
+	}
+
+	rows, err := r.db.Query(ctx, query, model, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list feedback record ids for backfill: %w", err)
 	}

@@ -68,6 +68,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
 	assert.Equal(t, event.ID, inserter.insertCalls[0].args.EventID, "event id is carried into the job args")
 	assert.Equal(t, "model-name", inserter.insertCalls[0].args.Model)
+	assert.Equal(t, models.EmbeddingInputKindRaw, inserter.insertCalls[0].args.InputKind)
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash, "dedupe key should include input hash")
 	assert.NotNil(t, inserter.insertCalls[0].opts)
 	assert.Equal(t, "embeddings", inserter.insertCalls[0].opts.Queue)
@@ -165,6 +166,45 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_fieldLabelInChange
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash)
 }
 
+func TestEmbeddingProvider_PublishEvent_TaxonomyTranslatedPrefersTranslatedText(t *testing.T) {
+	inserter := &mockEmbeddingInserter{}
+	p := NewEmbeddingProviderForInputKind(
+		inserter,
+		"taxonomy:model:translated-v1",
+		"embeddings",
+		3,
+		"",
+		nil,
+		models.EmbeddingInputKindTaxonomyTranslated,
+	)
+
+	recordID := uuid.Must(uuid.NewV7())
+	fieldLabel := "What went wrong?"
+	valueText := "La machine ne demarre pas"
+	translated := "The washing machine does not start"
+	event := Event{
+		ID:        uuid.Must(uuid.NewV7()),
+		Type:      datatypes.FeedbackRecordCreated,
+		Timestamp: time.Now(),
+		Data: &models.FeedbackRecord{
+			ID:                  recordID,
+			FieldType:           models.FieldTypeText,
+			FieldLabel:          &fieldLabel,
+			ValueText:           &valueText,
+			ValueTextTranslated: &translated,
+		},
+	}
+
+	p.PublishEvent(context.Background(), event)
+
+	require.Len(t, inserter.insertCalls, 1)
+	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
+	assert.Equal(t, "taxonomy:model:translated-v1", inserter.insertCalls[0].args.Model)
+	assert.Equal(t, models.EmbeddingInputKindTaxonomyTranslated, inserter.insertCalls[0].args.InputKind)
+	assert.Equal(t, hashContent("Question: What went wrong?\nAnswer: The washing machine does not start"),
+		inserter.insertCalls[0].args.ValueTextHash)
+}
+
 func TestBuildEmbeddingInput(t *testing.T) {
 	t.Run("label and value produces Question/Answer format", func(t *testing.T) {
 		out := BuildEmbeddingInput(
@@ -188,4 +228,35 @@ func TestBuildEmbeddingInput(t *testing.T) {
 		out := BuildEmbeddingInput(new("Q"), new("A"), "search_document: ")
 		assert.Equal(t, "search_document: Question: Q\nAnswer: A", out)
 	})
+}
+
+func TestBuildEmbeddingInputForKind(t *testing.T) {
+	fieldLabel := "Open feedback"
+	valueText := "Original text"
+	translated := "Translated text"
+
+	out := BuildEmbeddingInputFromValues(
+		&fieldLabel,
+		&valueText,
+		&translated,
+		models.EmbeddingInputKindTaxonomyTranslated,
+		"",
+	)
+	assert.Equal(t, "Question: Open feedback\nAnswer: Translated text", out)
+
+	blankTranslated := "  "
+	out = BuildEmbeddingInputFromValues(
+		&fieldLabel,
+		&valueText,
+		&blankTranslated,
+		models.EmbeddingInputKindTaxonomyTranslated,
+		"",
+	)
+	assert.Equal(t, "Question: Open feedback\nAnswer: Original text", out)
+}
+
+func TestTaxonomyEmbeddingModel(t *testing.T) {
+	assert.Equal(t, "taxonomy:text-embedding:translated-v1", TaxonomyEmbeddingModel("text-embedding", ""))
+	assert.Equal(t, "custom-taxonomy-model", TaxonomyEmbeddingModel("text-embedding", " custom-taxonomy-model "))
+	assert.Empty(t, TaxonomyEmbeddingModel(" ", ""))
 }

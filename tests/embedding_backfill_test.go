@@ -21,7 +21,8 @@ import (
 
 // countingEmbeddingInserter records the FeedbackEmbeddingArgs jobs enqueued.
 type countingEmbeddingInserter struct {
-	ids []uuid.UUID
+	ids  []uuid.UUID
+	args []service.FeedbackEmbeddingArgs
 }
 
 func (c *countingEmbeddingInserter) Insert(
@@ -29,6 +30,7 @@ func (c *countingEmbeddingInserter) Insert(
 ) (*rivertype.JobInsertResult, error) {
 	if a, ok := args.(service.FeedbackEmbeddingArgs); ok {
 		c.ids = append(c.ids, a.FeedbackRecordID)
+		c.args = append(c.args, a)
 	}
 
 	return &rivertype.JobInsertResult{}, nil
@@ -162,6 +164,45 @@ func TestBackfillEmbeddings_StreamsAllEligible(t *testing.T) {
 	}
 }
 
+func TestBackfillEmbeddings_TaxonomyInputKind(t *testing.T) {
+	ctx := context.Background()
+	feedbackRepo, embeddingsRepo := embeddingBackfillRepos(t)
+
+	model := "taxonomy-backfill-stream-" + uuid.NewString()
+	tenant := uuid.NewString()
+	value := "Bonjour"
+
+	rec, err := feedbackRepo.Create(ctx, &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		SubmissionID: uuid.NewString(),
+		TenantID:     tenant,
+		FieldID:      "q1",
+		FieldType:    models.FieldTypeText,
+		ValueText:    &value,
+	})
+	require.NoError(t, err)
+
+	inserter := &countingEmbeddingInserter{}
+	svc := service.NewFeedbackRecordsService(feedbackRepo, embeddingsRepo, model, nil, inserter, "embeddings", 3, "")
+
+	enqueued, err := svc.BackfillEmbeddingsWithInputKind(ctx, model, models.EmbeddingInputKindTaxonomyTranslated)
+	require.NoError(t, err)
+	require.Positive(t, enqueued)
+
+	found := false
+
+	for _, args := range inserter.args {
+		if args.FeedbackRecordID == rec.ID {
+			found = true
+
+			assert.Equal(t, models.EmbeddingInputKindTaxonomyTranslated, args.InputKind)
+			assert.Equal(t, model, args.Model)
+		}
+	}
+
+	assert.True(t, found, "taxonomy backfill should enqueue the created record")
+}
+
 // TestEmbeddingsUpsert_StaleWriteGuard locks the concurrent-jobs guard: an upsert (or clear)
 // whose stillCurrent check fails against the record's current content is skipped with
 // ErrEmbeddingSuperseded, so a slower job that read older content can never clobber the vector
@@ -188,7 +229,7 @@ func TestEmbeddingsUpsert_StaleWriteGuard(t *testing.T) {
 
 	// A stale job (its content no longer matches the row) is skipped and writes nothing.
 	staleErr := embeddingsRepo.Upsert(ctx, rec.ID, model, embedding,
-		func(_, valueText *string) bool { return valueText != nil && *valueText == "older text" })
+		func(_, valueText, _ *string) bool { return valueText != nil && *valueText == "older text" })
 	require.ErrorIs(t, staleErr, huberrors.ErrEmbeddingSuperseded)
 
 	_, getErr := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, rec.ID, model)
@@ -196,7 +237,7 @@ func TestEmbeddingsUpsert_StaleWriteGuard(t *testing.T) {
 
 	// The job holding the current content writes normally.
 	require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, model, embedding,
-		func(_, valueText *string) bool { return valueText != nil && *valueText == text }))
+		func(_, valueText, _ *string) bool { return valueText != nil && *valueText == text }))
 
 	stored, err := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, rec.ID, model)
 	require.NoError(t, err)
@@ -205,7 +246,7 @@ func TestEmbeddingsUpsert_StaleWriteGuard(t *testing.T) {
 	// A stale clear must not delete the current vector either.
 	require.ErrorIs(t,
 		embeddingsRepo.DeleteByFeedbackRecordAndModel(ctx, rec.ID, model,
-			func(_, valueText *string) bool { return valueText == nil }),
+			func(_, valueText, _ *string) bool { return valueText == nil }),
 		huberrors.ErrEmbeddingSuperseded)
 
 	_, err = embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, rec.ID, model)

@@ -3,6 +3,8 @@ package service
 import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+
+	"github.com/formbricks/hub/internal/models"
 )
 
 const (
@@ -22,6 +24,8 @@ type FeedbackEmbeddingArgs struct {
 	EventID uuid.UUID `json:"event_id"`
 	// Model is the embedding model name; stored in embeddings.model.
 	Model string `json:"model" river:"unique"`
+	// InputKind selects which feedback text is embedded. Empty is treated as raw for legacy queued jobs.
+	InputKind models.EmbeddingInputKind `json:"input_kind,omitempty"`
 	// ValueTextHash is a hash of the input (trimmed value_text, or "empty"/"backfill") for dedupe semantics.
 	ValueTextHash string `json:"value_text_hash" river:"unique"`
 }

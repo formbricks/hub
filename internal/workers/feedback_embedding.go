@@ -32,7 +32,7 @@ type feedbackEmbeddingService interface {
 	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	SetEmbedding(
 		ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-		stillCurrent func(fieldLabel, valueText *string) bool,
+		stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
 }
 
@@ -105,14 +105,15 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 		return fmt.Errorf("get feedback record: %w", err)
 	}
 
-	text := service.BuildEmbeddingInput(record.FieldLabel, record.ValueText, w.docPrefix)
+	inputKind := models.NormalizeEmbeddingInputKind(args.InputKind)
+	text := service.BuildEmbeddingInputForKind(record, inputKind, w.docPrefix)
 
 	// stillCurrent lets the repository verify, atomically with the write, that the content this
 	// job embedded is still the record's content — so of two concurrent jobs for one record, the
 	// stale one skips instead of clobbering the newer vector (last-write-wins would attach an old
 	// text's embedding forever; the missing-rows-only backfill cannot repair that).
-	stillCurrent := func(fieldLabel, valueText *string) bool {
-		return service.BuildEmbeddingInput(fieldLabel, valueText, w.docPrefix) == text
+	stillCurrent := func(fieldLabel, valueText, valueTextTranslated *string) bool {
+		return service.BuildEmbeddingInputFromValues(fieldLabel, valueText, valueTextTranslated, inputKind, w.docPrefix) == text
 	}
 
 	if text == "" {
@@ -270,7 +271,7 @@ func (w *FeedbackEmbeddingWorker) handleEmptyText(
 	record *models.FeedbackRecord,
 	log *slog.Logger,
 	start time.Time,
-	stillCurrent func(fieldLabel, valueText *string) bool,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	feedbackRecordID := job.Args.FeedbackRecordID
 

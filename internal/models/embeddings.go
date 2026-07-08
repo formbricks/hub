@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,28 @@ type Embedding struct {
 	Model            string    `json:"model"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// EmbeddingInputKind identifies which record text was embedded.
+type EmbeddingInputKind string
+
+const (
+	// EmbeddingInputKindRaw embeds the original feedback value_text.
+	EmbeddingInputKindRaw EmbeddingInputKind = "raw"
+	// EmbeddingInputKindTaxonomyTranslated embeds translated text when present, falling back to value_text.
+	EmbeddingInputKindTaxonomyTranslated EmbeddingInputKind = "taxonomy_translated"
+)
+
+// NormalizeEmbeddingInputKind maps empty/unknown job values to raw for backward-compatible queued jobs.
+func NormalizeEmbeddingInputKind(kind EmbeddingInputKind) EmbeddingInputKind {
+	switch EmbeddingInputKind(strings.TrimSpace(string(kind))) {
+	case EmbeddingInputKindRaw:
+		return EmbeddingInputKindRaw
+	case EmbeddingInputKindTaxonomyTranslated:
+		return EmbeddingInputKindTaxonomyTranslated
+	default:
+		return EmbeddingInputKindRaw
+	}
 }
 
 // FeedbackRecordWithScore is a feedback record ID, similarity score, and the record's field_label and value_text for display.

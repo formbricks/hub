@@ -25,6 +25,7 @@ type EmbeddingProvider struct {
 	maxAttempts int
 	docPrefix   string // model-specific prefix for document embedding; OpenAI and Google use ""
 	metrics     observability.EmbeddingMetrics
+	inputKind   models.EmbeddingInputKind
 }
 
 // NewEmbeddingProvider creates a provider that enqueues feedback_embedding jobs.
@@ -39,6 +40,20 @@ func NewEmbeddingProvider(
 	docPrefix string,
 	metrics observability.EmbeddingMetrics,
 ) *EmbeddingProvider {
+	return NewEmbeddingProviderForInputKind(
+		inserter, model, queueName, maxAttempts, docPrefix, metrics, models.EmbeddingInputKindRaw)
+}
+
+// NewEmbeddingProviderForInputKind creates a provider for a specific embedding input kind.
+func NewEmbeddingProviderForInputKind(
+	inserter RiverJobInserter,
+	model string,
+	queueName string,
+	maxAttempts int,
+	docPrefix string,
+	metrics observability.EmbeddingMetrics,
+	inputKind models.EmbeddingInputKind,
+) *EmbeddingProvider {
 	return &EmbeddingProvider{
 		inserter:    inserter,
 		model:       model,
@@ -46,6 +61,7 @@ func NewEmbeddingProvider(
 		maxAttempts: maxAttempts,
 		docPrefix:   docPrefix,
 		metrics:     metrics,
+		inputKind:   models.NormalizeEmbeddingInputKind(inputKind),
 	}
 }
 
@@ -55,8 +71,8 @@ func NewEmbeddingProvider(
 // API key is required for openai and google (validated at startup).
 func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	if event.Type == datatypes.FeedbackRecordUpdated {
-		if !slices.Contains(event.ChangedFields, "value_text") && !slices.Contains(event.ChangedFields, "field_label") {
-			slog.Debug("embedding: skip, value_text/field_label not in changed fields",
+		if !p.hasEmbeddingRelevantChange(event.ChangedFields) {
+			slog.Debug("embedding: skip, embedding input fields not in changed fields",
 				"event_id", event.ID,
 				"feedback_record_id", recordIDFromEventData(event.Data),
 			)
@@ -76,7 +92,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 
 	// Build the embedding input once and reuse it for both the create-time empty check and the
 	// dedupe hash; it was otherwise computed twice on the create path.
-	input := BuildEmbeddingInput(record.FieldLabel, record.ValueText, p.docPrefix)
+	input := BuildEmbeddingInputForKind(record, p.inputKind, p.docPrefix)
 
 	// On create, only enqueue when there is embeddable text. On update we enqueue regardless so the worker can clear.
 	if event.Type == datatypes.FeedbackRecordCreated && input == "" {
@@ -101,6 +117,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 		FeedbackRecordID: record.ID,
 		EventID:          event.ID,
 		Model:            p.model,
+		InputKind:        p.inputKind,
 		ValueTextHash:    valueTextHash,
 	}, opts)
 	if err != nil {
@@ -125,6 +142,15 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	if p.metrics != nil {
 		p.metrics.RecordJobsEnqueued(ctx, 1)
 	}
+}
+
+func (p *EmbeddingProvider) hasEmbeddingRelevantChange(changedFields []string) bool {
+	if slices.Contains(changedFields, "value_text") || slices.Contains(changedFields, "field_label") {
+		return true
+	}
+
+	return p.inputKind == models.EmbeddingInputKindTaxonomyTranslated &&
+		slices.Contains(changedFields, "value_text_translated")
 }
 
 func recordIDFromEventData(data any) uuid.UUID {
@@ -153,6 +179,35 @@ const (
 //
 // Returns formatted string: "[prefix]Question: [label]\nAnswer: [value]" (or "[prefix][value]" when label is empty).
 func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
+	return BuildEmbeddingInputFromValues(fieldLabel, valueText, nil, models.EmbeddingInputKindRaw, prefix)
+}
+
+// BuildEmbeddingInputForKind prepares text for a specific embedding input kind.
+func BuildEmbeddingInputForKind(record *models.FeedbackRecord, kind models.EmbeddingInputKind, prefix string) string {
+	if record == nil {
+		return ""
+	}
+
+	return BuildEmbeddingInputFromValues(record.FieldLabel, record.ValueText, record.ValueTextTranslated, kind, prefix)
+}
+
+// BuildEmbeddingInputFromValues prepares text for vector embedding from raw record values.
+// Taxonomy embeddings prefer translated text when present, falling back to original value_text.
+func BuildEmbeddingInputFromValues(
+	fieldLabel, valueText, valueTextTranslated *string,
+	kind models.EmbeddingInputKind,
+	prefix string,
+) string {
+	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
+		if normalizedText(valueTextTranslated) != "" {
+			return buildEmbeddingInput(fieldLabel, valueTextTranslated, prefix)
+		}
+	}
+
+	return buildEmbeddingInput(fieldLabel, valueText, prefix)
+}
+
+func buildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 	if valueText == nil {
 		return ""
 	}

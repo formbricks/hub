@@ -125,8 +125,7 @@ func (r *TaxonomyRepository) CountScopeInput(
 			FROM feedback_records fr
 			LEFT JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $2
 			WHERE fr.tenant_id = $1
-			  AND fr.value_text IS NOT NULL
-			  AND btrim(fr.value_text) <> ''`,
+			  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`,
 			scope.TenantID, embeddingModel,
 		).Scan(&recordCount, &embeddingCount)
 		if err != nil {
@@ -147,8 +146,7 @@ func (r *TaxonomyRepository) CountScopeInput(
 		  AND fr.source_type = $2
 		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
 		  AND fr.field_id = $4
-		  AND fr.value_text IS NOT NULL
-		  AND btrim(fr.value_text) <> ''`,
+		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`,
 		scope.TenantID, scope.SourceType, scope.SourceID, scope.FieldID, embeddingModel,
 	).Scan(&recordCount, &embeddingCount, &fieldLabel)
 	if err != nil {
@@ -890,13 +888,12 @@ func (r *TaxonomyRepository) queryRunInputRows(
 				COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
 				fr.field_id,
 				COALESCE(fr.field_label, ''),
-				fr.value_text,
+				COALESCE(NULLIF(btrim(fr.value_text_translated), ''), fr.value_text),
 				e.embedding
 			FROM feedback_records fr
 			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $3
 			WHERE fr.tenant_id = $1
-			  AND fr.value_text IS NOT NULL
-			  AND btrim(fr.value_text) <> ''
+			  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
 			ORDER BY fr.collected_at DESC, fr.id ASC
 			LIMIT $2`,
 			run.TenantID, limit, embeddingModel,
@@ -915,7 +912,7 @@ func (r *TaxonomyRepository) queryRunInputRows(
 			COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
 			fr.field_id,
 			COALESCE(fr.field_label, ''),
-			fr.value_text,
+			COALESCE(NULLIF(btrim(fr.value_text_translated), ''), fr.value_text),
 			e.embedding
 		FROM feedback_records fr
 		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
@@ -923,8 +920,7 @@ func (r *TaxonomyRepository) queryRunInputRows(
 		  AND fr.source_type = $2
 		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
 		  AND fr.field_id = $4
-		  AND fr.value_text IS NOT NULL
-		  AND btrim(fr.value_text) <> ''
+		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
 		ORDER BY fr.collected_at DESC, fr.id ASC
 		LIMIT $5`,
 		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
