@@ -81,106 +81,17 @@ paths:
             description: Lists feedback records for a required tenant_id with optional additional filters and pagination
             operationId: list-feedback-records
             parameters:
-                - name: tenant_id
-                  in: query
-                  required: true
-                  description: Tenant ID (required for isolation). NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Tenant ID (required for isolation). NULL bytes not allowed.
-                    minLength: 1
-                    maxLength: 255
-                    pattern: '^[^\x00]*$'
-                    example: "org-123"
-                - name: submission_id
-                  in: query
-                  description: Filter by submission ID to group records belonging to one logical submission. NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Filter by submission ID (e.g. UUID from webhook idempotency). NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
-                    example: "550e8400-e29b-41d4-a716-446655440000"
-                - name: source_type
-                  in: query
-                  description: Filter by source type. NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Filter by source type. NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
-                    example: "survey"
-                - name: source_id
-                  in: query
-                  description: Filter by source ID (NULL bytes not allowed)
-                  schema:
-                    type: string
-                    description: Filter by source ID (NULL bytes not allowed)
-                    pattern: '^[^\x00]*$'
-                    example: "survey-123"
-                - name: field_id
-                  in: query
-                  description: Filter by field ID. NULL bytes not allowed.
-                  schema:
-                    type: string
-                    pattern: '^[^\x00]*$'
-                    example: "q1"
-                - name: field_group_id
-                  in: query
-                  description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
-                    example: "feature_priority"
-                - name: field_type
-                  in: query
-                  description: Filter by field type. NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Filter by field type. NULL bytes not allowed.
-                    enum:
-                        - text
-                        - categorical
-                        - nps
-                        - csat
-                        - ces
-                        - rating
-                        - number
-                        - boolean
-                        - date
-                    pattern: '^[^\x00]*$'
-                - name: value_id
-                  in: query
-                  description: Filter by the source system's stable option id (e.g. all records for one survey choice). NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Filter by the source system's stable option id. NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
-                    maxLength: 255
-                    example: "opt_very_satisfied"
-                - name: user_id
-                  in: query
-                  description: Filter by user ID. NULL bytes not allowed.
-                  schema:
-                    type: string
-                    description: Filter by user ID. NULL bytes not allowed.
-                    pattern: '^[^\x00]*$'
-                    example: "user-abc-123"
-                - name: since
-                  in: query
-                  description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
-                  schema:
-                    type: string
-                    format: date-time
-                    description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
-                    example: "2024-01-01T00:00:00Z"
-                - name: until
-                  in: query
-                  description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
-                  schema:
-                    type: string
-                    format: date-time
-                    description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
-                    example: "2024-12-31T23:59:59Z"
+                - $ref: '#/components/parameters/FeedbackRecordsTenantId'
+                - $ref: '#/components/parameters/FeedbackRecordsSubmissionId'
+                - $ref: '#/components/parameters/FeedbackRecordsSourceType'
+                - $ref: '#/components/parameters/FeedbackRecordsSourceId'
+                - $ref: '#/components/parameters/FeedbackRecordsFieldId'
+                - $ref: '#/components/parameters/FeedbackRecordsFieldGroupId'
+                - $ref: '#/components/parameters/FeedbackRecordsFieldType'
+                - $ref: '#/components/parameters/FeedbackRecordsValueId'
+                - $ref: '#/components/parameters/FeedbackRecordsUserId'
+                - $ref: '#/components/parameters/FeedbackRecordsSince'
+                - $ref: '#/components/parameters/FeedbackRecordsUntil'
                 - name: limit
                   in: query
                   description: Number of results to return (max 1000)
@@ -491,6 +402,44 @@ paths:
                         tenant data purge is in progress for a tenant holding records for this user, or the user's
                         records changed mid-deletion (drift guard). No records were deleted. The conflict is
                         transient; retry the request.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/feedback-records/count:
+        get:
+            tags:
+                - Feedback Records
+            summary: Count feedback records
+            description: Returns the total number of feedback records matching the given filters. Supports the same query parameters as the list endpoint.
+            operationId: count-feedback-records
+            parameters:
+                - $ref: '#/components/parameters/FeedbackRecordsTenantId'
+                - $ref: '#/components/parameters/FeedbackRecordsSubmissionId'
+                - $ref: '#/components/parameters/FeedbackRecordsSourceType'
+                - $ref: '#/components/parameters/FeedbackRecordsSourceId'
+                - $ref: '#/components/parameters/FeedbackRecordsFieldId'
+                - $ref: '#/components/parameters/FeedbackRecordsFieldGroupId'
+                - $ref: '#/components/parameters/FeedbackRecordsFieldType'
+                - $ref: '#/components/parameters/FeedbackRecordsValueId'
+                - $ref: '#/components/parameters/FeedbackRecordsUserId'
+                - $ref: '#/components/parameters/FeedbackRecordsSince'
+                - $ref: '#/components/parameters/FeedbackRecordsUntil'
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CountFeedbackRecordsOutputBody'
+                "400":
+                    description: Bad Request (e.g. validation error)
                     content:
                         application/problem+json:
                             schema:
@@ -1859,6 +1808,63 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/runs/{run_id}/record-counts:
+        get:
+            tags:
+                - Taxonomy
+            summary: Count feedback records per taxonomy node
+            description: Returns the feedback-record count for every visible node in a taxonomy run. Each count is a subtree total, so a topic (branch) reports the sum of its subtopics and the root reports the run total. Tenant-scoped; returns 404 if the run does not belong to the tenant.
+            operationId: count-taxonomy-node-records
+            parameters:
+                - name: run_id
+                  in: path
+                  required: true
+                  description: Taxonomy run ID.
+                  schema:
+                    type: string
+                    format: uuid
+                    example: "019f177f-9aa3-705e-8195-cea2aa187268"
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant that owns the run.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: Per-node feedback-record counts for the run
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyRecordCountsOutputBody'
+                "400":
+                    description: Bad Request (e.g. invalid run_id or missing/invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – no run with this ID for the tenant.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
     /v1/taxonomy/nodes/{node_id}:
         patch:
             tags:
@@ -2076,6 +2082,118 @@ components:
             scheme: bearer
             bearerFormat: API Key
             description: API key authentication via Bearer token in Authorization header
+    parameters:
+        FeedbackRecordsTenantId:
+            name: tenant_id
+            in: query
+            required: true
+            description: Tenant ID (required for isolation). NULL bytes not allowed.
+            schema:
+                type: string
+                description: Tenant ID (required for isolation). NULL bytes not allowed.
+                minLength: 1
+                maxLength: 255
+                pattern: '^[^\x00]*$'
+                example: "org-123"
+        FeedbackRecordsSubmissionId:
+            name: submission_id
+            in: query
+            description: Filter by submission ID to group records belonging to one logical submission. NULL bytes not allowed.
+            schema:
+                type: string
+                description: Filter by submission ID (e.g. UUID from webhook idempotency). NULL bytes not allowed.
+                pattern: '^[^\x00]*$'
+                example: "550e8400-e29b-41d4-a716-446655440000"
+        FeedbackRecordsSourceType:
+            name: source_type
+            in: query
+            description: Filter by source type. NULL bytes not allowed.
+            schema:
+                type: string
+                description: Filter by source type. NULL bytes not allowed.
+                pattern: '^[^\x00]*$'
+                example: "survey"
+        FeedbackRecordsSourceId:
+            name: source_id
+            in: query
+            description: Filter by source ID (NULL bytes not allowed)
+            schema:
+                type: string
+                description: Filter by source ID (NULL bytes not allowed)
+                pattern: '^[^\x00]*$'
+                example: "survey-123"
+        FeedbackRecordsFieldId:
+            name: field_id
+            in: query
+            description: Filter by field ID. NULL bytes not allowed.
+            schema:
+                type: string
+                pattern: '^[^\x00]*$'
+                example: "q1"
+        FeedbackRecordsFieldGroupId:
+            name: field_group_id
+            in: query
+            description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
+            schema:
+                type: string
+                description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
+                pattern: '^[^\x00]*$'
+                example: "feature_priority"
+        FeedbackRecordsFieldType:
+            name: field_type
+            in: query
+            description: Filter by field type. NULL bytes not allowed.
+            schema:
+                type: string
+                description: Filter by field type. NULL bytes not allowed.
+                enum:
+                    - text
+                    - categorical
+                    - nps
+                    - csat
+                    - ces
+                    - rating
+                    - number
+                    - boolean
+                    - date
+                pattern: '^[^\x00]*$'
+        FeedbackRecordsValueId:
+            name: value_id
+            in: query
+            description: Filter by the source system's stable option id (e.g. all records for one survey choice). NULL bytes not allowed.
+            schema:
+                type: string
+                description: Filter by the source system's stable option id. NULL bytes not allowed.
+                pattern: '^[^\x00]*$'
+                maxLength: 255
+                example: "opt_very_satisfied"
+        FeedbackRecordsUserId:
+            name: user_id
+            in: query
+            description: Filter by user ID. NULL bytes not allowed.
+            schema:
+                type: string
+                description: Filter by user ID. NULL bytes not allowed.
+                pattern: '^[^\x00]*$'
+                example: "user-abc-123"
+        FeedbackRecordsSince:
+            name: since
+            in: query
+            description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+            schema:
+                type: string
+                format: date-time
+                description: Filter by collected_at >= since (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+                example: "2024-01-01T00:00:00Z"
+        FeedbackRecordsUntil:
+            name: until
+            in: query
+            description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+            schema:
+                type: string
+                format: date-time
+                description: Filter by collected_at <= until (ISO 8601 format). Must be between 1970-01-01 and 2080-12-31.
+                example: "2024-12-31T23:59:59Z"
     schemas:
         DeleteFeedbackRecordsByUserOutputBody:
             type: object
@@ -2091,6 +2209,17 @@ components:
             required:
                 - deleted_count
                 - message
+        CountFeedbackRecordsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                count:
+                    type: integer
+                    description: Number of feedback records matching the filters
+                    format: int64
+                    example: 42
+            required:
+                - count
         TenantDataDeleteOutputBody:
             type: object
             additionalProperties: false
@@ -3352,3 +3481,31 @@ components:
             required:
                 - data
                 - limit
+        TaxonomyNodeRecordCount:
+            type: object
+            additionalProperties: false
+            properties:
+                node_id:
+                    type: string
+                    format: uuid
+                    description: Taxonomy node ID.
+                    example: "019f177f-9aa3-705e-8195-cea2aa187268"
+                record_count:
+                    type: integer
+                    format: int64
+                    description: Number of feedback records in the node's subtree.
+                    example: 42
+            required:
+                - node_id
+                - record_count
+        TaxonomyRecordCountsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                counts:
+                    type: array
+                    description: Per-node feedback-record counts, one entry per visible node.
+                    items:
+                        $ref: '#/components/schemas/TaxonomyNodeRecordCount'
+            required:
+                - counts

@@ -735,6 +735,72 @@ func (r *TaxonomyRepository) GetTree(
 	return &models.TaxonomyTreeResponse{Run: *run, Root: root}, nil
 }
 
+// CountNodeRecords returns the feedback-record count for every visible node in a taxonomy run.
+// Each count is a subtree total: the number of DISTINCT feedback records assigned (through cluster
+// membership) to the node or any of its visible descendants. So a branch reports the count across
+// all of its subtopics and the root reports the run total. The run must belong to the tenant,
+// otherwise a not-found error is returned.
+//
+// The count is derived from a single recursive descendant-closure query with COUNT(DISTINCT ...),
+// which stays correct even if the same cluster is referenced by more than one node — a record is
+// never double counted within a subtree. Records attach only through live cluster memberships, and
+// a membership is removed by cascade when its feedback record is deleted, so counts track live data.
+func (r *TaxonomyRepository) CountNodeRecords(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) ([]models.TaxonomyNodeRecordCount, error) {
+	if _, err := r.GetRunForTenant(ctx, runID, tenantID); err != nil {
+		return nil, err
+	}
+
+	rows, err := r.db.Query(ctx, `
+		WITH RECURSIVE visible_nodes AS (
+			SELECT id, parent_id, cluster_id
+			FROM taxonomy_nodes
+			WHERE run_id = $1 AND removed_at IS NULL
+		),
+		subtree AS (
+			-- Every visible node is an ancestor of itself, so it appears with a count of its own.
+			SELECT id AS ancestor_id, id AS descendant_id, cluster_id
+			FROM visible_nodes
+			UNION ALL
+			SELECT ancestor.ancestor_id, child.id, child.cluster_id
+			FROM subtree ancestor
+			INNER JOIN visible_nodes child ON child.parent_id = ancestor.descendant_id
+		)
+		SELECT subtree.ancestor_id, COUNT(DISTINCT tcm.feedback_record_id)
+		FROM subtree
+		LEFT JOIN taxonomy_cluster_memberships tcm
+			ON tcm.run_id = $1
+			AND tcm.tenant_id = $2
+			AND tcm.cluster_id = subtree.cluster_id
+		GROUP BY subtree.ancestor_id`,
+		runID, tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query taxonomy node record counts: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make([]models.TaxonomyNodeRecordCount, 0)
+
+	for rows.Next() {
+		var entry models.TaxonomyNodeRecordCount
+		if err := rows.Scan(&entry.NodeID, &entry.RecordCount); err != nil {
+			return nil, fmt.Errorf("scan taxonomy node record count: %w", err)
+		}
+
+		counts = append(counts, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate taxonomy node record counts: %w", err)
+	}
+
+	return counts, nil
+}
+
 // RenameNode updates a taxonomy node label and records an edit event.
 func (r *TaxonomyRepository) RenameNode(
 	ctx context.Context,

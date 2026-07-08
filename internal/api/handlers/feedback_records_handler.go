@@ -22,6 +22,7 @@ type FeedbackRecordsService interface {
 	ListFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (*models.ListFeedbackRecordsResponse, error)
 	UpdateFeedbackRecord(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	DeleteFeedbackRecord(ctx context.Context, id uuid.UUID) error
+	CountFeedbackRecords(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int, error)
 	DeleteFeedbackRecordsByUser(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) (int, error)
 }
 
@@ -229,4 +230,24 @@ func (h *FeedbackRecordsHandler) DeleteByUser(w http.ResponseWriter, r *http.Req
 	}
 
 	response.RespondJSON(w, http.StatusOK, resp)
+}
+
+// Count handles GET /v1/feedback-records/count.
+func (h *FeedbackRecordsHandler) Count(w http.ResponseWriter, r *http.Request) {
+	filters := &models.ListFeedbackRecordsFilters{}
+
+	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
+	count, err := h.service.CountFeedbackRecords(r.Context(), filters)
+	if err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
+	response.RespondJSON(w, http.StatusOK, models.CountFeedbackRecordsResponse{Count: int64(count)})
 }

@@ -20,6 +20,7 @@ import (
 
 // mockFeedbackRecordsService mocks FeedbackRecordsService for handler tests.
 type mockFeedbackRecordsService struct {
+	countFunc        func(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int, error)
 	createFunc       func(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	deleteByUserFunc func(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) (int, error)
 }
@@ -52,6 +53,16 @@ func (m *mockFeedbackRecordsService) UpdateFeedbackRecord(
 
 func (m *mockFeedbackRecordsService) DeleteFeedbackRecord(context.Context, uuid.UUID) error {
 	return nil
+}
+
+func (m *mockFeedbackRecordsService) CountFeedbackRecords(
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
+) (int, error) {
+	if m.countFunc != nil {
+		return m.countFunc(ctx, filters)
+	}
+
+	return 0, nil
 }
 
 func (m *mockFeedbackRecordsService) DeleteFeedbackRecordsByUser(
@@ -487,5 +498,61 @@ func TestFeedbackRecordsHandler_BodyBounds(t *testing.T) {
 		handler.Update(rec, req)
 
 		assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	})
+}
+
+func TestFeedbackRecordsHandler_Count(t *testing.T) {
+	t.Run("success returns count", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{
+			countFunc: func(_ context.Context, filters *models.ListFeedbackRecordsFilters) (int, error) {
+				assert.Equal(t, "org-123", *filters.TenantID)
+
+				return 42, nil
+			},
+		}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodGet, "http://test/v1/feedback-records/count?tenant_id=org-123", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.Count(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		var resp models.CountFeedbackRecordsResponse
+
+		err := json.Unmarshal(rec.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, int64(42), resp.Count)
+	})
+
+	t.Run("missing tenant_id returns 400", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://test/v1/feedback-records/count", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.Count(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("service error returns 500", func(t *testing.T) {
+		mock := &mockFeedbackRecordsService{
+			countFunc: func(_ context.Context, _ *models.ListFeedbackRecordsFilters) (int, error) {
+				return 0, assert.AnError
+			},
+		}
+		handler := NewFeedbackRecordsHandler(mock)
+
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodGet, "http://test/v1/feedback-records/count?tenant_id=org-123", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.Count(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
 }

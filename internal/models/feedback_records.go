@@ -476,6 +476,11 @@ type DeleteFeedbackRecordsByUserResponse struct {
 	Message      string `json:"message"`
 }
 
+// CountFeedbackRecordsResponse represents the response for counting feedback records.
+type CountFeedbackRecordsResponse struct {
+	Count int64 `json:"count"`
+}
+
 // DeletedFeedbackRecordsByTenant groups deleted feedback record IDs by tenant.
 type DeletedFeedbackRecordsByTenant struct {
 	TenantID string

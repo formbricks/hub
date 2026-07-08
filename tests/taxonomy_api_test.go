@@ -232,6 +232,99 @@ func TestTaxonomyAPI_TenantIsolation(t *testing.T) {
 	})
 }
 
+// TestTaxonomyAPI_RecordCounts covers GET /v1/taxonomy/runs/{run_id}/record-counts: subtree
+// totals per node against real data, tenant isolation, and input validation.
+func TestTaxonomyAPI_RecordCounts(t *testing.T) {
+	ctx := context.Background()
+	harness := setupTaxonomyAPIServer(t)
+
+	scope := uniqueTaxonomyScope("tax-api-count")
+	ids := seedTaxonomyGraph(ctx, t, harness.db, scope)
+
+	// Add a second feedback record to the leaf's cluster so counts exceed the node count and
+	// prove we count distinct records, not nodes or clusters. The cluster now holds two records.
+	var secondRecordID uuid.UUID
+
+	err := harness.db.QueryRow(ctx, `
+		INSERT INTO feedback_records (
+			source_type, source_id, field_id, field_label, field_type,
+			value_text, tenant_id, submission_id
+		)
+		VALUES ($1, NULLIF($2, ''), $3, 'Feedback', 'text'::field_type_enum, $4, $5, $6)
+		RETURNING id`,
+		scope.SourceType, scope.SourceID, scope.FieldID,
+		"Login still confusing", scope.TenantID, "submission-"+uuid.NewString(),
+	).Scan(&secondRecordID)
+	require.NoError(t, err)
+
+	_, err = harness.db.Exec(ctx, `
+		INSERT INTO taxonomy_cluster_memberships (run_id, tenant_id, cluster_id, feedback_record_id, confidence)
+		VALUES ($1, $2, $3, $4, 0.90)`,
+		ids.RunID, scope.TenantID, ids.ClusterID, secondRecordID,
+	)
+	require.NoError(t, err)
+
+	// Add a SECOND leaf under the same branch that references the SAME cluster as the first leaf.
+	// The schema does not forbid this, and it is the case where a naive per-cluster sum would
+	// double count: the branch would report 4 instead of the 2 distinct records. This locks in the
+	// distinct-count behaviour.
+	var sharedClusterLeafID uuid.UUID
+
+	err = harness.db.QueryRow(ctx, `
+		INSERT INTO taxonomy_nodes (run_id, parent_id, cluster_id, node_type, label, original_label, level, sort_order)
+		VALUES ($1, $2, $3, 'leaf'::taxonomy_node_type_enum, 'Login Problems (dup)', 'Login Problems (dup)', 2, 1)
+		RETURNING id`,
+		ids.RunID, ids.BranchID, ids.ClusterID,
+	).Scan(&sharedClusterLeafID)
+	require.NoError(t, err)
+
+	tenantQuery := url.Values{"tenant_id": {scope.TenantID}}
+	countsURL := func(runID string, q url.Values) string {
+		return taxonomyURL(harness.server.URL, "/v1/taxonomy/runs/"+runID+"/record-counts", q)
+	}
+
+	t.Run("returns distinct subtree totals per node", func(t *testing.T) {
+		var resp models.TaxonomyRecordCountsResponse
+		requestTaxonomyJSON(ctx, t, http.MethodGet, countsURL(ids.RunID.String(), tenantQuery),
+			harness.apiKey, nil, http.StatusOK, &resp)
+
+		byNode := make(map[uuid.UUID]int64, len(resp.Counts))
+		for _, c := range resp.Counts {
+			byNode[c.NodeID] = c.RecordCount
+		}
+
+		// Seed graph is root -> branch -> {leaf, sharedClusterLeaf}; both leaves point at the one
+		// cluster, which holds two records. Each leaf reports 2. The branch and root carry no
+		// cluster of their own, so their counts come purely from the subtree — and must be 2
+		// distinct records, not 4 (which double counting the shared cluster would produce).
+		assert.Equal(t, int64(2), byNode[ids.LeafID], "leaf reports its cluster's two records")
+		assert.Equal(t, int64(2), byNode[sharedClusterLeafID], "shared-cluster leaf reports the same two")
+		assert.Equal(t, int64(2), byNode[ids.BranchID], "branch counts distinct records, not per-node sums")
+		assert.Equal(t, int64(2), byNode[ids.RootID], "root reports the run's distinct total")
+	})
+
+	t.Run("404s for another tenant", func(t *testing.T) {
+		otherQuery := url.Values{"tenant_id": {"tax-api-count-other-" + uuid.NewString()}}
+		requestTaxonomyJSON(ctx, t, http.MethodGet, countsURL(ids.RunID.String(), otherQuery),
+			harness.apiKey, nil, http.StatusNotFound, nil)
+	})
+
+	t.Run("404s for an unknown run", func(t *testing.T) {
+		requestTaxonomyJSON(ctx, t, http.MethodGet, countsURL(uuid.NewString(), tenantQuery),
+			harness.apiKey, nil, http.StatusNotFound, nil)
+	})
+
+	t.Run("400s for an invalid run ID", func(t *testing.T) {
+		requestTaxonomyJSON(ctx, t, http.MethodGet, countsURL("not-a-uuid", tenantQuery),
+			harness.apiKey, nil, http.StatusBadRequest, nil)
+	})
+
+	t.Run("400s when tenant_id is missing", func(t *testing.T) {
+		requestTaxonomyJSON(ctx, t, http.MethodGet, countsURL(ids.RunID.String(), url.Values{}),
+			harness.apiKey, nil, http.StatusBadRequest, nil)
+	})
+}
+
 // TestTaxonomyAPI_CreateRun covers the public run-creation endpoint: validation failures,
 // insufficient embedded input, the accepted happy path, and in-progress reuse.
 func TestTaxonomyAPI_CreateRun(t *testing.T) {

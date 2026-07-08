@@ -93,6 +93,94 @@ func clearsColumn(query, col string) bool {
 	return strings.Contains(query, col+" = CASE WHEN")
 }
 
+// buildCountQuery constructs `SELECT COUNT(*) FROM feedback_records` with an optional WHERE clause
+// derived from the same filter predicates used by List. Test the query string construction and arg
+// count to lock the SQL generation without a database.
+func TestBuildCountQuery(t *testing.T) {
+	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+
+	t.Run("no filters", func(t *testing.T) {
+		query, args := buildCountQuery(&models.ListFeedbackRecordsFilters{})
+		if query != "SELECT COUNT(*) FROM feedback_records" {
+			t.Fatalf("query = %q, want SELECT COUNT(*) FROM feedback_records", query)
+		}
+
+		if len(args) != 0 {
+			t.Fatalf("args = %v, want empty", args)
+		}
+	})
+
+	t.Run("tenant_id only", func(t *testing.T) {
+		tenantID := "org-123"
+
+		query, args := buildCountQuery(&models.ListFeedbackRecordsFilters{TenantID: &tenantID})
+		if !strings.Contains(query, "WHERE tenant_id = $1") {
+			t.Fatalf("query = %q, want WHERE tenant_id = $1", query)
+		}
+
+		if len(args) != 1 || args[0] != "org-123" {
+			t.Fatalf("args = %v, want [org-123]", args)
+		}
+	})
+
+	t.Run("all filters combined", func(t *testing.T) {
+		tenantID := "org-123"
+		sourceType := "formbricks"
+		fieldID := "field-1"
+		userID := "user-1"
+		submissionID := "sub-1"
+		sourceID := "src-1"
+		fieldGroupID := "fg-1"
+		fieldType := models.FieldTypeText
+
+		query, args := buildCountQuery(&models.ListFeedbackRecordsFilters{
+			TenantID:     &tenantID,
+			SourceType:   &sourceType,
+			FieldID:      &fieldID,
+			UserID:       &userID,
+			SubmissionID: &submissionID,
+			SourceID:     &sourceID,
+			FieldGroupID: &fieldGroupID,
+			FieldType:    &fieldType,
+			Since:        &now,
+			Until:        &now,
+		})
+
+		// Must start with base SELECT.
+		if !strings.HasPrefix(query, "SELECT COUNT(*) FROM feedback_records WHERE ") {
+			t.Fatalf("query = %q, want SELECT COUNT(*) prefix with WHERE", query)
+		}
+
+		// Must contain every expected condition (order doesn't matter within AND).
+		wantConditions := []string{
+			"tenant_id = $1",
+			"submission_id = $2",
+			"source_type = $3",
+			"source_id = $4",
+			"field_id = $5",
+			"field_group_id = $6",
+			"field_type = $7",
+			"user_id = $8",
+			"collected_at >= $9",
+			"collected_at <= $10",
+		}
+
+		for _, cond := range wantConditions {
+			if !strings.Contains(query, cond) {
+				t.Fatalf("query missing condition %q\nquery: %s", cond, query)
+			}
+		}
+
+		if len(args) != 10 {
+			t.Fatalf("args count = %d, want 10; args = %v", len(args), args)
+		}
+
+		if args[0] != "org-123" {
+			t.Fatalf("args[0] = %v, want org-123", args[0])
+		}
+	})
+}
+
 // TestBuildUpdateQuery_ValueID verifies value_id is a plain assignable column: an
 // update carrying it emits a direct "value_id = $N" SET clause (not an eager-clear CASE),
 // since it is caller-supplied data rather than a derived enrichment.

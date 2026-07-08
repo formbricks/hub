@@ -683,6 +683,30 @@ func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereCla
 	return whereClause, args
 }
 
+// Count returns the number of feedback records matching the given filters.
+func (r *FeedbackRecordsRepository) Count(
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
+) (int, error) {
+	query, args := buildCountQuery(filters)
+
+	var count int
+	if err := r.db.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("query feedback records count: %w", err)
+	}
+
+	return count, nil
+}
+
+// buildCountQuery constructs the SELECT COUNT(*) query and args from filters.
+// Extracted for testability; mirrors the WHERE clause logic of List.
+func buildCountQuery(filters *models.ListFeedbackRecordsFilters) (string, []any) {
+	query := "SELECT COUNT(*) FROM feedback_records"
+	whereClause, args := buildFilterConditions(filters)
+	query += whereClause
+
+	return query, args
+}
+
 const feedbackRecordsListSelect = `SELECT ` + feedbackRecordColumns + `
 		FROM feedback_records
 	`
