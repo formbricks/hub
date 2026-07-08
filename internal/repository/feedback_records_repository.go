@@ -43,7 +43,7 @@ func NewFeedbackRecordsRepository(db *pgxpool.Pool) *FeedbackRecordsRepository {
 const feedbackRecordColumns = `id, collected_at, created_at, updated_at,
 	source_type, source_id, source_name,
 	field_id, field_label, field_type, field_group_id, field_group_label,
-	value_text, value_number, value_boolean, value_date,
+	value_text, value_id, value_number, value_boolean, value_date,
 	metadata, language, user_id, tenant_id, submission_id,
 	value_text_translated, translation_lang_key,
 	sentiment, sentiment_score,
@@ -72,6 +72,7 @@ func scanFeedbackRecord(row scanner) (*models.FeedbackRecord, error) {
 		&record.FieldGroupID,
 		&record.FieldGroupLabel,
 		&record.ValueText,
+		&record.ValueID,
 		&record.ValueNumber,
 		&record.ValueBoolean,
 		&record.ValueDate,
@@ -112,16 +113,16 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 	// write lock in a single statement (held for this statement's implicit
 	// transaction): one round trip, same isolation against a tenant data purge.
 	// Zero rows means the lock was refused (purge in progress).
-	const lockKeyParam = 19 // $19, after the 18 inserted columns
+	const lockKeyParam = 20 // $20, after the 19 inserted columns
 
 	query := `
 		INSERT INTO feedback_records (
 			collected_at, source_type, source_id, source_name,
 			field_id, field_label, field_type, field_group_id, field_group_label,
 			value_text, value_number, value_boolean, value_date,
-			metadata, language, user_id, tenant_id, submission_id
+			metadata, language, user_id, tenant_id, submission_id, value_id
 		)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
 		WHERE ` + tenantWriteLockGate(lockKeyParam) + `
 		RETURNING ` + feedbackRecordColumns
 
@@ -129,7 +130,7 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
 		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
-		req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID,
+		req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID, req.ValueID,
 		TenantWriteLockKey(req.TenantID),
 	))
 	if err != nil {
@@ -616,64 +617,62 @@ func scanBackfillTargetIDs(rows pgx.Rows, name string) ([]uuid.UUID, error) {
 func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereClause string, args []any) {
 	var conditions []string
 
-	argCount := 1
-
+	// Each placeholder is len(args)+1, evaluated before that condition's arg is appended, so $N
+	// always equals the argument's 1-based position. Deriving it from the slice length (rather than
+	// a manual counter) means conditions stay correct in any order and a new filter can be added
+	// anywhere without desyncing a counter.
 	if filters.TenantID != nil {
-		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", len(args)+1))
 		args = append(args, *filters.TenantID)
-		argCount++
 	}
 
 	if filters.SubmissionID != nil {
-		conditions = append(conditions, fmt.Sprintf("submission_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("submission_id = $%d", len(args)+1))
 		args = append(args, *filters.SubmissionID)
-		argCount++
 	}
 
 	if filters.SourceType != nil {
-		conditions = append(conditions, fmt.Sprintf("source_type = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("source_type = $%d", len(args)+1))
 		args = append(args, *filters.SourceType)
-		argCount++
 	}
 
 	if filters.SourceID != nil {
-		conditions = append(conditions, fmt.Sprintf("source_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("source_id = $%d", len(args)+1))
 		args = append(args, *filters.SourceID)
-		argCount++
 	}
 
 	if filters.FieldID != nil {
-		conditions = append(conditions, fmt.Sprintf("field_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("field_id = $%d", len(args)+1))
 		args = append(args, *filters.FieldID)
-		argCount++
 	}
 
 	if filters.FieldGroupID != nil {
-		conditions = append(conditions, fmt.Sprintf("field_group_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("field_group_id = $%d", len(args)+1))
 		args = append(args, *filters.FieldGroupID)
-		argCount++
 	}
 
 	if filters.FieldType != nil {
-		conditions = append(conditions, fmt.Sprintf("field_type = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("field_type = $%d", len(args)+1))
 		args = append(args, *filters.FieldType)
-		argCount++
+	}
+
+	if filters.ValueID != nil {
+		conditions = append(conditions, fmt.Sprintf("value_id = $%d", len(args)+1))
+		args = append(args, *filters.ValueID)
 	}
 
 	if filters.UserID != nil {
-		conditions = append(conditions, fmt.Sprintf("user_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)+1))
 		args = append(args, *filters.UserID)
-		argCount++
 	}
 
 	if filters.Since != nil {
-		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", len(args)+1))
 		args = append(args, *filters.Since)
-		argCount++
 	}
 
 	if filters.Until != nil {
-		conditions = append(conditions, fmt.Sprintf("collected_at <= $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("collected_at <= $%d", len(args)+1))
 		args = append(args, *filters.Until)
 	}
 
@@ -789,6 +788,14 @@ func buildUpdateQuery(
 		valueTextArg = argCount
 		updates = append(updates, fmt.Sprintf("value_text = $%d", argCount))
 		args = append(args, *req.ValueText)
+		argCount++
+	}
+
+	// value_id is a plain caller-supplied field (not an enrichment source), so it is set
+	// directly and does not participate in the stale-enrichment clears below.
+	if req.ValueID != nil {
+		updates = append(updates, fmt.Sprintf("value_id = $%d", argCount))
+		args = append(args, *req.ValueID)
 		argCount++
 	}
 

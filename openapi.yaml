@@ -148,6 +148,15 @@ paths:
                         - boolean
                         - date
                     pattern: '^[^\x00]*$'
+                - name: value_id
+                  in: query
+                  description: Filter by the source system's stable option id (e.g. all records for one survey choice). NULL bytes not allowed.
+                  schema:
+                    type: string
+                    description: Filter by the source system's stable option id. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                    maxLength: 255
+                    example: "opt_very_satisfied"
                 - name: user_id
                   in: query
                   description: Filter by user ID. NULL bytes not allowed.
@@ -2435,6 +2444,13 @@ components:
                         - Great service!
                     pattern: '^[^\x00]*$'
                     maxLength: 30000
+                value_id:
+                    type: [string, "null"]
+                    description: Stable id of the selected option in the source system (e.g. a survey choice id or matrix column id), stored alongside value_text so selected-choice answers keep a durable identity across label edits and languages. Opaque to Hub (not validated). Null for free-text/"other" answers, non-choice fields, and sources without option ids. NULL bytes not allowed when present.
+                    examples:
+                        - opt_very_satisfied
+                    pattern: '^[^\x00]*$'
+                    maxLength: 255
             required:
                 - source_type
                 - field_id
@@ -2654,6 +2670,10 @@ components:
                 value_text:
                     type: string
                     description: Text response. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                value_id:
+                    type: string
+                    description: Stable id of the selected option in the source system (e.g. a survey choice id), stored alongside value_text for durable option identity. Opaque to Hub. Absent for free-text/non-choice answers. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
                 value_text_translated:
                     type: string
@@ -2985,6 +3005,11 @@ components:
                     description: Update text response. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
                     maxLength: 30000
+                value_id:
+                    type: string
+                    description: Update the stable id of the selected option in the source system (e.g. a survey choice id), stored alongside value_text for durable option identity. Opaque to Hub. NULL bytes not allowed.
+                    pattern: '^[^\x00]*$'
+                    maxLength: 255
         TaxonomyRunStatus:
             type: string
             description: Lifecycle state of a taxonomy run. Allowed transitions are pending -> running|failed|canceled and running -> succeeded|failed|canceled.
