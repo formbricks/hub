@@ -735,6 +735,85 @@ func (r *TaxonomyRepository) GetTree(
 	return &models.TaxonomyTreeResponse{Run: *run, Root: root}, nil
 }
 
+// CountNodeRecords returns the feedback-record count for every visible node in a taxonomy run.
+// Each count is a subtree total (the node plus its visible descendants), so a branch reports the
+// sum of its leaves and the root reports the run total. The run must belong to the tenant,
+// otherwise a not-found error is returned.
+func (r *TaxonomyRepository) CountNodeRecords(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) ([]models.TaxonomyNodeRecordCount, error) {
+	if _, err := r.GetRunForTenant(ctx, runID, tenantID); err != nil {
+		return nil, err
+	}
+
+	nodes, err := r.listVisibleNodes(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+
+	clusterCounts, err := r.countRecordsByCluster(ctx, runID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	return rollUpNodeRecordCounts(nodes, clusterCounts), nil
+}
+
+// rollUpNodeRecordCounts converts per-cluster record counts into a subtree total for every node.
+// A node's direct count is the record count of the cluster it references (if any); its reported
+// count also adds the totals of all its children. Nodes whose parent is not in the visible set
+// are treated as subtree roots so every visible node is counted exactly once.
+func rollUpNodeRecordCounts(
+	nodes []models.TaxonomyNode,
+	clusterCounts map[uuid.UUID]int64,
+) []models.TaxonomyNodeRecordCount {
+	present := make(map[uuid.UUID]bool, len(nodes))
+	for i := range nodes {
+		present[nodes[i].ID] = true
+	}
+
+	childrenByParent := make(map[uuid.UUID][]uuid.UUID, len(nodes))
+	directCount := make(map[uuid.UUID]int64, len(nodes))
+	roots := make([]uuid.UUID, 0)
+
+	for i := range nodes {
+		node := nodes[i]
+
+		if node.ClusterID != nil {
+			directCount[node.ID] = clusterCounts[*node.ClusterID]
+		}
+
+		if node.ParentID != nil && present[*node.ParentID] {
+			childrenByParent[*node.ParentID] = append(childrenByParent[*node.ParentID], node.ID)
+		} else {
+			roots = append(roots, node.ID)
+		}
+	}
+
+	counts := make([]models.TaxonomyNodeRecordCount, 0, len(nodes))
+
+	var visit func(id uuid.UUID) int64
+
+	visit = func(id uuid.UUID) int64 {
+		total := directCount[id]
+		for _, childID := range childrenByParent[id] {
+			total += visit(childID)
+		}
+
+		counts = append(counts, models.TaxonomyNodeRecordCount{NodeID: id, RecordCount: total})
+
+		return total
+	}
+
+	for _, rootID := range roots {
+		visit(rootID)
+	}
+
+	return counts
+}
+
 // RenameNode updates a taxonomy node label and records an edit event.
 func (r *TaxonomyRepository) RenameNode(
 	ctx context.Context,
@@ -964,6 +1043,50 @@ func (r *TaxonomyRepository) listVisibleNodes(ctx context.Context, runID uuid.UU
 	}
 
 	return nodes, nil
+}
+
+// countRecordsByCluster returns, per cluster in the run, the number of feedback records assigned
+// to it. The (run_id, feedback_record_id) uniqueness constraint guarantees a record maps to a
+// single cluster per run, so these per-cluster counts can be summed across a subtree without
+// double counting. Deleting a feedback record cascades to its membership rows, so a live
+// membership always corresponds to a live record.
+func (r *TaxonomyRepository) countRecordsByCluster(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) (map[uuid.UUID]int64, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT cluster_id, COUNT(*)
+		FROM taxonomy_cluster_memberships
+		WHERE run_id = $1 AND tenant_id = $2
+		GROUP BY cluster_id`,
+		runID, tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("count taxonomy records by cluster: %w", err)
+	}
+	defer rows.Close()
+
+	counts := map[uuid.UUID]int64{}
+
+	for rows.Next() {
+		var (
+			clusterID uuid.UUID
+			count     int64
+		)
+
+		if err := rows.Scan(&clusterID, &count); err != nil {
+			return nil, fmt.Errorf("scan taxonomy cluster count: %w", err)
+		}
+
+		counts[clusterID] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate taxonomy cluster counts: %w", err)
+	}
+
+	return counts, nil
 }
 
 // transitionError builds the conflict (or not-found) error for a run that could

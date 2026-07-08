@@ -279,3 +279,17 @@ type TaxonomyNodeRecordsResponse struct {
 	Data  []FeedbackRecord `json:"data"`
 	Limit int              `json:"limit"`
 }
+
+// TaxonomyNodeRecordCount is the number of feedback records in a taxonomy node's subtree
+// (the node itself plus all of its visible descendants).
+type TaxonomyNodeRecordCount struct {
+	NodeID      uuid.UUID `json:"node_id"`
+	RecordCount int64     `json:"record_count"`
+}
+
+// TaxonomyRecordCountsResponse holds the per-node feedback-record counts for a taxonomy run,
+// one entry per visible node. Counts are subtree totals, so a topic (branch) reports the sum of
+// its subtopics and the root reports the run total.
+type TaxonomyRecordCountsResponse struct {
+	Counts []TaxonomyNodeRecordCount `json:"counts"`
+}

@@ -1968,6 +1968,63 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/taxonomy/runs/{run_id}/record-counts:
+        get:
+            tags:
+                - Taxonomy
+            summary: Count feedback records per taxonomy node
+            description: Returns the feedback-record count for every visible node in a taxonomy run. Each count is a subtree total, so a topic (branch) reports the sum of its subtopics and the root reports the run total. Tenant-scoped; returns 404 if the run does not belong to the tenant.
+            operationId: count-taxonomy-node-records
+            parameters:
+                - name: run_id
+                  in: path
+                  required: true
+                  description: Taxonomy run ID.
+                  schema:
+                    type: string
+                    format: uuid
+                    example: "019f177f-9aa3-705e-8195-cea2aa187268"
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant that owns the run.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: Per-node feedback-record counts for the run
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TaxonomyRecordCountsOutputBody'
+                "400":
+                    description: Bad Request (e.g. invalid run_id or missing/invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – no run with this ID for the tenant.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
     /v1/taxonomy/nodes/{node_id}:
         patch:
             tags:
@@ -3456,3 +3513,31 @@ components:
             required:
                 - data
                 - limit
+        TaxonomyNodeRecordCount:
+            type: object
+            additionalProperties: false
+            properties:
+                node_id:
+                    type: string
+                    format: uuid
+                    description: Taxonomy node ID.
+                    example: "019f177f-9aa3-705e-8195-cea2aa187268"
+                record_count:
+                    type: integer
+                    format: int64
+                    description: Number of feedback records in the node's subtree.
+                    example: 42
+            required:
+                - node_id
+                - record_count
+        TaxonomyRecordCountsOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                counts:
+                    type: array
+                    description: Per-node feedback-record counts, one entry per visible node.
+                    items:
+                        $ref: '#/components/schemas/TaxonomyNodeRecordCount'
+            required:
+                - counts

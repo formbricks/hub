@@ -60,6 +60,7 @@ type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service 
 	RenameNode(ctx context.Context, nodeID uuid.UUID, tenantID, actorID, label string) (*models.TaxonomyNode, error)
 	RemoveNode(ctx context.Context, nodeID uuid.UUID, tenantID, actorID string) (*models.TaxonomyNode, error)
 	ListNodeRecords(ctx context.Context, nodeID uuid.UUID, tenantID string, limit int) ([]models.FeedbackRecord, int, error)
+	CountNodeRecords(ctx context.Context, runID uuid.UUID, tenantID string) ([]models.TaxonomyNodeRecordCount, error)
 }
 
 // TaxonomyRunStarter starts asynchronous taxonomy compute work.
@@ -288,6 +289,26 @@ func (s *TaxonomyService) GetTree(
 	}
 
 	return tree, nil
+}
+
+// GetNodeRecordCounts returns the feedback-record count for every visible node in a run, as
+// subtree totals (a branch reports the sum of its subtopics, the root reports the run total).
+func (s *TaxonomyService) GetNodeRecordCounts(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) (*models.TaxonomyRecordCountsResponse, error) {
+	normalizedTenantID, err := normalizeRequiredTenantIDValue(tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	counts, err := s.repo.CountNodeRecords(ctx, runID, normalizedTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("get taxonomy node record counts: %w", err)
+	}
+
+	return &models.TaxonomyRecordCountsResponse{Counts: counts}, nil
 }
 
 // GetRunInput returns feedback text and embeddings for the taxonomy service.

@@ -601,6 +601,7 @@ func newHTTPServer(
 	protected.HandleFunc("GET /v1/taxonomy/runs/active/tree", taxonomy.GetActiveTree)
 	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}", taxonomy.GetRun)
 	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/tree", taxonomy.GetTree)
+	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/record-counts", taxonomy.RecordCounts)
 	protected.HandleFunc("PATCH /v1/taxonomy/nodes/{node_id}", taxonomy.RenameNode)
 	protected.HandleFunc("DELETE /v1/taxonomy/nodes/{node_id}", taxonomy.RemoveNode)
 	protected.HandleFunc("GET /v1/taxonomy/nodes/{node_id}/records", taxonomy.ListNodeRecords)

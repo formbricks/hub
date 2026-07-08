@@ -30,6 +30,11 @@ type TaxonomyService interface {
 		nodeID uuid.UUID,
 		filters models.TaxonomyNodeRecordsFilters,
 	) (*models.TaxonomyNodeRecordsResponse, error)
+	GetNodeRecordCounts(
+		ctx context.Context,
+		runID uuid.UUID,
+		tenantID string,
+	) (*models.TaxonomyRecordCountsResponse, error)
 }
 
 // TaxonomyHandler hosts public taxonomy API endpoints.
@@ -159,6 +164,23 @@ func (h *TaxonomyHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.service.GetTree(r.Context(), runID, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		respondTaxonomyError(w, r, err)
+
+		return
+	}
+
+	response.RespondJSON(w, http.StatusOK, result)
+}
+
+// RecordCounts returns the feedback-record count for every visible node in a taxonomy run.
+func (h *TaxonomyHandler) RecordCounts(w http.ResponseWriter, r *http.Request) {
+	runID, ok := parseUUIDPathValue(w, r, "run_id")
+	if !ok {
+		return
+	}
+
+	result, err := h.service.GetNodeRecordCounts(r.Context(), runID, r.URL.Query().Get("tenant_id"))
 	if err != nil {
 		respondTaxonomyError(w, r, err)
 

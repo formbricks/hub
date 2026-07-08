@@ -94,6 +94,71 @@ func TestBuildTaxonomyTreePreservesDeepChildren(t *testing.T) {
 	}
 }
 
+// TestRollUpNodeRecordCounts verifies that per-cluster record counts roll up into subtree totals:
+// a leaf reports its own cluster's records, a branch reports the sum of its descendants, and the
+// root reports the whole run. Nodes with no cluster, clusters absent from the count map, and
+// orphaned subtrees (parent not visible) are all handled.
+func TestRollUpNodeRecordCounts(t *testing.T) {
+	rootID := uuid.New()
+	branchAID := uuid.New()
+	leafA1ID := uuid.New()
+	leafA2ID := uuid.New()
+	leafBID := uuid.New()
+	orphanID := uuid.New()
+
+	clusterA1 := uuid.New()
+	clusterA2 := uuid.New()
+	clusterB := uuid.New()
+	clusterEmpty := uuid.New() // referenced by a node but absent from the counts map -> 0
+	clusterOrphan := uuid.New()
+
+	ptr := func(id uuid.UUID) *uuid.UUID { return &id }
+
+	nodes := []models.TaxonomyNode{
+		{ID: rootID, NodeType: models.TaxonomyNodeTypeRoot, Level: 0},
+		{ID: branchAID, ParentID: ptr(rootID), NodeType: models.TaxonomyNodeTypeBranch, Level: 1},
+		{ID: leafA1ID, ParentID: ptr(branchAID), ClusterID: ptr(clusterA1), NodeType: models.TaxonomyNodeTypeLeaf, Level: 2},
+		{ID: leafA2ID, ParentID: ptr(branchAID), ClusterID: ptr(clusterA2), NodeType: models.TaxonomyNodeTypeLeaf, Level: 2},
+		{ID: leafBID, ParentID: ptr(rootID), ClusterID: ptr(clusterB), NodeType: models.TaxonomyNodeTypeLeaf, Level: 1},
+		// Parent is not in the visible set: treated as its own subtree root.
+		{ID: orphanID, ParentID: ptr(uuid.New()), ClusterID: ptr(clusterOrphan), NodeType: models.TaxonomyNodeTypeLeaf, Level: 2},
+	}
+
+	clusterCounts := map[uuid.UUID]int64{
+		clusterA1:     3,
+		clusterA2:     5,
+		clusterB:      2,
+		clusterEmpty:  9, // no node references this; must not appear anywhere
+		clusterOrphan: 4,
+	}
+
+	got := rollUpNodeRecordCounts(nodes, clusterCounts)
+
+	if len(got) != len(nodes) {
+		t.Fatalf("count entries = %d, want %d (one per visible node)", len(got), len(nodes))
+	}
+
+	byNode := make(map[uuid.UUID]int64, len(got))
+	for _, c := range got {
+		byNode[c.NodeID] = c.RecordCount
+	}
+
+	want := map[uuid.UUID]int64{
+		leafA1ID:  3,
+		leafA2ID:  5,
+		branchAID: 8, // 3 + 5
+		leafBID:   2,
+		rootID:    10, // 8 (branch A) + 2 (leaf B); root has no own cluster
+		orphanID:  4,  // orphan subtree counted independently, not folded into root
+	}
+
+	for id, wantCount := range want {
+		if byNode[id] != wantCount {
+			t.Fatalf("node %s count = %d, want %d", id, byNode[id], wantCount)
+		}
+	}
+}
+
 func onlyChild(t *testing.T, node *models.TaxonomyNode, label string) *models.TaxonomyNode {
 	t.Helper()
 

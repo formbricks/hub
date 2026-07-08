@@ -143,6 +143,7 @@ func setupTaxonomyAPIServer(t *testing.T) *taxonomyTestServer {
 	protected.HandleFunc("GET /v1/taxonomy/runs/active/tree", taxonomyHandler.GetActiveTree)
 	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}", taxonomyHandler.GetRun)
 	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/tree", taxonomyHandler.GetTree)
+	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/record-counts", taxonomyHandler.RecordCounts)
 	protected.HandleFunc("PATCH /v1/taxonomy/nodes/{node_id}", taxonomyHandler.RenameNode)
 	protected.HandleFunc("DELETE /v1/taxonomy/nodes/{node_id}", taxonomyHandler.RemoveNode)
 	protected.HandleFunc("GET /v1/taxonomy/nodes/{node_id}/records", taxonomyHandler.ListNodeRecords)

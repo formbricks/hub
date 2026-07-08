@@ -22,6 +22,11 @@ type mockTaxonomyRepo struct {
 	markRunFailedMessage string
 	markRunFailedCode    models.TaxonomyRunFailureCode
 	markRunFailedTenant  string
+
+	countNodeRecords       []models.TaxonomyNodeRecordCount
+	countNodeRecordsErr    error
+	countNodeRecordsRunID  uuid.UUID
+	countNodeRecordsTenant string
 }
 
 func (m *mockTaxonomyRepo) ListFieldOptions(
@@ -162,6 +167,21 @@ func (m *mockTaxonomyRepo) ListNodeRecords(
 	return nil, 0, nil
 }
 
+func (m *mockTaxonomyRepo) CountNodeRecords(
+	_ context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) ([]models.TaxonomyNodeRecordCount, error) {
+	m.countNodeRecordsRunID = runID
+	m.countNodeRecordsTenant = tenantID
+
+	if m.countNodeRecordsErr != nil {
+		return nil, m.countNodeRecordsErr
+	}
+
+	return m.countNodeRecords, nil
+}
+
 type failingTaxonomyStarter struct{}
 
 func (f failingTaxonomyStarter) StartRun(_ context.Context, _ string) error {
@@ -277,4 +297,55 @@ func TestTaxonomyService_FailRunDefaultsFailureCode(t *testing.T) {
 	if *result.ErrorCode != models.TaxonomyRunFailureCodeGenerationFailed {
 		t.Fatalf("result error code = %q, want generation_failed", *result.ErrorCode)
 	}
+}
+
+func TestTaxonomyService_GetNodeRecordCounts(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-444444444444")
+	nodeID := uuid.MustParse("018e1234-5678-9abc-def0-555555555555")
+
+	t.Run("returns counts and forwards normalized tenant", func(t *testing.T) {
+		repo := &mockTaxonomyRepo{
+			countNodeRecords: []models.TaxonomyNodeRecordCount{{NodeID: nodeID, RecordCount: 7}},
+		}
+		svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+		result, err := svc.GetNodeRecordCounts(context.Background(), runID, "  tenant-1  ")
+		if err != nil {
+			t.Fatalf("GetNodeRecordCounts() error = %v", err)
+		}
+
+		if len(result.Counts) != 1 || result.Counts[0].RecordCount != 7 {
+			t.Fatalf("counts = %+v, want one entry with count 7", result.Counts)
+		}
+
+		if repo.countNodeRecordsRunID != runID {
+			t.Fatalf("repo run ID = %s, want %s", repo.countNodeRecordsRunID, runID)
+		}
+
+		if repo.countNodeRecordsTenant != "tenant-1" {
+			t.Fatalf("repo tenant = %q, want trimmed %q", repo.countNodeRecordsTenant, "tenant-1")
+		}
+	})
+
+	t.Run("rejects empty tenant without hitting repo", func(t *testing.T) {
+		repo := &mockTaxonomyRepo{}
+		svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+		if _, err := svc.GetNodeRecordCounts(context.Background(), runID, "   "); err == nil {
+			t.Fatal("GetNodeRecordCounts() = nil error, want validation error for empty tenant")
+		}
+
+		if repo.countNodeRecordsTenant != "" {
+			t.Fatalf("repo was called with tenant %q; expected no repo call", repo.countNodeRecordsTenant)
+		}
+	})
+
+	t.Run("propagates repo error", func(t *testing.T) {
+		repo := &mockTaxonomyRepo{countNodeRecordsErr: errors.New("boom")}
+		svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+		if _, err := svc.GetNodeRecordCounts(context.Background(), runID, "tenant-1"); err == nil {
+			t.Fatal("GetNodeRecordCounts() = nil error, want propagated repo error")
+		}
+	})
 }
