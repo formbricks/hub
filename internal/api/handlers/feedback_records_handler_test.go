@@ -461,6 +461,7 @@ func TestFeedbackRecordsHandler_BodyBounds(t *testing.T) {
 			"source_id":         `"source_id":"` + over256 + `"`,
 			"source_name":       `"source_name":"` + over256 + `"`,
 			"user_id":           `"user_id":"` + over256 + `"`,
+			"value_id":          `"value_id":"` + over256 + `"`,
 			"field_label":       `"field_label":"` + over2049 + `"`,
 			"field_group_label": `"field_group_label":"` + over2049 + `"`,
 		}

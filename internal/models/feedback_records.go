@@ -254,27 +254,31 @@ func (e EmotionValue) IsValid() bool {
 
 // FeedbackRecord represents a single feedback record.
 type FeedbackRecord struct {
-	ID              uuid.UUID       `json:"id"`
-	CollectedAt     time.Time       `json:"collected_at"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	SourceType      string          `json:"source_type"`
-	SourceID        *string         `json:"source_id,omitempty"`
-	SourceName      *string         `json:"source_name,omitempty"`
-	FieldID         string          `json:"field_id"`
-	FieldLabel      *string         `json:"field_label,omitempty"`
-	FieldType       FieldType       `json:"field_type"`
-	FieldGroupID    *string         `json:"field_group_id,omitempty"`
-	FieldGroupLabel *string         `json:"field_group_label,omitempty"`
-	ValueText       *string         `json:"value_text,omitempty"`
-	ValueNumber     *float64        `json:"value_number,omitempty"`
-	ValueBoolean    *bool           `json:"value_boolean,omitempty"`
-	ValueDate       *time.Time      `json:"value_date,omitempty"`
-	Metadata        json.RawMessage `json:"metadata,omitempty"`
-	Language        *string         `json:"language,omitempty"`
-	UserID          *string         `json:"user_id,omitempty"`
-	TenantID        string          `json:"tenant_id"`
-	SubmissionID    string          `json:"submission_id"` // mandatory; never null
+	ID              uuid.UUID `json:"id"`
+	CollectedAt     time.Time `json:"collected_at"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	SourceType      string    `json:"source_type"`
+	SourceID        *string   `json:"source_id,omitempty"`
+	SourceName      *string   `json:"source_name,omitempty"`
+	FieldID         string    `json:"field_id"`
+	FieldLabel      *string   `json:"field_label,omitempty"`
+	FieldType       FieldType `json:"field_type"`
+	FieldGroupID    *string   `json:"field_group_id,omitempty"`
+	FieldGroupLabel *string   `json:"field_group_label,omitempty"`
+	ValueText       *string   `json:"value_text,omitempty"`
+	// ValueID is the source system's stable id for a selected option (e.g. a survey choice id),
+	// stored alongside ValueText's display label so selected-choice answers keep a durable identity
+	// across label edits and languages. Opaque to Hub; nil for free-text/non-choice answers.
+	ValueID      *string         `json:"value_id,omitempty"`
+	ValueNumber  *float64        `json:"value_number,omitempty"`
+	ValueBoolean *bool           `json:"value_boolean,omitempty"`
+	ValueDate    *time.Time      `json:"value_date,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	Language     *string         `json:"language,omitempty"`
+	UserID       *string         `json:"user_id,omitempty"`
+	TenantID     string          `json:"tenant_id"`
+	SubmissionID string          `json:"submission_id"` // mandatory; never null
 	// Language-enrichment outputs (ENG-1255): server-generated, read-only. NULL until
 	// the record is translated into the tenant's configured target language.
 	ValueTextTranslated *string `json:"value_text_translated,omitempty"`
@@ -313,6 +317,7 @@ type CreateFeedbackRecordRequest struct {
 	FieldGroupID    *string         `json:"field_group_id,omitempty"    validate:"omitempty,no_null_bytes,max=255"`
 	FieldGroupLabel *string         `json:"field_group_label,omitempty" validate:"omitempty,no_null_bytes,max=2048"`
 	ValueText       *string         `json:"value_text,omitempty"        validate:"omitempty,no_null_bytes,max=30000"`
+	ValueID         *string         `json:"value_id,omitempty"          validate:"omitempty,no_null_bytes,max=255"`
 	ValueNumber     *float64        `json:"value_number,omitempty"`
 	ValueBoolean    *bool           `json:"value_boolean,omitempty"`
 	ValueDate       *time.Time      `json:"value_date,omitempty"`
@@ -334,6 +339,7 @@ type TranslationBackfillTarget struct {
 // Only value fields, metadata, language, and user_id can be updated.
 type UpdateFeedbackRecordRequest struct {
 	ValueText    *string         `json:"value_text,omitempty"    validate:"omitempty,no_null_bytes,max=30000"`
+	ValueID      *string         `json:"value_id,omitempty"      validate:"omitempty,no_null_bytes,max=255"`
 	ValueNumber  *float64        `json:"value_number,omitempty"`
 	ValueBoolean *bool           `json:"value_boolean,omitempty"`
 	ValueDate    *time.Time      `json:"value_date,omitempty"`
@@ -352,6 +358,10 @@ func (r *UpdateFeedbackRecordRequest) FieldsChangedFrom(old *FeedbackRecord) []s
 
 	if r.ValueText != nil && !stringPtrEqual(old.ValueText, r.ValueText) {
 		fields = append(fields, "value_text")
+	}
+
+	if r.ValueID != nil && !stringPtrEqual(old.ValueID, r.ValueID) {
+		fields = append(fields, "value_id")
 	}
 
 	if r.ValueNumber != nil && (old.ValueNumber == nil || *old.ValueNumber != *r.ValueNumber) {
@@ -399,6 +409,10 @@ func (r *UpdateFeedbackRecordRequest) ChangedFields() []string {
 		fields = append(fields, "value_text")
 	}
 
+	if r.ValueID != nil {
+		fields = append(fields, "value_id")
+	}
+
 	if r.ValueNumber != nil {
 		fields = append(fields, "value_number")
 	}
@@ -435,6 +449,7 @@ type ListFeedbackRecordsFilters struct {
 	FieldID      *string    `form:"field_id"       validate:"omitempty,no_null_bytes"`
 	FieldGroupID *string    `form:"field_group_id" validate:"omitempty,no_null_bytes"`
 	FieldType    *FieldType `form:"field_type"     validate:"omitempty,field_type"`
+	ValueID      *string    `form:"value_id"       validate:"omitempty,no_null_bytes"`
 	UserID       *string    `form:"user_id"        validate:"omitempty,no_null_bytes"`
 	Since        *time.Time `form:"since"          validate:"omitempty"`
 	Until        *time.Time `form:"until"          validate:"omitempty"`
