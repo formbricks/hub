@@ -117,3 +117,61 @@ func TestBuildUpdateQuery_ValueID(t *testing.T) {
 		t.Fatalf("args = %v, want first arg %q", args, valueID)
 	}
 }
+
+// TestBuildFilterConditions_PlaceholdersMatchArgs locks that every generated $N placeholder maps to
+// its argument's 1-based position for any combination of filters. The placeholder is derived from
+// len(args)+1 at each append precisely so the order of filters can't desync it — this guards
+// against a regression to a manual counter (a trailing filter that forgot to advance it would bind
+// the wrong value). Every filter is set here, so the conditions appear in the function's fixed
+// order and each column's placeholder must equal its position.
+func TestBuildFilterConditions_PlaceholdersMatchArgs(t *testing.T) {
+	tenant := "t1"
+	submission := "s1"
+	sourceType := "survey"
+	sourceID := "src1"
+	fieldID := "q1"
+	fieldGroupID := "g1"
+	fieldType := models.FieldTypeCategorical
+	valueID := "opt_a"
+	userID := "u1"
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	until := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+
+	where, args := buildFilterConditions(&models.ListFeedbackRecordsFilters{
+		TenantID: &tenant, SubmissionID: &submission, SourceType: &sourceType,
+		SourceID: &sourceID, FieldID: &fieldID, FieldGroupID: &fieldGroupID,
+		FieldType: &fieldType, ValueID: &valueID, UserID: &userID,
+		Since: &since, Until: &until,
+	})
+
+	expected := []struct {
+		clause string
+		value  any
+	}{
+		{"tenant_id = $1", tenant},
+		{"submission_id = $2", submission},
+		{"source_type = $3", sourceType},
+		{"source_id = $4", sourceID},
+		{"field_id = $5", fieldID},
+		{"field_group_id = $6", fieldGroupID},
+		{"field_type = $7", fieldType},
+		{"value_id = $8", valueID},
+		{"user_id = $9", userID},
+		{"collected_at >= $10", since},
+		{"collected_at <= $11", until},
+	}
+
+	if len(args) != len(expected) {
+		t.Fatalf("args len = %d, want %d\nwhere: %s", len(args), len(expected), where)
+	}
+
+	for i, exp := range expected {
+		if !strings.Contains(where, exp.clause) {
+			t.Fatalf("where clause missing %q\ngot: %s", exp.clause, where)
+		}
+
+		if args[i] != exp.value {
+			t.Fatalf("args[%d] = %v, want %v (placeholder in %q must bind that arg)", i, args[i], exp.value, exp.clause)
+		}
+	}
+}

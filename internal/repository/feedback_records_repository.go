@@ -617,70 +617,62 @@ func scanBackfillTargetIDs(rows pgx.Rows, name string) ([]uuid.UUID, error) {
 func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereClause string, args []any) {
 	var conditions []string
 
-	argCount := 1
-
+	// Each placeholder is len(args)+1, evaluated before that condition's arg is appended, so $N
+	// always equals the argument's 1-based position. Deriving it from the slice length (rather than
+	// a manual counter) means conditions stay correct in any order and a new filter can be added
+	// anywhere without desyncing a counter.
 	if filters.TenantID != nil {
-		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", len(args)+1))
 		args = append(args, *filters.TenantID)
-		argCount++
 	}
 
 	if filters.SubmissionID != nil {
-		conditions = append(conditions, fmt.Sprintf("submission_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("submission_id = $%d", len(args)+1))
 		args = append(args, *filters.SubmissionID)
-		argCount++
 	}
 
 	if filters.SourceType != nil {
-		conditions = append(conditions, fmt.Sprintf("source_type = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("source_type = $%d", len(args)+1))
 		args = append(args, *filters.SourceType)
-		argCount++
 	}
 
 	if filters.SourceID != nil {
-		conditions = append(conditions, fmt.Sprintf("source_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("source_id = $%d", len(args)+1))
 		args = append(args, *filters.SourceID)
-		argCount++
 	}
 
 	if filters.FieldID != nil {
-		conditions = append(conditions, fmt.Sprintf("field_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("field_id = $%d", len(args)+1))
 		args = append(args, *filters.FieldID)
-		argCount++
 	}
 
 	if filters.FieldGroupID != nil {
-		conditions = append(conditions, fmt.Sprintf("field_group_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("field_group_id = $%d", len(args)+1))
 		args = append(args, *filters.FieldGroupID)
-		argCount++
 	}
 
 	if filters.FieldType != nil {
-		conditions = append(conditions, fmt.Sprintf("field_type = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("field_type = $%d", len(args)+1))
 		args = append(args, *filters.FieldType)
-		argCount++
 	}
 
 	if filters.ValueID != nil {
-		conditions = append(conditions, fmt.Sprintf("value_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("value_id = $%d", len(args)+1))
 		args = append(args, *filters.ValueID)
-		argCount++
 	}
 
 	if filters.UserID != nil {
-		conditions = append(conditions, fmt.Sprintf("user_id = $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)+1))
 		args = append(args, *filters.UserID)
-		argCount++
 	}
 
 	if filters.Since != nil {
-		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", len(args)+1))
 		args = append(args, *filters.Since)
-		argCount++
 	}
 
 	if filters.Until != nil {
-		conditions = append(conditions, fmt.Sprintf("collected_at <= $%d", argCount))
+		conditions = append(conditions, fmt.Sprintf("collected_at <= $%d", len(args)+1))
 		args = append(args, *filters.Until)
 	}
 
