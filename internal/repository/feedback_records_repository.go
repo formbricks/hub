@@ -692,7 +692,7 @@ func (r *FeedbackRecordsRepository) Count(
 
 	var count int
 	if err := r.db.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("count feedback records: %w", err)
+		return 0, fmt.Errorf("query feedback records count: %w", err)
 	}
 
 	return count, nil
