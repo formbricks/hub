@@ -340,6 +340,48 @@ Response:
 }
 ```
 
+### 4. Count Feedback Records
+
+To get the total number of records matching a filter—without paging through results—use the count endpoint:
+
+```bash
+curl "http://localhost:8080/v1/feedback-records/count?tenant_id=org-123" \
+  -H "Authorization: Bearer your_secure_api_key_here"
+```
+
+Response:
+
+```json
+{
+  "count": 42
+}
+```
+
+It accepts the same filters as the query endpoint (`source_type`, `field_id`, `user_id`, `since`/`until`, and so on), so you can count any subset—for example, only `survey` responses in the last week.
+
+### 5. Count Records per Taxonomy Node
+
+If you've generated a taxonomy for a dataset, you can fetch how many feedback records fall under each topic and subtopic in a single call:
+
+```bash
+curl "http://localhost:8080/v1/taxonomy/runs/RUN_ID/record-counts?tenant_id=org-123" \
+  -H "Authorization: Bearer your_secure_api_key_here"
+```
+
+Response:
+
+```json
+{
+  "counts": [
+    { "node_id": "…root", "record_count": 128 },
+    { "node_id": "…account", "record_count": 47 },
+    { "node_id": "…login", "record_count": 19 }
+  ]
+}
+```
+
+Each `record_count` is a subtree total: a topic reports the number of distinct records across all of its subtopics, and the root reports the run total. Join the `node_id`s with the taxonomy tree (`GET /v1/taxonomy/runs/{run_id}/tree`) to show counts alongside each node. See the [API Reference](/api) for the full taxonomy surface.
+
 ## Configuration
 
 ### Environment Variables
