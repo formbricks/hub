@@ -242,7 +242,7 @@ func TestTaxonomyAPI_RecordCounts(t *testing.T) {
 	ids := seedTaxonomyGraph(ctx, t, harness.db, scope)
 
 	// Add a second feedback record to the leaf's cluster so counts exceed the node count and
-	// prove we are counting distinct records, not nodes or clusters.
+	// prove we count distinct records, not nodes or clusters. The cluster now holds two records.
 	var secondRecordID uuid.UUID
 
 	err := harness.db.QueryRow(ctx, `
@@ -264,12 +264,26 @@ func TestTaxonomyAPI_RecordCounts(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// Add a SECOND leaf under the same branch that references the SAME cluster as the first leaf.
+	// The schema does not forbid this, and it is the case where a naive per-cluster sum would
+	// double count: the branch would report 4 instead of the 2 distinct records. This locks in the
+	// distinct-count behaviour.
+	var sharedClusterLeafID uuid.UUID
+
+	err = harness.db.QueryRow(ctx, `
+		INSERT INTO taxonomy_nodes (run_id, parent_id, cluster_id, node_type, label, original_label, level, sort_order)
+		VALUES ($1, $2, $3, 'leaf'::taxonomy_node_type_enum, 'Login Problems (dup)', 'Login Problems (dup)', 2, 1)
+		RETURNING id`,
+		ids.RunID, ids.BranchID, ids.ClusterID,
+	).Scan(&sharedClusterLeafID)
+	require.NoError(t, err)
+
 	tenantQuery := url.Values{"tenant_id": {scope.TenantID}}
 	countsURL := func(runID string, q url.Values) string {
 		return taxonomyURL(harness.server.URL, "/v1/taxonomy/runs/"+runID+"/record-counts", q)
 	}
 
-	t.Run("returns subtree totals per node", func(t *testing.T) {
+	t.Run("returns distinct subtree totals per node", func(t *testing.T) {
 		var resp models.TaxonomyRecordCountsResponse
 		requestTaxonomyJSON(ctx, t, http.MethodGet, countsURL(ids.RunID.String(), tenantQuery),
 			harness.apiKey, nil, http.StatusOK, &resp)
@@ -279,12 +293,14 @@ func TestTaxonomyAPI_RecordCounts(t *testing.T) {
 			byNode[c.NodeID] = c.RecordCount
 		}
 
-		// Seed graph is root -> branch -> leaf; the leaf's cluster now holds two records.
-		// The branch and root carry no cluster of their own, so their counts can only come
-		// from rolling up the leaf.
-		assert.Equal(t, int64(2), byNode[ids.LeafID], "leaf holds its two records")
-		assert.Equal(t, int64(2), byNode[ids.BranchID], "branch rolls up its leaf")
-		assert.Equal(t, int64(2), byNode[ids.RootID], "root rolls up the whole run")
+		// Seed graph is root -> branch -> {leaf, sharedClusterLeaf}; both leaves point at the one
+		// cluster, which holds two records. Each leaf reports 2. The branch and root carry no
+		// cluster of their own, so their counts come purely from the subtree — and must be 2
+		// distinct records, not 4 (which double counting the shared cluster would produce).
+		assert.Equal(t, int64(2), byNode[ids.LeafID], "leaf reports its cluster's two records")
+		assert.Equal(t, int64(2), byNode[sharedClusterLeafID], "shared-cluster leaf reports the same two")
+		assert.Equal(t, int64(2), byNode[ids.BranchID], "branch counts distinct records, not per-node sums")
+		assert.Equal(t, int64(2), byNode[ids.RootID], "root reports the run's distinct total")
 	})
 
 	t.Run("404s for another tenant", func(t *testing.T) {

@@ -519,11 +519,11 @@ func TestFeedbackRecordsHandler_Count(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 
-		var resp map[string]int
+		var resp models.CountFeedbackRecordsResponse
 
 		err := json.Unmarshal(rec.Body.Bytes(), &resp)
 		require.NoError(t, err)
-		assert.Equal(t, 42, resp["count"])
+		assert.Equal(t, int64(42), resp.Count)
 	})
 
 	t.Run("missing tenant_id returns 400", func(t *testing.T) {

@@ -1869,13 +1869,13 @@ func TestCountFeedbackRecords(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var body map[string]int
+		var body models.CountFeedbackRecordsResponse
 
 		err = json.NewDecoder(resp.Body).Decode(&body)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 
-		assert.Equal(t, 3, body["count"])
+		assert.Equal(t, int64(3), body.Count)
 	})
 
 	t.Run("filters by source_type", func(t *testing.T) {
@@ -1888,13 +1888,13 @@ func TestCountFeedbackRecords(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var body map[string]int
+		var body models.CountFeedbackRecordsResponse
 
 		err = json.NewDecoder(resp.Body).Decode(&body)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 
-		assert.Equal(t, 1, body["count"])
+		assert.Equal(t, int64(1), body.Count)
 	})
 
 	t.Run("returns 0 for tenant with no records", func(t *testing.T) {
@@ -1907,13 +1907,13 @@ func TestCountFeedbackRecords(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var body map[string]int
+		var body models.CountFeedbackRecordsResponse
 
 		err = json.NewDecoder(resp.Body).Decode(&body)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 
-		assert.Equal(t, 0, body["count"])
+		assert.Equal(t, int64(0), body.Count)
 	})
 
 	t.Run("missing tenant_id returns 400", func(t *testing.T) {

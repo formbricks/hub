@@ -736,9 +736,15 @@ func (r *TaxonomyRepository) GetTree(
 }
 
 // CountNodeRecords returns the feedback-record count for every visible node in a taxonomy run.
-// Each count is a subtree total (the node plus its visible descendants), so a branch reports the
-// sum of its leaves and the root reports the run total. The run must belong to the tenant,
+// Each count is a subtree total: the number of DISTINCT feedback records assigned (through cluster
+// membership) to the node or any of its visible descendants. So a branch reports the count across
+// all of its subtopics and the root reports the run total. The run must belong to the tenant,
 // otherwise a not-found error is returned.
+//
+// The count is derived from a single recursive descendant-closure query with COUNT(DISTINCT ...),
+// which stays correct even if the same cluster is referenced by more than one node — a record is
+// never double counted within a subtree. Records attach only through live cluster memberships, and
+// a membership is removed by cascade when its feedback record is deleted, so counts track live data.
 func (r *TaxonomyRepository) CountNodeRecords(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -748,70 +754,51 @@ func (r *TaxonomyRepository) CountNodeRecords(
 		return nil, err
 	}
 
-	nodes, err := r.listVisibleNodes(ctx, runID)
+	rows, err := r.db.Query(ctx, `
+		WITH RECURSIVE visible_nodes AS (
+			SELECT id, parent_id, cluster_id
+			FROM taxonomy_nodes
+			WHERE run_id = $1 AND removed_at IS NULL
+		),
+		subtree AS (
+			-- Every visible node is an ancestor of itself, so it appears with a count of its own.
+			SELECT id AS ancestor_id, id AS descendant_id, cluster_id
+			FROM visible_nodes
+			UNION ALL
+			SELECT ancestor.ancestor_id, child.id, child.cluster_id
+			FROM subtree ancestor
+			INNER JOIN visible_nodes child ON child.parent_id = ancestor.descendant_id
+		)
+		SELECT subtree.ancestor_id, COUNT(DISTINCT tcm.feedback_record_id)
+		FROM subtree
+		LEFT JOIN taxonomy_cluster_memberships tcm
+			ON tcm.run_id = $1
+			AND tcm.tenant_id = $2
+			AND tcm.cluster_id = subtree.cluster_id
+		GROUP BY subtree.ancestor_id`,
+		runID, tenantID,
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query taxonomy node record counts: %w", err)
 	}
+	defer rows.Close()
 
-	clusterCounts, err := r.countRecordsByCluster(ctx, runID, tenantID)
-	if err != nil {
-		return nil, err
-	}
+	counts := make([]models.TaxonomyNodeRecordCount, 0)
 
-	return rollUpNodeRecordCounts(nodes, clusterCounts), nil
-}
-
-// rollUpNodeRecordCounts converts per-cluster record counts into a subtree total for every node.
-// A node's direct count is the record count of the cluster it references (if any); its reported
-// count also adds the totals of all its children. Nodes whose parent is not in the visible set
-// are treated as subtree roots so every visible node is counted exactly once.
-func rollUpNodeRecordCounts(
-	nodes []models.TaxonomyNode,
-	clusterCounts map[uuid.UUID]int64,
-) []models.TaxonomyNodeRecordCount {
-	present := make(map[uuid.UUID]bool, len(nodes))
-	for i := range nodes {
-		present[nodes[i].ID] = true
-	}
-
-	childrenByParent := make(map[uuid.UUID][]uuid.UUID, len(nodes))
-	directCount := make(map[uuid.UUID]int64, len(nodes))
-	roots := make([]uuid.UUID, 0)
-
-	for i := range nodes {
-		node := nodes[i]
-
-		if node.ClusterID != nil {
-			directCount[node.ID] = clusterCounts[*node.ClusterID]
+	for rows.Next() {
+		var entry models.TaxonomyNodeRecordCount
+		if err := rows.Scan(&entry.NodeID, &entry.RecordCount); err != nil {
+			return nil, fmt.Errorf("scan taxonomy node record count: %w", err)
 		}
 
-		if node.ParentID != nil && present[*node.ParentID] {
-			childrenByParent[*node.ParentID] = append(childrenByParent[*node.ParentID], node.ID)
-		} else {
-			roots = append(roots, node.ID)
-		}
+		counts = append(counts, entry)
 	}
 
-	counts := make([]models.TaxonomyNodeRecordCount, 0, len(nodes))
-
-	var visit func(id uuid.UUID) int64
-
-	visit = func(id uuid.UUID) int64 {
-		total := directCount[id]
-		for _, childID := range childrenByParent[id] {
-			total += visit(childID)
-		}
-
-		counts = append(counts, models.TaxonomyNodeRecordCount{NodeID: id, RecordCount: total})
-
-		return total
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate taxonomy node record counts: %w", err)
 	}
 
-	for _, rootID := range roots {
-		visit(rootID)
-	}
-
-	return counts
+	return counts, nil
 }
 
 // RenameNode updates a taxonomy node label and records an edit event.
@@ -1043,50 +1030,6 @@ func (r *TaxonomyRepository) listVisibleNodes(ctx context.Context, runID uuid.UU
 	}
 
 	return nodes, nil
-}
-
-// countRecordsByCluster returns, per cluster in the run, the number of feedback records assigned
-// to it. The (run_id, feedback_record_id) uniqueness constraint guarantees a record maps to a
-// single cluster per run, so these per-cluster counts can be summed across a subtree without
-// double counting. Deleting a feedback record cascades to its membership rows, so a live
-// membership always corresponds to a live record.
-func (r *TaxonomyRepository) countRecordsByCluster(
-	ctx context.Context,
-	runID uuid.UUID,
-	tenantID string,
-) (map[uuid.UUID]int64, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT cluster_id, COUNT(*)
-		FROM taxonomy_cluster_memberships
-		WHERE run_id = $1 AND tenant_id = $2
-		GROUP BY cluster_id`,
-		runID, tenantID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("count taxonomy records by cluster: %w", err)
-	}
-	defer rows.Close()
-
-	counts := map[uuid.UUID]int64{}
-
-	for rows.Next() {
-		var (
-			clusterID uuid.UUID
-			count     int64
-		)
-
-		if err := rows.Scan(&clusterID, &count); err != nil {
-			return nil, fmt.Errorf("scan taxonomy cluster count: %w", err)
-		}
-
-		counts[clusterID] = count
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate taxonomy cluster counts: %w", err)
-	}
-
-	return counts, nil
 }
 
 // transitionError builds the conflict (or not-found) error for a run that could
