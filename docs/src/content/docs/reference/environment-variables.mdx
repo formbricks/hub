@@ -150,6 +150,18 @@ Sentiment and emotions additionally honor per-directory switches (`sentiment_ena
 `emotions_enabled`) set through the [tenant settings API](/core-concepts/tenant-settings);
 both default to on when the enrichment is configured.
 
+## Taxonomy
+
+[Taxonomy](/core-concepts/taxonomy) clusters embedded feedback into a tree of topics via a
+standalone service. It requires embeddings (see [Embeddings](#embeddings)) to be configured.
+
+| Variable                        | Default | Description                                                                                                            |
+| ------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `TAXONOMY_SERVICE_URL`          | -       | Absolute `http(s)` URL Hub calls to run clustering. Unset disables taxonomy.                                           |
+| `TAXONOMY_SERVICE_TOKEN`        | -       | Bearer token Hub sends to the taxonomy service.                                                                        |
+| `HUB_INTERNAL_API_TOKEN`        | -       | Token the taxonomy service presents to call Hub's internal callback endpoints. Required to enable the internal routes. |
+| `TAXONOMY_MIN_EMBEDDED_RECORDS` | `20`    | Minimum embedded records a scope needs before a run may start.                                                         |
+
 ## Tenant Settings Cache
 
 The translation, sentiment, and emotion enqueue providers each resolve a per-tenant setting

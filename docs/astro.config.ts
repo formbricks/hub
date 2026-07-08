@@ -154,6 +154,10 @@ export default defineConfig({
                   label: "Sentiment & Emotions",
                   slug: "core-concepts/sentiment-and-emotions",
                 },
+                {
+                  label: "Taxonomy",
+                  slug: "core-concepts/taxonomy",
+                },
               ],
             },
             {

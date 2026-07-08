@@ -1,0 +1,100 @@
+---
+title: Taxonomy
+description: Hub can organize open-text feedback into a hierarchy of topics and subtopics by clustering semantically similar records, so you can browse and quantify what people are talking about without manual tagging.
+---
+
+import { Callout } from "@stainless-api/docs/components";
+
+A **taxonomy** turns a pile of open-text feedback into a browsable tree of topics and subtopics. Hub embeds each text record, hands the vectors to a clustering service, and stores the result as a tree of **nodes** you can read, edit, and count against — so you can see _what_ people are talking about, and _how much_, without tagging anything by hand.
+
+Taxonomies are generated on demand as **runs**. A run reads a defined slice of feedback, produces a tree, and — once it succeeds — becomes the **active** tree for that slice until a newer run replaces it.
+
+<Callout variant="note">
+  Taxonomy is additive and asynchronous. Generating a taxonomy never changes the
+  underlying [feedback records](/core-concepts/data-model), and a run is
+  computed in the background — you create it, then poll its status until it
+  succeeds.
+</Callout>
+
+## How it works
+
+1. **Embeddings first.** Taxonomy reuses the same embeddings as [semantic search](/guides/hub-self-hosted-embeddings). Only text records with a stored embedding participate, so a deployment must have embeddings configured, and the records must already be embedded.
+2. **Clustering.** When you start a run, Hub sends the in-scope records and their embeddings to the standalone taxonomy service, which groups semantically similar feedback into clusters.
+3. **Tree.** Hub stores the returned clusters as a tree of nodes — a root, intermediate **topics**, and leaf **subtopics** — and marks the run active for its scope.
+
+The compute happens off the ingestion path in a separate service, so creating feedback is never slowed down by taxonomy.
+
+## Runs and their lifecycle
+
+A run is created for a [scope](#scope) with `POST /v1/taxonomy/runs` and moves through a fixed set of states:
+
+| Status      | Meaning                                                             |
+| ----------- | ------------------------------------------------------------------- |
+| `pending`   | Hub accepted the request and persisted the run.                     |
+| `running`   | Hub handed the run to the taxonomy service.                         |
+| `succeeded` | The service returned a tree and Hub activated the run.              |
+| `failed`    | The run ended with an error (with a machine-readable failure code). |
+| `canceled`  | Reserved for future user/operator cancellation.                     |
+
+Allowed transitions are `pending → running | failed | canceled` and `running → succeeded | failed | canceled`; terminal states are never overwritten. Not having enough input, or the service being unavailable, surface as a `failed` run with a failure code rather than a separate status.
+
+A run needs a minimum number of embedded records before it will start (see [Enabling](#enabling)); below that threshold the request is rejected. Poll `GET /v1/taxonomy/runs/{run_id}` for status, and list history with `GET /v1/taxonomy/runs`.
+
+## Scope
+
+A run covers one **scope** — the slice of feedback it reads:
+
+- **`field`** — the feedback for a single `field_id` (for example, one survey question), optionally narrowed by `source_type` / `source_id`.
+- **`directory`** — all open-text feedback for the tenant, across sources and fields.
+
+Each scope has at most one **active** taxonomy at a time. Fetch it with `GET /v1/taxonomy/runs/active/tree`; a fresh successful run for the same scope replaces the previous active tree. Use `GET /v1/taxonomy/fields` to discover which fields have enough embedded feedback to be worth a run.
+
+## The tree
+
+A taxonomy tree has three kinds of node:
+
+- **root** — one per run; the whole scope.
+- **topic** (branch) — an intermediate grouping.
+- **subtopic** (leaf) — a terminal cluster that feedback records actually belong to.
+
+Read the full tree with `GET /v1/taxonomy/runs/{run_id}/tree`, or drill into a node's feedback with `GET /v1/taxonomy/nodes/{node_id}/records`.
+
+Trees are **editable**. You can rename a node (`PATCH /v1/taxonomy/nodes/{node_id}`) or soft-remove one (`DELETE /v1/taxonomy/nodes/{node_id}`). Removed nodes are hidden from the tree and every count — the endpoints only ever return **visible** nodes — but the underlying feedback is untouched.
+
+## Counting records per node
+
+To show totals in a taxonomy view, `GET /v1/taxonomy/runs/{run_id}/record-counts` returns the feedback-record count for every visible node in one call:
+
+```bash
+curl "http://localhost:8080/v1/taxonomy/runs/RUN_ID/record-counts?tenant_id=org-123" \
+  -H "Authorization: Bearer your_secure_api_key_here"
+```
+
+```json
+{
+  "counts": [
+    { "node_id": "…root", "record_count": 128 },
+    { "node_id": "…account", "record_count": 47 },
+    { "node_id": "…login", "record_count": 19 }
+  ]
+}
+```
+
+Each `record_count` is a **subtree total** of distinct records: a topic reports the count across all of its subtopics, and the root reports the run total. Join the `node_id`s with the tree to render a count next to each topic and subtopic.
+
+## Enabling
+
+Taxonomy is available where the **deployment has both embeddings and the taxonomy service configured**:
+
+- Embeddings must be on — set `EMBEDDING_PROVIDER` + `EMBEDDING_MODEL` (see [Environment Variables](/reference/environment-variables#embeddings)); records are embedded before they can be clustered.
+- The clustering service must be reachable — set `TAXONOMY_SERVICE_URL`, `TAXONOMY_SERVICE_TOKEN`, and `HUB_INTERNAL_API_TOKEN` (see [Environment Variables](/reference/environment-variables#taxonomy)).
+- `TAXONOMY_MIN_EMBEDDED_RECORDS` (default `20`) sets how many embedded records a scope needs before a run may start.
+
+With the service unconfigured, or embeddings off, the taxonomy endpoints report that the feature is unavailable.
+
+## Next Steps
+
+- [Data Model](/core-concepts/data-model) - How feedback records are stored
+- [Self-Hosted Embeddings](/guides/hub-self-hosted-embeddings) - Configure the embeddings taxonomy builds on
+- [Environment Variables](/reference/environment-variables#taxonomy) - Configure the taxonomy service
+- [API Reference](/api) - Every taxonomy endpoint in detail
