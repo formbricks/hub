@@ -172,6 +172,28 @@ func TestFeedbackTranslationWorker_ClearsWhenValueTextEmpty(t *testing.T) {
 	}
 }
 
+func TestFeedbackTranslationWorker_UnsetSourceLanguageCopies(t *testing.T) {
+	// No source language (record.Language == nil) — the common Formbricks single-language case,
+	// where a default-language response reaches the Hub with no language at all. Copy through
+	// instead of round-tripping identical text through the LLM (e.g. English -> English).
+	svc := &mockTranslationWorkerService{record: translationRecord("Hello world", "")}
+	client := &stubTranslationClient{out: "should-not-be-used"}
+	worker := NewFeedbackTranslationWorker(svc, client, nil)
+
+	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
+		t.Fatalf("Work() error = %v", err)
+	}
+
+	if len(client.calls) != 0 {
+		t.Fatalf("client called %d times, want 0 (unset source must copy, not translate)", len(client.calls))
+	}
+
+	if len(svc.setCalls) != 1 || svc.setCalls[0].translated == nil ||
+		*svc.setCalls[0].translated != "Hello world" || svc.setCalls[0].langKey != "en-US" {
+		t.Fatalf("set calls = %+v, want copied 'Hello world' / en-US", svc.setCalls)
+	}
+}
+
 func TestFeedbackTranslationWorker_UndeterminedSourceTranslates(t *testing.T) {
 	// "und" (undetermined) must not be treated as matching the target — translate, not copy.
 	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "und")}

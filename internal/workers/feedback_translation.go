@@ -69,13 +69,27 @@ func NewFeedbackTranslationWorker(
 }
 
 // translate returns the translated value_text, short-circuiting (copying the original) when the
-// record's source language already matches the target language.
+// record has no usable source language, or its source language already matches the target.
 func translate(
 	ctx context.Context, client service.TranslationClient, record *models.FeedbackRecord, targetLang string, eventID uuid.UUID,
 ) (string, error) {
 	sourceLang := ""
 	if record.Language != nil {
 		sourceLang = *record.Language
+	}
+
+	// An unset source language means the caller isn't tracking languages for this record. For
+	// Formbricks surveys specifically, a response in the survey's default language arrives with no
+	// language at all (the "default" sentinel is dropped before send), so the common single-language
+	// case has no source. Treat "unknown" as "already in the target" and copy through rather than
+	// round-tripping identical text through the LLM — which is what produced e.g. English feedback
+	// being "translated" to English. A present-but-different (or undetermined "und") tag still
+	// translates via sameLanguageAndScript below.
+	if strings.TrimSpace(sourceLang) == "" {
+		slog.Info("translation: source language unset, copying value_text",
+			"feedback_record_id", record.ID, "event_id", eventID)
+
+		return *record.ValueText, nil
 	}
 
 	if sameLanguageAndScript(sourceLang, targetLang) {
