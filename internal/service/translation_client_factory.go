@@ -63,8 +63,10 @@ func buildTranslationPrompt(req TranslateRequest) (systemPrompt, userText string
 
 	systemPrompt = fmt.Sprintf(
 		"You are a professional translator. Translate the user's message from %s into %s. "+
-			"Preserve the original meaning, tone, and formatting, and keep any {{variable}} placeholders "+
-			"and HTML tags unchanged. Respond with only the translated text — no preamble, notes, or quotation marks.",
+			"Preserve the original meaning and tone. Reproduce the original formatting exactly: keep the "+
+			"same line breaks, blank lines, and leading/trailing whitespace, and do not add, remove, or "+
+			"merge line breaks or paragraphs. Keep any {{variable}} placeholders and HTML tags unchanged. "+
+			"Respond with only the translated text — no preamble, notes, or quotation marks.",
 		from, target,
 	)
 

@@ -71,6 +71,10 @@ func TestBuildTranslationPrompt(t *testing.T) {
 		if !strings.Contains(systemPrompt, "from French into German") {
 			t.Fatalf("system prompt missing language names: %q", systemPrompt)
 		}
+
+		if !strings.Contains(systemPrompt, "same line breaks") {
+			t.Fatalf("system prompt missing line-break preservation instruction: %q", systemPrompt)
+		}
 	})
 
 	t.Run("unknown source falls back to original language", func(t *testing.T) {
