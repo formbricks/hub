@@ -67,8 +67,7 @@ func (r *TaxonomyRepository) ListFieldOptions(
 		FROM feedback_records fr
 		LEFT JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $2
 		WHERE fr.tenant_id = $1
-		  AND fr.value_text IS NOT NULL
-		  AND btrim(fr.value_text) <> ''
+		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
 		GROUP BY fr.tenant_id, fr.source_type, COALESCE(NULLIF(btrim(fr.source_id), ''), ''), fr.field_id
 		ORDER BY fr.source_type, COALESCE(NULLIF(btrim(fr.source_id), ''), ''), fr.field_id`,
 		tenantID, embeddingModel,
@@ -888,7 +887,7 @@ func (r *TaxonomyRepository) queryRunInputRows(
 				COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
 				fr.field_id,
 				COALESCE(fr.field_label, ''),
-				COALESCE(NULLIF(btrim(fr.value_text_translated), ''), fr.value_text),
+				COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')),
 				e.embedding
 			FROM feedback_records fr
 			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $3
@@ -912,7 +911,7 @@ func (r *TaxonomyRepository) queryRunInputRows(
 			COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
 			fr.field_id,
 			COALESCE(fr.field_label, ''),
-			COALESCE(NULLIF(btrim(fr.value_text_translated), ''), fr.value_text),
+			COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')),
 			e.embedding
 		FROM feedback_records fr
 		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6

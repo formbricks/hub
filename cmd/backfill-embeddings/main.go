@@ -115,11 +115,12 @@ func run() int {
 	}
 
 	embeddingModelForDB := embeddingModel
+	taxonomyEmbeddingModel := service.TaxonomyEmbeddingModel(embeddingModelForDB, cfg.Taxonomy.EmbeddingModel)
 	targetModel := embeddingModelForDB
 	inputKind := models.EmbeddingInputKindRaw
 
 	if *taxonomyMode {
-		targetModel = service.TaxonomyEmbeddingModel(embeddingModelForDB, cfg.Taxonomy.EmbeddingModel)
+		targetModel = taxonomyEmbeddingModel
 		inputKind = models.EmbeddingInputKindTaxonomyTranslated
 	}
 
@@ -133,15 +134,17 @@ func run() int {
 			return exitFailure
 		}
 
-		deleted, pruneErr := embeddingsRepo.DeleteEmbeddingsForOtherModels(ctx, embeddingModelForDB, pruneBatchSize)
+		deleted, pruneErr := embeddingsRepo.DeleteEmbeddingsForOtherModels(
+			ctx, embeddingModelForDB, pruneBatchSize, taxonomyEmbeddingModel)
 		if pruneErr != nil {
 			slog.Error("Prune failed", "error", pruneErr, "deleted_before_failure", deleted)
 
 			return exitFailure
 		}
 
-		slog.Info("Prune complete", "deleted", deleted, "kept_model", embeddingModelForDB)
-		fmt.Printf("Deleted %d stale-model embedding row(s); kept model %q.\n", deleted, embeddingModelForDB)
+		slog.Info("Prune complete", "deleted", deleted, "kept_models", []string{embeddingModelForDB, taxonomyEmbeddingModel})
+		fmt.Printf("Deleted %d stale-model embedding row(s); kept models %q and %q.\n",
+			deleted, embeddingModelForDB, taxonomyEmbeddingModel)
 
 		return exitSuccess
 	}

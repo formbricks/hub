@@ -382,6 +382,43 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		assert.Equal(t, translated, input.Records[0].ValueText)
 	})
 
+	t.Run("run input includes translated-only records", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-translated-only-input")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+
+		translated := "The machine does not start"
+
+		var recordID uuid.UUID
+
+		err := harness.db.QueryRow(ctx, `
+			INSERT INTO feedback_records (
+				source_type, source_id, field_id, field_label, field_type,
+				value_text, value_text_translated, translation_lang_key, tenant_id, submission_id
+			)
+			VALUES ($1, $2, $3, 'Feedback', 'text'::field_type_enum, NULL, $4, 'en-US', $5, $6)
+			RETURNING id`,
+			scope.SourceType, scope.SourceID, scope.FieldID, translated, scope.TenantID, "submission-"+uuid.NewString(),
+		).Scan(&recordID)
+		require.NoError(t, err)
+
+		embedding := make([]float32, models.EmbeddingVectorDimensions)
+		embedding[0] = 0.25
+		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, recordID, taxonomyEmbeddingModel, embedding, nil))
+
+		recordCount, embeddingCount, _, err := harness.repo.CountScopeInput(ctx, scope, taxonomyEmbeddingModel)
+		require.NoError(t, err)
+		assert.Equal(t, 1, recordCount)
+		assert.Equal(t, 1, embeddingCount)
+
+		runID := startRunForScope(ctx, t, harness, scope)
+		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"
+
+		var input models.TaxonomyRunInputResponse
+		requestTaxonomyJSON(ctx, t, http.MethodGet, inputURL, harness.internalToken, nil, http.StatusOK, &input)
+		require.Len(t, input.Records, 1)
+		assert.Equal(t, translated, input.Records[0].ValueText)
+	})
+
 	t.Run("directory run input spans sources and fields", func(t *testing.T) {
 		directoryScope := uniqueDirectoryTaxonomyScope("tax-internal-directory-input")
 		cleanupTaxonomyTenant(ctx, t, harness.db, directoryScope.TenantID)

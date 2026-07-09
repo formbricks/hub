@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,8 +36,12 @@ const (
 	maxNearestFetchLimit = 2000
 )
 
-// ErrEmbeddingDimensionMismatch is returned when an embedding slice length does not match EmbeddingVectorDimensions.
-var ErrEmbeddingDimensionMismatch = errors.New("embedding dimension mismatch")
+var (
+	// ErrEmbeddingDimensionMismatch is returned when an embedding slice length does not match EmbeddingVectorDimensions.
+	ErrEmbeddingDimensionMismatch = errors.New("embedding dimension mismatch")
+
+	errNoCurrentEmbeddingModels = errors.New("at least one current embedding model is required")
+)
 
 // EmbeddingsRepository handles data access for the embeddings table.
 type EmbeddingsRepository struct {
@@ -186,23 +191,27 @@ func guardEmbeddingSourceCurrent(
 	return nil
 }
 
-// DeleteEmbeddingsForOtherModels batch-deletes embedding rows whose model differs from
-// currentModel. Reads only ever join on the current model, so such rows are dead weight — but
-// they sit inside the single shared HNSW index, where every stale vector consumes candidate
-// budget on every search (worsening recall) and storage grows with each model migration. Batched
-// (batchSize rows per DELETE) so a large prune never holds long row locks or produces one giant
-// WAL burst. Returns the total deleted. Run only after a model migration's backfill has
-// completed, or search goes dark until the new model's vectors exist.
+// DeleteEmbeddingsForOtherModels batch-deletes embedding rows whose model is not in the
+// current model set. Reads only ever join on active models, so such rows are dead weight.
+// Batched (batchSize rows per DELETE) so a large prune never holds long row locks or
+// produces one giant WAL burst. Returns the total deleted. Run only after a model
+// migration's backfill has completed, or reads using that model go dark until the new
+// model's vectors exist.
 func (r *EmbeddingsRepository) DeleteEmbeddingsForOtherModels(
-	ctx context.Context, currentModel string, batchSize int,
+	ctx context.Context, currentModel string, batchSize int, additionalCurrentModels ...string,
 ) (int64, error) {
+	currentModels := normalizeEmbeddingModels(append([]string{currentModel}, additionalCurrentModels...))
+	if len(currentModels) == 0 {
+		return 0, errNoCurrentEmbeddingModels
+	}
+
 	var total int64
 
 	for {
 		tag, err := r.db.Exec(ctx, `
 			DELETE FROM embeddings WHERE id IN (
-				SELECT id FROM embeddings WHERE model <> $1 LIMIT $2
-			)`, currentModel, batchSize)
+				SELECT id FROM embeddings WHERE NOT (model = ANY($1::text[])) LIMIT $2
+			)`, currentModels, batchSize)
 		if err != nil {
 			return total, fmt.Errorf("delete stale-model embeddings: %w", err)
 		}
@@ -214,6 +223,27 @@ func (r *EmbeddingsRepository) DeleteEmbeddingsForOtherModels(
 			return total, nil
 		}
 	}
+}
+
+func normalizeEmbeddingModels(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	out := make([]string, 0, len(models))
+
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+
+		if _, ok := seen[model]; ok {
+			continue
+		}
+
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+
+	return out
 }
 
 // ListFeedbackRecordIDsForBackfill returns one keyset page (fr.id > afterID, ordered by id,
@@ -362,6 +392,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
+			  AND e.model NOT LIKE 'taxonomy:%'
 			ORDER BY (e.embedding <=> $1), e.feedback_record_id
 			LIMIT $4`, queryVec, model, tenantID, fetchLimit)
 	} else {
@@ -371,6 +402,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
+			  AND e.model NOT LIKE 'taxonomy:%'
 			ORDER BY (e.embedding <=> $1), e.feedback_record_id
 			LIMIT $5`, queryVec, model, tenantID, *excludeID, fetchLimit)
 	}
@@ -467,6 +499,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
+			  AND e.model NOT LIKE 'taxonomy:%'
 			  AND ((e.embedding <=> $1), e.feedback_record_id) > ($4, $5)
 			ORDER BY (e.embedding <=> $1), e.feedback_record_id
 			LIMIT $6`, queryVec, model, tenantID, lastDistance, lastFeedbackRecordID, fetchLimit)
@@ -477,6 +510,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
+			  AND e.model NOT LIKE 'taxonomy:%'
 			  AND ((e.embedding <=> $1), e.feedback_record_id) > ($5, $6)
 			ORDER BY (e.embedding <=> $1), e.feedback_record_id
 			LIMIT $7`, queryVec, model, tenantID, *excludeID, lastDistance, lastFeedbackRecordID, fetchLimit)

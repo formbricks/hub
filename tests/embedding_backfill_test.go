@@ -254,13 +254,14 @@ func TestEmbeddingsUpsert_StaleWriteGuard(t *testing.T) {
 }
 
 // TestDeleteEmbeddingsForOtherModels locks the stale-model prune: rows for other models are
-// batch-deleted, rows for the current model survive.
+// batch-deleted, rows for the current models survive.
 func TestDeleteEmbeddingsForOtherModels(t *testing.T) {
 	ctx := context.Background()
 	feedbackRepo, embeddingsRepo := embeddingBackfillRepos(t)
 
 	// Unique per-run model names so the assertion is immune to leftover rows from other tests.
 	currentModel := "prune-current-" + uuid.NewString()
+	currentTaxonomyModel := "taxonomy:" + currentModel + ":translated-v1"
 	staleModel := "prune-stale-" + uuid.NewString()
 	text := "prune me"
 
@@ -281,6 +282,7 @@ func TestDeleteEmbeddingsForOtherModels(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, currentModel, embedding, nil))
+		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, currentTaxonomyModel, embedding, nil))
 		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, staleModel, embedding, nil))
 
 		keep = append(keep, rec.ID)
@@ -288,13 +290,16 @@ func TestDeleteEmbeddingsForOtherModels(t *testing.T) {
 	}
 
 	// batchSize 2 forces multiple delete rounds over the 3 stale rows.
-	deleted, err := embeddingsRepo.DeleteEmbeddingsForOtherModels(ctx, currentModel, 2)
+	deleted, err := embeddingsRepo.DeleteEmbeddingsForOtherModels(ctx, currentModel, 2, currentTaxonomyModel)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, deleted, int64(3), "at least this test's stale rows are pruned")
 
 	for _, id := range keep {
 		_, err := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, id, currentModel)
 		require.NoError(t, err, "current-model rows must survive the prune")
+
+		_, err = embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, id, currentTaxonomyModel)
+		require.NoError(t, err, "current taxonomy-model rows must survive the prune")
 	}
 
 	for _, id := range drop {

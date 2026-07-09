@@ -145,12 +145,7 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 }
 
 func (p *EmbeddingProvider) hasEmbeddingRelevantChange(changedFields []string) bool {
-	if slices.Contains(changedFields, "value_text") || slices.Contains(changedFields, "field_label") {
-		return true
-	}
-
-	return p.inputKind == models.EmbeddingInputKindTaxonomyTranslated &&
-		slices.Contains(changedFields, "value_text_translated")
+	return slices.Contains(changedFields, "value_text") || slices.Contains(changedFields, "field_label")
 }
 
 func recordIDFromEventData(data any) uuid.UUID {
