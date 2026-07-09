@@ -72,8 +72,6 @@ func TestBuildTranslationPrompt(t *testing.T) {
 			t.Fatalf("system prompt missing language names: %q", systemPrompt)
 		}
 
-		// The model must not re-flow the text — it was inserting paragraph breaks into
-		// run-on source text (see Johannes' German login-issue example).
 		if !strings.Contains(systemPrompt, "same line breaks") {
 			t.Fatalf("system prompt missing line-break preservation instruction: %q", systemPrompt)
 		}
