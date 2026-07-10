@@ -75,14 +75,17 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 type EmbeddingsRepository interface {
 	Upsert(
 		ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-		stillCurrent func(fieldLabel, valueText *string) bool,
+		stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
 	DeleteByFeedbackRecordAndModel(
 		ctx context.Context, feedbackRecordID uuid.UUID, model string,
-		stillCurrent func(fieldLabel, valueText *string) bool,
+		stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
 	ListFeedbackRecordIDsForBackfill(
 		ctx context.Context, model string, afterID uuid.UUID, limit int,
+	) ([]uuid.UUID, error)
+	ListFeedbackRecordIDsForBackfillByInputKind(
+		ctx context.Context, model string, inputKind models.EmbeddingInputKind, afterID uuid.UUID, limit int,
 	) ([]uuid.UUID, error)
 }
 
@@ -98,6 +101,7 @@ type FeedbackRecordsService struct {
 	repo                   FeedbackRecordsRepository
 	embeddingsRepo         EmbeddingsRepository
 	embeddingModel         string
+	taxonomyEmbeddingModel string
 	publisher              MessagePublisher
 	embeddingInserter      RiverJobInserter
 	embeddingQueueName     string
@@ -140,6 +144,11 @@ func NewFeedbackRecordsService(
 // This allows a single service instance to be used by both handlers and the embedding worker.
 func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter RiverJobInserter) {
 	s.embeddingInserter = inserter
+}
+
+// SetTaxonomyEmbeddingModel sets the model key used for taxonomy-specific translated embeddings.
+func (s *FeedbackRecordsService) SetTaxonomyEmbeddingModel(model string) {
+	s.taxonomyEmbeddingModel = strings.TrimSpace(model)
 }
 
 // SetEnrichmentClearMetrics enables the eager-clear counter. Wire it on the API service instance
@@ -202,6 +211,10 @@ func (s *FeedbackRecordsService) SetTranslation(
 		ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang, stillCurrent,
 	); err != nil {
 		return fmt.Errorf("set feedback record translation: %w", err)
+	}
+
+	if err := s.enqueueTaxonomyEmbedding(ctx, feedbackRecordID); err != nil {
+		return err
 	}
 
 	return nil
@@ -494,7 +507,7 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecordsByUser(
 // It does not publish an event.
 func (s *FeedbackRecordsService) SetEmbedding(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-	stillCurrent func(fieldLabel, valueText *string) bool,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	if embedding == nil {
 		if err := s.embeddingsRepo.DeleteByFeedbackRecordAndModel(ctx, feedbackRecordID, model, stillCurrent); err != nil {
@@ -520,9 +533,20 @@ const embeddingBackfillPageSize = 500
 // It streams the records in keyset pages. Returns the number of jobs enqueued. Requires embeddingInserter
 // and embeddingQueueName to be set.
 func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model string) (int, error) {
+	return s.BackfillEmbeddingsWithInputKind(ctx, model, models.EmbeddingInputKindRaw)
+}
+
+// BackfillEmbeddingsWithInputKind enqueues embedding jobs for the given input kind.
+func (s *FeedbackRecordsService) BackfillEmbeddingsWithInputKind(
+	ctx context.Context,
+	model string,
+	inputKind models.EmbeddingInputKind,
+) (int, error) {
 	if s.embeddingInserter == nil || s.embeddingQueueName == "" {
 		return 0, ErrEmbeddingBackfillNotConfigured
 	}
+
+	inputKind = models.NormalizeEmbeddingInputKind(inputKind)
 
 	opts := &river.InsertOpts{
 		Queue:       s.embeddingQueueName,
@@ -535,7 +559,8 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model s
 	afterID := uuid.Nil
 
 	for {
-		ids, err := s.embeddingsRepo.ListFeedbackRecordIDsForBackfill(ctx, model, afterID, embeddingBackfillPageSize)
+		ids, err := s.embeddingsRepo.ListFeedbackRecordIDsForBackfillByInputKind(
+			ctx, model, inputKind, afterID, embeddingBackfillPageSize)
 		if err != nil {
 			return enqueued, fmt.Errorf("list ids for embedding backfill: %w", err)
 		}
@@ -548,7 +573,8 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model s
 			res, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
 				FeedbackRecordID: id,
 				Model:            model,
-				ValueTextHash:    "backfill",
+				InputKind:        inputKind,
+				ValueTextHash:    "backfill:" + string(inputKind),
 			}, opts)
 			if err != nil {
 				return enqueued, fmt.Errorf("enqueue embedding job for %s: %w", id, err)
@@ -630,6 +656,27 @@ func (s *FeedbackRecordsService) BackfillTranslationsForTenant(
 
 			return targets, nil
 		})
+}
+
+func (s *FeedbackRecordsService) enqueueTaxonomyEmbedding(ctx context.Context, feedbackRecordID uuid.UUID) error {
+	if s.embeddingInserter == nil || s.embeddingQueueName == "" || s.taxonomyEmbeddingModel == "" {
+		return nil
+	}
+
+	_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
+		FeedbackRecordID: feedbackRecordID,
+		Model:            s.taxonomyEmbeddingModel,
+		InputKind:        models.EmbeddingInputKindTaxonomyTranslated,
+		ValueTextHash:    "translation",
+	}, &river.InsertOpts{
+		Queue:       s.embeddingQueueName,
+		MaxAttempts: s.embeddingMaxAttempts,
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue taxonomy embedding after translation write: %w", err)
+	}
+
+	return nil
 }
 
 // backfillTranslationsPaged enqueues a translation job for every target produced by

@@ -94,6 +94,16 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	}
 
 	providerName, embeddingModel := embeddingProviderAndModel(cfg)
+	taxonomyEmbeddingModel := service.TaxonomyEmbeddingModel(embeddingModel, cfg.Taxonomy.EmbeddingModel)
+
+	taxonomyEmbeddingEnqueueModel := taxonomyEmbeddingModel
+
+	if providerName == "" {
+		taxonomyEmbeddingEnqueueModel = ""
+	}
+
+	var translationRecordsService *service.FeedbackRecordsService
+
 	if providerName != "" {
 		embeddingCfg := service.EmbeddingClientConfig{
 			Provider:            providerName,
@@ -155,10 +165,20 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		}
 
 		// The translation worker only reads the record and writes the translation, so
-		// the embedding-specific service params are unused here.
+		// the raw embedding params are unused here. The taxonomy embedding params let
+		// successful translation writes enqueue translated taxonomy re-embedding.
 		translationRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-		translationRecordsService := service.NewFeedbackRecordsService(
-			translationRecordsRepo, nil, "", nil, nil, "", 0, cfg.Translation.DefaultLanguage)
+		translationRecordsService = service.NewFeedbackRecordsService(
+			translationRecordsRepo,
+			nil,
+			"",
+			nil,
+			nil,
+			service.EmbeddingsQueueName,
+			cfg.Embedding.MaxAttempts,
+			cfg.Translation.DefaultLanguage,
+		)
+		translationRecordsService.SetTaxonomyEmbeddingModel(taxonomyEmbeddingEnqueueModel)
 
 		deps.TranslationService = translationRecordsService
 		deps.TranslationClient = translationClient
@@ -262,6 +282,10 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		shutdownObservability(context.Background(), meterProvider, tracerProvider)
 
 		return nil, fmt.Errorf("create River client: %w", err)
+	}
+
+	if translationRecordsService != nil {
+		translationRecordsService.SetEmbeddingInserter(riverClient)
 	}
 
 	return &WorkerApp{

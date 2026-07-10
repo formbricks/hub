@@ -55,7 +55,7 @@ func (m *mockEmbeddingService) GetFeedbackRecord(_ context.Context, _ uuid.UUID)
 
 func (m *mockEmbeddingService) SetEmbedding(
 	_ context.Context, _ uuid.UUID, _ string, embedding []float32,
-	_ func(fieldLabel, valueText *string) bool,
+	_ func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	m.setCalls++
 	m.setEmbeddingNil = embedding == nil
@@ -66,9 +66,12 @@ func (m *mockEmbeddingService) SetEmbedding(
 type mockEmbeddingClient struct {
 	embedding []float32
 	err       error
+	input     string
 }
 
-func (m *mockEmbeddingClient) CreateEmbedding(_ context.Context, _ string) ([]float32, error) {
+func (m *mockEmbeddingClient) CreateEmbedding(_ context.Context, input string) ([]float32, error) {
+	m.input = input
+
 	return m.embedding, m.err
 }
 
@@ -93,6 +96,13 @@ func textRecord(valueText string) *models.FeedbackRecord {
 	if valueText != "" {
 		record.ValueText = &valueText
 	}
+
+	return record
+}
+
+func translatedTextRecord(valueText, valueTextTranslated string) *models.FeedbackRecord {
+	record := textRecord(valueText)
+	record.ValueTextTranslated = &valueTextTranslated
 
 	return record
 }
@@ -195,6 +205,22 @@ func TestFeedbackEmbeddingWorker_Work_SetEmbeddingConflict(t *testing.T) {
 			t.Fatalf("Work() error = %v, must not be a tenant write conflict", err)
 		}
 	})
+}
+
+func TestFeedbackEmbeddingWorker_Work_TaxonomyInputUsesTranslatedText(t *testing.T) {
+	svc := &mockEmbeddingService{record: translatedTextRecord("La machine ne demarre pas", "The machine does not start")}
+	client := &mockEmbeddingClient{embedding: []float32{0.1}}
+	worker := NewFeedbackEmbeddingWorker(svc, client, "", nil)
+	job := embeddingJob()
+	job.Args.InputKind = models.EmbeddingInputKindTaxonomyTranslated
+
+	if err := worker.Work(context.Background(), job); err != nil {
+		t.Fatalf("Work() error = %v, want nil", err)
+	}
+
+	if client.input != "Question: How was it?\nAnswer: The machine does not start" {
+		t.Fatalf("embedding input = %q, want translated taxonomy text", client.input)
+	}
 }
 
 func TestFeedbackEmbeddingWorker_Work_EmptyTextConflict(t *testing.T) {

@@ -481,6 +481,45 @@ func TestFeedbackRecordsService_SetTranslation_RequiresLangKey(t *testing.T) {
 	}
 }
 
+func TestFeedbackRecordsService_SetTranslation_EnqueuesTaxonomyEmbedding(t *testing.T) {
+	inserter := &mockEmbeddingInserter{}
+	svc := NewFeedbackRecordsService(
+		&mockFeedbackRecordsRepo{},
+		nil,
+		"",
+		nil,
+		inserter,
+		"embeddings",
+		3,
+		"",
+	)
+	svc.SetTaxonomyEmbeddingModel("taxonomy:embedding-model:translated-v1")
+
+	recordID := uuid.New()
+
+	translated := "Hello"
+	if err := svc.SetTranslation(context.Background(), recordID, &translated, "en-US", nil); err != nil {
+		t.Fatalf("SetTranslation() error = %v", err)
+	}
+
+	if len(inserter.insertCalls) != 1 {
+		t.Fatalf("insert calls = %d, want 1", len(inserter.insertCalls))
+	}
+
+	got := inserter.insertCalls[0]
+	if got.args.FeedbackRecordID != recordID {
+		t.Fatalf("FeedbackRecordID = %s, want %s", got.args.FeedbackRecordID, recordID)
+	}
+
+	if got.args.Model != "taxonomy:embedding-model:translated-v1" {
+		t.Fatalf("Model = %q, want taxonomy model", got.args.Model)
+	}
+
+	if got.args.InputKind != models.EmbeddingInputKindTaxonomyTranslated {
+		t.Fatalf("InputKind = %q, want taxonomy_translated", got.args.InputKind)
+	}
+}
+
 func TestFeedbackRecordsService_SetSentiment_Persists(t *testing.T) {
 	repo := &mockFeedbackRecordsRepo{}
 	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")

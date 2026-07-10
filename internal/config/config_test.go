@@ -420,6 +420,7 @@ func TestLoad_TaxonomyConfig(t *testing.T) {
 	t.Setenv("TAXONOMY_SERVICE_URL", "https://taxonomy.example.com/root/")
 	t.Setenv("TAXONOMY_SERVICE_TOKEN", "taxonomy-service-token")
 	t.Setenv("HUB_INTERNAL_API_TOKEN", "hub-internal-token")
+	t.Setenv("TAXONOMY_EMBEDDING_MODEL", "taxonomy:test-model:translated-v1")
 
 	cfg, err := Load()
 	if err != nil {
@@ -436,6 +437,10 @@ func TestLoad_TaxonomyConfig(t *testing.T) {
 
 	if cfg.Taxonomy.HubInternalAPIToken != "hub-internal-token" {
 		t.Errorf("Taxonomy.HubInternalAPIToken = %q, want hub-internal-token", cfg.Taxonomy.HubInternalAPIToken)
+	}
+
+	if cfg.Taxonomy.EmbeddingModel != "taxonomy:test-model:translated-v1" {
+		t.Errorf("Taxonomy.EmbeddingModel = %q, want taxonomy:test-model:translated-v1", cfg.Taxonomy.EmbeddingModel)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,8 +36,12 @@ const (
 	maxNearestFetchLimit = 2000
 )
 
-// ErrEmbeddingDimensionMismatch is returned when an embedding slice length does not match EmbeddingVectorDimensions.
-var ErrEmbeddingDimensionMismatch = errors.New("embedding dimension mismatch")
+var (
+	// ErrEmbeddingDimensionMismatch is returned when an embedding slice length does not match EmbeddingVectorDimensions.
+	ErrEmbeddingDimensionMismatch = errors.New("embedding dimension mismatch")
+
+	errNoCurrentEmbeddingModels = errors.New("at least one current embedding model is required")
+)
 
 // EmbeddingsRepository handles data access for the embeddings table.
 type EmbeddingsRepository struct {
@@ -79,7 +84,7 @@ func rollbackQuietly(ctx context.Context, tx pgx.Tx, msg string) {
 // writes the row.
 func (r *EmbeddingsRepository) Upsert(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-	stillCurrent func(fieldLabel, valueText *string) bool,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	if len(embedding) != models.EmbeddingVectorDimensions {
 		return fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(embedding), models.EmbeddingVectorDimensions)
@@ -120,7 +125,7 @@ func (r *EmbeddingsRepository) Upsert(
 // since-changed content must not delete the vector a newer job wrote.
 func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 	ctx context.Context, feedbackRecordID uuid.UUID, model string,
-	stillCurrent func(fieldLabel, valueText *string) bool,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
@@ -148,7 +153,8 @@ func (r *EmbeddingsRepository) DeleteByFeedbackRecordAndModel(
 // content for the stillCurrent check. Returns ErrEmbeddingSuperseded when the content moved on,
 // NotFound when the record vanished mid-transaction, and nil (no-op) when stillCurrent is nil.
 func guardEmbeddingSourceCurrent(
-	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID, stillCurrent func(fieldLabel, valueText *string) bool,
+	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	if stillCurrent == nil {
 		return nil
@@ -160,7 +166,7 @@ func guardEmbeddingSourceCurrent(
 		return fmt.Errorf("lock feedback record for embedding write: %w", err)
 	}
 
-	var fieldLabel, valueText *string
+	var fieldLabel, valueText, valueTextTranslated *string
 
 	// FOR UPDATE row-locks the record until this write commits, so a concurrent PATCH Update
 	// (which does not take the per-record advisory lock) cannot change the content between this
@@ -168,8 +174,8 @@ func guardEmbeddingSourceCurrent(
 	// sibling guardValueTextCurrent. Crucial here: embeddings have no eager-clear or NULL-rows
 	// backfill, so a stale vector that lands last is otherwise permanent.
 	err := dbTx.QueryRow(ctx,
-		`SELECT field_label, value_text FROM feedback_records WHERE id = $1 FOR UPDATE`, feedbackRecordID,
-	).Scan(&fieldLabel, &valueText)
+		`SELECT field_label, value_text, value_text_translated FROM feedback_records WHERE id = $1 FOR UPDATE`, feedbackRecordID,
+	).Scan(&fieldLabel, &valueText, &valueTextTranslated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
@@ -178,30 +184,34 @@ func guardEmbeddingSourceCurrent(
 		return fmt.Errorf("read feedback record content for embedding write: %w", err)
 	}
 
-	if !stillCurrent(fieldLabel, valueText) {
+	if !stillCurrent(fieldLabel, valueText, valueTextTranslated) {
 		return huberrors.ErrEmbeddingSuperseded
 	}
 
 	return nil
 }
 
-// DeleteEmbeddingsForOtherModels batch-deletes embedding rows whose model differs from
-// currentModel. Reads only ever join on the current model, so such rows are dead weight — but
-// they sit inside the single shared HNSW index, where every stale vector consumes candidate
-// budget on every search (worsening recall) and storage grows with each model migration. Batched
-// (batchSize rows per DELETE) so a large prune never holds long row locks or produces one giant
-// WAL burst. Returns the total deleted. Run only after a model migration's backfill has
-// completed, or search goes dark until the new model's vectors exist.
+// DeleteEmbeddingsForOtherModels batch-deletes embedding rows whose model is not in the
+// current model set. Reads only ever join on active models, so such rows are dead weight.
+// Batched (batchSize rows per DELETE) so a large prune never holds long row locks or
+// produces one giant WAL burst. Returns the total deleted. Run only after a model
+// migration's backfill has completed, or reads using that model go dark until the new
+// model's vectors exist.
 func (r *EmbeddingsRepository) DeleteEmbeddingsForOtherModels(
-	ctx context.Context, currentModel string, batchSize int,
+	ctx context.Context, currentModel string, batchSize int, additionalCurrentModels ...string,
 ) (int64, error) {
+	currentModels := normalizeEmbeddingModels(append([]string{currentModel}, additionalCurrentModels...))
+	if len(currentModels) == 0 {
+		return 0, errNoCurrentEmbeddingModels
+	}
+
 	var total int64
 
 	for {
 		tag, err := r.db.Exec(ctx, `
 			DELETE FROM embeddings WHERE id IN (
-				SELECT id FROM embeddings WHERE model <> $1 LIMIT $2
-			)`, currentModel, batchSize)
+				SELECT id FROM embeddings WHERE NOT (model = ANY($1::text[])) LIMIT $2
+			)`, currentModels, batchSize)
 		if err != nil {
 			return total, fmt.Errorf("delete stale-model embeddings: %w", err)
 		}
@@ -215,6 +225,27 @@ func (r *EmbeddingsRepository) DeleteEmbeddingsForOtherModels(
 	}
 }
 
+func normalizeEmbeddingModels(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	out := make([]string, 0, len(models))
+
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+
+		if _, ok := seen[model]; ok {
+			continue
+		}
+
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+
+	return out
+}
+
 // ListFeedbackRecordIDsForBackfill returns one keyset page (fr.id > afterID, ordered by id,
 // at most limit rows) of feedback-record IDs that have non-empty value_text and no row in
 // embeddings for the given model (so they need an embedding for that model). Pass uuid.Nil
@@ -222,7 +253,19 @@ func (r *EmbeddingsRepository) DeleteEmbeddingsForOtherModels(
 func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfill(
 	ctx context.Context, model string, afterID uuid.UUID, limit int,
 ) ([]uuid.UUID, error) {
-	rows, err := r.db.Query(ctx, `
+	return r.ListFeedbackRecordIDsForBackfillByInputKind(ctx, model, models.EmbeddingInputKindRaw, afterID, limit)
+}
+
+// ListFeedbackRecordIDsForBackfillByInputKind returns feedback-record IDs missing an embedding
+// for model and eligible for the requested embedding input kind.
+func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfillByInputKind(
+	ctx context.Context,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	afterID uuid.UUID,
+	limit int,
+) ([]uuid.UUID, error) {
+	query := `
 		SELECT fr.id FROM feedback_records fr
 		WHERE fr.value_text IS NOT NULL AND trim(fr.value_text) != ''
 		  AND fr.id > $2
@@ -232,7 +275,22 @@ func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfill(
 		  )
 		ORDER BY fr.id
 		LIMIT $3
-	`, model, afterID, limit)
+	`
+	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
+		query = `
+			SELECT fr.id FROM feedback_records fr
+			WHERE COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+			  AND fr.id > $2
+			  AND NOT EXISTS (
+			    SELECT 1 FROM embeddings e
+			    WHERE e.feedback_record_id = fr.id AND e.model = $1
+			  )
+			ORDER BY fr.id
+			LIMIT $3
+		`
+	}
+
+	rows, err := r.db.Query(ctx, query, model, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list feedback record ids for backfill: %w", err)
 	}
@@ -334,6 +392,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
+			  AND e.model NOT LIKE 'taxonomy:%'
 			ORDER BY (e.embedding <=> $1), e.feedback_record_id
 			LIMIT $4`, queryVec, model, tenantID, fetchLimit)
 	} else {
@@ -343,6 +402,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbedding(
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
+			  AND e.model NOT LIKE 'taxonomy:%'
 			ORDER BY (e.embedding <=> $1), e.feedback_record_id
 			LIMIT $5`, queryVec, model, tenantID, *excludeID, fetchLimit)
 	}
@@ -439,6 +499,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3
+			  AND e.model NOT LIKE 'taxonomy:%'
 			  AND ((e.embedding <=> $1), e.feedback_record_id) > ($4, $5)
 			ORDER BY (e.embedding <=> $1), e.feedback_record_id
 			LIMIT $6`, queryVec, model, tenantID, lastDistance, lastFeedbackRecordID, fetchLimit)
@@ -449,6 +510,7 @@ func (r *EmbeddingsRepository) NearestFeedbackRecordsByEmbeddingAfterCursor(
 			FROM embeddings e
 			INNER JOIN feedback_records fr ON fr.id = e.feedback_record_id
 			WHERE e.model = $2 AND fr.tenant_id = $3 AND e.feedback_record_id != $4
+			  AND e.model NOT LIKE 'taxonomy:%'
 			  AND ((e.embedding <=> $1), e.feedback_record_id) > ($5, $6)
 			ORDER BY (e.embedding <=> $1), e.feedback_record_id
 			LIMIT $7`, queryVec, model, tenantID, *excludeID, lastDistance, lastFeedbackRecordID, fetchLimit)
