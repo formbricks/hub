@@ -125,6 +125,61 @@ func TestTaxonomyRepository_RunLifecycle(t *testing.T) {
 	})
 }
 
+// TestTaxonomyRepository_FailStuckRuns covers the reaper sweep: runs left in running (via started_at)
+// or pending (via created_at) past the timeout are transitioned to failed with the internal_error
+// code, while a run newer than the timeout is left untouched. The sweep is cross-tenant, so the test
+// asserts on the specific runs rather than an exact count.
+func TestTaxonomyRepository_FailStuckRuns(t *testing.T) {
+	ctx := context.Background()
+	db := taxonomyTestDB(t)
+	repo := repository.NewTaxonomyRepository(db)
+
+	stuckScope := uniqueTaxonomyScope("tax-reap-stuck")
+	pendingScope := uniqueTaxonomyScope("tax-reap-pending")
+	freshScope := uniqueTaxonomyScope("tax-reap-fresh")
+
+	for _, s := range []models.TaxonomyScope{stuckScope, pendingScope, freshScope} {
+		cleanupTaxonomyTenant(ctx, t, db, s.TenantID)
+	}
+
+	// A run orphaned in `running`: started_at is old, so COALESCE(started_at, created_at) is old.
+	stuck, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: stuckScope})
+	require.NoError(t, err)
+	_, err = repo.MarkRunRunning(ctx, stuck.ID, stuckScope.TenantID)
+	require.NoError(t, err)
+	_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET started_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, stuck.ID)
+	require.NoError(t, err)
+
+	// A run orphaned in `pending`: started_at is NULL, so the reaper falls back to created_at.
+	pending, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: pendingScope})
+	require.NoError(t, err)
+	_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET created_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, pending.ID)
+	require.NoError(t, err)
+
+	// A fresh run that must survive the sweep.
+	fresh, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: freshScope})
+	require.NoError(t, err)
+	_, err = repo.MarkRunRunning(ctx, fresh.ID, freshScope.TenantID)
+	require.NoError(t, err)
+
+	failed, err := repo.FailStuckRuns(ctx, time.Hour, "stuck run", models.TaxonomyRunFailureCodeInternalError)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, failed, int64(2), "both orphaned runs should be reaped")
+
+	for _, id := range []uuid.UUID{stuck.ID, pending.ID} {
+		reaped, err := repo.GetRunForInternalService(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, models.TaxonomyRunStatusFailed, reaped.Status)
+		require.NotNil(t, reaped.ErrorCode)
+		assert.Equal(t, models.TaxonomyRunFailureCodeInternalError, *reaped.ErrorCode)
+		assert.NotNil(t, reaped.FinishedAt)
+	}
+
+	survivor, err := repo.GetRunForInternalService(ctx, fresh.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.TaxonomyRunStatusRunning, survivor.Status, "a run newer than the timeout must not be reaped")
+}
+
 // TestTaxonomyRepository_StoreResultAndActivate covers persisting the full artifact graph
 // (clusters, memberships, nodes), activating the run, replacing a prior active run, and the
 // conflict when the run is not in the running state.

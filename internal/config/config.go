@@ -215,6 +215,11 @@ type TaxonomyConfig struct {
 	HubInternalAPIToken    string `env:"HUB_INTERNAL_API_TOKEN"`
 	EmbeddingModel         string `env:"TAXONOMY_EMBEDDING_MODEL"`
 	MinimumEmbeddedRecords int    `env:"TAXONOMY_MIN_EMBEDDED_RECORDS" env-default:"20"`
+	// StuckRunTimeout is how long a run may sit in pending/running before the reaper force-fails it;
+	// it must exceed the longest legitimate run so healthy long-running generations are not reaped.
+	StuckRunTimeout DurationSec `env:"TAXONOMY_STUCK_RUN_TIMEOUT_SECONDS" env-default:"1800"`
+	// ReaperInterval is how often the reaper sweeps for stuck runs.
+	ReaperInterval DurationSec `env:"TAXONOMY_REAPER_INTERVAL_SECONDS" env-default:"60"`
 }
 
 // TenantDataConfig holds tenant data purge settings.

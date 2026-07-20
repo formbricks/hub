@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -326,6 +327,33 @@ func (r *TaxonomyRepository) MarkRunFailed(
 	}
 
 	return run, nil
+}
+
+// FailStuckRuns marks taxonomy runs stuck in a non-terminal state (pending/running) past olderThan
+// as failed. Runs are orphaned when the taxonomy service crashes mid-run or its terminal callback is
+// lost; without this sweep they are polled forever in the UI and block regeneration. The status
+// filter keeps it idempotent and race-safe — a run that finishes between sweeps no longer matches.
+// Returns the number of runs failed.
+func (r *TaxonomyRepository) FailStuckRuns(
+	ctx context.Context,
+	olderThan time.Duration,
+	message string,
+	errorCode models.TaxonomyRunFailureCode,
+) (int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+
+	tag, err := r.db.Exec(ctx, `
+		UPDATE taxonomy_runs
+		SET status = 'failed', error = $1, error_code = $2, finished_at = NOW(), updated_at = NOW()
+		WHERE status IN ('pending', 'running')
+		  AND COALESCE(started_at, created_at) < $3`,
+		message, nullableFailureCode(errorCode), cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("fail stuck taxonomy runs: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
 }
 
 // GetRunForInternalService returns run metadata for internal taxonomy service-token workflows.
