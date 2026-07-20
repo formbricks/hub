@@ -805,6 +805,15 @@ const stuckTaxonomyRunMessage = "taxonomy run timed out without completing"
 func runTaxonomyRunReaper(
 	ctx context.Context, repo *repository.TaxonomyRepository, timeout, interval time.Duration,
 ) {
+	// A non-positive interval panics time.NewTicker, and a non-positive timeout would reap active
+	// runs (cutoff would be now or in the future). Either is misconfiguration — disable the reaper.
+	if interval <= 0 || timeout <= 0 {
+		slog.WarnContext(ctx, "taxonomy stuck-run reaper disabled: non-positive interval or timeout",
+			"interval", interval, "timeout", timeout)
+
+		return
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
