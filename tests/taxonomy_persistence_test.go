@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,6 +124,164 @@ func TestTaxonomyRepository_RunLifecycle(t *testing.T) {
 		_, err := repo.MarkRunRunning(ctx, uuid.New(), scope.TenantID)
 		require.ErrorIs(t, err, huberrors.ErrNotFound)
 	})
+}
+
+// TestTaxonomyRepository_FailStuckRuns covers the reaper sweep: pending/running runs whose updated_at
+// (the liveness signal) is older than the timeout are transitioned to failed with the internal_error
+// code, while a run with a recent updated_at is left untouched. The sweep is cross-tenant, so the test
+// asserts on the specific runs rather than an exact count.
+func TestTaxonomyRepository_FailStuckRuns(t *testing.T) {
+	ctx := context.Background()
+	db := taxonomyTestDB(t)
+	repo := repository.NewTaxonomyRepository(db)
+
+	stuckScope := uniqueTaxonomyScope("tax-reap-stuck")
+	pendingScope := uniqueTaxonomyScope("tax-reap-pending")
+	freshScope := uniqueTaxonomyScope("tax-reap-fresh")
+
+	for _, s := range []models.TaxonomyScope{stuckScope, pendingScope, freshScope} {
+		cleanupTaxonomyTenant(ctx, t, db, s.TenantID)
+	}
+
+	// A run orphaned in `running` with a stale updated_at (no heartbeat for two hours).
+	stuck, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: stuckScope})
+	require.NoError(t, err)
+	_, err = repo.MarkRunRunning(ctx, stuck.ID, stuckScope.TenantID)
+	require.NoError(t, err)
+	_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, stuck.ID)
+	require.NoError(t, err)
+
+	// A run orphaned in `pending` with an equally stale updated_at.
+	pending, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: pendingScope})
+	require.NoError(t, err)
+	_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, pending.ID)
+	require.NoError(t, err)
+
+	// A fresh run (updated_at set to NOW by MarkRunRunning) that must survive the sweep.
+	fresh, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: freshScope})
+	require.NoError(t, err)
+	_, err = repo.MarkRunRunning(ctx, fresh.ID, freshScope.TenantID)
+	require.NoError(t, err)
+
+	failed, err := repo.FailStuckRuns(ctx, time.Hour, "stuck run", models.TaxonomyRunFailureCodeInternalError)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, failed, int64(2), "both orphaned runs should be reaped")
+
+	for _, id := range []uuid.UUID{stuck.ID, pending.ID} {
+		reaped, err := repo.GetRunForInternalService(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, models.TaxonomyRunStatusFailed, reaped.Status)
+		require.NotNil(t, reaped.ErrorCode)
+		assert.Equal(t, models.TaxonomyRunFailureCodeInternalError, *reaped.ErrorCode)
+		assert.NotNil(t, reaped.FinishedAt)
+	}
+
+	survivor, err := repo.GetRunForInternalService(ctx, fresh.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.TaxonomyRunStatusRunning, survivor.Status, "a run newer than the timeout must not be reaped")
+}
+
+// TestTaxonomyRepository_Heartbeat covers the liveness heartbeat: bumping updated_at keeps an
+// otherwise-stale run out of the reaper's reach, and a heartbeat on a terminal run is a no-op that
+// neither errors nor resurrects it.
+func TestTaxonomyRepository_Heartbeat(t *testing.T) {
+	ctx := context.Background()
+	db := taxonomyTestDB(t)
+	repo := repository.NewTaxonomyRepository(db)
+
+	t.Run("heartbeat keeps a stale running run from being reaped", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-heartbeat-alive")
+		cleanupTaxonomyTenant(ctx, t, db, scope.TenantID)
+
+		run, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: scope})
+		require.NoError(t, err)
+		_, err = repo.MarkRunRunning(ctx, run.ID, scope.TenantID)
+		require.NoError(t, err)
+
+		// Age it past the timeout, then heartbeat: updated_at returns to NOW.
+		_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, run.ID)
+		require.NoError(t, err)
+		require.NoError(t, repo.Heartbeat(ctx, run.ID, scope.TenantID))
+
+		_, err = repo.FailStuckRuns(ctx, time.Hour, "stuck run", models.TaxonomyRunFailureCodeInternalError)
+		require.NoError(t, err)
+
+		survivor, err := repo.GetRunForInternalService(ctx, run.ID)
+		require.NoError(t, err)
+		assert.Equal(t, models.TaxonomyRunStatusRunning, survivor.Status, "a heartbeated run must not be reaped")
+	})
+
+	t.Run("heartbeat on a terminal run is a no-op", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-heartbeat-terminal")
+		cleanupTaxonomyTenant(ctx, t, db, scope.TenantID)
+
+		run, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: scope})
+		require.NoError(t, err)
+		failed, err := repo.MarkRunFailed(
+			ctx, run.ID, scope.TenantID, "boom", models.TaxonomyRunFailureCodeInternalError,
+		)
+		require.NoError(t, err)
+
+		// A late heartbeat racing with completion must not error or reopen the run.
+		require.NoError(t, repo.Heartbeat(ctx, run.ID, scope.TenantID))
+
+		after, err := repo.GetRunForInternalService(ctx, run.ID)
+		require.NoError(t, err)
+		assert.Equal(t, models.TaxonomyRunStatusFailed, after.Status, "a terminal run must stay terminal")
+		require.NotNil(t, after.FinishedAt)
+		assert.WithinDuration(t, *failed.FinishedAt, *after.FinishedAt, time.Second, "finished_at must be unchanged")
+	})
+}
+
+// TestTaxonomyRepository_FailStuckRunsCoordinatesWithPurge is a purge-race regression test: the
+// reaper fails runs through the shared tenant write lock, so it must serialize with a concurrent
+// tenant-data purge (which takes the exclusive tenant lock) rather than deadlock on row locks, and
+// the run must end up purged regardless of interleaving.
+func TestTaxonomyRepository_FailStuckRunsCoordinatesWithPurge(t *testing.T) {
+	ctx := context.Background()
+	db := taxonomyTestDB(t)
+	repo := repository.NewTaxonomyRepository(db)
+	tenantData := repository.NewTenantDataRepository(db, 5*time.Second)
+
+	scope := uniqueTaxonomyScope("tax-reap-purge-race")
+	cleanupTaxonomyTenant(ctx, t, db, scope.TenantID)
+
+	run, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: scope})
+	require.NoError(t, err)
+
+	_, err = repo.MarkRunRunning(ctx, run.ID, scope.TenantID)
+	require.NoError(t, err)
+
+	_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, run.ID)
+	require.NoError(t, err)
+
+	var (
+		waitGroup sync.WaitGroup
+		reapErr   error
+		purgeErr  error
+	)
+
+	waitGroup.Add(2)
+
+	go func() {
+		defer waitGroup.Done()
+
+		_, reapErr = repo.FailStuckRuns(ctx, time.Hour, "stuck run", models.TaxonomyRunFailureCodeInternalError)
+	}()
+
+	go func() {
+		defer waitGroup.Done()
+
+		_, purgeErr = tenantData.DeleteByTenant(ctx, scope.TenantID)
+	}()
+
+	waitGroup.Wait()
+
+	require.NoError(t, reapErr, "reaper must not error while a purge runs concurrently")
+	require.NoError(t, purgeErr, "purge must not error while the reaper runs concurrently")
+
+	_, err = repo.GetRunForInternalService(ctx, run.ID)
+	require.ErrorIs(t, err, huberrors.ErrNotFound, "the run must be purged regardless of interleaving")
 }
 
 // TestTaxonomyRepository_StoreResultAndActivate covers persisting the full artifact graph

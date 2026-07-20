@@ -22,6 +22,7 @@ type mockTaxonomyRepo struct {
 	markRunFailedMessage string
 	markRunFailedCode    models.TaxonomyRunFailureCode
 	markRunFailedTenant  string
+	heartbeatTenant      string
 
 	countNodeRecords       []models.TaxonomyNodeRecordCount
 	countNodeRecordsErr    error
@@ -81,6 +82,12 @@ func (m *mockTaxonomyRepo) MarkRunFailed(
 		Error:     &message,
 		ErrorCode: &errorCode,
 	}, nil
+}
+
+func (m *mockTaxonomyRepo) Heartbeat(_ context.Context, _ uuid.UUID, tenantID string) error {
+	m.heartbeatTenant = tenantID
+
+	return nil
 }
 
 func (m *mockTaxonomyRepo) GetRunForInternalService(_ context.Context, runID uuid.UUID) (*models.TaxonomyRun, error) {
@@ -269,6 +276,20 @@ func TestTaxonomyService_StartManualRunMarksServiceUnavailableFailure(t *testing
 
 	if repo.markRunFailedCode != models.TaxonomyRunFailureCodeServiceUnavailable {
 		t.Fatalf("MarkRunFailed code = %q, want service_unavailable", repo.markRunFailedCode)
+	}
+}
+
+func TestTaxonomyService_HeartbeatResolvesTenant(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-333333333333")
+	repo := &mockTaxonomyRepo{internalRun: &models.TaxonomyRun{ID: runID, TenantID: "tenant-7"}}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+	if err := svc.Heartbeat(context.Background(), runID); err != nil {
+		t.Fatalf("Heartbeat() error = %v", err)
+	}
+
+	if repo.heartbeatTenant != "tenant-7" {
+		t.Fatalf("Heartbeat tenant = %q, want tenant-7", repo.heartbeatTenant)
 	}
 }
 

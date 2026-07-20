@@ -40,6 +40,7 @@ type App struct {
 	meterProvider  *sdkmetric.MeterProvider
 	tracerProvider *sdktrace.TracerProvider
 	metrics        *observability.Metrics
+	taxonomyRepo   *repository.TaxonomyRepository
 }
 
 var (
@@ -569,6 +570,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		meterProvider:  meterProvider,
 		tracerProvider: tracerProvider,
 		metrics:        metrics,
+		taxonomyRepo:   taxonomyRepo,
 	}, nil
 }
 
@@ -639,6 +641,7 @@ func newHTTPServer(
 		internalTaxonomy.HandleFunc("GET /internal/v1/taxonomy/runs/{run_id}/input", taxonomyInternal.GetRunInput)
 		internalTaxonomy.HandleFunc("PUT /internal/v1/taxonomy/runs/{run_id}/result", taxonomyInternal.CompleteRun)
 		internalTaxonomy.HandleFunc("POST /internal/v1/taxonomy/runs/{run_id}/failed", taxonomyInternal.FailRun)
+		internalTaxonomy.HandleFunc("POST /internal/v1/taxonomy/runs/{run_id}/heartbeat", taxonomyInternal.Heartbeat)
 		internalTaxonomyWithAuth := middleware.Auth(cfg.Taxonomy.HubInternalAPIToken)(internalTaxonomy)
 		mux.Handle("/internal/v1/taxonomy/", internalTaxonomyWithAuth)
 	}
@@ -687,6 +690,13 @@ func (a *App) Run(ctx context.Context) error {
 
 	if a.metrics != nil && a.metrics.Events != nil {
 		go runRiverQueueDepthPoller(ctx, a.db, a.metrics.Events)
+	}
+
+	// Reap taxonomy runs orphaned in a non-terminal state, but only when the taxonomy service is wired
+	// (no runs exist otherwise, so the sweep would be pointless).
+	if a.taxonomyRepo != nil && (a.cfg.Taxonomy.ServiceURL != "" || a.cfg.Taxonomy.ServiceToken != "") {
+		go runTaxonomyRunReaper(ctx, a.taxonomyRepo,
+			a.cfg.Taxonomy.StuckRunTimeout.Duration(), a.cfg.Taxonomy.ReaperInterval.Duration())
 	}
 
 	go func() {
@@ -781,6 +791,53 @@ func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetric
 			return
 		case <-ticker.C:
 			update()
+		}
+	}
+}
+
+// stuckTaxonomyRunMessage is stored on runs the reaper force-fails. The Web maps the internal_error
+// code to a localized, user-facing message; this raw string is for operators (logs / API consumers).
+const stuckTaxonomyRunMessage = "taxonomy run timed out without completing"
+
+// runTaxonomyRunReaper periodically fails taxonomy runs orphaned in a non-terminal state — the
+// taxonomy service crashed mid-run or its terminal callback was lost — so they stop being polled
+// forever in the UI and generation can be retried. Idempotent: the repository's status filter skips
+// runs that finished on their own between sweeps.
+func runTaxonomyRunReaper(
+	ctx context.Context, repo *repository.TaxonomyRepository, timeout, interval time.Duration,
+) {
+	// A non-positive interval panics time.NewTicker, and a non-positive timeout would reap active
+	// runs (cutoff would be now or in the future). Either is misconfiguration — disable the reaper.
+	if interval <= 0 || timeout <= 0 {
+		slog.WarnContext(ctx, "taxonomy stuck-run reaper disabled: non-positive interval or timeout",
+			"interval", interval, "timeout", timeout)
+
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	reap := func() {
+		failed, err := repo.FailStuckRuns(ctx, timeout, stuckTaxonomyRunMessage,
+			models.TaxonomyRunFailureCodeInternalError)
+		if failed > 0 {
+			slog.InfoContext(ctx, "taxonomy stuck-run reaper failed stalled runs", "count", failed)
+		}
+
+		if err != nil {
+			slog.WarnContext(ctx, "taxonomy stuck-run reaper failed", "error", err)
+		}
+	}
+
+	reap()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reap()
 		}
 	}
 }

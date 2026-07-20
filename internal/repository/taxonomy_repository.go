@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -326,6 +327,128 @@ func (r *TaxonomyRepository) MarkRunFailed(
 	}
 
 	return run, nil
+}
+
+// Heartbeat bumps updated_at to NOW() for a run still in a non-terminal state (pending/running),
+// keeping it out of the stuck-run reaper's reach for another timeout window. The taxonomy service
+// calls this periodically while a generation is in flight; updated_at is the liveness signal the
+// reaper (FailStuckRuns) checks against.
+//
+// The update runs through the shared tenant write lock — the repository invariant that coordinates
+// tenant-owned writes with tenant-data purges. A heartbeat that finds no pending/running row (the run
+// finished, was purged, or its id is stale) is a benign no-op: there is nothing left to keep alive, so
+// it succeeds silently rather than erroring. Callers resolve the run (and thus a 404 for an unknown
+// id) before reaching here.
+func (r *TaxonomyRepository) Heartbeat(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) error {
+	return withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		if _, err := dbTx.Exec(ctx, `
+			UPDATE taxonomy_runs
+			SET updated_at = NOW()
+			WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'running')`,
+			runID, tenantID,
+		); err != nil {
+			return fmt.Errorf("heartbeat taxonomy run: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// FailStuckRuns marks taxonomy runs stuck in a non-terminal state (pending/running) past olderThan
+// as failed. Runs are orphaned when the taxonomy service crashes mid-run or its terminal callback is
+// lost; without this sweep they are polled forever in the UI and block regeneration.
+//
+// Staleness is measured against updated_at, the run's liveness signal: the taxonomy service bumps it
+// via Heartbeat while a generation is in flight (see Heartbeat), so olderThan is the maximum tolerated
+// gap between heartbeats, not a ceiling on total run duration. Until heartbeats flow, updated_at holds
+// the timestamp of the run's last state change, so the sweep degrades to a coarse "no progress since"
+// safety net.
+//
+// Candidates are selected up front (a scoped update needs each run's tenant), then failed one at a
+// time through MarkRunFailed so every mutation takes the shared tenant write lock — the repository
+// invariant that coordinates tenant-owned writes with tenant-data purges. Stuck runs are rare, so a
+// per-run loop rather than a batched per-tenant update is sufficient. A run that reaches a terminal
+// state between selection and update is no longer stuck (ErrConflict / ErrNotFound) and is skipped.
+// Returns the number of runs failed and the first unexpected error, if any.
+func (r *TaxonomyRepository) FailStuckRuns(
+	ctx context.Context,
+	olderThan time.Duration,
+	message string,
+	errorCode models.TaxonomyRunFailureCode,
+) (int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+
+	type stuckRun struct {
+		id       uuid.UUID
+		tenantID string
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT id, tenant_id
+		FROM taxonomy_runs
+		WHERE status IN ('pending', 'running')
+		  AND updated_at < $1`,
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("select stuck taxonomy runs: %w", err)
+	}
+
+	var candidates []stuckRun
+
+	for rows.Next() {
+		var run stuckRun
+		if scanErr := rows.Scan(&run.id, &run.tenantID); scanErr != nil {
+			rows.Close()
+
+			return 0, fmt.Errorf("scan stuck taxonomy run: %w", scanErr)
+		}
+
+		candidates = append(candidates, run)
+	}
+
+	rows.Close()
+
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return 0, fmt.Errorf("iterate stuck taxonomy runs: %w", rowsErr)
+	}
+
+	var (
+		reaped   int64
+		firstErr error
+	)
+
+	for _, run := range candidates {
+		_, markErr := r.MarkRunFailed(ctx, run.id, run.tenantID, message, errorCode)
+		if markErr == nil {
+			reaped++
+
+			continue
+		}
+
+		// Skip a run that is no longer ours to fail rather than erroring the whole sweep:
+		//   - ErrConflict: it reached a terminal state between the select and here.
+		//   - ErrNotFound: it was purged between the select and here.
+		//   - ErrTenantWriteConflict: a tenant data purge holds the exclusive lock, so the shared
+		//     write lock is unavailable; the purge is deleting these runs anyway, and any that
+		//     survive it are caught by the next sweep.
+		// Record the first genuinely unexpected error but keep reaping the remaining candidates.
+		if errors.Is(markErr, huberrors.ErrConflict) ||
+			errors.Is(markErr, huberrors.ErrNotFound) ||
+			errors.Is(markErr, huberrors.ErrTenantWriteConflict) {
+			continue
+		}
+
+		if firstErr == nil {
+			firstErr = markErr
+		}
+	}
+
+	return reaped, firstErr
 }
 
 // GetRunForInternalService returns run metadata for internal taxonomy service-token workflows.
