@@ -40,6 +40,7 @@ type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service 
 		message string,
 		errorCode models.TaxonomyRunFailureCode,
 	) (*models.TaxonomyRun, error)
+	Heartbeat(ctx context.Context, runID uuid.UUID, tenantID string) error
 	GetRunForInternalService(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
 	GetRunForTenant(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyRun, error)
 	GetActiveRun(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyRun, error)
@@ -372,6 +373,24 @@ func (s *TaxonomyService) FailRun(
 	}
 
 	return run, nil
+}
+
+// Heartbeat records that a taxonomy run is still alive, keeping it out of the stuck-run reaper's
+// reach. Resolving the run first yields its tenant and a not-found error for unknown ids.
+func (s *TaxonomyService) Heartbeat(
+	ctx context.Context,
+	runID uuid.UUID,
+) error {
+	existingRun, err := s.repo.GetRunForInternalService(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("get taxonomy run: %w", err)
+	}
+
+	if err := s.repo.Heartbeat(ctx, runID, existingRun.TenantID); err != nil {
+		return fmt.Errorf("heartbeat taxonomy run: %w", err)
+	}
+
+	return nil
 }
 
 func normalizeRunFailure(

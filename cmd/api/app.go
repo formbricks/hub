@@ -641,6 +641,7 @@ func newHTTPServer(
 		internalTaxonomy.HandleFunc("GET /internal/v1/taxonomy/runs/{run_id}/input", taxonomyInternal.GetRunInput)
 		internalTaxonomy.HandleFunc("PUT /internal/v1/taxonomy/runs/{run_id}/result", taxonomyInternal.CompleteRun)
 		internalTaxonomy.HandleFunc("POST /internal/v1/taxonomy/runs/{run_id}/failed", taxonomyInternal.FailRun)
+		internalTaxonomy.HandleFunc("POST /internal/v1/taxonomy/runs/{run_id}/heartbeat", taxonomyInternal.Heartbeat)
 		internalTaxonomyWithAuth := middleware.Auth(cfg.Taxonomy.HubInternalAPIToken)(internalTaxonomy)
 		mux.Handle("/internal/v1/taxonomy/", internalTaxonomyWithAuth)
 	}

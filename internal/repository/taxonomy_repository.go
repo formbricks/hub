@@ -329,9 +329,44 @@ func (r *TaxonomyRepository) MarkRunFailed(
 	return run, nil
 }
 
+// Heartbeat bumps updated_at to NOW() for a run still in a non-terminal state (pending/running),
+// keeping it out of the stuck-run reaper's reach for another timeout window. The taxonomy service
+// calls this periodically while a generation is in flight; updated_at is the liveness signal the
+// reaper (FailStuckRuns) checks against.
+//
+// The update runs through the shared tenant write lock — the repository invariant that coordinates
+// tenant-owned writes with tenant-data purges. A heartbeat that finds no pending/running row (the run
+// finished, was purged, or its id is stale) is a benign no-op: there is nothing left to keep alive, so
+// it succeeds silently rather than erroring. Callers resolve the run (and thus a 404 for an unknown
+// id) before reaching here.
+func (r *TaxonomyRepository) Heartbeat(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+) error {
+	return withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		if _, err := dbTx.Exec(ctx, `
+			UPDATE taxonomy_runs
+			SET updated_at = NOW()
+			WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'running')`,
+			runID, tenantID,
+		); err != nil {
+			return fmt.Errorf("heartbeat taxonomy run: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // FailStuckRuns marks taxonomy runs stuck in a non-terminal state (pending/running) past olderThan
 // as failed. Runs are orphaned when the taxonomy service crashes mid-run or its terminal callback is
 // lost; without this sweep they are polled forever in the UI and block regeneration.
+//
+// Staleness is measured against updated_at, the run's liveness signal: the taxonomy service bumps it
+// via Heartbeat while a generation is in flight (see Heartbeat), so olderThan is the maximum tolerated
+// gap between heartbeats, not a ceiling on total run duration. Until heartbeats flow, updated_at holds
+// the timestamp of the run's last state change, so the sweep degrades to a coarse "no progress since"
+// safety net.
 //
 // Candidates are selected up front (a scoped update needs each run's tenant), then failed one at a
 // time through MarkRunFailed so every mutation takes the shared tenant write lock — the repository
@@ -356,7 +391,7 @@ func (r *TaxonomyRepository) FailStuckRuns(
 		SELECT id, tenant_id
 		FROM taxonomy_runs
 		WHERE status IN ('pending', 'running')
-		  AND COALESCE(started_at, created_at) < $1`,
+		  AND updated_at < $1`,
 		cutoff,
 	)
 	if err != nil {

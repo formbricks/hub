@@ -20,6 +20,7 @@ type TaxonomyInternalService interface {
 		message string,
 		errorCode models.TaxonomyRunFailureCode,
 	) (*models.TaxonomyRun, error)
+	Heartbeat(ctx context.Context, runID uuid.UUID) error
 }
 
 // TaxonomyInternalHandler hosts internal taxonomy service endpoints.
@@ -126,4 +127,26 @@ func (h *TaxonomyInternalHandler) FailRun(w http.ResponseWriter, r *http.Request
 	}
 
 	response.RespondJSON(w, http.StatusOK, result)
+}
+
+// Heartbeat records that a taxonomy run is still alive so the stuck-run reaper does not fail it.
+func (h *TaxonomyInternalHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	if h.service == nil {
+		response.RespondServiceUnavailable(w, r, "Taxonomy internals are not available.")
+
+		return
+	}
+
+	runID, ok := parseUUIDPathValue(w, r, "run_id")
+	if !ok {
+		return
+	}
+
+	if err := h.service.Heartbeat(r.Context(), runID); err != nil {
+		respondTaxonomyError(w, r, err)
+
+		return
+	}
+
+	response.RespondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
