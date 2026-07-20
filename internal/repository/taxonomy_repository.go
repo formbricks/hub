@@ -358,6 +358,45 @@ func (r *TaxonomyRepository) Heartbeat(
 	})
 }
 
+// FailRunIfStale marks a pending/running taxonomy run as failed only when its liveness timestamp is
+// still older than cutoff at the moment of the update. The status and freshness checks are part of
+// the tenant-locked UPDATE so a heartbeat that lands after candidate selection protects the run.
+// Returns true when the run was failed and false when it was refreshed, completed, or removed first.
+func (r *TaxonomyRepository) FailRunIfStale(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+	cutoff time.Time,
+	message string,
+	errorCode models.TaxonomyRunFailureCode,
+) (bool, error) {
+	var failed bool
+
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		tag, err := dbTx.Exec(ctx, `
+			UPDATE taxonomy_runs
+			SET status = 'failed', error = $3, error_code = $4, finished_at = NOW(), updated_at = NOW()
+			WHERE id = $1
+			  AND tenant_id = $2
+			  AND status IN ('pending', 'running')
+			  AND updated_at < $5`,
+			runID, tenantID, message, nullableFailureCode(errorCode), cutoff,
+		)
+		if err != nil {
+			return fmt.Errorf("fail stale taxonomy run: %w", err)
+		}
+
+		failed = tag.RowsAffected() > 0
+
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return failed, nil
+}
+
 // FailStuckRuns marks taxonomy runs stuck in a non-terminal state (pending/running) past olderThan
 // as failed. Runs are orphaned when the taxonomy service crashes mid-run or its terminal callback is
 // lost; without this sweep they are polled forever in the UI and block regeneration.
@@ -369,10 +408,11 @@ func (r *TaxonomyRepository) Heartbeat(
 // safety net.
 //
 // Candidates are selected up front (a scoped update needs each run's tenant), then failed one at a
-// time through MarkRunFailed so every mutation takes the shared tenant write lock — the repository
+// time through FailRunIfStale so every mutation takes the shared tenant write lock — the repository
 // invariant that coordinates tenant-owned writes with tenant-data purges. Stuck runs are rare, so a
-// per-run loop rather than a batched per-tenant update is sufficient. A run that reaches a terminal
-// state between selection and update is no longer stuck (ErrConflict / ErrNotFound) and is skipped.
+// per-run loop rather than a batched per-tenant update is sufficient. The final UPDATE re-checks both
+// status and updated_at under the tenant lock, so a run that heartbeats, reaches a terminal state, or
+// is removed between selection and update is skipped.
 // Returns the number of runs failed and the first unexpected error, if any.
 func (r *TaxonomyRepository) FailStuckRuns(
 	ctx context.Context,
@@ -423,23 +463,20 @@ func (r *TaxonomyRepository) FailStuckRuns(
 	)
 
 	for _, run := range candidates {
-		_, markErr := r.MarkRunFailed(ctx, run.id, run.tenantID, message, errorCode)
+		failed, markErr := r.FailRunIfStale(ctx, run.id, run.tenantID, cutoff, message, errorCode)
 		if markErr == nil {
-			reaped++
+			if failed {
+				reaped++
+			}
 
 			continue
 		}
 
-		// Skip a run that is no longer ours to fail rather than erroring the whole sweep:
-		//   - ErrConflict: it reached a terminal state between the select and here.
-		//   - ErrNotFound: it was purged between the select and here.
-		//   - ErrTenantWriteConflict: a tenant data purge holds the exclusive lock, so the shared
-		//     write lock is unavailable; the purge is deleting these runs anyway, and any that
-		//     survive it are caught by the next sweep.
+		// Skip a run when ErrTenantWriteConflict indicates that a tenant data purge holds the exclusive
+		// lock, so the shared write lock is unavailable. The purge is deleting these runs anyway, and
+		// any that survive it are caught by the next sweep.
 		// Record the first genuinely unexpected error but keep reaping the remaining candidates.
-		if errors.Is(markErr, huberrors.ErrConflict) ||
-			errors.Is(markErr, huberrors.ErrNotFound) ||
-			errors.Is(markErr, huberrors.ErrTenantWriteConflict) {
+		if errors.Is(markErr, huberrors.ErrTenantWriteConflict) {
 			continue
 		}
 
