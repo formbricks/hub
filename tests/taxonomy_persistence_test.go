@@ -211,6 +211,34 @@ func TestTaxonomyRepository_Heartbeat(t *testing.T) {
 		assert.Equal(t, models.TaxonomyRunStatusRunning, survivor.Status, "a heartbeated run must not be reaped")
 	})
 
+	t.Run("heartbeat after candidate selection prevents the stale transition", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-heartbeat-race")
+		cleanupTaxonomyTenant(ctx, t, db, scope.TenantID)
+
+		run, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: scope})
+		require.NoError(t, err)
+		_, err = repo.MarkRunRunning(ctx, run.ID, scope.TenantID)
+		require.NoError(t, err)
+
+		_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, run.ID)
+		require.NoError(t, err)
+
+		cutoff := time.Now().Add(-time.Hour)
+
+		// The reaper has already selected this run using cutoff, but a heartbeat lands before its
+		// tenant-locked transition. The final UPDATE must re-check freshness and leave the run alive.
+		require.NoError(t, repo.Heartbeat(ctx, run.ID, scope.TenantID))
+		failed, err := repo.FailRunIfStale(
+			ctx, run.ID, scope.TenantID, cutoff, "stuck run", models.TaxonomyRunFailureCodeInternalError,
+		)
+		require.NoError(t, err)
+		assert.False(t, failed, "a run refreshed after candidate selection must not be failed")
+
+		survivor, err := repo.GetRunForInternalService(ctx, run.ID)
+		require.NoError(t, err)
+		assert.Equal(t, models.TaxonomyRunStatusRunning, survivor.Status)
+	})
+
 	t.Run("heartbeat on a terminal run is a no-op", func(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-heartbeat-terminal")
 		cleanupTaxonomyTenant(ctx, t, db, scope.TenantID)
