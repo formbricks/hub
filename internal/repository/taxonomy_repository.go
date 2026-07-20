@@ -430,9 +430,16 @@ func (r *TaxonomyRepository) FailStuckRuns(
 			continue
 		}
 
-		// A run that finished (ErrConflict) or was purged (ErrNotFound) between the select and here
-		// is no longer stuck — skip it. Record the first unexpected error but keep reaping.
-		if errors.Is(markErr, huberrors.ErrConflict) || errors.Is(markErr, huberrors.ErrNotFound) {
+		// Skip a run that is no longer ours to fail rather than erroring the whole sweep:
+		//   - ErrConflict: it reached a terminal state between the select and here.
+		//   - ErrNotFound: it was purged between the select and here.
+		//   - ErrTenantWriteConflict: a tenant data purge holds the exclusive lock, so the shared
+		//     write lock is unavailable; the purge is deleting these runs anyway, and any that
+		//     survive it are caught by the next sweep.
+		// Record the first genuinely unexpected error but keep reaping the remaining candidates.
+		if errors.Is(markErr, huberrors.ErrConflict) ||
+			errors.Is(markErr, huberrors.ErrNotFound) ||
+			errors.Is(markErr, huberrors.ErrTenantWriteConflict) {
 			continue
 		}
 
