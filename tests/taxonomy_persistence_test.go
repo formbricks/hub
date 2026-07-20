@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -178,6 +179,57 @@ func TestTaxonomyRepository_FailStuckRuns(t *testing.T) {
 	survivor, err := repo.GetRunForInternalService(ctx, fresh.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.TaxonomyRunStatusRunning, survivor.Status, "a run newer than the timeout must not be reaped")
+}
+
+// TestTaxonomyRepository_FailStuckRunsCoordinatesWithPurge is a purge-race regression test: the
+// reaper fails runs through the shared tenant write lock, so it must serialize with a concurrent
+// tenant-data purge (which takes the exclusive tenant lock) rather than deadlock on row locks, and
+// the run must end up purged regardless of interleaving.
+func TestTaxonomyRepository_FailStuckRunsCoordinatesWithPurge(t *testing.T) {
+	ctx := context.Background()
+	db := taxonomyTestDB(t)
+	repo := repository.NewTaxonomyRepository(db)
+	tenantData := repository.NewTenantDataRepository(db, 5*time.Second)
+
+	scope := uniqueTaxonomyScope("tax-reap-purge-race")
+	cleanupTaxonomyTenant(ctx, t, db, scope.TenantID)
+
+	run, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: scope})
+	require.NoError(t, err)
+
+	_, err = repo.MarkRunRunning(ctx, run.ID, scope.TenantID)
+	require.NoError(t, err)
+
+	_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET started_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, run.ID)
+	require.NoError(t, err)
+
+	var (
+		waitGroup sync.WaitGroup
+		reapErr   error
+		purgeErr  error
+	)
+
+	waitGroup.Add(2)
+
+	go func() {
+		defer waitGroup.Done()
+
+		_, reapErr = repo.FailStuckRuns(ctx, time.Hour, "stuck run", models.TaxonomyRunFailureCodeInternalError)
+	}()
+
+	go func() {
+		defer waitGroup.Done()
+
+		_, purgeErr = tenantData.DeleteByTenant(ctx, scope.TenantID)
+	}()
+
+	waitGroup.Wait()
+
+	require.NoError(t, reapErr, "reaper must not error while a purge runs concurrently")
+	require.NoError(t, purgeErr, "purge must not error while the reaper runs concurrently")
+
+	_, err = repo.GetRunForInternalService(ctx, run.ID)
+	require.ErrorIs(t, err, huberrors.ErrNotFound, "the run must be purged regardless of interleaving")
 }
 
 // TestTaxonomyRepository_StoreResultAndActivate covers persisting the full artifact graph

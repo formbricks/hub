@@ -820,14 +820,12 @@ func runTaxonomyRunReaper(
 	reap := func() {
 		failed, err := repo.FailStuckRuns(ctx, timeout, stuckTaxonomyRunMessage,
 			models.TaxonomyRunFailureCodeInternalError)
-		if err != nil {
-			slog.WarnContext(ctx, "taxonomy stuck-run reaper failed", "error", err)
-
-			return
-		}
-
 		if failed > 0 {
 			slog.InfoContext(ctx, "taxonomy stuck-run reaper failed stalled runs", "count", failed)
+		}
+
+		if err != nil {
+			slog.WarnContext(ctx, "taxonomy stuck-run reaper failed", "error", err)
 		}
 	}
 

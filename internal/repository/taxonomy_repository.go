@@ -331,9 +331,14 @@ func (r *TaxonomyRepository) MarkRunFailed(
 
 // FailStuckRuns marks taxonomy runs stuck in a non-terminal state (pending/running) past olderThan
 // as failed. Runs are orphaned when the taxonomy service crashes mid-run or its terminal callback is
-// lost; without this sweep they are polled forever in the UI and block regeneration. The status
-// filter keeps it idempotent and race-safe — a run that finishes between sweeps no longer matches.
-// Returns the number of runs failed.
+// lost; without this sweep they are polled forever in the UI and block regeneration.
+//
+// Candidates are selected up front (a scoped update needs each run's tenant), then failed one at a
+// time through MarkRunFailed so every mutation takes the shared tenant write lock — the repository
+// invariant that coordinates tenant-owned writes with tenant-data purges. Stuck runs are rare, so a
+// per-run loop rather than a batched per-tenant update is sufficient. A run that reaches a terminal
+// state between selection and update is no longer stuck (ErrConflict / ErrNotFound) and is skipped.
+// Returns the number of runs failed and the first unexpected error, if any.
 func (r *TaxonomyRepository) FailStuckRuns(
 	ctx context.Context,
 	olderThan time.Duration,
@@ -342,18 +347,66 @@ func (r *TaxonomyRepository) FailStuckRuns(
 ) (int64, error) {
 	cutoff := time.Now().Add(-olderThan)
 
-	tag, err := r.db.Exec(ctx, `
-		UPDATE taxonomy_runs
-		SET status = 'failed', error = $1, error_code = $2, finished_at = NOW(), updated_at = NOW()
-		WHERE status IN ('pending', 'running')
-		  AND COALESCE(started_at, created_at) < $3`,
-		message, nullableFailureCode(errorCode), cutoff,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("fail stuck taxonomy runs: %w", err)
+	type stuckRun struct {
+		id       uuid.UUID
+		tenantID string
 	}
 
-	return tag.RowsAffected(), nil
+	rows, err := r.db.Query(ctx, `
+		SELECT id, tenant_id
+		FROM taxonomy_runs
+		WHERE status IN ('pending', 'running')
+		  AND COALESCE(started_at, created_at) < $1`,
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("select stuck taxonomy runs: %w", err)
+	}
+
+	var candidates []stuckRun
+
+	for rows.Next() {
+		var run stuckRun
+		if scanErr := rows.Scan(&run.id, &run.tenantID); scanErr != nil {
+			rows.Close()
+
+			return 0, fmt.Errorf("scan stuck taxonomy run: %w", scanErr)
+		}
+
+		candidates = append(candidates, run)
+	}
+
+	rows.Close()
+
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return 0, fmt.Errorf("iterate stuck taxonomy runs: %w", rowsErr)
+	}
+
+	var (
+		reaped   int64
+		firstErr error
+	)
+
+	for _, run := range candidates {
+		_, markErr := r.MarkRunFailed(ctx, run.id, run.tenantID, message, errorCode)
+		if markErr == nil {
+			reaped++
+
+			continue
+		}
+
+		// A run that finished (ErrConflict) or was purged (ErrNotFound) between the select and here
+		// is no longer stuck — skip it. Record the first unexpected error but keep reaping.
+		if errors.Is(markErr, huberrors.ErrConflict) || errors.Is(markErr, huberrors.ErrNotFound) {
+			continue
+		}
+
+		if firstErr == nil {
+			firstErr = markErr
+		}
+	}
+
+	return reaped, firstErr
 }
 
 // GetRunForInternalService returns run metadata for internal taxonomy service-token workflows.
