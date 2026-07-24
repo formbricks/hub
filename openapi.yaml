@@ -54,6 +54,8 @@ tags:
       description: Tenant-scoped enrichment settings
     - name: Taxonomy
       description: Automatic topic/subtopic taxonomy generation, run history, tree browsing, and node edits
+    - name: Enrichment Status
+      description: Tenant-scoped enrichment progress (translation, sentiment, emotions)
 security:
     - ApiKeyAuth: []
 paths:
@@ -1370,6 +1372,56 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                 "413":
                     description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/enrichment-status:
+        get:
+            tags:
+                - Enrichment Status
+            summary: Get tenant enrichment status
+            description: |
+                Returns a tenant's enrichment progress across the record-level enrichments
+                (translation, sentiment, emotions). For each, `enabled` reports whether the enrichment
+                is active for the tenant (deployment-configured and switched on / with a resolvable
+                target language), and `eligible`/`done` are directory-level counts of feedback records
+                that qualify and that have been enriched — the UI derives "in progress" as
+                `eligible - done`. When an enrichment is not enabled its counts are zero. The response
+                contains counts only (no record identifiers or content).
+            operationId: get-enrichment-status
+            parameters:
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant whose enrichment status should be returned.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "200":
+                    description: Tenant enrichment status
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/EnrichmentStatusOutputBody'
+                "400":
+                    description: Bad Request (e.g. missing or invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
                     content:
                         application/problem+json:
                             schema:
@@ -3362,6 +3414,44 @@ components:
                         $ref: '#/components/schemas/TaxonomyFieldOption'
             required:
                 - data
+        EnrichmentTypeStatus:
+            type: object
+            additionalProperties: false
+            description: One enrichment's progress for a tenant. When `enabled` is false, `eligible` and `done` are zero.
+            properties:
+                enabled:
+                    type: boolean
+                    description: Whether the enrichment is active for the tenant (deployment-configured and switched on / with a resolvable target language).
+                eligible:
+                    type: integer
+                    format: int64
+                    description: Feedback records that qualify for this enrichment.
+                done:
+                    type: integer
+                    format: int64
+                    description: Eligible records that have been enriched.
+            required:
+                - enabled
+                - eligible
+                - done
+        EnrichmentStatusOutputBody:
+            type: object
+            additionalProperties: false
+            description: A tenant's enrichment progress across the record-level enrichments. Counts are directory-level totals.
+            properties:
+                tenant_id:
+                    type: string
+                translation:
+                    $ref: '#/components/schemas/EnrichmentTypeStatus'
+                sentiment:
+                    $ref: '#/components/schemas/EnrichmentTypeStatus'
+                emotions:
+                    $ref: '#/components/schemas/EnrichmentTypeStatus'
+            required:
+                - tenant_id
+                - translation
+                - sentiment
+                - emotions
         CreateTaxonomyRunInputBody:
             type: object
             additionalProperties: false
