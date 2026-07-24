@@ -89,3 +89,45 @@ func (r *EnrichmentStatusRepository) CountEnrichmentStatus(
 
 	return counts, nil
 }
+
+// enrichmentEffectiveTargetAgg mirrors enrichmentEffectiveTarget but binds the default target to
+// $1 — the aggregate query's only parameter (no tenant filter).
+const enrichmentEffectiveTargetAgg = `COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)`
+
+// countEnrichmentBacklogAggregateSQL is countEnrichmentStatusSQL without the tenant filter: it sums
+// eligible/done per enrichment across ALL tenants (for the observability gauge). $1 = deployment
+// default target language. The per-tenant enable gates still apply so a tenant that switched an
+// enrichment off, or has no resolvable target, never inflates the backlog.
+const countEnrichmentBacklogAggregateSQL = `
+	SELECT
+		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentSentimentOn + `),
+		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentSentimentOn + ` AND fr.sentiment IS NOT NULL),
+		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentEmotionsOn + `),
+		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentEmotionsOn + ` AND fr.emotions IS NOT NULL),
+		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentEffectiveTargetAgg + ` <> ''),
+		COUNT(*) FILTER (
+			WHERE ` + enrichmentEligibleText + `
+			AND ` + enrichmentEffectiveTargetAgg + ` <> ''
+			AND fr.translation_lang_key = ` + enrichmentEffectiveTargetAgg + `)
+	FROM feedback_records fr
+	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id`
+
+// CountEnrichmentBacklogAggregate returns eligible/done counts per enrichment summed across all
+// tenants. defaultLang is the deployment translation fallback. Used by the observability poller;
+// the result carries no tenant dimension.
+func (r *EnrichmentStatusRepository) CountEnrichmentBacklogAggregate(
+	ctx context.Context, defaultLang string,
+) (EnrichmentStatusCounts, error) {
+	var counts EnrichmentStatusCounts
+
+	err := r.db.QueryRow(ctx, countEnrichmentBacklogAggregateSQL, defaultLang).Scan(
+		&counts.SentimentEligible, &counts.SentimentDone,
+		&counts.EmotionsEligible, &counts.EmotionsDone,
+		&counts.TranslationEligible, &counts.TranslationDone,
+	)
+	if err != nil {
+		return EnrichmentStatusCounts{}, fmt.Errorf("count enrichment backlog aggregate: %w", err)
+	}
+
+	return counts, nil
+}

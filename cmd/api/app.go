@@ -52,6 +52,12 @@ var (
 const (
 	riverQueueDepthInterval = 15 * time.Second
 	startupCleanupTimeout   = 5 * time.Second
+	// enrichmentBacklogInterval is deliberately slower than the River depth poll: the backlog query
+	// is a full-table aggregate over feedback_records, not a queue-scoped scan.
+	enrichmentBacklogInterval = 60 * time.Second
+	// enrichmentBacklogQueryTimeout bounds each aggregate scan so a slow query cannot pin a pool
+	// connection or stall the ticker.
+	enrichmentBacklogQueryTimeout = 30 * time.Second
 )
 
 // embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
@@ -706,6 +712,15 @@ func (a *App) Run(ctx context.Context) error {
 		go runRiverQueueDepthPoller(ctx, a.db, a.metrics.Events)
 	}
 
+	if a.metrics != nil && a.metrics.EnrichmentBacklog != nil {
+		go runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, enrichmentBacklogPollConfig{
+			defaultLang:           a.cfg.Translation.DefaultLanguage,
+			translationConfigured: a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
+			sentimentConfigured:   a.cfg.Sentiment.Enabled(),
+			emotionsConfigured:    a.cfg.Emotions.Enabled(),
+		})
+	}
+
 	// Reap taxonomy runs orphaned in a non-terminal state, but only when the taxonomy service is wired
 	// (no runs exist otherwise, so the sweep would be pointless).
 	if a.taxonomyRepo != nil && (a.cfg.Taxonomy.ServiceURL != "" || a.cfg.Taxonomy.ServiceToken != "") {
@@ -742,6 +757,66 @@ var riverDepthQueues = []string{
 	service.TranslationBackfillsQueueName,
 	service.SentimentsQueueName,
 	service.EmotionsQueueName,
+}
+
+// enrichmentBacklogPollConfig configures runEnrichmentBacklogPoller: the deployment default target
+// language and which enrichments are deployment-configured (only those emit a gauge).
+type enrichmentBacklogPollConfig struct {
+	defaultLang           string
+	translationConfigured bool
+	sentimentConfigured   bool
+	emotionsConfigured    bool
+}
+
+// runEnrichmentBacklogPoller periodically refreshes the aggregate enrichment-backlog gauge
+// (eligible-but-unenriched records per enrichment, summed across all tenants) — a durable
+// completeness signal complementing the transient River queue-depth gauge. Only
+// deployment-configured enrichments are reported, and each scan is bounded by its own timeout.
+func runEnrichmentBacklogPoller(
+	ctx context.Context,
+	db *pgxpool.Pool,
+	backlog observability.EnrichmentBacklogMetrics,
+	cfg enrichmentBacklogPollConfig,
+) {
+	repo := repository.NewEnrichmentStatusRepository(db)
+
+	ticker := time.NewTicker(enrichmentBacklogInterval)
+	defer ticker.Stop()
+
+	update := func() {
+		queryCtx, cancel := context.WithTimeout(ctx, enrichmentBacklogQueryTimeout)
+		defer cancel()
+
+		counts, err := repo.CountEnrichmentBacklogAggregate(queryCtx, cfg.defaultLang)
+		if err != nil {
+			slog.WarnContext(ctx, "enrichment backlog poll failed", "error", err)
+
+			return
+		}
+
+		if cfg.translationConfigured {
+			backlog.SetEnrichmentPending("translation", counts.TranslationEligible-counts.TranslationDone)
+		}
+
+		if cfg.sentimentConfigured {
+			backlog.SetEnrichmentPending("sentiment", counts.SentimentEligible-counts.SentimentDone)
+		}
+
+		if cfg.emotionsConfigured {
+			backlog.SetEnrichmentPending("emotions", counts.EmotionsEligible-counts.EmotionsDone)
+		}
+	}
+
+	update()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			update()
+		}
+	}
 }
 
 // runRiverQueueDepthPoller periodically updates the per-queue River backlog gauge. Covering

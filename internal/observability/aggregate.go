@@ -20,6 +20,8 @@ type Metrics struct {
 	Cache       CacheMetrics
 	// EnrichmentClear counts enrichment outputs nulled by an edit's eager-clear.
 	EnrichmentClear EnrichmentClearMetrics
+	// EnrichmentBacklog gauges the aggregate eligible-but-unenriched record count per enrichment.
+	EnrichmentBacklog EnrichmentBacklogMetrics
 }
 
 // NewMetrics creates EventMetrics, WebhookMetrics, EmbeddingMetrics, TranslationMetrics, and CacheMetrics from the given meter.
@@ -70,14 +72,20 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("enrichment clear metrics: %w", err)
 	}
 
+	enrichmentBacklog, err := NewEnrichmentBacklogMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("enrichment backlog metrics: %w", err)
+	}
+
 	return &Metrics{
-		Events:          events,
-		Webhooks:        webhooks,
-		Embeddings:      embeddings,
-		Translation:     translation,
-		Sentiment:       sentiment,
-		Emotions:        emotions,
-		Cache:           cache,
-		EnrichmentClear: enrichmentClear,
+		Events:            events,
+		Webhooks:          webhooks,
+		Embeddings:        embeddings,
+		Translation:       translation,
+		Sentiment:         sentiment,
+		Emotions:          emotions,
+		Cache:             cache,
+		EnrichmentClear:   enrichmentClear,
+		EnrichmentBacklog: enrichmentBacklog,
 	}, nil
 }

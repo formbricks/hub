@@ -36,18 +36,7 @@ func TestCountEnrichmentStatus(t *testing.T) {
 
 	// mkRecord inserts one feedback record for a tenant with an explicit field type + value_text.
 	mkRecord := func(tenant string, fieldType models.FieldType, valueText string) *models.FeedbackRecord {
-		vt := valueText
-		rec, createErr := frepo.Create(ctx, &models.CreateFeedbackRecordRequest{
-			SourceType:   "formbricks",
-			FieldID:      "q1",
-			FieldType:    fieldType,
-			ValueText:    &vt,
-			TenantID:     tenant,
-			SubmissionID: testTenantID("sub"),
-		})
-		require.NoError(t, createErr)
-
-		return rec
+		return seedEnrichmentRecord(t, frepo, tenant, fieldType, valueText)
 	}
 
 	setSentiment := func(id uuid.UUID) {
@@ -150,4 +139,85 @@ func TestCountEnrichmentStatus(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), counts.SentimentEligible, "tenant A sees only its own record, not tenant B's")
 	})
+}
+
+// seedEnrichmentRecord inserts one feedback record and returns it. Shared by the per-tenant and
+// aggregate enrichment-status tests.
+func seedEnrichmentRecord(
+	t *testing.T, frepo *repository.FeedbackRecordsRepository, tenant string, fieldType models.FieldType, valueText string,
+) *models.FeedbackRecord {
+	t.Helper()
+
+	vt := valueText
+	rec, err := frepo.Create(context.Background(), &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		FieldID:      "q1",
+		FieldType:    fieldType,
+		ValueText:    &vt,
+		TenantID:     tenant,
+		SubmissionID: testTenantID("sub"),
+	})
+	require.NoError(t, err)
+
+	return rec
+}
+
+// TestCountEnrichmentBacklogAggregate covers the cross-tenant aggregate query that feeds the
+// backlog gauge. The shared test DB holds records from other tests, so it asserts on the DELTA
+// around a fresh seed rather than absolute totals — and verifies the per-tenant enable gate still
+// applies (a sentiment-off tenant contributes to emotions but not sentiment).
+func TestCountEnrichmentBacklogAggregate(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	statusRepo := repository.NewEnrichmentStatusRepository(db)
+	frepo := repository.NewFeedbackRecordsRepository(db)
+	tsRepo := repository.NewTenantSettingsRepository(db)
+
+	const defaultLang = "en-US"
+
+	pending := func(c repository.EnrichmentStatusCounts) (sentiment, emotions, translation int64) {
+		return c.SentimentEligible - c.SentimentDone,
+			c.EmotionsEligible - c.EmotionsDone,
+			c.TranslationEligible - c.TranslationDone
+	}
+
+	before, err := statusRepo.CountEnrichmentBacklogAggregate(ctx, defaultLang)
+	require.NoError(t, err)
+
+	beforeSent, beforeEmo, beforeTrans := pending(before)
+
+	// Tenant with everything enabled (no settings row → sentiment/emotions default-on; translation
+	// via the en-US default): 3 un-enriched text records.
+	enabled := testTenantID("agg-enabled")
+	for range 3 {
+		seedEnrichmentRecord(t, frepo, enabled, models.FieldTypeText, "pending record")
+	}
+
+	// Tenant with sentiment switched OFF: 2 un-enriched text records. These must add to emotions and
+	// translation backlog but NOT sentiment.
+	sentimentOff := testTenantID("agg-sentiment-off")
+	off := false
+	_, err = tsRepo.Upsert(ctx, sentimentOff, models.EnrichmentSettings{SentimentEnabled: &off})
+	require.NoError(t, err)
+
+	for range 2 {
+		seedEnrichmentRecord(t, frepo, sentimentOff, models.FieldTypeText, "pending record")
+	}
+
+	after, err := statusRepo.CountEnrichmentBacklogAggregate(ctx, defaultLang)
+	require.NoError(t, err)
+
+	afterSent, afterEmo, afterTrans := pending(after)
+
+	assert.Equal(t, int64(3), afterSent-beforeSent, "only the sentiment-enabled tenant's 3 records add to sentiment backlog")
+	assert.Equal(t, int64(5), afterEmo-beforeEmo, "emotions default-enabled for both tenants → 3+2")
+	assert.Equal(t, int64(5), afterTrans-beforeTrans, "en-US default makes all 5 records translation-pending")
 }
