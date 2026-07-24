@@ -9,6 +9,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+// Enrichment type label values for MetricNameEnrichmentPendingRecords — a fixed, bounded set that
+// keeps the gauge's cardinality low. Callers pass these to SetEnrichmentPending.
+const (
+	EnrichmentTypeTranslation = "translation"
+	EnrichmentTypeSentiment   = "sentiment"
+	EnrichmentTypeEmotions    = "emotions"
+)
+
 // EnrichmentBacklogMetrics reports the aggregate (cross-tenant) count of eligible-but-unenriched
 // feedback records per enrichment type — a data-derived "how far behind is enrichment" gauge that
 // complements the transient River queue-depth gauge. A background poller refreshes the values; an

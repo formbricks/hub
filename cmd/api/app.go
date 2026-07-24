@@ -795,15 +795,15 @@ func runEnrichmentBacklogPoller(
 		}
 
 		if cfg.translationConfigured {
-			backlog.SetEnrichmentPending("translation", counts.TranslationEligible-counts.TranslationDone)
+			backlog.SetEnrichmentPending(observability.EnrichmentTypeTranslation, counts.TranslationEligible-counts.TranslationDone)
 		}
 
 		if cfg.sentimentConfigured {
-			backlog.SetEnrichmentPending("sentiment", counts.SentimentEligible-counts.SentimentDone)
+			backlog.SetEnrichmentPending(observability.EnrichmentTypeSentiment, counts.SentimentEligible-counts.SentimentDone)
 		}
 
 		if cfg.emotionsConfigured {
-			backlog.SetEnrichmentPending("emotions", counts.EmotionsEligible-counts.EmotionsDone)
+			backlog.SetEnrichmentPending(observability.EnrichmentTypeEmotions, counts.EmotionsEligible-counts.EmotionsDone)
 		}
 	}
 
