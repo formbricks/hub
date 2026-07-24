@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -717,7 +718,9 @@ func (a *App) Run(ctx context.Context) error {
 
 	if a.metrics != nil && a.metrics.EnrichmentBacklog != nil {
 		go runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, enrichmentBacklogPollConfig{
-			defaultLang:           a.cfg.Translation.DefaultLanguage,
+			// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
+			// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
+			defaultLang:           strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
 			translationConfigured: a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
 			sentimentConfigured:   a.cfg.Sentiment.Enabled(),
 			emotionsConfigured:    a.cfg.Emotions.Enabled(),

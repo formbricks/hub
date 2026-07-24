@@ -1426,6 +1426,14 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "503":
+                    description: |
+                        Service Unavailable – the enrichment status service is not available
+                        (code `service_unavailable`).
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 default:
                     description: Error
                     content:

@@ -72,18 +72,24 @@ const enrichmentCountFrom = `
 	FROM feedback_records fr
 	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id`
 
+// The `fr.field_type = 'text'` predicate in the outer WHERE below is redundant with
+// enrichmentEligibleText inside every FILTER (so it can never change a count), but hoisting it out
+// lets the planner use idx_feedback_records_tenant_field_type (tenant_id, field_type) to visit only
+// text rows instead of scanning every row and discarding non-text inside the FILTERs.
+
 // countEnrichmentStatusSQL counts eligible/done per enrichment for ONE tenant. $1 = deployment
-// default target language, $2 = tenant_id. The tenant-scoped scan is served by
-// idx_feedback_records_tenant_field_type (tenant_id, field_type): only the tenant's text rows are
-// visited, so cost scales with the tenant's text-record count, not the whole table.
+// default target language, $2 = tenant_id. The (tenant_id, field_type) predicate is served by
+// idx_feedback_records_tenant_field_type, so cost scales with the tenant's text-record count.
 const countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
-	WHERE fr.tenant_id = $2`
+	WHERE fr.tenant_id = $2 AND fr.field_type = 'text'`
 
 // countEnrichmentBacklogAggregateSQL is the same SELECT without the tenant filter: it sums
 // eligible/done per enrichment across ALL tenants (for the observability gauge). $1 = deployment
-// default target language. The per-tenant enable gates still apply, so a tenant that switched an
-// enrichment off, or has no resolvable target, never inflates the backlog.
-const countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom
+// default target language. The field_type = 'text' predicate narrows the scan to text rows; the
+// per-tenant enable gates still apply, so a tenant that switched an enrichment off, or has no
+// resolvable target, never inflates the backlog.
+const countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
+	WHERE fr.field_type = 'text'`
 
 // CountEnrichmentStatus returns one tenant's eligible/done counts per enrichment. defaultLang is
 // the deployment translation fallback ("" disables the fallback, so only tenants with their own
