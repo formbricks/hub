@@ -545,6 +545,17 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	taxonomyInternalHandler := handlers.NewTaxonomyInternalHandler(taxonomyService)
+
+	enrichmentStatusService := service.NewEnrichmentStatusService(service.NewEnrichmentStatusServiceParams{
+		Repo:                  repository.NewEnrichmentStatusRepository(db),
+		Settings:              tenantSettingsService,
+		DefaultLang:           cfg.Translation.DefaultLanguage,
+		TranslationConfigured: cfg.Translation.Provider != "" && cfg.Translation.Model != "",
+		SentimentConfigured:   cfg.Sentiment.Enabled(),
+		EmotionsConfigured:    cfg.Emotions.Enabled(),
+	})
+	enrichmentStatusHandler := handlers.NewEnrichmentStatusHandler(enrichmentStatusService)
+
 	healthHandler := handlers.NewHealthHandler()
 
 	openapiHandler, err := handlers.NewOpenAPIHandler(handlers.ResolveOpenAPISpecPath(), cfg.Server.PublicBaseURL)
@@ -557,7 +568,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	server := newHTTPServer(
 		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler,
 		tenantSettingsHandler, searchHandler,
-		taxonomyHandler, taxonomyInternalHandler,
+		taxonomyHandler, taxonomyInternalHandler, enrichmentStatusHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -588,6 +599,7 @@ func newHTTPServer(
 	search *handlers.SearchHandler,
 	taxonomy *handlers.TaxonomyHandler,
 	taxonomyInternal *handlers.TaxonomyInternalHandler,
+	enrichmentStatus *handlers.EnrichmentStatusHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
 ) *http.Server {
@@ -614,6 +626,8 @@ func newHTTPServer(
 	protected.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettings.Get)
 	protected.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettings.Update)
 	protected.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettings.Patch)
+
+	protected.HandleFunc("GET /v1/enrichment-status", enrichmentStatus.GetStatus)
 
 	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
