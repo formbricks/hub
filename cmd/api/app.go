@@ -52,11 +52,14 @@ var (
 const (
 	riverQueueDepthInterval = 15 * time.Second
 	startupCleanupTimeout   = 5 * time.Second
-	// enrichmentBacklogInterval is deliberately slower than the River depth poll: the backlog query
-	// is a full-table aggregate over feedback_records, not a queue-scoped scan.
-	enrichmentBacklogInterval = 60 * time.Second
+	// enrichmentBacklogInterval is deliberately much slower than the River depth poll: the backlog
+	// query is a full-table aggregate over feedback_records (a high-write table), so it runs
+	// infrequently to minimize shared-DB load and keep the MVCC snapshot it holds short-lived
+	// relative to VACUUM. Backlog is a slow-moving trend signal, so 5-minute resolution is ample.
+	// The poller only runs at all when metrics are enabled (see App.Run).
+	enrichmentBacklogInterval = 5 * time.Minute
 	// enrichmentBacklogQueryTimeout bounds each aggregate scan so a slow query cannot pin a pool
-	// connection or stall the ticker.
+	// connection, stall the ticker, or hold a long snapshot that delays VACUUM on feedback_records.
 	enrichmentBacklogQueryTimeout = 30 * time.Second
 )
 
