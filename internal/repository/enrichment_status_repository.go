@@ -32,13 +32,16 @@ type EnrichmentStatusCounts struct {
 	EmotionsDone        int64
 }
 
-// enrichmentEligibleText is the data-level eligibility predicate: an open-text field with
-// content. It mirrors the backfill eligibility (see classifyBackfillEligibleSQL /
-// translationBackfillSelectSQL) but uses the fuller btrim charset E' \t\r\n' so a whitespace-only
-// value_text ("\t", "\n") is treated as empty — matching the workers' Go strings.TrimSpace content
-// gate (HasOpenText). field_type = 'text' is load-bearing: matrix/multi-choice expansion writes
-// value_text on categorical/number rows that are not enrichable.
-const enrichmentEligibleText = `fr.field_type = 'text' AND fr.value_text IS NOT NULL AND btrim(fr.value_text, E' \t\r\n') <> ''`
+// enrichmentEligibleText is the data-level eligibility predicate: an open-text field with content.
+// It mirrors the backfill eligibility (classifyBackfillEligibleSQL / translationBackfillSelectSQL),
+// trimming the full ASCII whitespace set (space, tab, VT, FF, CR, LF) before the emptiness check.
+// This approximates the workers' HasOpenText gate (Go strings.TrimSpace, which additionally strips
+// exotic Unicode whitespace such as NBSP U+00A0 or the ideographic space U+3000); a value composed
+// ENTIRELY of exotic Unicode whitespace is a rare edge that would read as eligible-but-never-done
+// here — an accepted approximation, consistent with the existing backfill queries. field_type =
+// 'text' is load-bearing: matrix/multi-choice expansion writes value_text on categorical/number
+// rows that are not enrichable.
+const enrichmentEligibleText = `fr.field_type = 'text' AND fr.value_text IS NOT NULL AND btrim(fr.value_text, E' \t\n\v\f\r') <> ''`
 
 // enrichmentEffectiveTarget resolves a tenant's effective translation target: its own
 // target_language, falling back to the deployment default ($1). An empty result means translation

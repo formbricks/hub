@@ -110,6 +110,22 @@ func TestCountEnrichmentStatus(t *testing.T) {
 		assert.Equal(t, int64(2), counts.EmotionsEligible, "emotions default-enabled → still eligible")
 	})
 
+	t.Run("emotions switch off zeroes emotions eligibility, sentiment unaffected", func(t *testing.T) {
+		tenant := testTenantID("enrich-status-emotions-off")
+		off := false
+		_, err := tsRepo.Upsert(ctx, tenant, models.EnrichmentSettings{EmotionsEnabled: &off})
+		require.NoError(t, err)
+
+		mkRecord(tenant, models.FieldTypeText, "a")
+		mkRecord(tenant, models.FieldTypeText, "b")
+
+		counts, err := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(0), counts.EmotionsEligible, "emotions disabled → not eligible")
+		assert.Equal(t, int64(2), counts.SentimentEligible, "sentiment default-enabled → still eligible")
+	})
+
 	t.Run("translation eligibility follows the effective target", func(t *testing.T) {
 		tenant := testTenantID("enrich-status-trans")
 		// No tenant settings row at all → no own target language.
