@@ -3425,6 +3425,9 @@ components:
         EnrichmentTypeStatus:
             type: object
             additionalProperties: false
+            # Reused for translation/sentiment/emotions; declare a model so the SDK emits one shared
+            # type instead of three structurally identical inline copies (Model/Recommended).
+            x-stainless-model: enrichmentStatus.typeStatus
             description: One enrichment's progress for a tenant. When `enabled` is false, `eligible` and `done` are zero.
             properties:
                 enabled:
