@@ -3427,7 +3427,8 @@ components:
             additionalProperties: false
             # Reused for translation/sentiment/emotions; declare a model so the SDK emits one shared
             # type instead of three structurally identical inline copies (Model/Recommended).
-            x-stainless-model: enrichmentStatus.typeStatus
+            # Model paths are snake_case (Name/NotSnakeCase), unlike the resource/method names.
+            x-stainless-model: enrichment_status.type_status
             description: One enrichment's progress for a tenant. When `enabled` is false, `eligible` and `done` are zero.
             properties:
                 enabled:
