@@ -24,6 +24,13 @@ const (
 // deliberately NOT a label, so per-tenant detail stays in the API and metric cardinality is bounded.
 type EnrichmentBacklogMetrics interface {
 	SetEnrichmentPending(enrichment string, count int64)
+	// ClearEnrichmentPending withdraws every series this process exports for the gauge. The async
+	// callback re-observes the stored values on EVERY collection, so a process that stops being the
+	// leader would otherwise keep exporting its final reading forever: the new leader's live series
+	// and the old leader's frozen one would coexist, a sum would double-count, and the frozen copy
+	// would look like a permanently stuck backlog. Callers must clear as soon as they are no longer
+	// the leader. Exporting nothing is the honest state — absence is visible, a stale value is not.
+	ClearEnrichmentPending()
 	// RecordPollError counts a failed refresh. The gauge holds its last value when a poll fails,
 	// which is indistinguishable from a healthy steady backlog on a dashboard — this counter is
 	// the signal to alert on (rate > 0 means the gauge is going stale).
@@ -90,6 +97,15 @@ func NewEnrichmentBacklogMetrics(meter metric.Meter) (EnrichmentBacklogMetrics, 
 	m.pollErrors = pollErrors
 
 	return m, nil
+}
+
+// ClearEnrichmentPending drops every stored value so the next collection observes nothing and this
+// process stops exporting the gauge entirely.
+func (m *enrichmentBacklogMetrics) ClearEnrichmentPending() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	clear(m.pending)
 }
 
 // RecordPollError counts one failed backlog refresh.

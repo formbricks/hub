@@ -23,6 +23,29 @@
 ALTER TABLE feedback_records
   ADD COLUMN IF NOT EXISTS emotions_classified_at TIMESTAMPTZ;
 
+-- Realign the 016 emotions-backfill index with the new completion semantics. That index was built
+-- on `emotions IS NULL` precisely so a row would "leave the index the moment it is enriched",
+-- keeping it near-empty once a backfill drains. A classified-empty row now keeps emotions NULL
+-- forever (the point of the column above), so under the old predicate it would stay indexed
+-- permanently: the index would grow monotonically, and a drained backfill would have to scan the
+-- whole retained set and discard every row instead of finishing near-instantly. Adding the marker
+-- to the predicate restores the drain property, and also lets the backfill query use the index
+-- directly instead of re-checking emotions_classified_at as a post-filter.
+--
+-- Built CONCURRENTLY, and DROP-then-CREATE (not IF NOT EXISTS) so an interrupted build leaves an
+-- INVALID index that a re-run replaces, matching 016.
+DROP INDEX CONCURRENTLY IF EXISTS idx_feedback_records_emotions_backfill;
+CREATE INDEX CONCURRENTLY idx_feedback_records_emotions_backfill
+  ON feedback_records (id)
+  WHERE field_type = 'text' AND value_text IS NOT NULL
+    AND emotions IS NULL AND emotions_classified_at IS NULL;
+
 -- +goose down
+-- Restore the 016 predicate before dropping the column it references.
+DROP INDEX CONCURRENTLY IF EXISTS idx_feedback_records_emotions_backfill;
+CREATE INDEX CONCURRENTLY idx_feedback_records_emotions_backfill
+  ON feedback_records (id)
+  WHERE field_type = 'text' AND value_text IS NOT NULL AND emotions IS NULL;
+
 ALTER TABLE feedback_records
   DROP COLUMN IF EXISTS emotions_classified_at;

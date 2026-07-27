@@ -305,6 +305,12 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	leaderOne := repository.NewEnrichmentBacklogLeader(dbLeader)
 	leaderTwo := repository.NewEnrichmentBacklogLeader(dbRival)
 
+	// Release leadership before the pools close. Close is idempotent, and without this an early
+	// require failure would unwind into pgxpool.Close with the leader's connection still checked
+	// out, wedging the whole suite until the test timeout instead of reporting the failure.
+	defer leaderOne.Close(ctx)
+	defer leaderTwo.Close(ctx)
+
 	// First replica wins leadership and gets real counts.
 	counts, isLeader, err := leaderOne.CountIfLeader(ctx, "")
 	require.NoError(t, err)

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -136,6 +137,10 @@ const (
 	// sessionUnlockSQL releases it. A session lock outlives returning the connection to the pool,
 	// so it must be released explicitly.
 	sessionUnlockSQL = `SELECT pg_advisory_unlock(hashtextextended($1, 0))`
+	// setLeaderIdleTimeoutSQL caps how long a stalled leader session can hold the lock. Applies to
+	// this session only (SET, not ALTER ROLE); comfortably above enrichmentBacklogInterval so a
+	// healthy leader, which queries every interval, is never affected. Requires PG14+.
+	setLeaderIdleTimeoutSQL = `SET idle_session_timeout = '30min'`
 )
 
 // CountEnrichmentStatus returns one tenant's eligible/done counts per enrichment. defaultLang is
@@ -238,6 +243,19 @@ func (l *EnrichmentBacklogLeader) tryAcquire(ctx context.Context) (bool, error) 
 		conn.Release()
 
 		return false, nil
+	}
+
+	// Bound how long a LOST leader can keep the lock. A session lock lives until its backend exits;
+	// a graceful shutdown releases it via Close, and a killed pod's socket closes, but a node
+	// failure or network partition leaves a zombie backend holding it until TCP keepalives reap the
+	// connection -- hours under Linux defaults, during which no replica can take over and the gauge
+	// just goes absent. An idle timeout on this session alone caps that at one timeout period. The
+	// leader queries every enrichmentBacklogInterval, so the timeout is set well above it and can
+	// only fire on a session that has genuinely stopped polling. Best effort: on an older server or
+	// a restricted role this simply does not apply and behaviour is as before.
+	if _, err := conn.Exec(ctx, setLeaderIdleTimeoutSQL); err != nil {
+		slog.WarnContext(ctx, "enrichment backlog: could not bound leader session idle timeout",
+			"error", err)
 	}
 
 	l.conn = conn

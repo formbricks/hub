@@ -40,6 +40,34 @@ func TestEnrichmentBacklogMetricsGauge(t *testing.T) {
 	assert.Equal(t, int64(3), backlogGaugeValue(t, reader, "translation"))
 }
 
+// TestEnrichmentBacklogMetricsClearWithdrawsSeries verifies a demoted leader stops exporting
+// entirely rather than freezing at its last reading. The async gauge re-observes stored values on
+// every collection, so without this a former leader's stale series would coexist with the new
+// leader's live one — a sum would double-count and the frozen copy would look like a stuck backlog.
+func TestEnrichmentBacklogMetricsClearWithdrawsSeries(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+
+	metrics, err := NewEnrichmentBacklogMetrics(provider.Meter("test"))
+	require.NoError(t, err)
+	require.NotNil(t, metrics)
+
+	metrics.SetEnrichmentPending(EnrichmentTypeTranslation, 42)
+	assert.Equal(t, int64(42), backlogGaugeValue(t, reader, EnrichmentTypeTranslation))
+
+	metrics.ClearEnrichmentPending()
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &collected))
+
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			assert.NotEqual(t, MetricNameEnrichmentPendingRecords, m.Name,
+				"a cleared gauge must export no data points at all, not a stale value")
+		}
+	}
+}
+
 // TestEnrichmentBacklogMetricsPollErrors verifies failed refreshes are counted, so a gauge frozen
 // at its last value (which looks like a healthy steady backlog) is still alertable.
 func TestEnrichmentBacklogMetricsPollErrors(t *testing.T) {

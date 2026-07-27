@@ -1228,18 +1228,16 @@ func (r *FeedbackRecordsRepository) writeEmotions(
 			return err
 		}
 
-		// classifiedAt is NULL when clearing and NOW() for a classifier result, so the marker always
-		// travels with the value it describes.
-		var classifiedAt any
-		if classified {
-			classifiedAt = time.Now()
-		}
-
+		// The marker is stamped from the DB clock, like updated_at beside it, rather than the pod's
+		// clock -- every other timestamp on this table is server-generated, and the two should not
+		// be able to disagree. CASE keeps it NULL when clearing.
 		tag, err := dbTx.Exec(ctx, `
 			UPDATE feedback_records
-			SET emotions = $2, emotions_classified_at = $3, updated_at = NOW()
+			SET emotions = $2,
+				emotions_classified_at = CASE WHEN $3::boolean THEN NOW() END,
+				updated_at = NOW()
 			WHERE id = $1`,
-			feedbackRecordID, emotionsArg, classifiedAt,
+			feedbackRecordID, emotionsArg, classified,
 		)
 		if err != nil {
 			return fmt.Errorf("set feedback record emotions: %w", err)

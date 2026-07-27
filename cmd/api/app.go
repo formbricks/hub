@@ -810,6 +810,10 @@ func runEnrichmentBacklogPoller(
 
 			consecutiveFailures++
 
+			// A failed scan also costs this process its leadership, so withdraw the series rather
+			// than leave it frozen at the last good reading while the new leader publishes its own.
+			backlog.ClearEnrichmentPending()
+
 			// Always count the failure so a stale gauge is alertable, then escalate the log from
 			// warn to error once failures persist: a single blip is noise, a run of them means the
 			// gauge is frozen at its last value and silently lying about the backlog.
@@ -829,7 +833,11 @@ func runEnrichmentBacklogPoller(
 		consecutiveFailures = 0
 
 		if !isLeader {
-			// Another replica owns this gauge and exports the single global series for it.
+			// Another replica owns this gauge and exports the single global series for it. Drop
+			// anything this process exported while it was previously the leader, so a handover
+			// leaves exactly one series rather than a live one plus a frozen one.
+			backlog.ClearEnrichmentPending()
+
 			return
 		}
 
