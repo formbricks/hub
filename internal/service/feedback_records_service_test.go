@@ -38,8 +38,9 @@ type mockFeedbackRecordsRepo struct {
 	setSentimentLabel  *models.SentimentValue
 	setSentimentScore  *float64
 
-	setEmotionsCalled bool
-	setEmotionsLabels []models.EmotionValue
+	setEmotionsCalled   bool
+	setEmotionsLabels   []models.EmotionValue
+	clearEmotionsCalled bool
 }
 
 func (m *mockFeedbackRecordsRepo) Create(
@@ -99,6 +100,14 @@ func (m *mockFeedbackRecordsRepo) SetSentiment(
 	m.setSentimentCalled = true
 	m.setSentimentLabel = sentiment
 	m.setSentimentScore = score
+
+	return nil
+}
+
+func (m *mockFeedbackRecordsRepo) ClearEmotions(
+	_ context.Context, _ uuid.UUID, _ func(valueText *string) bool,
+) error {
+	m.clearEmotionsCalled = true
 
 	return nil
 }

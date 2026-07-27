@@ -24,6 +24,10 @@ type emotionsWorkerService interface {
 	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
 		stillCurrent func(valueText *string) bool) error
+	// ClearEmotions returns the record to "not classified" (used when the source content is gone),
+	// as opposed to SetEmotions with an empty result, which is a completed classification.
+	ClearEmotions(ctx context.Context, feedbackRecordID uuid.UUID,
+		stillCurrent func(valueText *string) bool) error
 }
 
 // tenantSettingsReader resolves a tenant's enrichment settings for the worker's authoritative
@@ -58,11 +62,14 @@ func NewFeedbackEmotionsWorker(
 		},
 		persist: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackEmotionsArgs, result *service.EmotionsResult) error {
 			// Guard the write against content churn since the Work-time read: a stale job's labels
-			// (or clear) must not land last over a newer job's write. A nil result (empty content)
-			// or an empty label set both clear the column: absence is NULL, never an empty array.
+			// (or clear) must not land last over a newer job's write. Both paths leave the column
+			// NULL when there are no labels (absence is NULL, never an empty array), but they are
+			// NOT the same state: a nil result means the content is gone, whereas an empty label
+			// set is a completed classification. ClearEmotions/SetEmotions record that difference
+			// in emotions_classified_at so progress counts can tell them apart (ENG-1670).
 			stillCurrent := valueTextStillCurrent(record.ValueText)
 			if result == nil {
-				return svc.SetEmotions(ctx, record.ID, nil, stillCurrent)
+				return svc.ClearEmotions(ctx, record.ID, stillCurrent)
 			}
 
 			return svc.SetEmotions(ctx, record.ID, result.Labels, stillCurrent)

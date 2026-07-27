@@ -58,10 +58,11 @@ func (m *countingEmotionsMetrics) RecordEmotionsDuration(_ context.Context, _ ti
 var _ observability.EmotionsMetrics = (*countingEmotionsMetrics)(nil)
 
 type mockEmotionsWorkerService struct {
-	record   *models.FeedbackRecord
-	getErr   error
-	setErr   error
-	setCalls [][]models.EmotionValue
+	record     *models.FeedbackRecord
+	getErr     error
+	setErr     error
+	setCalls   [][]models.EmotionValue
+	clearCalls int
 }
 
 func (m *mockEmotionsWorkerService) GetFeedbackRecord(_ context.Context, _ uuid.UUID) (*models.FeedbackRecord, error) {
@@ -72,6 +73,16 @@ func (m *mockEmotionsWorkerService) SetEmotions(
 	_ context.Context, _ uuid.UUID, emotions []models.EmotionValue, _ func(valueText *string) bool,
 ) error {
 	m.setCalls = append(m.setCalls, emotions)
+
+	return m.setErr
+}
+
+// ClearEmotions is the "content is gone" path, distinct from SetEmotions with an empty result
+// (a completed classification). Counted separately so tests can assert which one the worker took.
+func (m *mockEmotionsWorkerService) ClearEmotions(
+	_ context.Context, _ uuid.UUID, _ func(valueText *string) bool,
+) error {
+	m.clearCalls++
 
 	return m.setErr
 }
@@ -186,8 +197,15 @@ func TestFeedbackEmotionsWorker_EmptyValueTextClears(t *testing.T) {
 				t.Fatalf("Classify calls = %d, want 0 (empty text is not classified)", client.calls)
 			}
 
-			if len(svc.setCalls) != 1 || len(svc.setCalls[0]) != 0 {
-				t.Fatalf("setCalls = %+v, want one clear (empty set)", svc.setCalls)
+			// Empty content must take the CLEAR path, not a classification with an empty result:
+			// both leave the labels NULL, but only a classification stamps the completion marker,
+			// and an unclassifiable record must not be reported as "done" (ENG-1670).
+			if svc.clearCalls != 1 {
+				t.Fatalf("clearCalls = %d, want 1 (empty text clears rather than classifies)", svc.clearCalls)
+			}
+
+			if len(svc.setCalls) != 0 {
+				t.Fatalf("setCalls = %+v, want none (empty text must not record a classification)", svc.setCalls)
 			}
 		})
 	}

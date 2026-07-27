@@ -126,6 +126,48 @@ func TestCountEnrichmentStatus(t *testing.T) {
 		assert.Equal(t, int64(2), counts.SentimentEligible, "sentiment default-enabled → still eligible")
 	})
 
+	t.Run("emotions completion is the marker, not the labels", func(t *testing.T) {
+		tenant := testTenantID("enrich-status-emotions-done")
+
+		// A successful classification that detects NO emotion stores NULL labels (the 015 CHECK
+		// rejects an empty array). Without the completion marker it is indistinguishable from
+		// "never classified" and would count as pending forever, so the backlog would never drain.
+		classifiedEmpty := mkRecord(tenant, models.FieldTypeText, "the export ran at 3pm")
+		require.NoError(t, frepo.SetEmotions(ctx, classifiedEmpty.ID, nil, nil))
+
+		classifiedWithLabels := mkRecord(tenant, models.FieldTypeText, "I am thrilled")
+		setEmotions(classifiedWithLabels.ID)
+
+		mkRecord(tenant, models.FieldTypeText, "not processed yet")
+
+		// A pre-020 row: labels present but no marker (the column did not exist when it was
+		// enriched). Non-NULL labels are themselves proof of completion, which is why the migration
+		// needs no bulk backfill.
+		legacy := mkRecord(tenant, models.FieldTypeText, "enriched before the marker existed")
+		setEmotions(legacy.ID)
+		_, err := db.Exec(ctx,
+			`UPDATE feedback_records SET emotions_classified_at = NULL WHERE id = $1`, legacy.ID)
+		require.NoError(t, err)
+
+		counts, err := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(4), counts.EmotionsEligible, "all four text records are eligible")
+		assert.Equal(t, int64(3), counts.EmotionsDone,
+			"classified-empty, classified-with-labels and the legacy row are all done; only the unprocessed one is pending")
+
+		// The eager-clear on a content edit must drop the marker with the labels, or an edited
+		// record would keep counting as classified while its emotions are gone.
+		newText := "completely different text now"
+		_, _, err = frepo.Update(ctx, classifiedWithLabels.ID,
+			&models.UpdateFeedbackRecordRequest{ValueText: &newText})
+		require.NoError(t, err)
+
+		afterEdit, err := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), afterEdit.EmotionsDone, "editing the text returns that record to pending")
+	})
+
 	t.Run("translation eligibility follows the effective target", func(t *testing.T) {
 		tenant := testTenantID("enrich-status-trans")
 		// No tenant settings row at all → no own target language.
@@ -260,29 +302,41 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 
 	defer dbRival.Close()
 
-	leaderRepo := repository.NewEnrichmentStatusRepository(dbLeader)
-	rivalRepo := repository.NewEnrichmentStatusRepository(dbRival)
+	leaderOne := repository.NewEnrichmentBacklogLeader(dbLeader)
+	leaderTwo := repository.NewEnrichmentBacklogLeader(dbRival)
 
-	// Hold the lock by starting a scan on one "replica" and blocking before it commits: emulate by
-	// taking the lock in an explicit transaction on the leader pool.
-	holderTx, err := dbLeader.Begin(ctx)
+	// First replica wins leadership and gets real counts.
+	counts, isLeader, err := leaderOne.CountIfLeader(ctx, "")
 	require.NoError(t, err)
+	require.True(t, isLeader, "the first replica to poll becomes the leader")
 
-	var held bool
-	require.NoError(t, holderTx.QueryRow(ctx,
-		`SELECT pg_try_advisory_xact_lock(hashtextextended('hub:enrichment-backlog-poller', 0))`).Scan(&held))
-	require.True(t, held, "test must hold the poller lock to simulate a busy replica")
-
-	// While it is held, the other replica must be denied — and that is a normal skip, not an error.
-	_, acquired, err := rivalRepo.CountEnrichmentBacklogAggregateIfLeader(ctx, "")
-	require.NoError(t, err, "losing the leader race is not an error")
-	assert.False(t, acquired, "a second replica must not run the aggregate concurrently")
-
-	// Releasing the transaction releases the lock, so the next tick can win.
-	require.NoError(t, holderTx.Rollback(ctx))
-
-	counts, acquired, err := leaderRepo.CountEnrichmentBacklogAggregateIfLeader(ctx, "")
+	// Prove the leader returns the real aggregate, not a zero value.
+	want, err := repository.NewEnrichmentStatusRepository(dbLeader).CountEnrichmentBacklogAggregate(ctx, "")
 	require.NoError(t, err)
-	assert.True(t, acquired, "lock is free again after the holder's transaction ends")
-	assert.GreaterOrEqual(t, counts.SentimentEligible, int64(0), "leader gets real counts")
+	assert.Equal(t, want.SentimentEligible, counts.SentimentEligible, "leader returns the true aggregate")
+
+	// The second replica is denied — a normal skip, not an error — and must NOT publish counts.
+	zero, isLeader, err := leaderTwo.CountIfLeader(ctx, "")
+	require.NoError(t, err, "losing the leader election is not an error")
+	assert.False(t, isLeader, "a second replica must not scan or export the global gauge")
+	assert.Equal(t, repository.EnrichmentStatusCounts{}, zero, "non-leader returns no counts to publish")
+
+	// Leadership is STICKY: unlike a scan-scoped lock, it persists across polls, so the same
+	// replica keeps exporting the series instead of it flapping between replicas.
+	_, stillLeader, err := leaderOne.CountIfLeader(ctx, "")
+	require.NoError(t, err)
+	assert.True(t, stillLeader, "leadership is held for the process lifetime, not per scan")
+
+	_, stillDenied, err := leaderTwo.CountIfLeader(ctx, "")
+	require.NoError(t, err)
+	assert.False(t, stillDenied, "the follower stays a follower while the leader lives")
+
+	// Releasing hands leadership over promptly rather than waiting for a session timeout.
+	leaderOne.Close(ctx)
+
+	_, promoted, err := leaderTwo.CountIfLeader(ctx, "")
+	require.NoError(t, err)
+	assert.True(t, promoted, "a follower is promoted once the leader releases")
+
+	leaderTwo.Close(ctx)
 }

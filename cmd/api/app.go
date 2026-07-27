@@ -787,7 +787,8 @@ func runEnrichmentBacklogPoller(
 	backlog observability.EnrichmentBacklogMetrics,
 	cfg enrichmentBacklogPollConfig,
 ) {
-	repo := repository.NewEnrichmentStatusRepository(db)
+	leader := repository.NewEnrichmentBacklogLeader(db)
+	defer leader.Close(ctx)
 
 	ticker := time.NewTicker(enrichmentBacklogInterval)
 	defer ticker.Stop()
@@ -798,9 +799,15 @@ func runEnrichmentBacklogPoller(
 		queryCtx, cancel := context.WithTimeout(ctx, enrichmentBacklogQueryTimeout)
 		defer cancel()
 
-		// Only the replica that wins the advisory lock scans; the others skip this tick.
-		counts, leader, err := repo.CountEnrichmentBacklogAggregateIfLeader(queryCtx, cfg.defaultLang)
+		// Exactly one replica holds leadership and scans; the rest skip until it goes away.
+		counts, isLeader, err := leader.CountIfLeader(queryCtx, cfg.defaultLang)
 		if err != nil {
+			// Shutdown cancels the scan mid-flight. That is not a poll failure, and counting it
+			// would fire the very alert this counter exists for on every rolling deploy.
+			if ctx.Err() != nil {
+				return
+			}
+
 			consecutiveFailures++
 
 			// Always count the failure so a stale gauge is alertable, then escalate the log from
@@ -821,8 +828,8 @@ func runEnrichmentBacklogPoller(
 
 		consecutiveFailures = 0
 
-		if !leader {
-			// Another replica refreshed the gauge this tick.
+		if !isLeader {
+			// Another replica owns this gauge and exports the single global series for it.
 			return
 		}
 
