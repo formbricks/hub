@@ -62,6 +62,9 @@ const (
 	// enrichmentBacklogQueryTimeout bounds each aggregate scan so a slow query cannot pin a pool
 	// connection, stall the ticker, or hold a long snapshot that delays VACUUM on feedback_records.
 	enrichmentBacklogQueryTimeout = 30 * time.Second
+	// enrichmentBacklogFailuresBeforeError is how many consecutive failed refreshes escalate the
+	// log from warn to error (a transient blip is expected; a sustained run means a stale gauge).
+	enrichmentBacklogFailuresBeforeError = 3
 )
 
 // embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
@@ -789,14 +792,37 @@ func runEnrichmentBacklogPoller(
 	ticker := time.NewTicker(enrichmentBacklogInterval)
 	defer ticker.Stop()
 
+	consecutiveFailures := 0
+
 	update := func() {
 		queryCtx, cancel := context.WithTimeout(ctx, enrichmentBacklogQueryTimeout)
 		defer cancel()
 
-		counts, err := repo.CountEnrichmentBacklogAggregate(queryCtx, cfg.defaultLang)
+		// Only the replica that wins the advisory lock scans; the others skip this tick.
+		counts, leader, err := repo.CountEnrichmentBacklogAggregateIfLeader(queryCtx, cfg.defaultLang)
 		if err != nil {
-			slog.WarnContext(ctx, "enrichment backlog poll failed", "error", err)
+			consecutiveFailures++
 
+			// Always count the failure so a stale gauge is alertable, then escalate the log from
+			// warn to error once failures persist: a single blip is noise, a run of them means the
+			// gauge is frozen at its last value and silently lying about the backlog.
+			backlog.RecordPollError(ctx)
+
+			if consecutiveFailures >= enrichmentBacklogFailuresBeforeError {
+				slog.ErrorContext(ctx, "enrichment backlog poll failing repeatedly; gauge is stale",
+					"error", err, "consecutive_failures", consecutiveFailures)
+			} else {
+				slog.WarnContext(ctx, "enrichment backlog poll failed",
+					"error", err, "consecutive_failures", consecutiveFailures)
+			}
+
+			return
+		}
+
+		consecutiveFailures = 0
+
+		if !leader {
+			// Another replica refreshed the gauge this tick.
 			return
 		}
 

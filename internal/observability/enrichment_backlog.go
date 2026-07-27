@@ -24,14 +24,19 @@ const (
 // deliberately NOT a label, so per-tenant detail stays in the API and metric cardinality is bounded.
 type EnrichmentBacklogMetrics interface {
 	SetEnrichmentPending(enrichment string, count int64)
+	// RecordPollError counts a failed refresh. The gauge holds its last value when a poll fails,
+	// which is indistinguishable from a healthy steady backlog on a dashboard — this counter is
+	// the signal to alert on (rate > 0 means the gauge is going stale).
+	RecordPollError(ctx context.Context)
 }
 
 // enrichmentBacklogMetrics implements EnrichmentBacklogMetrics. The latest per-enrichment value is
 // stored under mu and read by the gauge callback.
 type enrichmentBacklogMetrics struct {
-	mu      sync.Mutex
-	pending map[string]int64
-	gauge   metric.Int64ObservableGauge
+	mu         sync.Mutex
+	pending    map[string]int64
+	gauge      metric.Int64ObservableGauge
+	pollErrors metric.Int64Counter
 }
 
 // NewEnrichmentBacklogMetrics registers the pending-records gauge. Returns (nil, nil) when meter is
@@ -69,7 +74,27 @@ func NewEnrichmentBacklogMetrics(meter metric.Meter) (EnrichmentBacklogMetrics, 
 
 	m.gauge = gauge
 
+	pollErrors, err := meter.Int64Counter(
+		MetricNameEnrichmentBacklogPollErrs,
+		metric.WithDescription(
+			"Failed refreshes of the enrichment backlog gauge. A non-zero rate means the gauge is "+
+				"stale (holding its last value), which on a dashboard is indistinguishable from a "+
+				"steady backlog — alert on this rather than trusting a flat gauge.",
+		),
+		metric.WithUnit("1"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", MetricNameEnrichmentBacklogPollErrs, err)
+	}
+
+	m.pollErrors = pollErrors
+
 	return m, nil
+}
+
+// RecordPollError counts one failed backlog refresh.
+func (m *enrichmentBacklogMetrics) RecordPollError(ctx context.Context) {
+	m.pollErrors.Add(ctx, 1)
 }
 
 // SetEnrichmentPending stores the latest backlog count for an enrichment type; the registered gauge

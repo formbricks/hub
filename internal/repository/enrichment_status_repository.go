@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -75,24 +76,40 @@ const enrichmentCountFrom = `
 	FROM feedback_records fr
 	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id`
 
-// The `fr.field_type = 'text'` predicate in the outer WHERE below is redundant with
-// enrichmentEligibleText inside every FILTER (so it can never change a count), but hoisting it out
-// lets the planner use idx_feedback_records_tenant_field_type (tenant_id, field_type) to visit only
-// text rows instead of scanning every row and discarding non-text inside the FILTERs.
+// The `fr.field_type = 'text'` predicate in the outer WHERE of both queries below is redundant
+// with enrichmentEligibleText inside every FILTER (so it can never change a count); it is hoisted
+// out so the planner can use it as an access-path predicate rather than only as a per-row filter.
 
 // countEnrichmentStatusSQL counts eligible/done per enrichment for ONE tenant. $1 = deployment
-// default target language, $2 = tenant_id. The (tenant_id, field_type) predicate is served by
+// default target language, $2 = tenant_id. The (tenant_id, field_type) pair matches
 // idx_feedback_records_tenant_field_type, so cost scales with the tenant's text-record count.
 const countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
 	WHERE fr.tenant_id = $2 AND fr.field_type = 'text'`
 
 // countEnrichmentBacklogAggregateSQL is the same SELECT without the tenant filter: it sums
 // eligible/done per enrichment across ALL tenants (for the observability gauge). $1 = deployment
-// default target language. The field_type = 'text' predicate narrows the scan to text rows; the
-// per-tenant enable gates still apply, so a tenant that switched an enrichment off, or has no
-// resolvable target, never inflates the backlog.
+// default target language. The per-tenant enable gates still apply, so a tenant that switched an
+// enrichment off, or has no resolvable target, never inflates the backlog.
+//
+// NOTE: unlike the per-tenant query this one canNOT use idx_feedback_records_tenant_field_type --
+// tenant_id is that index's leading column, and this query has no tenant predicate -- so Postgres
+// plans a sequential scan of feedback_records (confirmed via EXPLAIN). That is deliberate: the
+// aggregate must read every text row anyway, so an index scan over most of the table would not be
+// cheaper, and a dedicated partial index would add write amplification to the high-throughput
+// ingest path we are protecting. The scan is instead bounded by running it infrequently
+// (enrichmentBacklogInterval), under a statement timeout, and on ONE replica at a time via the
+// advisory lock below.
 const countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
 	WHERE fr.field_type = 'text'`
+
+// enrichmentBacklogLockKey names the advisory lock that elects a single backlog-poller run across
+// API replicas. Hashed with hashtextextended like the other advisory locks in this package.
+const enrichmentBacklogLockKey = "hub:enrichment-backlog-poller"
+
+// tryAdvisoryXactLockSQL takes a transaction-scoped advisory lock without blocking; it returns
+// false when another session (replica) already holds it. Transaction scope means the lock is
+// always released on commit/rollback, so a crashed poller cannot wedge the others.
+const tryAdvisoryXactLockSQL = `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))`
 
 // CountEnrichmentStatus returns one tenant's eligible/done counts per enrichment. defaultLang is
 // the deployment translation fallback ("" disables the fallback, so only tenants with their own
@@ -100,37 +117,67 @@ const countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + e
 func (r *EnrichmentStatusRepository) CountEnrichmentStatus(
 	ctx context.Context, tenantID, defaultLang string,
 ) (EnrichmentStatusCounts, error) {
-	var counts EnrichmentStatusCounts
-
-	// Scan order matches enrichmentCountSelect.
-	err := r.db.QueryRow(ctx, countEnrichmentStatusSQL, defaultLang, tenantID).Scan(
-		&counts.SentimentEligible, &counts.SentimentDone,
-		&counts.EmotionsEligible, &counts.EmotionsDone,
-		&counts.TranslationEligible, &counts.TranslationDone,
-	)
-	if err != nil {
-		return EnrichmentStatusCounts{}, fmt.Errorf("count enrichment status: %w", err)
-	}
-
-	return counts, nil
+	return scanEnrichmentCounts(
+		r.db.QueryRow(ctx, countEnrichmentStatusSQL, defaultLang, tenantID), "count enrichment status")
 }
 
 // CountEnrichmentBacklogAggregate returns eligible/done counts per enrichment summed across all
-// tenants. defaultLang is the deployment translation fallback. Used by the observability poller;
-// the result carries no tenant dimension.
+// tenants. defaultLang is the deployment translation fallback. The result carries no tenant
+// dimension. Prefer CountEnrichmentBacklogAggregateIfLeader from the poller so only one replica
+// runs the scan.
 func (r *EnrichmentStatusRepository) CountEnrichmentBacklogAggregate(
 	ctx context.Context, defaultLang string,
 ) (EnrichmentStatusCounts, error) {
+	return scanEnrichmentCounts(
+		r.db.QueryRow(ctx, countEnrichmentBacklogAggregateSQL, defaultLang), "count enrichment backlog aggregate")
+}
+
+// CountEnrichmentBacklogAggregateIfLeader runs the cross-tenant aggregate only if this process wins
+// a non-blocking advisory lock, and reports whether it did. Production runs several API replicas
+// per region, and each would otherwise repeat the same full-table scan on every tick and publish
+// the same global gauge — multiplying DB load and producing duplicate series that a naive sum would
+// over-count. Losing the race is normal, not an error: the winner refreshes the gauge for everyone.
+// The lock is transaction-scoped, so it is released even if this process dies mid-scan.
+func (r *EnrichmentStatusRepository) CountEnrichmentBacklogAggregateIfLeader(
+	ctx context.Context, defaultLang string,
+) (EnrichmentStatusCounts, bool, error) {
+	backlogTx, err := r.db.Begin(ctx)
+	if err != nil {
+		return EnrichmentStatusCounts{}, false, fmt.Errorf("begin enrichment backlog tx: %w", err)
+	}
+
+	// Read-only work: always roll back (releasing the advisory lock); a rollback after success is
+	// equivalent to a commit here and avoids leaking the tx on any early return.
+	defer func() { _ = backlogTx.Rollback(ctx) }()
+
+	var acquired bool
+	if err := backlogTx.QueryRow(ctx, tryAdvisoryXactLockSQL, enrichmentBacklogLockKey).Scan(&acquired); err != nil {
+		return EnrichmentStatusCounts{}, false, fmt.Errorf("try enrichment backlog advisory lock: %w", err)
+	}
+
+	if !acquired {
+		return EnrichmentStatusCounts{}, false, nil
+	}
+
+	counts, err := scanEnrichmentCounts(
+		backlogTx.QueryRow(ctx, countEnrichmentBacklogAggregateSQL, defaultLang), "count enrichment backlog aggregate")
+	if err != nil {
+		return EnrichmentStatusCounts{}, false, err
+	}
+
+	return counts, true, nil
+}
+
+// scanEnrichmentCounts reads the six-column count row; the scan order matches enrichmentCountSelect.
+func scanEnrichmentCounts(row pgx.Row, what string) (EnrichmentStatusCounts, error) {
 	var counts EnrichmentStatusCounts
 
-	// Scan order matches enrichmentCountSelect.
-	err := r.db.QueryRow(ctx, countEnrichmentBacklogAggregateSQL, defaultLang).Scan(
+	if err := row.Scan(
 		&counts.SentimentEligible, &counts.SentimentDone,
 		&counts.EmotionsEligible, &counts.EmotionsDone,
 		&counts.TranslationEligible, &counts.TranslationDone,
-	)
-	if err != nil {
-		return EnrichmentStatusCounts{}, fmt.Errorf("count enrichment backlog aggregate: %w", err)
+	); err != nil {
+		return EnrichmentStatusCounts{}, fmt.Errorf("%s: %w", what, err)
 	}
 
 	return counts, nil

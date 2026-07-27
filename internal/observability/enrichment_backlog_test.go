@@ -40,6 +40,43 @@ func TestEnrichmentBacklogMetricsGauge(t *testing.T) {
 	assert.Equal(t, int64(3), backlogGaugeValue(t, reader, "translation"))
 }
 
+// TestEnrichmentBacklogMetricsPollErrors verifies failed refreshes are counted, so a gauge frozen
+// at its last value (which looks like a healthy steady backlog) is still alertable.
+func TestEnrichmentBacklogMetricsPollErrors(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+
+	metrics, err := NewEnrichmentBacklogMetrics(provider.Meter("test"))
+	require.NoError(t, err)
+	require.NotNil(t, metrics)
+
+	ctx := context.Background()
+	metrics.RecordPollError(ctx)
+	metrics.RecordPollError(ctx)
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(ctx, &collected))
+
+	var total int64
+
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != MetricNameEnrichmentBacklogPollErrs {
+				continue
+			}
+
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok, "expected Sum[int64] for %s", MetricNameEnrichmentBacklogPollErrs)
+
+			for _, point := range sum.DataPoints {
+				total += point.Value
+			}
+		}
+	}
+
+	assert.Equal(t, int64(2), total, "each failed poll increments the error counter")
+}
+
 // backlogGaugeValue collects metrics and returns the pending-records gauge value for one enrichment.
 func backlogGaugeValue(t *testing.T, reader sdkmetric.Reader, enrichment string) int64 {
 	t.Helper()

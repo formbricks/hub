@@ -16,6 +16,7 @@ const (
 	MetricNameHNSWIterativeScanDegraded = "hub_hnsw_iterative_scan_degraded"
 	MetricNameEnrichmentOutputsCleared  = "hub_enrichment_outputs_cleared_total"
 	MetricNameEnrichmentPendingRecords  = "hub_enrichment_pending_records"
+	MetricNameEnrichmentBacklogPollErrs = "hub_enrichment_backlog_poll_errors_total"
 	MetricNameWebhookJobsEnqueued       = "hub_webhook_jobs_enqueued_total"
 	MetricNameWebhookProviderErrors     = "hub_webhook_provider_errors_total"
 	MetricNameWebhookDeliveries         = "hub_webhook_deliveries_total"

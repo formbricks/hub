@@ -237,3 +237,52 @@ func TestCountEnrichmentBacklogAggregate(t *testing.T) {
 	assert.Equal(t, int64(5), afterEmo-beforeEmo, "emotions default-enabled for both tenants → 3+2")
 	assert.Equal(t, int64(5), afterTrans-beforeTrans, "en-US default makes all 5 records translation-pending")
 }
+
+// TestCountEnrichmentBacklogAggregateIfLeader covers the single-flight advisory lock that stops
+// every API replica from repeating the same cross-tenant scan: one caller wins and gets the counts,
+// a concurrent caller is denied (not an error) and skips its tick, and the lock is released
+// afterwards so the next tick can win again.
+func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	// Two independent pools stand in for two API replicas: a transaction-scoped advisory lock is
+	// held per session, so the contention is only observable across separate connections.
+	dbLeader, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer dbLeader.Close()
+
+	dbRival, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer dbRival.Close()
+
+	leaderRepo := repository.NewEnrichmentStatusRepository(dbLeader)
+	rivalRepo := repository.NewEnrichmentStatusRepository(dbRival)
+
+	// Hold the lock by starting a scan on one "replica" and blocking before it commits: emulate by
+	// taking the lock in an explicit transaction on the leader pool.
+	holderTx, err := dbLeader.Begin(ctx)
+	require.NoError(t, err)
+
+	var held bool
+	require.NoError(t, holderTx.QueryRow(ctx,
+		`SELECT pg_try_advisory_xact_lock(hashtextextended('hub:enrichment-backlog-poller', 0))`).Scan(&held))
+	require.True(t, held, "test must hold the poller lock to simulate a busy replica")
+
+	// While it is held, the other replica must be denied — and that is a normal skip, not an error.
+	_, acquired, err := rivalRepo.CountEnrichmentBacklogAggregateIfLeader(ctx, "")
+	require.NoError(t, err, "losing the leader race is not an error")
+	assert.False(t, acquired, "a second replica must not run the aggregate concurrently")
+
+	// Releasing the transaction releases the lock, so the next tick can win.
+	require.NoError(t, holderTx.Rollback(ctx))
+
+	counts, acquired, err := leaderRepo.CountEnrichmentBacklogAggregateIfLeader(ctx, "")
+	require.NoError(t, err)
+	assert.True(t, acquired, "lock is free again after the holder's transaction ends")
+	assert.GreaterOrEqual(t, counts.SentimentEligible, int64(0), "leader gets real counts")
+}
