@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
@@ -102,6 +103,30 @@ func TestSetupMetricsDisabledWithNilConfig(t *testing.T) {
 	}
 }
 
+// NewApp builds its River client insert-only — no Workers, no Queues — so the API never needs the
+// enrichment credentials that only hub-worker's workers use (ENG-1916). River rejects a config that
+// sets Queues without Workers, so omitting both is the only legal way to express insert-only; this
+// asserts that config stays valid, which is what lets NewApp boot without a worker bundle.
+//
+// That the resulting client may insert kinds it registers no worker for needs a database, so it is
+// covered by the integration suite rather than here.
+func TestRiverClientIsInsertOnly(t *testing.T) {
+	if _, err := river.NewClient(riverpgxv5.New(nil), &river.Config{}); err != nil {
+		t.Fatalf("river.NewClient(insert-only config) error = %v, want nil", err)
+	}
+
+	// The constraint that forces the shape above: declaring queues obliges us to supply a worker
+	// bundle, which is what used to drag the enrichment clients (and their credentials) into this
+	// process. If a River upgrade ever drops this rule, revisit whether the API can declare queues
+	// again for insert-time validation without taking on the credentials.
+	_, err := river.NewClient(riverpgxv5.New(nil), &river.Config{
+		Queues: map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}},
+	})
+	if err == nil {
+		t.Fatal("river.NewClient(queues without workers) error = nil, want a validation error")
+	}
+}
+
 func TestSetupEmbeddingSearchHandler(t *testing.T) {
 	cfg := &config.Config{
 		Embedding: config.EmbeddingConfig{
@@ -114,13 +139,9 @@ func TestSetupEmbeddingSearchHandler(t *testing.T) {
 		cfg,
 		service.EmbeddingProviderOpenAI,
 		"text-embedding-3-small",
-		"",
 		nil,
 		nil,
 		nil,
-		nil,
-		nil,
-		river.NewWorkers(),
 	)
 	if err != nil {
 		t.Fatalf("setupEmbeddingSearchHandler() error = %v, want nil", err)
@@ -137,13 +158,9 @@ func TestSetupEmbeddingSearchHandlerValidatesConfig(t *testing.T) {
 		&config.Config{},
 		service.EmbeddingProviderOpenAI,
 		"text-embedding-3-small",
-		"",
 		nil,
 		nil,
 		nil,
-		nil,
-		nil,
-		river.NewWorkers(),
 	)
 	if !errors.Is(err, service.ErrEmbeddingProviderAPIKey) {
 		t.Fatalf("setupEmbeddingSearchHandler() error = %v, want %v", err, service.ErrEmbeddingProviderAPIKey)
