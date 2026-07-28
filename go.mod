@@ -10,7 +10,6 @@ require (
 	github.com/iancoleman/strcase v0.3.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/openai/openai-go/v3 v3.32.0
 	github.com/pgvector/pgvector-go v0.3.0
 	github.com/riverqueue/river v0.39.0
@@ -30,14 +29,6 @@ require (
 	golang.org/x/sync v0.21.0
 	golang.org/x/text v0.39.0
 	google.golang.org/genai v1.54.0
-)
-
-require (
-	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/segmentio/asm v1.1.3 // indirect
-	github.com/segmentio/encoding v0.5.4 // indirect
-	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
 )
 
 require (
