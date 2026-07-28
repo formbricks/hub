@@ -11,7 +11,8 @@ import (
 )
 
 // RiverDeps holds dependencies required to build River workers and queue config.
-// When EmbeddingClient is nil, only webhook workers are registered.
+// Each optional group is gated on its client: leave a client nil and neither its worker nor its
+// queue is registered.
 type RiverDeps struct {
 	// Webhook worker
 	WebhooksRepo       webhookDispatchRepo
@@ -46,11 +47,15 @@ type RiverDeps struct {
 	EmotionsMetrics  observability.EmotionsMetrics
 }
 
-// NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps.
-// When deps.EmbeddingClient is nil, only webhook workers are registered and the embeddings queue is not added.
-// When placeholderMaxWorkers > 0 (e.g. 1 for insert-only API), all queue MaxWorkers use it; otherwise use cfg.
+// NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps. Each optional
+// worker is registered only when its client is set, and its queue is declared alongside it, so a
+// disabled enrichment leaves no queue for jobs to pile up on unworked.
+//
+// Only hub-worker calls this: the API inserts jobs through an insert-only River client and registers
+// nothing (see cmd/api/app.go), so the queue MaxWorkers below are always the real configured
+// concurrency.
 func NewRiverWorkersAndQueues(
-	cfg *config.Config, deps RiverDeps, placeholderMaxWorkers int,
+	cfg *config.Config, deps RiverDeps,
 ) (*river.Workers, map[string]river.QueueConfig) {
 	workers := river.NewWorkers()
 
@@ -62,14 +67,6 @@ func NewRiverWorkersAndQueues(
 	maxTranslation := cfg.Translation.MaxConcurrent
 	maxSentiment := cfg.Sentiment.MaxConcurrent
 	maxEmotions := cfg.Emotions.MaxConcurrent
-
-	if placeholderMaxWorkers > 0 {
-		maxDefault = placeholderMaxWorkers
-		maxEmbedding = placeholderMaxWorkers
-		maxTranslation = placeholderMaxWorkers
-		maxSentiment = placeholderMaxWorkers
-		maxEmotions = placeholderMaxWorkers
-	}
 
 	queues := map[string]river.QueueConfig{
 		river.QueueDefault: {MaxWorkers: maxDefault},
