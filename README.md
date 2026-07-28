@@ -66,7 +66,6 @@ Formbricks Hub is an independent open-source project with a growing developer ec
 - Power BI Guide: [Connect Hub to Microsoft Power BI](https://hub.formbricks.com/guides/hub-powerbi/)
 - Superset Guide: [Connect Hub to Apache Superset](https://hub.formbricks.com/guides/hub-superset/)
 - TypeScript SDK: [`@formbricks/hub`](https://www.npmjs.com/package/@formbricks/hub)
-- MCP Server: [`@formbricks/hub-mcp`](https://www.npmjs.com/package/@formbricks/hub-mcp)
 - Formbricks XM Suite (uses Hub): [`formbricks/formbricks`](https://github.com/formbricks/formbricks)
 
 ## Getting Started
