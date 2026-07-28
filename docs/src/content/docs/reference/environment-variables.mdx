@@ -182,15 +182,3 @@ event; a settings write evicts the tenant's entry so a change is visible immedia
 | `OTEL_TRACES_EXPORTER`  | -       | OpenTelemetry traces exporter.  |
 
 With `OTEL_METRICS_EXPORTER` set, Hub emits the metrics listed in the [Metrics](/reference/metrics) reference.
-
-## MCP Client Package
-
-These variables are used by MCP client package flows. They are not read by the
-Hub API or worker processes.
-
-| Variable                  | Default | Description                                                                        |
-| ------------------------- | ------- | ---------------------------------------------------------------------------------- |
-| `HUB_API_KEY`             | -       | API key used by MCP clients; usually the same value as Hub's `API_KEY`.            |
-| `FORMBRICKS_HUB_BASE_URL` | -       | Hub API root reachable from the MCP server, for example `https://hub.example.com`. |
-
-See [Connect Hub to AI Clients via MCP](/guides/hub-mcp) for client setup.

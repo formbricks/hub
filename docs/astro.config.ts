@@ -164,10 +164,6 @@ export default defineConfig({
               label: "Guides",
               items: [
                 {
-                  label: "Connect Hub to AI Clients via MCP",
-                  slug: "guides/hub-mcp",
-                },
-                {
                   label: "Connecting Hub to Power BI",
                   slug: "guides/hub-powerbi",
                 },
