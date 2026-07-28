@@ -757,16 +757,10 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 // riverDepthQueues is the fixed queue set the depth poller reports — every queue the Hub
-// declares. The list bounds the gauge's queue-label cardinality; a queue with no backlog is
-// reported as 0 so dashboards see the series exist.
-var riverDepthQueues = []string{
-	river.QueueDefault,
-	service.EmbeddingsQueueName,
-	service.TranslationsQueueName,
-	service.TranslationBackfillsQueueName,
-	service.SentimentsQueueName,
-	service.EmotionsQueueName,
-}
+// declares, derived from service.JobKindSpecs so a new job kind cannot be added without its
+// queue appearing on the gauge. The list bounds the gauge's queue-label cardinality; a queue with
+// no backlog is reported as 0 so dashboards see the series exist.
+var riverDepthQueues = service.JobQueueNames()
 
 // enrichmentBacklogPollConfig configures runEnrichmentBacklogPoller: the deployment default target
 // language and which enrichments are deployment-configured (only those emit a gauge).
