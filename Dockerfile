@@ -7,9 +7,12 @@ ARG TARGETOS=linux
 ARG TARGETARCH
 ARG GOOSE_VERSION=v3.27.1
 ARG RIVER_VERSION=v0.39.0
-ARG X_CRYPTO_VERSION=v0.52.0
-ARG X_NET_VERSION=v0.55.0
-ARG X_SYS_VERSION=v0.45.0
+ARG OTEL_VERSION=v1.44.0
+ARG GRPC_VERSION=v1.82.1
+ARG X_CRYPTO_VERSION=v0.53.0
+ARG X_NET_VERSION=v0.56.0
+ARG X_SYS_VERSION=v0.46.0
+ARG X_TEXT_VERSION=v0.39.0
 
 RUN apk add --no-cache git ca-certificates
 
@@ -24,9 +27,12 @@ RUN mkdir -p /tmp/migration-tools && \
     go get \
       github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION} \
       github.com/riverqueue/river/cmd/river@${RIVER_VERSION} \
+      go.opentelemetry.io/otel@${OTEL_VERSION} \
       golang.org/x/crypto@${X_CRYPTO_VERSION} \
       golang.org/x/net@${X_NET_VERSION} \
-      golang.org/x/sys@${X_SYS_VERSION} && \
+      golang.org/x/sys@${X_SYS_VERSION} \
+      golang.org/x/text@${X_TEXT_VERSION} \
+      google.golang.org/grpc@${GRPC_VERSION} && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/pressly/goose/v3/cmd/goose && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go install github.com/riverqueue/river/cmd/river
 
