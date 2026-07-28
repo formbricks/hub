@@ -4,9 +4,37 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 
 	"go.opentelemetry.io/otel/trace"
 )
+
+// ParseLogLevel maps a LOG_LEVEL value to a slog.Level, falling back to info for anything
+// unrecognized (including the empty string) so a typo degrades to the default rather than silencing
+// logs.
+func ParseLogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// SetupLogging installs the default slog handler at the given level. Both binaries call it during
+// startup: hub-api and hub-worker have to agree on log format and honor the same LOG_LEVEL, or a
+// failure that only reproduces in one of them is harder to read than it needs to be.
+func SetupLogging(level string) {
+	opts := &slog.HandlerOptions{Level: ParseLogLevel(level)}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
+}
 
 // requestIDKey is the context key for the request ID (X-Request-ID).
 // Middleware sets it; the TraceContextHandler adds it to log records.
