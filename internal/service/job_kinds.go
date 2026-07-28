@@ -39,7 +39,13 @@ func JobKindSpecs() []JobKindSpec {
 // JobQueueNames returns the distinct River queue names from JobKindSpecs, in declaration order.
 // Several kinds may share a queue, so callers that need queues rather than kinds use this.
 func JobQueueNames() []string {
-	specs := JobKindSpecs()
+	return distinctQueues(JobKindSpecs())
+}
+
+// distinctQueues collapses specs to their queue names, preserving declaration order and dropping
+// repeats. Taking the specs as a parameter keeps the dedup reachable from a test: every kind
+// declared today owns its own queue, so the duplicate path would otherwise never run.
+func distinctQueues(specs []JobKindSpec) []string {
 	seen := make(map[string]struct{}, len(specs))
 	queues := make([]string, 0, len(specs))
 
