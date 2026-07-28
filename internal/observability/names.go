@@ -15,6 +15,8 @@ const (
 	MetricNameProviderPanics            = "hub_provider_panics_total"
 	MetricNameHNSWIterativeScanDegraded = "hub_hnsw_iterative_scan_degraded"
 	MetricNameEnrichmentOutputsCleared  = "hub_enrichment_outputs_cleared_total"
+	MetricNameEnrichmentPendingRecords  = "hub_enrichment_pending_records"
+	MetricNameEnrichmentBacklogPollErrs = "hub_enrichment_backlog_poll_errors_total"
 	MetricNameWebhookJobsEnqueued       = "hub_webhook_jobs_enqueued_total"
 	MetricNameWebhookProviderErrors     = "hub_webhook_provider_errors_total"
 	MetricNameWebhookDeliveries         = "hub_webhook_deliveries_total"
@@ -65,6 +67,10 @@ const (
 	// AttrQueue labels the River queue-depth gauge; values come from the poller's fixed queue
 	// set, so cardinality is bounded.
 	AttrQueue = "queue"
+	// AttrEnrichment labels the enrichment-backlog gauge; values are the fixed enrichment types
+	// (translation, sentiment, emotions). tenant_id is deliberately NOT a label — the gauge is
+	// aggregated across all tenants to keep cardinality bounded.
+	AttrEnrichment = "enrichment"
 )
 
 // AllowedEventTypes returns event type strings allowed for metric attributes (bounded cardinality).

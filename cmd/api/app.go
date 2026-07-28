@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -52,6 +53,18 @@ var (
 const (
 	riverQueueDepthInterval = 15 * time.Second
 	startupCleanupTimeout   = 5 * time.Second
+	// enrichmentBacklogInterval is deliberately much slower than the River depth poll: the backlog
+	// query is a full-table aggregate over feedback_records (a high-write table), so it runs
+	// infrequently to minimize shared-DB load and keep the MVCC snapshot it holds short-lived
+	// relative to VACUUM. Backlog is a slow-moving trend signal, so 5-minute resolution is ample.
+	// The poller only runs at all when metrics are enabled (see App.Run).
+	enrichmentBacklogInterval = 5 * time.Minute
+	// enrichmentBacklogQueryTimeout bounds each aggregate scan so a slow query cannot pin a pool
+	// connection, stall the ticker, or hold a long snapshot that delays VACUUM on feedback_records.
+	enrichmentBacklogQueryTimeout = 30 * time.Second
+	// enrichmentBacklogFailuresBeforeError is how many consecutive failed refreshes escalate the
+	// log from warn to error (a transient blip is expected; a sustained run means a stale gauge).
+	enrichmentBacklogFailuresBeforeError = 3
 )
 
 // embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
@@ -545,6 +558,17 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	taxonomyInternalHandler := handlers.NewTaxonomyInternalHandler(taxonomyService)
+
+	enrichmentStatusService := service.NewEnrichmentStatusService(service.NewEnrichmentStatusServiceParams{
+		Repo:                  repository.NewEnrichmentStatusRepository(db),
+		Settings:              tenantSettingsService,
+		DefaultLang:           cfg.Translation.DefaultLanguage,
+		TranslationConfigured: cfg.Translation.Provider != "" && cfg.Translation.Model != "",
+		SentimentConfigured:   cfg.Sentiment.Enabled(),
+		EmotionsConfigured:    cfg.Emotions.Enabled(),
+	})
+	enrichmentStatusHandler := handlers.NewEnrichmentStatusHandler(enrichmentStatusService)
+
 	healthHandler := handlers.NewHealthHandler()
 
 	openapiHandler, err := handlers.NewOpenAPIHandler(handlers.ResolveOpenAPISpecPath(), cfg.Server.PublicBaseURL)
@@ -557,7 +581,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	server := newHTTPServer(
 		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler,
 		tenantSettingsHandler, searchHandler,
-		taxonomyHandler, taxonomyInternalHandler,
+		taxonomyHandler, taxonomyInternalHandler, enrichmentStatusHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -588,6 +612,7 @@ func newHTTPServer(
 	search *handlers.SearchHandler,
 	taxonomy *handlers.TaxonomyHandler,
 	taxonomyInternal *handlers.TaxonomyInternalHandler,
+	enrichmentStatus *handlers.EnrichmentStatusHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
 ) *http.Server {
@@ -614,6 +639,8 @@ func newHTTPServer(
 	protected.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettings.Get)
 	protected.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettings.Update)
 	protected.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettings.Patch)
+
+	protected.HandleFunc("GET /v1/enrichment-status", enrichmentStatus.GetStatus)
 
 	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
@@ -692,6 +719,17 @@ func (a *App) Run(ctx context.Context) error {
 		go runRiverQueueDepthPoller(ctx, a.db, a.metrics.Events)
 	}
 
+	if a.metrics != nil && a.metrics.EnrichmentBacklog != nil {
+		go runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, enrichmentBacklogPollConfig{
+			// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
+			// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
+			defaultLang:           strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
+			translationConfigured: a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
+			sentimentConfigured:   a.cfg.Sentiment.Enabled(),
+			emotionsConfigured:    a.cfg.Emotions.Enabled(),
+		})
+	}
+
 	// Reap taxonomy runs orphaned in a non-terminal state, but only when the taxonomy service is wired
 	// (no runs exist otherwise, so the sweep would be pointless).
 	if a.taxonomyRepo != nil && (a.cfg.Taxonomy.ServiceURL != "" || a.cfg.Taxonomy.ServiceToken != "") {
@@ -728,6 +766,104 @@ var riverDepthQueues = []string{
 	service.TranslationBackfillsQueueName,
 	service.SentimentsQueueName,
 	service.EmotionsQueueName,
+}
+
+// enrichmentBacklogPollConfig configures runEnrichmentBacklogPoller: the deployment default target
+// language and which enrichments are deployment-configured (only those emit a gauge).
+type enrichmentBacklogPollConfig struct {
+	defaultLang           string
+	translationConfigured bool
+	sentimentConfigured   bool
+	emotionsConfigured    bool
+}
+
+// runEnrichmentBacklogPoller periodically refreshes the aggregate enrichment-backlog gauge
+// (eligible-but-unenriched records per enrichment, summed across all tenants) — a durable
+// completeness signal complementing the transient River queue-depth gauge. Only
+// deployment-configured enrichments are reported, and each scan is bounded by its own timeout.
+func runEnrichmentBacklogPoller(
+	ctx context.Context,
+	db *pgxpool.Pool,
+	backlog observability.EnrichmentBacklogMetrics,
+	cfg enrichmentBacklogPollConfig,
+) {
+	leader := repository.NewEnrichmentBacklogLeader(db)
+	defer leader.Close(ctx)
+
+	ticker := time.NewTicker(enrichmentBacklogInterval)
+	defer ticker.Stop()
+
+	consecutiveFailures := 0
+
+	update := func() {
+		queryCtx, cancel := context.WithTimeout(ctx, enrichmentBacklogQueryTimeout)
+		defer cancel()
+
+		// Exactly one replica holds leadership and scans; the rest skip until it goes away.
+		counts, isLeader, err := leader.CountIfLeader(queryCtx, cfg.defaultLang)
+		if err != nil {
+			// Shutdown cancels the scan mid-flight. That is not a poll failure, and counting it
+			// would fire the very alert this counter exists for on every rolling deploy.
+			if ctx.Err() != nil {
+				return
+			}
+
+			consecutiveFailures++
+
+			// A failed scan also costs this process its leadership, so withdraw the series rather
+			// than leave it frozen at the last good reading while the new leader publishes its own.
+			backlog.ClearEnrichmentPending()
+
+			// Always count the failure so a stale gauge is alertable, then escalate the log from
+			// warn to error once failures persist: a single blip is noise, a run of them means the
+			// gauge is frozen at its last value and silently lying about the backlog.
+			backlog.RecordPollError(ctx)
+
+			if consecutiveFailures >= enrichmentBacklogFailuresBeforeError {
+				slog.ErrorContext(ctx, "enrichment backlog poll failing repeatedly; gauge is stale",
+					"error", err, "consecutive_failures", consecutiveFailures)
+			} else {
+				slog.WarnContext(ctx, "enrichment backlog poll failed",
+					"error", err, "consecutive_failures", consecutiveFailures)
+			}
+
+			return
+		}
+
+		consecutiveFailures = 0
+
+		if !isLeader {
+			// Another replica owns this gauge and exports the single global series for it. Drop
+			// anything this process exported while it was previously the leader, so a handover
+			// leaves exactly one series rather than a live one plus a frozen one.
+			backlog.ClearEnrichmentPending()
+
+			return
+		}
+
+		if cfg.translationConfigured {
+			backlog.SetEnrichmentPending(observability.EnrichmentTypeTranslation, counts.TranslationEligible-counts.TranslationDone)
+		}
+
+		if cfg.sentimentConfigured {
+			backlog.SetEnrichmentPending(observability.EnrichmentTypeSentiment, counts.SentimentEligible-counts.SentimentDone)
+		}
+
+		if cfg.emotionsConfigured {
+			backlog.SetEnrichmentPending(observability.EnrichmentTypeEmotions, counts.EmotionsEligible-counts.EmotionsDone)
+		}
+	}
+
+	update()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			update()
+		}
+	}
 }
 
 // runRiverQueueDepthPoller periodically updates the per-queue River backlog gauge. Covering
