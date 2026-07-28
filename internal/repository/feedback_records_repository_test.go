@@ -34,7 +34,10 @@ func TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange(t *testing.T) {
 
 	// Enrichment output columns, grouped by what invalidates them.
 	translationCols := []string{"value_text_translated", "translation_lang_key"}
-	textOnlyCols := []string{"sentiment", "sentiment_score", "emotions"}
+	// emotions_classified_at must clear with emotions: it is the completion marker, so leaving it
+	// behind would keep an edited record counting as classified. It must equally NOT clear on a
+	// language-only edit, which the negative cases below cover.
+	textOnlyCols := []string{"sentiment", "sentiment_score", "emotions", "emotions_classified_at"}
 	allCols := append(append([]string{}, translationCols...), textOnlyCols...)
 
 	cases := []struct {

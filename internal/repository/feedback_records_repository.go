@@ -426,36 +426,21 @@ func (r *FeedbackRecordsRepository) SetEmotions(
 		emotionsArg = labels
 	}
 
-	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
-		// Emotions ride the feedback record's tenant boundary; resolve and lock it so the write
-		// cannot race a tenant data purge.
-		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
-			return err
-		}
+	// A classifier result -- even an empty one -- means the record HAS been classified, so stamp
+	// the completion marker. Without it an empty result is stored as a bare NULL and is
+	// indistinguishable from "never classified", which pins the record in every pending count
+	// forever (ENG-1670). Use ClearEmotions for the not-classified transition.
+	return r.writeEmotions(ctx, feedbackRecordID, emotionsArg, true, stillCurrent)
+}
 
-		if err := guardValueTextCurrent(ctx, dbTx, feedbackRecordID, stillCurrent,
-			huberrors.ErrClassificationSuperseded); err != nil {
-			return err
-		}
-
-		tag, err := dbTx.Exec(ctx, `
-			UPDATE feedback_records
-			SET emotions = $2, updated_at = NOW()
-			WHERE id = $1`,
-			feedbackRecordID, emotionsArg,
-		)
-		if err != nil {
-			return fmt.Errorf("set feedback record emotions: %w", err)
-		}
-
-		// Locked above, so zero rows means the record was deleted between the lock and this write:
-		// surface NotFound so the worker treats it as a benign skip.
-		if tag.RowsAffected() == 0 {
-			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
-		}
-
-		return nil
-	})
+// ClearEmotions removes a record's emotion enrichment AND its completion marker, returning it to
+// the "not classified" state. Used when the source content is gone (an empty-content job clears
+// rather than classifies), so the record is correctly excluded from progress counts instead of
+// masquerading as classified-with-no-emotions.
+func (r *FeedbackRecordsRepository) ClearEmotions(
+	ctx context.Context, feedbackRecordID uuid.UUID, stillCurrent func(valueText *string) bool,
+) error {
+	return r.writeEmotions(ctx, feedbackRecordID, nil, false, stillCurrent)
 }
 
 // translationBackfillSelectSQL selects feedback records that need (re)translation: text
@@ -557,8 +542,14 @@ const sentimentBackfillSelectSQL = classifyBackfillEligibleSQL + `
 	ORDER BY id
 	LIMIT $2`
 
+// Both NULL checks are required. emotions IS NULL alone would re-send every record whose
+// classification legitimately found no emotion (stored as NULL) to the provider on every run;
+// emotions_classified_at IS NULL alone would re-classify rows enriched before that column existed
+// (migration 020). Together they select exactly the records never classified. The 016 partial index
+// covers the emotions IS NULL arm; the marker is an additional filter on top.
 const emotionsBackfillSelectSQL = classifyBackfillEligibleSQL + `
 		AND emotions IS NULL
+		AND emotions_classified_at IS NULL
 		AND id > $1
 	ORDER BY id
 	LIMIT $2`
@@ -907,6 +898,9 @@ func buildUpdateQuery(
 			clearColumnWhen("sentiment", valueTextChanged),
 			clearColumnWhen("sentiment_score", valueTextChanged),
 			clearColumnWhen("emotions", valueTextChanged),
+			// The completion marker must be cleared with the value it describes, otherwise an
+			// edited record keeps counting as classified while its emotions are gone (ENG-1670).
+			clearColumnWhen("emotions_classified_at", valueTextChanged),
 		)
 	}
 
@@ -1214,4 +1208,47 @@ func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
 	}
 
 	return records, nil
+}
+
+// writeEmotions is the shared write path for SetEmotions/ClearEmotions. classified controls the
+// completion marker: NOW() for a classifier result, NULL when clearing.
+func (r *FeedbackRecordsRepository) writeEmotions(
+	ctx context.Context, feedbackRecordID uuid.UUID, emotionsArg any, classified bool,
+	stillCurrent func(valueText *string) bool,
+) error {
+	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		// Emotions ride the feedback record's tenant boundary; resolve and lock it so the write
+		// cannot race a tenant data purge.
+		if _, err := lockFeedbackRecordTenantShared(ctx, dbTx, feedbackRecordID); err != nil {
+			return err
+		}
+
+		if err := guardValueTextCurrent(ctx, dbTx, feedbackRecordID, stillCurrent,
+			huberrors.ErrClassificationSuperseded); err != nil {
+			return err
+		}
+
+		// The marker is stamped from the DB clock, like updated_at beside it, rather than the pod's
+		// clock -- every other timestamp on this table is server-generated, and the two should not
+		// be able to disagree. CASE keeps it NULL when clearing.
+		tag, err := dbTx.Exec(ctx, `
+			UPDATE feedback_records
+			SET emotions = $2,
+				emotions_classified_at = CASE WHEN $3::boolean THEN NOW() END,
+				updated_at = NOW()
+			WHERE id = $1`,
+			feedbackRecordID, emotionsArg, classified,
+		)
+		if err != nil {
+			return fmt.Errorf("set feedback record emotions: %w", err)
+		}
+
+		// Locked above, so zero rows means the record was deleted between the lock and this write:
+		// surface NotFound so the worker treats it as a benign skip.
+		if tag.RowsAffected() == 0 {
+			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+		}
+
+		return nil
+	})
 }

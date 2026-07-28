@@ -380,6 +380,7 @@ func newTestHTTPServerWithConfig(t *testing.T, publicBaseURL string, taxonomy co
 		handlers.NewSearchHandler(nil),
 		handlers.NewTaxonomyHandler(nil),
 		handlers.NewTaxonomyInternalHandler(),
+		handlers.NewEnrichmentStatusHandler(nil),
 		nil,
 		nil,
 	)

@@ -58,6 +58,8 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 		stillCurrent func(valueText *string) bool) error
 	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
 		stillCurrent func(valueText *string) bool) error
+	ClearEmotions(ctx context.Context, feedbackRecordID uuid.UUID,
+		stillCurrent func(valueText *string) bool) error
 	ListTranslationBackfillTargets(
 		ctx context.Context, afterID uuid.UUID, limit int, defaultLang string,
 	) ([]models.TranslationBackfillTarget, error)
@@ -260,16 +262,18 @@ func (s *FeedbackRecordsService) SetSentiment(
 // (no enrichment loop). stillCurrent (optional) is the repository's content-supersession guard:
 // it is given the record's current value_text atomically with the write, and a false return skips
 // the write with huberrors.ErrClassificationSuperseded (nil ⇒ unconditional). Emotions are
-// multi-label; an empty (or nil) set clears the column, so "no emotion detected" and "not yet
-// enriched" share the same NULL representation.
+// multi-label; an empty (or nil) set still records a COMPLETED classification (the labels column
+// stays NULL, but the completion marker is stamped), which is what distinguishes "no emotion
+// detected" from "not yet enriched" -- use ClearEmotions for the latter.
 func (s *FeedbackRecordsService) SetEmotions(
 	ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
 	stillCurrent func(valueText *string) bool,
 ) error {
-	// An empty set clears (stored as NULL, never an empty array).
+	// An empty set stores NULL labels (never an empty array) but is still a classification result,
+	// so it goes through SetEmotions -- not ClearEmotions -- to stamp the completion marker.
 	if len(emotions) == 0 {
 		if err := s.repo.SetEmotions(ctx, feedbackRecordID, nil, stillCurrent); err != nil {
-			return fmt.Errorf("clear feedback record emotions: %w", err)
+			return fmt.Errorf("set empty feedback record emotions: %w", err)
 		}
 
 		return nil
@@ -283,6 +287,19 @@ func (s *FeedbackRecordsService) SetEmotions(
 
 	if err := s.repo.SetEmotions(ctx, feedbackRecordID, emotions, stillCurrent); err != nil {
 		return fmt.Errorf("set feedback record emotions: %w", err)
+	}
+
+	return nil
+}
+
+// ClearEmotions returns a record to the "not classified" state, dropping both the labels and the
+// completion marker. Used when the source content is gone, so the record is excluded from progress
+// counts rather than counting as classified-with-no-emotions.
+func (s *FeedbackRecordsService) ClearEmotions(
+	ctx context.Context, feedbackRecordID uuid.UUID, stillCurrent func(valueText *string) bool,
+) error {
+	if err := s.repo.ClearEmotions(ctx, feedbackRecordID, stillCurrent); err != nil {
+		return fmt.Errorf("clear feedback record emotions: %w", err)
 	}
 
 	return nil
