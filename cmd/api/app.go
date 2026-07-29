@@ -673,6 +673,12 @@ func runEnrichmentBacklogPoller(
 	leader := repository.NewEnrichmentBacklogLeader(db)
 	defer leader.Close(ctx)
 
+	// Withdraw the series whenever this process stops being the leader, including the most common
+	// case of all: shutdown. Close releases the advisory lock, so without this the meter provider's
+	// final collect-and-export on shutdown would publish one last reading for a backlog this
+	// process no longer owns.
+	defer backlog.ClearEnrichmentPending()
+
 	ticker := time.NewTicker(enrichmentBacklogInterval)
 	defer ticker.Stop()
 
@@ -697,13 +703,13 @@ func runEnrichmentBacklogPoller(
 			// than leave it frozen at the last good reading while the new leader publishes its own.
 			backlog.ClearEnrichmentPending()
 
-			// Always count the failure so a stale gauge is alertable, then escalate the log from
-			// warn to error once failures persist: a single blip is noise, a run of them means the
-			// gauge is frozen at its last value and silently lying about the backlog.
+			// Count the failure so the gap is alertable, then escalate the log from warn to error
+			// once failures persist: a single blip is noise, but a run of them means nobody is
+			// publishing the backlog at all.
 			backlog.RecordPollError(ctx)
 
 			if consecutiveFailures >= enrichmentBacklogFailuresBeforeError {
-				slog.ErrorContext(ctx, "enrichment backlog poll failing repeatedly; gauge is stale",
+				slog.ErrorContext(ctx, "enrichment backlog poll failing repeatedly; gauge is not being published",
 					"error", err, "consecutive_failures", consecutiveFailures)
 			} else {
 				slog.WarnContext(ctx, "enrichment backlog poll failed",

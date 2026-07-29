@@ -60,12 +60,25 @@ func TestEnrichmentBacklogMetricsClearWithdrawsSeries(t *testing.T) {
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &collected))
 
+	// Count rather than iterate-and-assert: after the clear the SDK drops the empty metric and then
+	// the empty scope, so a loop over ScopeMetrics runs zero times and would pass vacuously (it
+	// would also "pass" if the metric name were wrong, or if Collect returned nothing at all).
+	points := 0
+
 	for _, scope := range collected.ScopeMetrics {
 		for _, m := range scope.Metrics {
-			assert.NotEqual(t, MetricNameEnrichmentPendingRecords, m.Name,
-				"a cleared gauge must export no data points at all, not a stale value")
+			if m.Name != MetricNameEnrichmentPendingRecords {
+				continue
+			}
+
+			gauge, ok := m.Data.(metricdata.Gauge[int64])
+			require.True(t, ok, "expected Gauge[int64] for %s", MetricNameEnrichmentPendingRecords)
+
+			points += len(gauge.DataPoints)
 		}
 	}
+
+	assert.Zero(t, points, "a cleared gauge must export no data points at all, not a stale value")
 }
 
 // TestEnrichmentBacklogMetricsPollErrors verifies failed refreshes are counted, so a gauge frozen

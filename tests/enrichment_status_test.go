@@ -290,8 +290,8 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	// Two independent pools stand in for two API replicas: a transaction-scoped advisory lock is
-	// held per session, so the contention is only observable across separate connections.
+	// Two independent pools stand in for two API replicas: the advisory lock is session-scoped and
+	// held on one connection, so contention is only observable across separate connections.
 	dbLeader, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
 	require.NoError(t, err)
 
@@ -345,4 +345,35 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	assert.True(t, promoted, "a follower is promoted once the leader releases")
 
 	leaderTwo.Close(ctx)
+}
+
+// TestEnrichmentBacklogLeaderLeavesNoSessionState pins the release path: the leader sets a
+// session-scoped idle_session_timeout on its connection, and pgxpool hands that same backend to
+// unrelated callers afterwards. If release() did not RESET it, Postgres would eventually terminate
+// some other component's pooled connection after 30 idle minutes. MaxConns=1 guarantees the
+// connection reused below is the very one leadership was held on.
+func TestEnrichmentBacklogLeaderLeavesNoSessionState(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(database.PoolConfig{MaxConns: 1, MinConns: 1}))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	leader := repository.NewEnrichmentBacklogLeader(db)
+
+	_, isLeader, err := leader.CountIfLeader(ctx, "")
+	require.NoError(t, err)
+	require.True(t, isLeader, "single-connection pool must win leadership")
+
+	leader.Close(ctx)
+
+	// Same backend, borrowed as any other caller would.
+	var timeout string
+	require.NoError(t, db.QueryRow(ctx, `SELECT current_setting('idle_session_timeout')`).Scan(&timeout))
+	assert.Equal(t, "0", timeout, "the released connection must carry no leader-only session state")
 }

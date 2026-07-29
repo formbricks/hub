@@ -33,7 +33,14 @@ ALTER TABLE feedback_records
 -- directly instead of re-checking emotions_classified_at as a post-filter.
 --
 -- Built CONCURRENTLY, and DROP-then-CREATE (not IF NOT EXISTS) so an interrupted build leaves an
--- INVALID index that a re-run replaces, matching 016.
+-- INVALID index that a re-run replaces, matching 016. Note the difference from 016 though: there the
+-- DROP only ever removed an INVALID leftover, whereas here it removes an index that is currently in
+-- service, so there is a window -- the length of the concurrent build, or until an operator re-runs
+-- a persistently failing one -- with no emotions-backfill index. Accepted deliberately: the only
+-- consumer is the manual classify-backfill command, which degrades to a sequential scan rather than
+-- failing, and no serving path uses this index. The zero-window alternative (build under a temp
+-- name, drop the old, then ALTER INDEX ... RENAME) adds two more statements and more partial-failure
+-- states than that degradation is worth.
 DROP INDEX CONCURRENTLY IF EXISTS idx_feedback_records_emotions_backfill;
 CREATE INDEX CONCURRENTLY idx_feedback_records_emotions_backfill
   ON feedback_records (id)

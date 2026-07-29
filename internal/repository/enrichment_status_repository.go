@@ -140,7 +140,13 @@ const (
 	// setLeaderIdleTimeoutSQL caps how long a stalled leader session can hold the lock. Applies to
 	// this session only (SET, not ALTER ROLE); comfortably above enrichmentBacklogInterval so a
 	// healthy leader, which queries every interval, is never affected. Requires PG14+.
+	//
+	// It cannot be SET LOCAL (the convention elsewhere in this package, e.g. embeddings_repository)
+	// because that is transaction-scoped and the leader deliberately holds no transaction -- which
+	// is exactly why release() must RESET it before the connection returns to the pool.
 	setLeaderIdleTimeoutSQL = `SET idle_session_timeout = '30min'`
+	// resetLeaderIdleTimeoutSQL restores the server default so the pooled connection goes back clean.
+	resetLeaderIdleTimeoutSQL = `RESET idle_session_timeout`
 )
 
 // CountEnrichmentStatus returns one tenant's eligible/done counts per enrichment. defaultLang is
@@ -278,6 +284,12 @@ func (l *EnrichmentBacklogLeader) release(ctx context.Context) {
 	// lock anyway. Returning the connection WITHOUT unlocking would be the real leak, since a
 	// session lock survives being handed back to the pool.
 	_, _ = l.conn.Exec(unlockCtx, sessionUnlockSQL, enrichmentBacklogLockKey)
+
+	// Undo the leader-only idle timeout for the same reason: SET is session state, and the pool
+	// hands this exact backend to unrelated callers afterwards (verified: same pid, setting still
+	// in effect). Leaving it behind would let Postgres terminate some other component's pooled
+	// connection after 30 idle minutes.
+	_, _ = l.conn.Exec(unlockCtx, resetLeaderIdleTimeoutSQL)
 
 	l.conn.Release()
 	l.conn = nil

@@ -31,9 +31,10 @@ type EnrichmentBacklogMetrics interface {
 	// would look like a permanently stuck backlog. Callers must clear as soon as they are no longer
 	// the leader. Exporting nothing is the honest state — absence is visible, a stale value is not.
 	ClearEnrichmentPending()
-	// RecordPollError counts a failed refresh. The gauge holds its last value when a poll fails,
-	// which is indistinguishable from a healthy steady backlog on a dashboard — this counter is
-	// the signal to alert on (rate > 0 means the gauge is going stale).
+	// RecordPollError counts a failed refresh. A failed poll costs this process its leadership and
+	// withdraws the series (see ClearEnrichmentPending), so the symptom is a MISSING gauge rather
+	// than a stale value: alert on this counter, or on the absence of the gauge — a value-based
+	// staleness rule will not catch it.
 	RecordPollError(ctx context.Context)
 }
 
@@ -84,9 +85,10 @@ func NewEnrichmentBacklogMetrics(meter metric.Meter) (EnrichmentBacklogMetrics, 
 	pollErrors, err := meter.Int64Counter(
 		MetricNameEnrichmentBacklogPollErrs,
 		metric.WithDescription(
-			"Failed refreshes of the enrichment backlog gauge. A non-zero rate means the gauge is "+
-				"stale (holding its last value), which on a dashboard is indistinguishable from a "+
-				"steady backlog — alert on this rather than trusting a flat gauge.",
+			"Failed refreshes of the enrichment backlog gauge. A failed poll costs the process its "+
+				"leadership and withdraws the series, so the symptom is a MISSING "+
+				MetricNameEnrichmentPendingRecords+" rather than a stale value — alert on this "+
+				"counter, or on absence of that gauge.",
 		),
 		metric.WithUnit("1"),
 	)
