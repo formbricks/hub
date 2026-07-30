@@ -364,7 +364,30 @@ func TestEnrichmentBacklogLeaderLeavesNoSessionState(t *testing.T) {
 
 	defer db.Close()
 
+	// Record the value the connection starts with, and prove this server/role actually honours the
+	// SET/RESET pair. tryAcquire applies the timeout best-effort and still grants leadership if the
+	// SET fails, so without this the assertion below could pass against an already-default value
+	// without ever exercising RESET.
+	var original string
+	require.NoError(t, db.QueryRow(ctx, `SELECT current_setting('idle_session_timeout')`).Scan(&original))
+
+	// set_config applies the value and returns it in one statement: pgx's extended protocol rejects
+	// a multi-statement "SET ...; SELECT ...", and going through the pool (rather than holding an
+	// acquired connection) means a failed assertion here cannot leave a connection checked out and
+	// wedge db.Close().
+	var probeSet string
+	require.NoError(t, db.QueryRow(ctx,
+		`SELECT set_config('idle_session_timeout', '30min', false)`).Scan(&probeSet))
+	require.Equal(t, "30min", probeSet, "server must honour idle_session_timeout for this test to mean anything")
+
+	_, err = db.Exec(ctx, `RESET idle_session_timeout`)
+	require.NoError(t, err)
+
 	leader := repository.NewEnrichmentBacklogLeader(db)
+
+	// Registered before leadership is taken: if a require below fails, cleanup must still return the
+	// connection or db.Close() would block on it and wedge the suite. Close is idempotent.
+	defer leader.Close(ctx)
 
 	_, isLeader, err := leader.CountIfLeader(ctx, "")
 	require.NoError(t, err)
@@ -372,8 +395,9 @@ func TestEnrichmentBacklogLeaderLeavesNoSessionState(t *testing.T) {
 
 	leader.Close(ctx)
 
-	// Same backend, borrowed as any other caller would.
-	var timeout string
-	require.NoError(t, db.QueryRow(ctx, `SELECT current_setting('idle_session_timeout')`).Scan(&timeout))
-	assert.Equal(t, "0", timeout, "the released connection must carry no leader-only session state")
+	// Same backend, borrowed as any other caller would: it must be back to what it started as, not
+	// carrying the leader's 30min timeout.
+	var afterRelease string
+	require.NoError(t, db.QueryRow(ctx, `SELECT current_setting('idle_session_timeout')`).Scan(&afterRelease))
+	assert.Equal(t, original, afterRelease, "the released connection must carry no leader-only session state")
 }
