@@ -223,12 +223,11 @@ func TestTaxonomyAPI_TenantIsolation(t *testing.T) {
 			taxonomyURL(harness.server.URL, "/v1/taxonomy/nodes/"+ids.BranchID.String(), removeQuery), harness.apiKey, nil, http.StatusNotFound, nil)
 	})
 
-	t.Run("node records return nothing for another tenant", func(t *testing.T) {
+	t.Run("node records 404 for another tenant", func(t *testing.T) {
+		// Not 200-with-empty: that would make a foreign node indistinguishable from one of your own
+		// that holds no records. Same contract as the run, tree, rename and remove cases above.
 		recordsURL := taxonomyURL(harness.server.URL, "/v1/taxonomy/nodes/"+ids.RootID.String()+"/records", otherQuery)
-
-		var resp models.TaxonomyNodeRecordsResponse
-		requestTaxonomyJSON(ctx, t, http.MethodGet, recordsURL, harness.apiKey, nil, http.StatusOK, &resp)
-		require.Empty(t, resp.Data)
+		requestTaxonomyJSON(ctx, t, http.MethodGet, recordsURL, harness.apiKey, nil, http.StatusNotFound, nil)
 	})
 }
 
