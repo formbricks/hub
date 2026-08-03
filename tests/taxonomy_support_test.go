@@ -181,7 +181,7 @@ func setupTaxonomyAPIServer(t *testing.T, options ...taxonomyAPIServerOption) *t
 	mux.Handle("/v1/", protectedWithAuth)
 	mux.Handle("/internal/v1/taxonomy/", internalWithAuth)
 
-	server := httptest.NewServer(mux)
+	server := httptest.NewServer(middleware.RequestID(middleware.ProblemErrors(mux)))
 
 	t.Cleanup(func() {
 		server.Close()

@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -75,6 +76,7 @@ func requestTaxonomyProblem(
 	assert.Equal(t, wantType, problem.Type)
 	assert.Equal(t, resp.Request.URL.Path, problem.Instance)
 	assert.NotEmpty(t, problem.Title)
+	assert.NotEmpty(t, problem.RequestID)
 
 	return problem
 }
@@ -158,6 +160,39 @@ func TestTaxonomyAPI_Auth(t *testing.T) {
 	})
 }
 
+func TestTaxonomyAPI_RoutingProblems(t *testing.T) {
+	ctx := context.Background()
+	harness := setupTaxonomyAPIServer(t)
+
+	t.Run("unknown paths use the problem contract", func(t *testing.T) {
+		requestTaxonomyProblem(
+			ctx,
+			t,
+			http.MethodGet,
+			harness.server.URL+"/v1/taxonomy/not-a-route",
+			harness.apiKey,
+			nil,
+			http.StatusNotFound,
+			response.CodeNotFound,
+			response.ProblemTypeNotFound,
+		)
+	})
+
+	t.Run("wrong methods use the problem contract", func(t *testing.T) {
+		requestTaxonomyProblem(
+			ctx,
+			t,
+			http.MethodPost,
+			harness.server.URL+"/v1/taxonomy/fields",
+			harness.apiKey,
+			nil,
+			http.StatusMethodNotAllowed,
+			response.CodeMethodNotAllowed,
+			response.ProblemTypeMethodNotAllowed,
+		)
+	})
+}
+
 // TestTaxonomyAPI_PublicReadAndEdit covers the public read and edit endpoints against a
 // seeded, activated taxonomy graph.
 func TestTaxonomyAPI_PublicReadAndEdit(t *testing.T) {
@@ -166,7 +201,10 @@ func TestTaxonomyAPI_PublicReadAndEdit(t *testing.T) {
 
 	scope := uniqueTaxonomyScope("tax-api-read")
 	ids := seedTaxonomyGraph(ctx, t, harness.db, scope)
-	seedEmbeddedFeedback(ctx, t, harness, scope, 1)
+	seededRecordIDs := append(
+		[]uuid.UUID{ids.FeedbackRecordID},
+		seedEmbeddedFeedback(ctx, t, harness, scope, 1)...,
+	)
 
 	scopeQuery := url.Values{
 		"tenant_id":   {scope.TenantID},
@@ -187,7 +225,7 @@ func TestTaxonomyAPI_PublicReadAndEdit(t *testing.T) {
 		assert.Equal(t, scope.SourceType, resp.Data[0].SourceType)
 		assert.Equal(t, scope.SourceID, resp.Data[0].SourceID)
 		assert.Equal(t, scope.FieldID, resp.Data[0].FieldID)
-		assert.Equal(t, 2, resp.Data[0].RecordCount)
+		assert.Equal(t, len(seededRecordIDs), resp.Data[0].RecordCount)
 		assert.Equal(t, 1, resp.Data[0].EmbeddingCount)
 	})
 
@@ -473,12 +511,12 @@ func TestTaxonomyAPI_CreateRun(t *testing.T) {
 	t.Run("scope below the minimum embedded record count is rejected", func(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-api-create-insufficient")
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
-		seedEmbeddedFeedback(ctx, t, harness, scope, taxonomyMinEmbeddedRecords-1)
+		seededRecordIDs := seedEmbeddedFeedback(ctx, t, harness, scope, taxonomyMinEmbeddedRecords-1)
 
 		body := models.CreateTaxonomyRunRequest{TaxonomyScope: scope}
 		problem := requestTaxonomyProblem(ctx, t, http.MethodPost, runsURL, harness.apiKey, body,
 			http.StatusBadRequest, response.CodeValidation, response.ProblemTypeValidation)
-		assertTaxonomyInvalidParam(t, problem, "field_id", "found 1")
+		assertTaxonomyInvalidParam(t, problem, "field_id", fmt.Sprintf("found %d", len(seededRecordIDs)))
 	})
 
 	t.Run("directory scope rejects field selectors", func(t *testing.T) {
@@ -773,18 +811,7 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		feedbackRecordID := insertScopeFeedbackRecord(ctx, t, harness.db, scope)
 		runID := createRunningRun(ctx, t, harness, scope)
 
-		result := models.TaxonomyRunResultRequest{
-			Clusters: []models.TaxonomyResultCluster{
-				{ClusterKey: 1, Label: new("login"), Size: 1},
-			},
-			Memberships: []models.TaxonomyResultMembership{
-				{ClusterKey: 1, FeedbackRecordID: feedbackRecordID, Confidence: new(0.9)},
-			},
-			Nodes: []models.TaxonomyResultNode{
-				{NodeKey: "root", NodeType: models.TaxonomyNodeTypeRoot, Label: "Feedback", Level: 0},
-				{NodeKey: "leaf", ParentKey: new("root"), ClusterKey: new(1), NodeType: models.TaxonomyNodeTypeLeaf, Label: "Login", Level: 1},
-			},
-		}
+		result := validTaxonomyResult(feedbackRecordID)
 
 		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
 

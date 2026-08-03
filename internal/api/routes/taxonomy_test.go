@@ -15,7 +15,7 @@ import (
 )
 
 type openAPIDocument struct {
-	Paths map[string]map[string]openAPIOperation `yaml:"paths"`
+	Paths map[string]map[string]yaml.Node `yaml:"paths"`
 }
 
 type openAPIOperation struct {
@@ -36,7 +36,7 @@ func TestPublicTaxonomyRoutesMatchOpenAPI(t *testing.T) {
 		path, ok := document.Paths[route.path]
 		require.Truef(t, ok, "OpenAPI is missing taxonomy path %s", route.path)
 
-		operation, ok := path[strings.ToLower(route.method)]
+		operation, ok := decodeOpenAPIOperation(t, path, strings.ToLower(route.method))
 		require.Truef(t, ok, "OpenAPI is missing %s %s", route.method, route.path)
 		assert.Equal(t, route.operationID, operation.OperationID)
 
@@ -86,6 +86,31 @@ func TestInternalTaxonomyRoutesStayOutOfPublicOpenAPI(t *testing.T) {
 	}
 }
 
+func TestOpenAPIPathItemMetadataIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	document := decodeOpenAPI(t, []byte(`
+paths:
+  /v1/taxonomy/fields:
+    summary: Taxonomy field discovery
+    parameters:
+      - name: tenant_id
+        in: query
+    get:
+      operationId: list-taxonomy-fields
+      responses:
+        "200": {}
+`))
+
+	path, ok := document.Paths["/v1/taxonomy/fields"]
+	require.True(t, ok)
+
+	operation, ok := decodeOpenAPIOperation(t, path, "get")
+	require.True(t, ok)
+	assert.Equal(t, "list-taxonomy-fields", operation.OperationID)
+	assert.Contains(t, operation.Responses, "200")
+}
+
 func loadOpenAPI(t *testing.T) openAPIDocument {
 	t.Helper()
 
@@ -97,10 +122,34 @@ func loadOpenAPI(t *testing.T) openAPIDocument {
 	contents, err := os.ReadFile(specPath)
 	require.NoError(t, err)
 
+	return decodeOpenAPI(t, contents)
+}
+
+func decodeOpenAPI(t *testing.T, contents []byte) openAPIDocument {
+	t.Helper()
+
 	var document openAPIDocument
 	require.NoError(t, yaml.Unmarshal(contents, &document))
 
 	return document
+}
+
+func decodeOpenAPIOperation(
+	t *testing.T,
+	pathItem map[string]yaml.Node,
+	method string,
+) (openAPIOperation, bool) {
+	t.Helper()
+
+	node, ok := pathItem[method]
+	if !ok {
+		return openAPIOperation{}, false
+	}
+
+	var operation openAPIOperation
+	require.NoErrorf(t, node.Decode(&operation), "decode OpenAPI %s operation", strings.ToUpper(method))
+
+	return operation, true
 }
 
 func isHTTPMethod(method string) bool {
