@@ -466,10 +466,27 @@ func TestTaxonomyRepository_ListNodeRecords(t *testing.T) {
 	require.Len(t, records, 1)
 	require.Equal(t, ids.FeedbackRecordID, records[0].ID)
 
-	// A different tenant sees nothing for the same node id.
-	otherTenantRecords, _, err := repo.ListNodeRecords(ctx, ids.RootID, "other-tenant-"+uuid.NewString(), 50)
+	// A different tenant cannot address the node at all — not even to be told it is empty.
+	_, _, err = repo.ListNodeRecords(ctx, ids.RootID, "other-tenant-"+uuid.NewString(), 50)
+	require.ErrorIs(t, err, huberrors.ErrNotFound, "node records must be tenant-scoped")
+
+	// An unknown node id is the same not-found, so ownership is never enumerable.
+	_, _, err = repo.ListNodeRecords(ctx, uuid.New(), scope.TenantID, 50)
+	require.ErrorIs(t, err, huberrors.ErrNotFound)
+
+	// A soft-removed node is not addressable either, matching rename and remove: the tree has already
+	// dropped it, so a caller asking for its records is working from stale state.
+	_, err = repo.RemoveNode(ctx, ids.LeafID, scope.TenantID, "actor-remove")
 	require.NoError(t, err)
-	require.Empty(t, otherTenantRecords, "node records must be tenant-scoped")
+
+	_, _, err = repo.ListNodeRecords(ctx, ids.LeafID, scope.TenantID, 50)
+	require.ErrorIs(t, err, huberrors.ErrNotFound)
+
+	// The root survives and now genuinely holds no records, because the removed leaf carried the only
+	// cluster membership. That empty result is only meaningful because the cases above are 404s.
+	rootRecords, _, err := repo.ListNodeRecords(ctx, ids.RootID, scope.TenantID, 50)
+	require.NoError(t, err)
+	require.Empty(t, rootRecords)
 }
 
 // TestTaxonomyRepository_TenantIsolation proves every tenant-scoped read and mutation refuses
@@ -498,6 +515,11 @@ func TestTaxonomyRepository_TenantIsolation(t *testing.T) {
 
 	t.Run("get tree refuses another tenant", func(t *testing.T) {
 		_, err := repo.GetTree(ctx, ids.RunID, otherTenant)
+		require.ErrorIs(t, err, huberrors.ErrNotFound)
+	})
+
+	t.Run("node records refuse another tenant", func(t *testing.T) {
+		_, _, err := repo.ListNodeRecords(ctx, ids.RootID, otherTenant, 50)
 		require.ErrorIs(t, err, huberrors.ErrNotFound)
 	})
 

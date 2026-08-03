@@ -2080,7 +2080,9 @@ paths:
             summary: List feedback records for a taxonomy node
             description: |
                 Returns the feedback records assigned to a node and all of its (visible) descendant nodes, via the
-                clusters those nodes reference. Tenant-scoped. The `limit` in the response reflects the applied cap.
+                clusters those nodes reference. Tenant-scoped; returns 404 if the node does not belong to the tenant
+                or has been removed. An empty `data` therefore means the node genuinely holds no records. The `limit`
+                in the response reflects the applied cap.
             operationId: list-taxonomy-node-records
             parameters:
                 - name: node_id
@@ -2125,6 +2127,12 @@ paths:
                                 $ref: '#/components/schemas/ErrorModel'
                 "401":
                     description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – no node with this ID for the tenant.
                     content:
                         application/problem+json:
                             schema:

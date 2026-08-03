@@ -1038,6 +1038,8 @@ func (r *TaxonomyRepository) RemoveNode(
 }
 
 // ListNodeRecords returns feedback records assigned to a visible taxonomy node or descendants.
+// The node must be visible and belong to the tenant, otherwise a not-found error is returned —
+// the same contract as every other node-scoped operation.
 func (r *TaxonomyRepository) ListNodeRecords(
 	ctx context.Context,
 	nodeID uuid.UUID,
@@ -1048,7 +1050,29 @@ func (r *TaxonomyRepository) ListNodeRecords(
 		limit = defaultTaxonomyNodeRecordLimit
 	}
 
-	rows, err := r.db.Query(ctx, `
+	// The records query below is already tenant-safe on its own (it filters on the run's tenant, so a
+	// foreign node simply matches no rows). The ownership guard is about the contract, not isolation:
+	// without it a foreign or removed node is indistinguishable from one that genuinely holds no
+	// records, which is what CountNodeRecords, GetTree, RenameNode and RemoveNode all avoid by
+	// resolving ownership first.
+	//
+	// Both reads share one REPEATABLE READ snapshot. On separate statements a RemoveNode committing
+	// between them would pass the guard and then match no rows in the recursive CTE, handing back the
+	// ambiguous 200-empty this contract exists to remove. Under one snapshot the node is either
+	// visible to both reads or to neither, so a removal mid-request lands as a 404. Read-only, so the
+	// deferred rollback is the only exit.
+	dbTx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin taxonomy node records tx: %w", err)
+	}
+
+	defer rollbackQuietly(ctx, dbTx, "list taxonomy node records: rollback failed")
+
+	if _, err := getNodeForTenant(ctx, dbTx, nodeID, tenantID); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := dbTx.Query(ctx, `
 		WITH RECURSIVE visible_nodes AS (
 			SELECT id, run_id, cluster_id
 			FROM taxonomy_nodes
@@ -1342,6 +1366,41 @@ func scanTaxonomyNode(row scanner) (*models.TaxonomyNode, error) {
 	return &node, nil
 }
 
+// A node is addressable by a tenant when it is visible and its run belongs to that tenant. Shared by
+// the locking write path and the read path so the two can never drift apart on what "yours" means.
+// $1 is the node id, $2 the tenant id.
+const taxonomyNodeForTenantWhere = `
+		WHERE id = $1 AND removed_at IS NULL
+		  AND EXISTS (
+		    SELECT 1 FROM taxonomy_runs
+		    WHERE taxonomy_runs.id = taxonomy_nodes.run_id AND taxonomy_runs.tenant_id = $2
+		  )`
+
+// getNodeForTenant returns a visible taxonomy node addressable by the tenant, or a not-found error.
+// The read-only counterpart of getNodeForUpdate: same ownership predicate, no row lock. It takes a
+// queryer so the caller decides the snapshot — ListNodeRecords passes its transaction so the check
+// and the records read cannot disagree about whether the node is still there.
+func getNodeForTenant(
+	ctx context.Context,
+	q queryer,
+	nodeID uuid.UUID,
+	tenantID string,
+) (*models.TaxonomyNode, error) {
+	node, err := queryTaxonomyNode(ctx, q, taxonomyNodeSelect+`
+		FROM taxonomy_nodes`+taxonomyNodeForTenantWhere,
+		nodeID, tenantID,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("taxonomy_node", "taxonomy node not found")
+		}
+
+		return nil, fmt.Errorf("get taxonomy node for tenant: %w", err)
+	}
+
+	return node, nil
+}
+
 // getNodeForUpdate takes a tenantWriteTx (not the narrower queryer) so the
 // compiler enforces that the SELECT ... FOR UPDATE row lock is held for the
 // life of a transaction; outside one, the lock would release at statement end.
@@ -1354,12 +1413,7 @@ func getNodeForUpdate(
 	// The tenant predicate keeps the row lock tenant-scoped: a caller can never
 	// lock another tenant's node row, even transiently.
 	node, err := queryTaxonomyNode(ctx, transaction, taxonomyNodeSelect+`
-		FROM taxonomy_nodes
-		WHERE id = $1 AND removed_at IS NULL
-		  AND EXISTS (
-		    SELECT 1 FROM taxonomy_runs
-		    WHERE taxonomy_runs.id = taxonomy_nodes.run_id AND taxonomy_runs.tenant_id = $2
-		  )
+		FROM taxonomy_nodes`+taxonomyNodeForTenantWhere+`
 		FOR UPDATE`,
 		nodeID, tenantID,
 	)

@@ -89,7 +89,7 @@ var publicTaxonomyRoutes = []publicTaxonomyRoute{
 		method:           http.MethodGet,
 		path:             "/v1/taxonomy/nodes/{node_id}/records",
 		operationID:      "list-taxonomy-node-records",
-		responseStatuses: []string{"200", "400", "401", "default"},
+		responseStatuses: []string{"200", "400", "401", "404", "default"},
 		handler:          (*handlers.TaxonomyHandler).ListNodeRecords,
 	},
 }
