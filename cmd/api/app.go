@@ -23,6 +23,7 @@ import (
 
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
+	"github.com/formbricks/hub/internal/api/routes"
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
@@ -646,16 +647,7 @@ func newHTTPServer(
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
 	protected.HandleFunc("GET /v1/feedback-records/{id}/similar", search.SimilarFeedback)
 
-	protected.HandleFunc("GET /v1/taxonomy/fields", taxonomy.ListFields)
-	protected.HandleFunc("POST /v1/taxonomy/runs", taxonomy.CreateRun)
-	protected.HandleFunc("GET /v1/taxonomy/runs", taxonomy.ListRuns)
-	protected.HandleFunc("GET /v1/taxonomy/runs/active/tree", taxonomy.GetActiveTree)
-	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}", taxonomy.GetRun)
-	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/tree", taxonomy.GetTree)
-	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/record-counts", taxonomy.RecordCounts)
-	protected.HandleFunc("PATCH /v1/taxonomy/nodes/{node_id}", taxonomy.RenameNode)
-	protected.HandleFunc("DELETE /v1/taxonomy/nodes/{node_id}", taxonomy.RemoveNode)
-	protected.HandleFunc("GET /v1/taxonomy/nodes/{node_id}/records", taxonomy.ListNodeRecords)
+	routes.RegisterPublicTaxonomy(protected, taxonomy)
 
 	protectedWithAuth := middleware.Auth(cfg.Server.HubAPIKey)(protected)
 
@@ -664,11 +656,7 @@ func newHTTPServer(
 
 	if cfg.Taxonomy.HubInternalAPIToken != "" {
 		internalTaxonomy := http.NewServeMux()
-		internalTaxonomy.HandleFunc("GET /internal/v1/taxonomy/auth-check", taxonomyInternal.AuthCheck)
-		internalTaxonomy.HandleFunc("GET /internal/v1/taxonomy/runs/{run_id}/input", taxonomyInternal.GetRunInput)
-		internalTaxonomy.HandleFunc("PUT /internal/v1/taxonomy/runs/{run_id}/result", taxonomyInternal.CompleteRun)
-		internalTaxonomy.HandleFunc("POST /internal/v1/taxonomy/runs/{run_id}/failed", taxonomyInternal.FailRun)
-		internalTaxonomy.HandleFunc("POST /internal/v1/taxonomy/runs/{run_id}/heartbeat", taxonomyInternal.Heartbeat)
+		routes.RegisterInternalTaxonomy(internalTaxonomy, taxonomyInternal)
 		internalTaxonomyWithAuth := middleware.Auth(cfg.Taxonomy.HubInternalAPIToken)(internalTaxonomy)
 		mux.Handle("/internal/v1/taxonomy/", internalTaxonomyWithAuth)
 	}

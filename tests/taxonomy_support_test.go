@@ -16,6 +16,7 @@ import (
 
 	"github.com/formbricks/hub/internal/api/handlers"
 	"github.com/formbricks/hub/internal/api/middleware"
+	"github.com/formbricks/hub/internal/api/routes"
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
@@ -98,12 +99,39 @@ type taxonomyTestServer struct {
 	apiKey         string
 }
 
+type taxonomyAPIServerConfig struct {
+	embeddingModel string
+	starterEnabled bool
+}
+
+type taxonomyAPIServerOption func(*taxonomyAPIServerConfig)
+
+func withTaxonomyEmbeddingModel(model string) taxonomyAPIServerOption {
+	return func(config *taxonomyAPIServerConfig) {
+		config.embeddingModel = model
+	}
+}
+
+func withoutTaxonomyStarter() taxonomyAPIServerOption {
+	return func(config *taxonomyAPIServerConfig) {
+		config.starterEnabled = false
+	}
+}
+
 // setupTaxonomyAPIServer builds an httptest server that mirrors cmd/api/app.go's taxonomy
 // wiring: public taxonomy routes behind the Hub API key, and the internal taxonomy routes
 // behind a separate internal token. It returns the server plus the repo/embeddings/starter
 // so tests can seed data and inspect start calls.
-func setupTaxonomyAPIServer(t *testing.T) *taxonomyTestServer {
+func setupTaxonomyAPIServer(t *testing.T, options ...taxonomyAPIServerOption) *taxonomyTestServer {
 	t.Helper()
+
+	serverConfig := taxonomyAPIServerConfig{
+		embeddingModel: taxonomyEmbeddingModel,
+		starterEnabled: true,
+	}
+	for _, option := range options {
+		option(&serverConfig)
+	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
@@ -125,43 +153,35 @@ func setupTaxonomyAPIServer(t *testing.T) *taxonomyTestServer {
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	starter := &fakeTaxonomyStarter{}
 
+	var runStarter service.TaxonomyRunStarter
+	if serverConfig.starterEnabled {
+		runStarter = starter
+	}
+
 	taxonomyService := service.NewTaxonomyService(service.NewTaxonomyServiceParams{
 		Repo:                  repo,
-		Starter:               starter,
-		EmbeddingModel:        taxonomyEmbeddingModel,
+		Starter:               runStarter,
+		EmbeddingModel:        serverConfig.embeddingModel,
 		MinimumEmbeddingCount: taxonomyMinEmbeddedRecords,
 	})
 	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService)
 	taxonomyInternalHandler := handlers.NewTaxonomyInternalHandler(taxonomyService)
 
-	// Public taxonomy routes (Hub API key auth), matching cmd/api/app.go ordering so the
-	// {run_id} literal-vs-pattern precedence (active/tree before {run_id}) is preserved.
+	// Public taxonomy routes (Hub API key auth), using the same registry as cmd/api/app.go.
 	protected := http.NewServeMux()
-	protected.HandleFunc("GET /v1/taxonomy/fields", taxonomyHandler.ListFields)
-	protected.HandleFunc("POST /v1/taxonomy/runs", taxonomyHandler.CreateRun)
-	protected.HandleFunc("GET /v1/taxonomy/runs", taxonomyHandler.ListRuns)
-	protected.HandleFunc("GET /v1/taxonomy/runs/active/tree", taxonomyHandler.GetActiveTree)
-	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}", taxonomyHandler.GetRun)
-	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/tree", taxonomyHandler.GetTree)
-	protected.HandleFunc("GET /v1/taxonomy/runs/{run_id}/record-counts", taxonomyHandler.RecordCounts)
-	protected.HandleFunc("PATCH /v1/taxonomy/nodes/{node_id}", taxonomyHandler.RenameNode)
-	protected.HandleFunc("DELETE /v1/taxonomy/nodes/{node_id}", taxonomyHandler.RemoveNode)
-	protected.HandleFunc("GET /v1/taxonomy/nodes/{node_id}/records", taxonomyHandler.ListNodeRecords)
+	routes.RegisterPublicTaxonomy(protected, taxonomyHandler)
 	protectedWithAuth := middleware.Auth(cfg.Server.HubAPIKey)(protected)
 
 	// Internal taxonomy routes (separate internal-service token auth).
 	internal := http.NewServeMux()
-	internal.HandleFunc("GET /internal/v1/taxonomy/auth-check", taxonomyInternalHandler.AuthCheck)
-	internal.HandleFunc("GET /internal/v1/taxonomy/runs/{run_id}/input", taxonomyInternalHandler.GetRunInput)
-	internal.HandleFunc("PUT /internal/v1/taxonomy/runs/{run_id}/result", taxonomyInternalHandler.CompleteRun)
-	internal.HandleFunc("POST /internal/v1/taxonomy/runs/{run_id}/failed", taxonomyInternalHandler.FailRun)
+	routes.RegisterInternalTaxonomy(internal, taxonomyInternalHandler)
 	internalWithAuth := middleware.Auth(testInternalToken)(internal)
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", protectedWithAuth)
 	mux.Handle("/internal/v1/taxonomy/", internalWithAuth)
 
-	server := httptest.NewServer(mux)
+	server := httptest.NewServer(middleware.RequestID(middleware.ProblemErrors(mux)))
 
 	t.Cleanup(func() {
 		server.Close()
@@ -296,8 +316,10 @@ func seedTaxonomyGraph(ctx context.Context, t *testing.T, db *pgxpool.Pool, scop
 // embedding under taxonomyEmbeddingModel, so StartManualRun's input counts are satisfied.
 func seedEmbeddedFeedback(
 	ctx context.Context, t *testing.T, harness *taxonomyTestServer, scope models.TaxonomyScope, count int,
-) {
+) []uuid.UUID {
 	t.Helper()
+
+	recordIDs := make([]uuid.UUID, 0, count)
 
 	for range count {
 		var recordID uuid.UUID
@@ -319,11 +341,14 @@ func seedEmbeddedFeedback(
 
 		// nil stillCurrent: unconditional write (test setup, no concurrent-job race to guard).
 		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, recordID, taxonomyEmbeddingModel, embedding, nil))
+		recordIDs = append(recordIDs, recordID)
 	}
 
 	t.Cleanup(func() {
 		_, _ = harness.db.Exec(ctx, `DELETE FROM feedback_records WHERE tenant_id = $1`, scope.TenantID)
 	})
+
+	return recordIDs
 }
 
 // doTaxonomyRequest issues an HTTP request against the taxonomy test server. When token is
