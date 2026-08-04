@@ -270,7 +270,7 @@ type TaxonomyRunFailureDiagnostics struct {
 	InputTokens        *int64             `json:"input_tokens,omitempty"            validate:"omitempty,min=0"`
 	OutputTokens       *int64             `json:"output_tokens,omitempty"           validate:"omitempty,min=0"`
 	TotalTokens        *int64             `json:"total_tokens,omitempty"            validate:"omitempty,min=0"`
-	PhaseDurations     map[string]float64 `json:"phase_durations_seconds,omitempty"`
+	PhaseDurations     map[string]float64 `json:"phase_durations_seconds,omitempty" validate:"omitempty,max=8,dive,keys,oneof=input_fetch input_validation clustering evidence_selection cluster_labeling taxonomy_generation payload_validation persistence,endkeys,gte=0"` //nolint:lll
 }
 
 // RenameTaxonomyNodeRequest renames a generated taxonomy node.

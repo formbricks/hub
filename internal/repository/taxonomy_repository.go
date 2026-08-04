@@ -363,7 +363,8 @@ func (r *TaxonomyRepository) Heartbeat(
 // FailRunIfStale marks a pending/running taxonomy run as failed only when its liveness timestamp is
 // still older than cutoff at the moment of the update. The status and freshness checks are part of
 // the tenant-locked UPDATE so a heartbeat that lands after candidate selection protects the run.
-// Returns true when the run was failed and false when it was refreshed, completed, or removed first.
+// Returns the database terminal timestamp when the run was failed and nil when it was refreshed,
+// completed, or removed first.
 func (r *TaxonomyRepository) FailRunIfStale(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -371,32 +372,39 @@ func (r *TaxonomyRepository) FailRunIfStale(
 	cutoff time.Time,
 	message string,
 	errorCode models.TaxonomyRunFailureCode,
-) (bool, error) {
-	var failed bool
+) (*time.Time, error) {
+	var finishedAt *time.Time
 
 	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
-		tag, err := dbTx.Exec(ctx, `
+		var terminalTime time.Time
+
+		err := dbTx.QueryRow(ctx, `
 			UPDATE taxonomy_runs
 			SET status = 'failed', error = $3, error_code = $4, finished_at = NOW(), updated_at = NOW()
 			WHERE id = $1
 			  AND tenant_id = $2
 			  AND status IN ('pending', 'running')
-			  AND updated_at < $5`,
+			  AND updated_at < $5
+			RETURNING finished_at`,
 			runID, tenantID, message, nullableFailureCode(errorCode), cutoff,
-		)
+		).Scan(&terminalTime)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+
 		if err != nil {
 			return fmt.Errorf("fail stale taxonomy run: %w", err)
 		}
 
-		failed = tag.RowsAffected() > 0
+		finishedAt = &terminalTime
 
 		return nil
 	})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
-	return failed, nil
+	return finishedAt, nil
 }
 
 // ReapedTaxonomyRun identifies a run transitioned by the reaper for correlated operator logs.
@@ -409,6 +417,7 @@ type ReapedTaxonomyRun struct {
 	FieldID    string
 	StartedAt  *time.Time
 	CreatedAt  time.Time
+	FinishedAt time.Time
 }
 
 // FailStuckRuns marks taxonomy runs stuck in a non-terminal state (pending/running) past olderThan
@@ -479,9 +488,10 @@ func (r *TaxonomyRepository) FailStuckRuns(
 	)
 
 	for _, run := range candidates {
-		failed, markErr := r.FailRunIfStale(ctx, run.ID, run.TenantID, cutoff, message, errorCode)
+		finishedAt, markErr := r.FailRunIfStale(ctx, run.ID, run.TenantID, cutoff, message, errorCode)
 		if markErr == nil {
-			if failed {
+			if finishedAt != nil {
+				run.FinishedAt = *finishedAt
 				reaped = append(reaped, run.ReapedTaxonomyRun)
 			}
 

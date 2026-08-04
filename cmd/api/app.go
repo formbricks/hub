@@ -972,7 +972,8 @@ func runTaxonomyRunReaper(
 					started = *run.StartedAt
 				}
 
-				metrics.RecordRunDuration(ctx, time.Since(started), string(models.TaxonomyRunStatusFailed),
+				duration := max(run.FinishedAt.Sub(started), 0)
+				metrics.RecordRunDuration(ctx, duration, string(models.TaxonomyRunStatusFailed),
 					string(run.ScopeType))
 			}
 		}
