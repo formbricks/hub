@@ -251,8 +251,26 @@ type TaxonomyRunResultRequest struct {
 
 // TaxonomyRunFailedRequest records a taxonomy run failure.
 type TaxonomyRunFailedRequest struct {
-	Error     string                 `json:"error"                validate:"required,no_null_bytes,min=1,max=2000"`
-	ErrorCode TaxonomyRunFailureCode `json:"error_code,omitempty" validate:"omitempty,oneof=insufficient_data service_unavailable generation_failed invalid_output internal_error"` //nolint:lll // Validator oneof values are space-delimited.
+	Error       string                         `json:"error"                 validate:"required,no_null_bytes,min=1,max=2000"`
+	ErrorCode   TaxonomyRunFailureCode         `json:"error_code,omitempty"  validate:"omitempty,oneof=insufficient_data service_unavailable generation_failed invalid_output internal_error"` //nolint:lll // Validator oneof values are space-delimited.
+	Diagnostics *TaxonomyRunFailureDiagnostics `json:"diagnostics,omitempty" validate:"omitempty"`
+}
+
+// TaxonomyRunFailureDiagnostics contains bounded, non-sensitive compute diagnostics. It is stored
+// inside the existing metrics JSON column, keeping the database and public API schema unchanged.
+type TaxonomyRunFailureDiagnostics struct {
+	Phase              string             `json:"phase,omitempty"                   validate:"omitempty,oneof=fetch cluster label tree persist unknown"`                                                                                                                                                      //nolint:lll
+	FailureReason      string             `json:"failure_reason,omitempty"          validate:"omitempty,oneof=provider_authentication provider_rate_limit provider_timeout provider_unavailable provider_response invalid_output validation_failed insufficient_data hub_unavailable internal_error unknown"` //nolint:lll
+	Provider           string             `json:"provider,omitempty"                validate:"omitempty,oneof=openai bedrock vertex unknown"`
+	Model              string             `json:"model,omitempty"                   validate:"omitempty,no_null_bytes,max=255"`
+	ProviderAdapter    string             `json:"provider_adapter,omitempty"        validate:"omitempty,no_null_bytes,max=100"`
+	AdapterVersion     string             `json:"adapter_version,omitempty"         validate:"omitempty,no_null_bytes,max=100"`
+	ProviderSDKVersion string             `json:"provider_sdk_version,omitempty"    validate:"omitempty,no_null_bytes,max=100"`
+	LLMAttempts        *int               `json:"llm_attempts,omitempty"            validate:"omitempty,min=0,max=1000"`
+	InputTokens        *int64             `json:"input_tokens,omitempty"            validate:"omitempty,min=0"`
+	OutputTokens       *int64             `json:"output_tokens,omitempty"           validate:"omitempty,min=0"`
+	TotalTokens        *int64             `json:"total_tokens,omitempty"            validate:"omitempty,min=0"`
+	PhaseDurations     map[string]float64 `json:"phase_durations_seconds,omitempty"`
 }
 
 // RenameTaxonomyNodeRequest renames a generated taxonomy node.

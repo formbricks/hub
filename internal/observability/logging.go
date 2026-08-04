@@ -3,7 +3,9 @@ package observability
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"strings"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -70,4 +72,28 @@ func (h *TraceContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 // WithGroup returns a handler for the given group.
 func (h *TraceContextHandler) WithGroup(name string) slog.Handler {
 	return &TraceContextHandler{inner: h.inner.WithGroup(name)}
+}
+
+// NewLogHandler creates a structured JSON or human-readable text slog handler.
+// Text remains the default for local and backwards-compatible deployments.
+func NewLogHandler(output io.Writer, level, format string) slog.Handler {
+	var logLevel slog.Level
+
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	default:
+		logLevel = slog.LevelInfo
+	}
+
+	options := &slog.HandlerOptions{Level: logLevel}
+	if strings.EqualFold(strings.TrimSpace(format), "json") {
+		return NewTraceContextHandler(slog.NewJSONHandler(output, options))
+	}
+
+	return NewTraceContextHandler(slog.NewTextHandler(output, options))
 }

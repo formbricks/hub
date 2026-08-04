@@ -297,6 +297,7 @@ func (r *TaxonomyRepository) MarkRunFailed(
 	tenantID string,
 	message string,
 	errorCode models.TaxonomyRunFailureCode,
+	metrics json.RawMessage,
 ) (*models.TaxonomyRun, error) {
 	var run *models.TaxonomyRun
 
@@ -304,11 +305,12 @@ func (r *TaxonomyRepository) MarkRunFailed(
 		updated, err := queryTaxonomyRun(ctx, dbTx, `
 			WITH taxonomy_runs AS (
 				UPDATE taxonomy_runs
-				SET status = 'failed', error = $2, error_code = $3, finished_at = NOW(), updated_at = NOW()
-				WHERE id = $1 AND tenant_id = $4 AND status IN ('pending', 'running')
+				SET status = 'failed', error = $2, error_code = $3, metrics = $4,
+					finished_at = NOW(), updated_at = NOW()
+				WHERE id = $1 AND tenant_id = $5 AND status IN ('pending', 'running')
 				RETURNING *
 			)`+taxonomyRunSelect+` FROM taxonomy_runs`,
-			runID, message, nullableFailureCode(errorCode), tenantID,
+			runID, message, nullableFailureCode(errorCode), rawOrDefault(metrics, defaultJSONObj), tenantID,
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -397,6 +399,18 @@ func (r *TaxonomyRepository) FailRunIfStale(
 	return failed, nil
 }
 
+// ReapedTaxonomyRun identifies a run transitioned by the reaper for correlated operator logs.
+type ReapedTaxonomyRun struct {
+	ID         uuid.UUID
+	TenantID   string
+	ScopeType  models.TaxonomyScopeType
+	SourceType string
+	SourceID   string
+	FieldID    string
+	StartedAt  *time.Time
+	CreatedAt  time.Time
+}
+
 // FailStuckRuns marks taxonomy runs stuck in a non-terminal state (pending/running) past olderThan
 // as failed. Runs are orphaned when the taxonomy service crashes mid-run or its terminal callback is
 // lost; without this sweep they are polled forever in the UI and block regeneration.
@@ -412,40 +426,42 @@ func (r *TaxonomyRepository) FailRunIfStale(
 // invariant that coordinates tenant-owned writes with tenant-data purges. Stuck runs are rare, so a
 // per-run loop rather than a batched per-tenant update is sufficient. The final UPDATE re-checks both
 // status and updated_at under the tenant lock, so a run that heartbeats, reaches a terminal state, or
-// is removed between selection and update is skipped.
-// Returns the number of runs failed and the first unexpected error, if any.
+// is removed between selection and update is skipped. It returns the runs failed and the first
+// unexpected error, if any.
 func (r *TaxonomyRepository) FailStuckRuns(
 	ctx context.Context,
 	olderThan time.Duration,
 	message string,
 	errorCode models.TaxonomyRunFailureCode,
-) (int64, error) {
+) ([]ReapedTaxonomyRun, error) {
 	cutoff := time.Now().Add(-olderThan)
 
 	type stuckRun struct {
-		id       uuid.UUID
-		tenantID string
+		ReapedTaxonomyRun
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT id, tenant_id
+		SELECT id, tenant_id, scope_type, source_type, source_id, field_id, started_at, created_at
 		FROM taxonomy_runs
 		WHERE status IN ('pending', 'running')
 		  AND updated_at < $1`,
 		cutoff,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("select stuck taxonomy runs: %w", err)
+		return nil, fmt.Errorf("select stuck taxonomy runs: %w", err)
 	}
 
 	var candidates []stuckRun
 
 	for rows.Next() {
 		var run stuckRun
-		if scanErr := rows.Scan(&run.id, &run.tenantID); scanErr != nil {
+		if scanErr := rows.Scan(
+			&run.ID, &run.TenantID, &run.ScopeType, &run.SourceType, &run.SourceID, &run.FieldID,
+			&run.StartedAt, &run.CreatedAt,
+		); scanErr != nil {
 			rows.Close()
 
-			return 0, fmt.Errorf("scan stuck taxonomy run: %w", scanErr)
+			return nil, fmt.Errorf("scan stuck taxonomy run: %w", scanErr)
 		}
 
 		candidates = append(candidates, run)
@@ -454,19 +470,19 @@ func (r *TaxonomyRepository) FailStuckRuns(
 	rows.Close()
 
 	if rowsErr := rows.Err(); rowsErr != nil {
-		return 0, fmt.Errorf("iterate stuck taxonomy runs: %w", rowsErr)
+		return nil, fmt.Errorf("iterate stuck taxonomy runs: %w", rowsErr)
 	}
 
 	var (
-		reaped   int64
+		reaped   []ReapedTaxonomyRun
 		firstErr error
 	)
 
 	for _, run := range candidates {
-		failed, markErr := r.FailRunIfStale(ctx, run.id, run.tenantID, cutoff, message, errorCode)
+		failed, markErr := r.FailRunIfStale(ctx, run.ID, run.TenantID, cutoff, message, errorCode)
 		if markErr == nil {
 			if failed {
-				reaped++
+				reaped = append(reaped, run.ReapedTaxonomyRun)
 			}
 
 			continue

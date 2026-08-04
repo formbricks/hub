@@ -71,6 +71,7 @@ type ServerConfig struct {
 	HubAPIKey       string      `env:"API_KEY"`
 	PublicBaseURL   string      `env:"PUBLIC_BASE_URL"`
 	LogLevel        string      `env:"LOG_LEVEL"                env-default:"info"`
+	LogFormat       string      `env:"LOG_FORMAT"               env-default:"text"`
 	ShutdownTimeout DurationSec `env:"SHUTDOWN_TIMEOUT_SECONDS" env-default:"30"`
 }
 
@@ -337,6 +338,10 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Server.LogLevel == "" {
 		cfg.Server.LogLevel = "info"
+	}
+
+	if cfg.Server.LogFormat == "" {
+		cfg.Server.LogFormat = "text"
 	}
 
 	const defaultShutdownSec = 30

@@ -104,6 +104,7 @@ func TestTaxonomyRepository_RunLifecycle(t *testing.T) {
 
 		failed, err := repo.MarkRunFailed(
 			ctx, run.ID, scope.TenantID, "clustering failed", models.TaxonomyRunFailureCodeInsufficientData,
+			nil,
 		)
 		require.NoError(t, err)
 		require.Equal(t, models.TaxonomyRunStatusFailed, failed.Status)
@@ -115,6 +116,7 @@ func TestTaxonomyRepository_RunLifecycle(t *testing.T) {
 
 		_, err = repo.MarkRunFailed(
 			ctx, run.ID, scope.TenantID, "again", models.TaxonomyRunFailureCodeInternalError,
+			nil,
 		)
 		require.ErrorIs(t, err, huberrors.ErrConflict, "failed->failed must conflict")
 	})
@@ -165,7 +167,7 @@ func TestTaxonomyRepository_FailStuckRuns(t *testing.T) {
 
 	failed, err := repo.FailStuckRuns(ctx, time.Hour, "stuck run", models.TaxonomyRunFailureCodeInternalError)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, failed, int64(2), "both orphaned runs should be reaped")
+	require.GreaterOrEqual(t, len(failed), 2, "both orphaned runs should be reaped")
 
 	for _, id := range []uuid.UUID{stuck.ID, pending.ID} {
 		reaped, err := repo.GetRunForInternalService(ctx, id)
@@ -247,6 +249,7 @@ func TestTaxonomyRepository_Heartbeat(t *testing.T) {
 		require.NoError(t, err)
 		failed, err := repo.MarkRunFailed(
 			ctx, run.ID, scope.TenantID, "boom", models.TaxonomyRunFailureCodeInternalError,
+			nil,
 		)
 		require.NoError(t, err)
 

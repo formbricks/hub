@@ -12,6 +12,7 @@ import (
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/pkg/database"
 )
 
@@ -31,6 +32,8 @@ func run() int {
 
 		return exitFailure
 	}
+
+	slog.SetDefault(slog.New(observability.NewLogHandler(os.Stdout, cfg.Server.LogLevel, cfg.Server.LogFormat)))
 
 	if cfg.Database.URL == "" || cfg.Database.URL == config.DefaultDatabaseURL {
 		slog.Error("DATABASE_URL must be set explicitly for hub-worker (do not use the default test URL)")

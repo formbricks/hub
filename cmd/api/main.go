@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/pkg/database"
 )
 
@@ -27,20 +27,20 @@ func main() {
 func run() int {
 	cfg, err := config.Load()
 	if err != nil {
-		setupLogging("info")
+		setupLogging("info", "text")
 		slog.Error("Failed to load configuration", "error", err)
 
 		return exitFailure
 	}
 
 	if cfg.Server.HubAPIKey == "" {
-		setupLogging(cfg.Server.LogLevel)
+		setupLogging(cfg.Server.LogLevel, cfg.Server.LogFormat)
 		slog.Error("API_KEY is required for hub-api")
 
 		return exitFailure
 	}
 
-	setupLogging(cfg.Server.LogLevel)
+	setupLogging(cfg.Server.LogLevel, cfg.Server.LogFormat)
 
 	ctx := context.Background()
 
@@ -92,23 +92,6 @@ func run() int {
 	return exitSuccess
 }
 
-func setupLogging(level string) {
-	var logLevel slog.Level
-
-	switch strings.ToLower(level) {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "info":
-		logLevel = slog.LevelInfo
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
-
-	opts := &slog.HandlerOptions{Level: logLevel}
-	handler := slog.NewTextHandler(os.Stdout, opts)
-	slog.SetDefault(slog.New(handler))
+func setupLogging(level, format string) {
+	slog.SetDefault(slog.New(observability.NewLogHandler(os.Stdout, level, format)))
 }
