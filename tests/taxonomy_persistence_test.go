@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -104,6 +105,7 @@ func TestTaxonomyRepository_RunLifecycle(t *testing.T) {
 
 		failed, err := repo.MarkRunFailed(
 			ctx, run.ID, scope.TenantID, "clustering failed", models.TaxonomyRunFailureCodeInsufficientData,
+			nil,
 		)
 		require.NoError(t, err)
 		require.Equal(t, models.TaxonomyRunStatusFailed, failed.Status)
@@ -112,11 +114,37 @@ func TestTaxonomyRepository_RunLifecycle(t *testing.T) {
 		require.NotNil(t, failed.ErrorCode)
 		require.Equal(t, models.TaxonomyRunFailureCodeInsufficientData, *failed.ErrorCode)
 		require.NotNil(t, failed.FinishedAt)
+		assert.JSONEq(t, `{}`, string(failed.Metrics))
+
+		roundTrip, err := repo.GetRunForInternalService(ctx, run.ID)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{}`, string(roundTrip.Metrics))
 
 		_, err = repo.MarkRunFailed(
 			ctx, run.ID, scope.TenantID, "again", models.TaxonomyRunFailureCodeInternalError,
+			nil,
 		)
 		require.ErrorIs(t, err, huberrors.ErrConflict, "failed->failed must conflict")
+	})
+
+	t.Run("mark failed persists metrics JSON", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-failed-metrics")
+		cleanupTaxonomyTenant(ctx, t, db, scope.TenantID)
+
+		run, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: scope})
+		require.NoError(t, err)
+
+		metrics := json.RawMessage(`{"failure_diagnostics":{"phase":"cluster","llm_attempts":2}}`)
+		failed, err := repo.MarkRunFailed(
+			ctx, run.ID, scope.TenantID, "clustering failed", models.TaxonomyRunFailureCodeGenerationFailed,
+			metrics,
+		)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(metrics), string(failed.Metrics))
+
+		roundTrip, err := repo.GetRunForInternalService(ctx, run.ID)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(metrics), string(roundTrip.Metrics))
 	})
 
 	t.Run("unknown run id is not found", func(t *testing.T) {
@@ -146,7 +174,7 @@ func TestTaxonomyRepository_FailStuckRuns(t *testing.T) {
 	// A run orphaned in `running` with a stale updated_at (no heartbeat for two hours).
 	stuck, _, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{TaxonomyScope: stuckScope})
 	require.NoError(t, err)
-	_, err = repo.MarkRunRunning(ctx, stuck.ID, stuckScope.TenantID)
+	stuck, err = repo.MarkRunRunning(ctx, stuck.ID, stuckScope.TenantID)
 	require.NoError(t, err)
 	_, err = db.Exec(ctx, `UPDATE taxonomy_runs SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, stuck.ID)
 	require.NoError(t, err)
@@ -165,7 +193,15 @@ func TestTaxonomyRepository_FailStuckRuns(t *testing.T) {
 
 	failed, err := repo.FailStuckRuns(ctx, time.Hour, "stuck run", models.TaxonomyRunFailureCodeInternalError)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, failed, int64(2), "both orphaned runs should be reaped")
+	require.GreaterOrEqual(t, len(failed), 2, "both orphaned runs should be reaped")
+
+	reapedByID := make(map[uuid.UUID]repository.ReapedTaxonomyRun, len(failed))
+	for _, run := range failed {
+		reapedByID[run.ID] = run
+	}
+
+	assertReapedMetadata(t, reapedByID[stuck.ID], stuck)
+	assertReapedMetadata(t, reapedByID[pending.ID], pending)
 
 	for _, id := range []uuid.UUID{stuck.ID, pending.ID} {
 		reaped, err := repo.GetRunForInternalService(ctx, id)
@@ -228,11 +264,11 @@ func TestTaxonomyRepository_Heartbeat(t *testing.T) {
 		// The reaper has already selected this run using cutoff, but a heartbeat lands before its
 		// tenant-locked transition. The final UPDATE must re-check freshness and leave the run alive.
 		require.NoError(t, repo.Heartbeat(ctx, run.ID, scope.TenantID))
-		failed, err := repo.FailRunIfStale(
+		finishedAt, err := repo.FailRunIfStale(
 			ctx, run.ID, scope.TenantID, cutoff, "stuck run", models.TaxonomyRunFailureCodeInternalError,
 		)
 		require.NoError(t, err)
-		assert.False(t, failed, "a run refreshed after candidate selection must not be failed")
+		assert.Nil(t, finishedAt, "a run refreshed after candidate selection must not be failed")
 
 		survivor, err := repo.GetRunForInternalService(ctx, run.ID)
 		require.NoError(t, err)
@@ -247,6 +283,7 @@ func TestTaxonomyRepository_Heartbeat(t *testing.T) {
 		require.NoError(t, err)
 		failed, err := repo.MarkRunFailed(
 			ctx, run.ID, scope.TenantID, "boom", models.TaxonomyRunFailureCodeInternalError,
+			nil,
 		)
 		require.NoError(t, err)
 
@@ -310,6 +347,27 @@ func TestTaxonomyRepository_FailStuckRunsCoordinatesWithPurge(t *testing.T) {
 
 	_, err = repo.GetRunForInternalService(ctx, run.ID)
 	require.ErrorIs(t, err, huberrors.ErrNotFound, "the run must be purged regardless of interleaving")
+}
+
+func assertReapedMetadata(t *testing.T, actual repository.ReapedTaxonomyRun, expected *models.TaxonomyRun) {
+	t.Helper()
+	require.Equal(t, expected.ID, actual.ID)
+	assert.Equal(t, expected.TenantID, actual.TenantID)
+	assert.Equal(t, expected.ScopeType, actual.ScopeType)
+	assert.Equal(t, expected.SourceType, actual.SourceType)
+	assert.Equal(t, expected.SourceID, actual.SourceID)
+	assert.Equal(t, expected.FieldID, actual.FieldID)
+	assert.WithinDuration(t, expected.CreatedAt, actual.CreatedAt, time.Microsecond)
+	require.False(t, actual.FinishedAt.IsZero())
+
+	if expected.StartedAt == nil {
+		assert.Nil(t, actual.StartedAt)
+
+		return
+	}
+
+	require.NotNil(t, actual.StartedAt)
+	assert.WithinDuration(t, *expected.StartedAt, *actual.StartedAt, time.Microsecond)
 }
 
 // TestTaxonomyRepository_StoreResultAndActivate covers persisting the full artifact graph

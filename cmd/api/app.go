@@ -230,10 +230,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		}
 	}
 
-	// Install TraceContextHandler unconditionally so request_id (and trace_id/span_id when tracing is on) appear in logs.
-	defaultHandler := slog.Default().Handler()
-	slog.SetDefault(slog.New(observability.NewTraceContextHandler(defaultHandler)))
-
 	if tracerProvider != nil {
 		otel.SetTracerProvider(tracerProvider)
 	}
@@ -449,11 +445,17 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		taxonomyStarter = taxonomyClient
 	}
 
+	var taxonomyMetrics observability.TaxonomyMetrics
+	if metrics != nil {
+		taxonomyMetrics = metrics.Taxonomy
+	}
+
 	taxonomyService := service.NewTaxonomyService(service.NewTaxonomyServiceParams{
 		Repo:                  taxonomyRepo,
 		Starter:               taxonomyStarter,
 		EmbeddingModel:        taxonomyEmbeddingModel,
 		MinimumEmbeddingCount: cfg.Taxonomy.MinimumEmbeddedRecords,
+		Metrics:               taxonomyMetrics,
 	})
 	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService)
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
@@ -620,7 +622,7 @@ func (a *App) Run(ctx context.Context) error {
 	// Reap taxonomy runs orphaned in a non-terminal state, but only when the taxonomy service is wired
 	// (no runs exist otherwise, so the sweep would be pointless).
 	if a.taxonomyRepo != nil && (a.cfg.Taxonomy.ServiceURL != "" || a.cfg.Taxonomy.ServiceToken != "") {
-		go runTaxonomyRunReaper(ctx, a.taxonomyRepo,
+		go runTaxonomyRunReaper(ctx, a.taxonomyRepo, taxonomyMetricsFromAggregate(a.metrics),
 			a.cfg.Taxonomy.StuckRunTimeout.Duration(), a.cfg.Taxonomy.ReaperInterval.Duration())
 	}
 
@@ -821,7 +823,8 @@ const stuckTaxonomyRunMessage = "taxonomy run timed out without completing"
 // forever in the UI and generation can be retried. Idempotent: the repository's status filter skips
 // runs that finished on their own between sweeps.
 func runTaxonomyRunReaper(
-	ctx context.Context, repo *repository.TaxonomyRepository, timeout, interval time.Duration,
+	ctx context.Context, repo *repository.TaxonomyRepository, metrics observability.TaxonomyMetrics,
+	timeout, interval time.Duration,
 ) {
 	// A non-positive interval panics time.NewTicker, and a non-positive timeout would reap active
 	// runs (cutoff would be now or in the future). Either is misconfiguration — disable the reaper.
@@ -836,10 +839,32 @@ func runTaxonomyRunReaper(
 	defer ticker.Stop()
 
 	reap := func() {
-		failed, err := repo.FailStuckRuns(ctx, timeout, stuckTaxonomyRunMessage,
+		reaped, err := repo.FailStuckRuns(ctx, timeout, stuckTaxonomyRunMessage,
 			models.TaxonomyRunFailureCodeInternalError)
-		if failed > 0 {
-			slog.InfoContext(ctx, "taxonomy stuck-run reaper failed stalled runs", "count", failed)
+		for _, run := range reaped {
+			slog.ErrorContext(ctx, "taxonomy stuck-run reaper failed stalled run",
+				"event", "hub.taxonomy.run.reaped", "run_id", run.ID, "tenant_id", run.TenantID,
+				"scope_type", run.ScopeType, "source_type", run.SourceType,
+				"source_id", run.SourceID, "field_id", run.FieldID,
+				"failure_code", models.TaxonomyRunFailureCodeInternalError)
+		}
+
+		if len(reaped) > 0 && metrics != nil {
+			metrics.RecordRunsReaped(ctx, int64(len(reaped)))
+
+			for _, run := range reaped {
+				metrics.RecordRunOutcome(ctx, string(models.TaxonomyRunStatusFailed),
+					string(models.TaxonomyRunFailureCodeInternalError), string(run.ScopeType))
+
+				started := run.CreatedAt
+				if run.StartedAt != nil {
+					started = *run.StartedAt
+				}
+
+				duration := max(run.FinishedAt.Sub(started), 0)
+				metrics.RecordRunDuration(ctx, duration, string(models.TaxonomyRunStatusFailed),
+					string(run.ScopeType))
+			}
 		}
 
 		if err != nil {
@@ -857,6 +882,14 @@ func runTaxonomyRunReaper(
 			reap()
 		}
 	}
+}
+
+func taxonomyMetricsFromAggregate(metrics *observability.Metrics) observability.TaxonomyMetrics {
+	if metrics == nil {
+		return nil
+	}
+
+	return metrics.Taxonomy
 }
 
 // shutdownObservability shuts down tracer and meter providers. Logs secondary errors, returns the first.

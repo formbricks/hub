@@ -17,8 +17,7 @@ type TaxonomyInternalService interface {
 	FailRun(
 		ctx context.Context,
 		runID uuid.UUID,
-		message string,
-		errorCode models.TaxonomyRunFailureCode,
+		req models.TaxonomyRunFailedRequest,
 	) (*models.TaxonomyRun, error)
 	Heartbeat(ctx context.Context, runID uuid.UUID) error
 }
@@ -119,7 +118,7 @@ func (h *TaxonomyInternalHandler) FailRun(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	result, err := h.service.FailRun(r.Context(), runID, req.Error, req.ErrorCode)
+	result, err := h.service.FailRun(r.Context(), runID, req)
 	if err != nil {
 		respondTaxonomyError(w, r, err)
 

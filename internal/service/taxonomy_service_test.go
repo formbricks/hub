@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -22,6 +23,7 @@ type mockTaxonomyRepo struct {
 	markRunFailedMessage string
 	markRunFailedCode    models.TaxonomyRunFailureCode
 	markRunFailedTenant  string
+	markRunFailedMetrics json.RawMessage
 	heartbeatTenant      string
 
 	countNodeRecords       []models.TaxonomyNodeRecordCount
@@ -71,10 +73,12 @@ func (m *mockTaxonomyRepo) MarkRunFailed(
 	tenantID string,
 	message string,
 	errorCode models.TaxonomyRunFailureCode,
+	metrics json.RawMessage,
 ) (*models.TaxonomyRun, error) {
 	m.markRunFailedTenant = tenantID
 	m.markRunFailedMessage = message
 	m.markRunFailedCode = errorCode
+	m.markRunFailedMetrics = metrics
 
 	return &models.TaxonomyRun{
 		ID:        runID,
@@ -298,7 +302,9 @@ func TestTaxonomyService_FailRunDefaultsFailureCode(t *testing.T) {
 	repo := &mockTaxonomyRepo{}
 	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
 
-	result, err := svc.FailRun(context.Background(), runID, " generated invalid taxonomy ", "")
+	result, err := svc.FailRun(context.Background(), runID, models.TaxonomyRunFailedRequest{
+		Error: " generated invalid taxonomy ",
+	})
 	if err != nil {
 		t.Fatalf("FailRun() error = %v", err)
 	}
@@ -317,6 +323,44 @@ func TestTaxonomyService_FailRunDefaultsFailureCode(t *testing.T) {
 
 	if *result.ErrorCode != models.TaxonomyRunFailureCodeGenerationFailed {
 		t.Fatalf("result error code = %q, want generation_failed", *result.ErrorCode)
+	}
+}
+
+func TestTaxonomyService_FailRunPersistsSafeDiagnosticsInMetrics(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-222222222223")
+	attempts := 2
+	tokens := int64(42)
+	repo := &mockTaxonomyRepo{}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+	_, err := svc.FailRun(context.Background(), runID, models.TaxonomyRunFailedRequest{
+		Error:     "provider request failed",
+		ErrorCode: models.TaxonomyRunFailureCodeServiceUnavailable,
+		Diagnostics: &models.TaxonomyRunFailureDiagnostics{
+			Phase:         "taxonomy_generation",
+			FailureReason: "provider_timeout",
+			Provider:      "vertex",
+			Model:         "gemini-2.5-flash",
+			LLMAttempts:   &attempts,
+			TotalTokens:   &tokens,
+		},
+	})
+	if err != nil {
+		t.Fatalf("FailRun() error = %v", err)
+	}
+
+	var persisted map[string]models.TaxonomyRunFailureDiagnostics
+	if err := json.Unmarshal(repo.markRunFailedMetrics, &persisted); err != nil {
+		t.Fatalf("unmarshal persisted diagnostics: %v", err)
+	}
+
+	diagnostics := persisted["failure_diagnostics"]
+	if diagnostics.FailureReason != "provider_timeout" || diagnostics.Provider != "vertex" {
+		t.Fatalf("persisted diagnostics = %+v", diagnostics)
+	}
+
+	if diagnostics.TotalTokens == nil || *diagnostics.TotalTokens != 42 {
+		t.Fatalf("persisted total tokens = %v", diagnostics.TotalTokens)
 	}
 }
 

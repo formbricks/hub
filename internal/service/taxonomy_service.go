@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
 )
 
@@ -39,6 +42,7 @@ type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service 
 		tenantID string,
 		message string,
 		errorCode models.TaxonomyRunFailureCode,
+		metrics json.RawMessage,
 	) (*models.TaxonomyRun, error)
 	Heartbeat(ctx context.Context, runID uuid.UUID, tenantID string) error
 	GetRunForInternalService(ctx context.Context, runID uuid.UUID) (*models.TaxonomyRun, error)
@@ -75,6 +79,7 @@ type TaxonomyService struct {
 	starter               TaxonomyRunStarter
 	embeddingModel        string
 	minimumEmbeddingCount int
+	metrics               observability.TaxonomyMetrics
 }
 
 // NewTaxonomyServiceParams configures a TaxonomyService.
@@ -83,6 +88,7 @@ type NewTaxonomyServiceParams struct {
 	Starter               TaxonomyRunStarter
 	EmbeddingModel        string
 	MinimumEmbeddingCount int
+	Metrics               observability.TaxonomyMetrics
 }
 
 // NewTaxonomyService creates a taxonomy application service.
@@ -97,6 +103,7 @@ func NewTaxonomyService(params NewTaxonomyServiceParams) *TaxonomyService {
 		starter:               params.Starter,
 		embeddingModel:        strings.TrimSpace(params.EmbeddingModel),
 		minimumEmbeddingCount: minimumEmbeddingCount,
+		metrics:               params.Metrics,
 	}
 }
 
@@ -193,17 +200,30 @@ func (s *TaxonomyService) StartManualRun(
 		return nil, fmt.Errorf("mark taxonomy run running: %w", err)
 	}
 
+	s.recordStarted(ctx, runningRun)
+
 	if err := s.starter.StartRun(ctx, run.ID.String()); err != nil {
-		_, markErr := s.repo.MarkRunFailed(
+		failedRun, markErr := s.repo.MarkRunFailed(
 			ctx,
 			run.ID,
 			scope.TenantID,
 			"taxonomy service did not accept the run",
 			models.TaxonomyRunFailureCodeServiceUnavailable,
+			nil,
 		)
 		if markErr != nil {
+			if s.metrics != nil {
+				s.metrics.RecordDispatchError(ctx, "mark_failed_failed")
+			}
+
 			return nil, fmt.Errorf("mark taxonomy run failed after start error: %w", markErr)
 		}
+
+		if s.metrics != nil {
+			s.metrics.RecordDispatchError(ctx, "request_failed")
+		}
+
+		s.recordTerminal(ctx, failedRun, models.TaxonomyRunFailureCodeServiceUnavailable)
 
 		return nil, fmt.Errorf("%w: %w", ErrTaxonomyServiceStartFailed, err)
 	}
@@ -350,6 +370,8 @@ func (s *TaxonomyService) CompleteRun(
 		return nil, fmt.Errorf("complete taxonomy run: %w", err)
 	}
 
+	s.recordTerminal(ctx, run, "")
+
 	return run, nil
 }
 
@@ -357,20 +379,26 @@ func (s *TaxonomyService) CompleteRun(
 func (s *TaxonomyService) FailRun(
 	ctx context.Context,
 	runID uuid.UUID,
-	message string,
-	errorCode models.TaxonomyRunFailureCode,
+	req models.TaxonomyRunFailedRequest,
 ) (*models.TaxonomyRun, error) {
-	sanitized, normalizedCode := normalizeRunFailure(message, errorCode)
+	sanitized, normalizedCode := normalizeRunFailure(req.Error, req.ErrorCode)
 
 	existingRun, err := s.repo.GetRunForInternalService(ctx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run: %w", err)
 	}
 
-	run, err := s.repo.MarkRunFailed(ctx, runID, existingRun.TenantID, sanitized, normalizedCode)
+	metrics, err := marshalFailureDiagnostics(req.Diagnostics)
+	if err != nil {
+		return nil, fmt.Errorf("marshal taxonomy failure diagnostics: %w", err)
+	}
+
+	run, err := s.repo.MarkRunFailed(ctx, runID, existingRun.TenantID, sanitized, normalizedCode, metrics)
 	if err != nil {
 		return nil, fmt.Errorf("fail taxonomy run: %w", err)
 	}
+
+	s.recordTerminal(ctx, run, normalizedCode)
 
 	return run, nil
 }
@@ -492,6 +520,74 @@ func (s *TaxonomyService) ListNodeRecords(
 	}
 
 	return &models.TaxonomyNodeRecordsResponse{Data: records, Limit: limit}, nil
+}
+
+func (s *TaxonomyService) recordStarted(ctx context.Context, run *models.TaxonomyRun) {
+	if s.metrics != nil {
+		s.metrics.RecordRunStarted(ctx, string(run.ScopeType))
+	}
+
+	slog.InfoContext(ctx, "taxonomy run started",
+		"event", "hub.taxonomy.run.started", "run_id", run.ID, "tenant_id", run.TenantID,
+		"scope_type", run.ScopeType, "source_type", run.SourceType, "source_id", run.SourceID,
+		"field_id", run.FieldID, "record_count", run.RecordCount, "embedding_count", run.EmbeddingCount)
+}
+
+func (s *TaxonomyService) recordTerminal(
+	ctx context.Context, run *models.TaxonomyRun, failureCode models.TaxonomyRunFailureCode,
+) {
+	if run == nil {
+		return
+	}
+
+	code := "none"
+	if failureCode != "" {
+		code = string(failureCode)
+	}
+
+	duration := taxonomyRunDuration(run)
+	if s.metrics != nil {
+		s.metrics.RecordRunOutcome(ctx, string(run.Status), code, string(run.ScopeType))
+		s.metrics.RecordRunDuration(ctx, duration, string(run.Status), string(run.ScopeType))
+	}
+
+	slog.InfoContext(ctx, "taxonomy run reached terminal state",
+		"event", "hub.taxonomy.run.terminal", "run_id", run.ID, "tenant_id", run.TenantID,
+		"scope_type", run.ScopeType, "source_type", run.SourceType, "source_id", run.SourceID,
+		"field_id", run.FieldID, "status", run.Status, "failure_code", code,
+		"duration_seconds", duration.Seconds(), "record_count", run.RecordCount,
+		"embedding_count", run.EmbeddingCount, "cluster_count", run.ClusterCount, "node_count", run.NodeCount)
+}
+
+func marshalFailureDiagnostics(diagnostics *models.TaxonomyRunFailureDiagnostics) (json.RawMessage, error) {
+	if diagnostics == nil {
+		return nil, nil
+	}
+
+	raw, err := json.Marshal(map[string]*models.TaxonomyRunFailureDiagnostics{"failure_diagnostics": diagnostics})
+	if err != nil {
+		return nil, fmt.Errorf("marshal diagnostics: %w", err)
+	}
+
+	return raw, nil
+}
+
+func taxonomyRunDuration(run *models.TaxonomyRun) time.Duration {
+	start := run.CreatedAt
+	if run.StartedAt != nil {
+		start = *run.StartedAt
+	}
+
+	end := time.Now()
+	if run.FinishedAt != nil {
+		end = *run.FinishedAt
+	}
+
+	if end.Before(start) {
+		return 0
+	}
+
+	return end.Sub(start)
 }
 
 func normalizeTaxonomyScope(scope models.TaxonomyScope) (models.TaxonomyScope, error) {

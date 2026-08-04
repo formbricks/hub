@@ -837,6 +837,14 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		body := models.TaxonomyRunFailedRequest{
 			Error:     "clustering did not converge",
 			ErrorCode: models.TaxonomyRunFailureCodeGenerationFailed,
+			Diagnostics: &models.TaxonomyRunFailureDiagnostics{
+				Phase: "clustering",
+				PhaseDurations: map[string]float64{
+					"input_fetch": 0.5, "input_validation": 0.1, "clustering": 2.5,
+					"evidence_selection": 0.2, "cluster_labeling": 1.2, "taxonomy_generation": 3.4,
+					"payload_validation": 0.3, "persistence": 0.7,
+				},
+			},
 		}
 		failedURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/failed"
 
@@ -849,6 +857,12 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		assert.Equal(t, models.TaxonomyRunStatusFailed, run.Status)
 		require.NotNil(t, run.Error)
 		assert.Equal(t, "clustering did not converge", *run.Error)
+		assert.JSONEq(t,
+			`{"failure_diagnostics":{"phase":"clustering","phase_durations_seconds":{`+
+				`"input_fetch":0.5,"input_validation":0.1,"clustering":2.5,"evidence_selection":0.2,`+
+				`"cluster_labeling":1.2,"taxonomy_generation":3.4,"payload_validation":0.3,"persistence":0.7}}}`,
+			string(run.Metrics),
+		)
 	})
 
 	t.Run("heartbeat returns the internal wire contract", func(t *testing.T) {
@@ -915,6 +929,46 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 			response.ProblemTypeValidation,
 		)
 		assertTaxonomyInvalidParam(t, problem, "error", "required")
+	})
+
+	t.Run("failed diagnostics phase durations are bounded", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			durations map[string]float64
+		}{
+			{name: "disallowed key", durations: map[string]float64{"prompt_rendering": 1}},
+			{name: "negative duration", durations: map[string]float64{"clustering": -0.1}},
+			{
+				name: "too many entries",
+				durations: map[string]float64{
+					"input_fetch": 1, "input_validation": 1, "clustering": 1, "evidence_selection": 1,
+					"cluster_labeling": 1, "taxonomy_generation": 1, "payload_validation": 1,
+					"persistence": 1, "prompt_rendering": 1,
+				},
+			},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				requestTaxonomyProblem(
+					ctx,
+					t,
+					http.MethodPost,
+					harness.server.URL+"/internal/v1/taxonomy/runs/"+unknownRunID.String()+"/failed",
+					harness.internalToken,
+					models.TaxonomyRunFailedRequest{
+						Error:     "generation failed",
+						ErrorCode: models.TaxonomyRunFailureCodeGenerationFailed,
+						Diagnostics: &models.TaxonomyRunFailureDiagnostics{
+							PhaseDurations: test.durations,
+						},
+					},
+					http.StatusBadRequest,
+					response.CodeValidation,
+					response.ProblemTypeValidation,
+				)
+			})
+		}
 	})
 
 	tests := []struct {

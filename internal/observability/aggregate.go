@@ -22,6 +22,7 @@ type Metrics struct {
 	EnrichmentClear EnrichmentClearMetrics
 	// EnrichmentBacklog gauges the aggregate eligible-but-unenriched record count per enrichment.
 	EnrichmentBacklog EnrichmentBacklogMetrics
+	Taxonomy          TaxonomyMetrics
 }
 
 // NewMetrics creates EventMetrics, WebhookMetrics, EmbeddingMetrics, TranslationMetrics, and CacheMetrics from the given meter.
@@ -77,6 +78,11 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("enrichment backlog metrics: %w", err)
 	}
 
+	taxonomy, err := NewTaxonomyMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("taxonomy metrics: %w", err)
+	}
+
 	return &Metrics{
 		Events:            events,
 		Webhooks:          webhooks,
@@ -87,5 +93,6 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		Cache:             cache,
 		EnrichmentClear:   enrichmentClear,
 		EnrichmentBacklog: enrichmentBacklog,
+		Taxonomy:          taxonomy,
 	}, nil
 }

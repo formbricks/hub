@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -14,7 +15,7 @@ import (
 // unrecognized (including the empty string) so a typo degrades to the default rather than silencing
 // logs.
 func ParseLogLevel(level string) slog.Level {
-	switch strings.ToLower(level) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
 		return slog.LevelDebug
 	case "info":
@@ -28,12 +29,10 @@ func ParseLogLevel(level string) slog.Level {
 	}
 }
 
-// SetupLogging installs the default slog handler at the given level. Both binaries call it during
-// startup: hub-api and hub-worker have to agree on log format and honor the same LOG_LEVEL, or a
-// failure that only reproduces in one of them is harder to read than it needs to be.
-func SetupLogging(level string) {
-	opts := &slog.HandlerOptions{Level: ParseLogLevel(level)}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
+// SetupLogging installs the default slog handler at the given level and format. Both binaries call
+// it during startup so hub-api and hub-worker honor the same LOG_LEVEL and LOG_FORMAT behavior.
+func SetupLogging(level, format string) {
+	slog.SetDefault(slog.New(NewLogHandler(os.Stdout, level, format)))
 }
 
 // requestIDKey is the context key for the request ID (X-Request-ID).
@@ -98,4 +97,15 @@ func (h *TraceContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 // WithGroup returns a handler for the given group.
 func (h *TraceContextHandler) WithGroup(name string) slog.Handler {
 	return &TraceContextHandler{inner: h.inner.WithGroup(name)}
+}
+
+// NewLogHandler creates a structured JSON or human-readable text slog handler.
+// Text remains the default for local and backwards-compatible deployments.
+func NewLogHandler(output io.Writer, level, format string) slog.Handler {
+	options := &slog.HandlerOptions{Level: ParseLogLevel(level)}
+	if strings.EqualFold(strings.TrimSpace(format), "json") {
+		return NewTraceContextHandler(slog.NewJSONHandler(output, options))
+	}
+
+	return NewTraceContextHandler(slog.NewTextHandler(output, options))
 }

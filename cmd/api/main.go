@@ -27,20 +27,20 @@ func main() {
 func run() int {
 	cfg, err := config.Load()
 	if err != nil {
-		observability.SetupLogging("info")
+		observability.SetupLogging("info", "text")
 		slog.Error("Failed to load configuration", "error", err)
 
 		return exitFailure
 	}
 
 	if cfg.Server.HubAPIKey == "" {
-		observability.SetupLogging(cfg.Server.LogLevel)
+		observability.SetupLogging(cfg.Server.LogLevel, cfg.Server.LogFormat)
 		slog.Error("API_KEY is required for hub-api")
 
 		return exitFailure
 	}
 
-	observability.SetupLogging(cfg.Server.LogLevel)
+	observability.SetupLogging(cfg.Server.LogLevel, cfg.Server.LogFormat)
 
 	ctx := context.Background()
 
