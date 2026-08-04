@@ -236,10 +236,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		}
 	}
 
-	// Install TraceContextHandler unconditionally so request_id (and trace_id/span_id when tracing is on) appear in logs.
-	defaultHandler := slog.Default().Handler()
-	slog.SetDefault(slog.New(observability.NewTraceContextHandler(defaultHandler)))
-
 	if tracerProvider != nil {
 		otel.SetTracerProvider(tracerProvider)
 	}

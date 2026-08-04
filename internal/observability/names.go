@@ -56,7 +56,7 @@ const (
 	MetricNameCacheMisses = "hub_cache_misses_total"
 
 	MetricNameTaxonomyRunsStarted   = "hub_taxonomy_runs_started_total"
-	MetricNameTaxonomyRunOutcomes   = "hub_taxonomy_runs_total"
+	MetricNameTaxonomyRunOutcomes   = "hub_taxonomy_outcomes_total"
 	MetricNameTaxonomyRunDuration   = "hub_taxonomy_run_duration_seconds"
 	MetricNameTaxonomyDispatchError = "hub_taxonomy_dispatch_errors_total"
 	MetricNameTaxonomyRunsReaped    = "hub_taxonomy_runs_reaped_total"

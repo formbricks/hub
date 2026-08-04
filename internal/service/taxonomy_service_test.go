@@ -337,7 +337,7 @@ func TestTaxonomyService_FailRunPersistsSafeDiagnosticsInMetrics(t *testing.T) {
 		Error:     "provider request failed",
 		ErrorCode: models.TaxonomyRunFailureCodeServiceUnavailable,
 		Diagnostics: &models.TaxonomyRunFailureDiagnostics{
-			Phase:         "tree",
+			Phase:         "taxonomy_generation",
 			FailureReason: "provider_timeout",
 			Provider:      "vertex",
 			Model:         "gemini-2.5-flash",

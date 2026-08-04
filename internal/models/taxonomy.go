@@ -259,7 +259,7 @@ type TaxonomyRunFailedRequest struct {
 // TaxonomyRunFailureDiagnostics contains bounded, non-sensitive compute diagnostics. It is stored
 // inside the existing metrics JSON column, keeping the database and public API schema unchanged.
 type TaxonomyRunFailureDiagnostics struct {
-	Phase              string             `json:"phase,omitempty"                   validate:"omitempty,oneof=fetch cluster label tree persist unknown"`                                                                                                                                                      //nolint:lll
+	Phase              string             `json:"phase,omitempty"                   validate:"omitempty,oneof=input_fetch input_validation clustering evidence_selection cluster_labeling taxonomy_generation payload_validation persistence unknown"`                                                        //nolint:lll
 	FailureReason      string             `json:"failure_reason,omitempty"          validate:"omitempty,oneof=provider_authentication provider_rate_limit provider_timeout provider_unavailable provider_response invalid_output validation_failed insufficient_data hub_unavailable internal_error unknown"` //nolint:lll
 	Provider           string             `json:"provider,omitempty"                validate:"omitempty,oneof=openai bedrock vertex unknown"`
 	Model              string             `json:"model,omitempty"                   validate:"omitempty,no_null_bytes,max=255"`

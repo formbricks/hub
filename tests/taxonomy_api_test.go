@@ -838,7 +838,7 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 			Error:     "clustering did not converge",
 			ErrorCode: models.TaxonomyRunFailureCodeGenerationFailed,
 			Diagnostics: &models.TaxonomyRunFailureDiagnostics{
-				Phase: "cluster",
+				Phase: "clustering",
 				PhaseDurations: map[string]float64{
 					"input_fetch": 0.5, "input_validation": 0.1, "clustering": 2.5,
 					"evidence_selection": 0.2, "cluster_labeling": 1.2, "taxonomy_generation": 3.4,
@@ -858,7 +858,7 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		require.NotNil(t, run.Error)
 		assert.Equal(t, "clustering did not converge", *run.Error)
 		assert.JSONEq(t,
-			`{"failure_diagnostics":{"phase":"cluster","phase_durations_seconds":{`+
+			`{"failure_diagnostics":{"phase":"clustering","phase_durations_seconds":{`+
 				`"input_fetch":0.5,"input_validation":0.1,"clustering":2.5,"evidence_selection":0.2,`+
 				`"cluster_labeling":1.2,"taxonomy_generation":3.4,"payload_validation":0.3,"persistence":0.7}}}`,
 			string(run.Metrics),

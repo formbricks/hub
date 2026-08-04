@@ -20,6 +20,8 @@ func TestNewLogHandlerJSONIncludesRequestCorrelation(t *testing.T) {
 
 	logger.InfoContext(ctx, "taxonomy lifecycle", "event", "hub.taxonomy.run.started")
 
+	assert.Equal(t, 1, strings.Count(output.String(), `"request_id"`))
+
 	var record map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &record))
 	assert.Equal(t, "request-1", record["request_id"])
