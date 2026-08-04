@@ -28,12 +28,14 @@ func main() {
 func run() int {
 	cfg, err := config.Load()
 	if err != nil {
+		// Configure logging before reporting the failure, so a broken config still produces output.
+		observability.SetupLogging("info", "text")
 		slog.Error("Failed to load configuration", "error", err)
 
 		return exitFailure
 	}
 
-	slog.SetDefault(slog.New(observability.NewLogHandler(os.Stdout, cfg.Server.LogLevel, cfg.Server.LogFormat)))
+	observability.SetupLogging(cfg.Server.LogLevel, cfg.Server.LogFormat)
 
 	if cfg.Database.URL == "" || cfg.Database.URL == config.DefaultDatabaseURL {
 		slog.Error("DATABASE_URL must be set explicitly for hub-worker (do not use the default test URL)")

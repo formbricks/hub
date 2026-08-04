@@ -253,7 +253,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.EmotionsMetrics = emotionsMetrics
 	}
 
-	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 0)
+	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps)
 
 	riverCfg := &river.Config{
 		Queues:  queues,

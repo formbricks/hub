@@ -29,7 +29,6 @@ import (
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
-	"github.com/formbricks/hub/internal/workers"
 )
 
 // App holds all server dependencies and coordinates startup and shutdown.
@@ -90,19 +89,18 @@ func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 
 const searchQueryCacheSize = 1000
 
-// setupEmbeddingSearchHandler creates embedding client, worker, and search handler when embeddings are enabled.
+// setupEmbeddingSearchHandler creates the embedding client and search handler when embeddings are
+// enabled. The client is used synchronously on the search path (it embeds the incoming query), which
+// is why the API needs embedding credentials even though it works no embedding jobs.
 // Returns (handler, nil) or (nil, err). Caller should use errors.Is for service.ErrEmbeddingProviderAPIKey and
 // service.ErrEmbeddingGoogleGeminiConfig to return app-level sentinel errors.
 func setupEmbeddingSearchHandler(
 	ctx context.Context,
 	cfg *config.Config,
-	embeddingProviderName, embeddingModel, embeddingDocPrefix string,
-	feedbackRecordsService *service.FeedbackRecordsService,
+	embeddingProviderName, embeddingModel string,
 	embeddingsRepo *repository.EmbeddingsRepository,
-	embeddingMetrics observability.EmbeddingMetrics,
 	metrics *observability.Metrics,
 	meterProvider *sdkmetric.MeterProvider,
-	riverWorkers *river.Workers,
 ) (*handlers.SearchHandler, error) {
 	embeddingCfg := service.EmbeddingClientConfig{
 		Provider:            embeddingProviderName,
@@ -121,10 +119,6 @@ func setupEmbeddingSearchHandler(
 	if err != nil {
 		return nil, fmt.Errorf("create embedding client: %w", err)
 	}
-
-	embeddingWorker := workers.NewFeedbackEmbeddingWorker(
-		feedbackRecordsService, embeddingClient, embeddingDocPrefix, embeddingMetrics)
-	river.AddWorker(riverWorkers, embeddingWorker)
 
 	queryCache, err := lru.New[string, []float32](searchQueryCacheSize)
 	if err != nil {
@@ -248,15 +242,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	messageManager := service.NewMessagePublisherManager(cfg.MessagePublisher.BufferSize, perEventTimeout, eventMetrics)
 
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhookSender := service.NewWebhookSenderImpl(
-		webhooksRepo, webhookMetrics, cfg.Webhook.URLBlacklist, cfg.Webhook.HTTPTimeout.Duration(), nil)
-
-	deps := workers.RiverDeps{
-		WebhooksRepo:       webhooksRepo,
-		WebhookSender:      webhookSender,
-		WebhookHTTPTimeout: cfg.Webhook.HTTPTimeout.Duration(),
-		WebhookMetrics:     webhookMetrics,
-	}
 
 	feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
@@ -294,21 +279,15 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
 
-	// Shared worker/queue registration first (webhook + optional embedding added below).
-	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps, 1)
-
 	var searchHandler *handlers.SearchHandler
 
 	if embeddingProviderName != "" {
-		embeddingDocPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
-
 		var err error
 
 		searchHandler, err = setupEmbeddingSearchHandler(
 			context.Background(), cfg,
-			embeddingProviderName, embeddingModel, embeddingDocPrefix,
-			feedbackRecordsService, embeddingsRepo, embeddingMetrics,
-			metrics, meterProvider, riverWorkers)
+			embeddingProviderName, embeddingModel, embeddingsRepo,
+			metrics, meterProvider)
 		if err != nil {
 			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
 
@@ -322,100 +301,20 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 			return nil, fmt.Errorf("embedding config: %w", err)
 		}
-
-		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: 1}
 	} else {
 		searchHandler = handlers.NewSearchHandler(nil) // 503 when embeddings disabled
 	}
 
-	// Register the translation worker and declare its queue so the River client can
-	// enqueue translation jobs (River requires the job kind registered and the queue
-	// declared at insert time); the jobs are processed by hub-worker, not in this
-	// process. Gated on TRANSLATION_PROVIDER+MODEL like embeddings; the enqueue
-	// provider is registered below, after the River client and tenant settings exist.
-	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
-		translationCfg := service.TranslationClientConfig{
-			Provider:            cfg.Translation.Provider,
-			ProviderAPIKey:      cfg.Translation.ProviderAPIKey,
-			Model:               cfg.Translation.Model,
-			BaseURL:             cfg.Translation.BaseURL,
-			GoogleCloudProject:  cfg.Translation.GoogleCloudProject,
-			GoogleCloudLocation: cfg.Translation.GoogleCloudLocation,
-		}
-
-		translationClient, translationErr := service.NewTranslationClient(context.Background(), translationCfg)
-		if translationErr != nil {
-			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
-
-			return nil, fmt.Errorf("translation config: %w", translationErr)
-		}
-
-		river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, translationMetrics))
-
-		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: 1}
-
-		// Per-tenant re-translation backfill, enqueued by the settings-change listener
-		// below. Registered here only so the River client can validate the kind and queue
-		// at insert time; the fan-out is processed by hub-worker.
-		river.AddWorker(riverWorkers, workers.NewTenantTranslationBackfillWorker(feedbackRecordsService, cfg.Translation.MaxAttempts))
-
-		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: 1}
-	}
-
-	// Register the sentiment worker and declare its queue so the River client can enqueue
-	// sentiment jobs (kind + queue must be known at insert time); the jobs are processed by
-	// hub-worker, not in this process. Gated on SENTIMENT_PROVIDER+MODEL; the enqueue provider
-	// is registered below, after the River client exists.
-	if cfg.Sentiment.Enabled() {
-		sentimentClient, sentimentErr := service.NewSentimentClient(context.Background(), service.SentimentClientConfig{
-			Provider:            cfg.Sentiment.Provider,
-			ProviderAPIKey:      cfg.Sentiment.ProviderAPIKey,
-			Model:               cfg.Sentiment.Model,
-			BaseURL:             cfg.Sentiment.BaseURL,
-			GoogleCloudProject:  cfg.Sentiment.GoogleCloudProject,
-			GoogleCloudLocation: cfg.Sentiment.GoogleCloudLocation,
-		})
-		if sentimentErr != nil {
-			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
-
-			return nil, fmt.Errorf("sentiment config: %w", sentimentErr)
-		}
-
-		river.AddWorker(riverWorkers, workers.NewFeedbackSentimentWorker(
-			feedbackRecordsService, tenantSettingsService, sentimentClient, sentimentMetrics))
-
-		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: 1}
-	}
-
-	// Register the emotions worker and declare its queue so the River client can enqueue emotion
-	// jobs (kind + queue must be known at insert time); the jobs are processed by hub-worker, not
-	// in this process. Gated on EMOTIONS_PROVIDER+MODEL; the enqueue provider is registered below,
-	// after the River client exists.
-	if cfg.Emotions.Enabled() {
-		emotionsClient, emotionsErr := service.NewEmotionsClient(context.Background(), service.EmotionsClientConfig{
-			Provider:            cfg.Emotions.Provider,
-			ProviderAPIKey:      cfg.Emotions.ProviderAPIKey,
-			Model:               cfg.Emotions.Model,
-			BaseURL:             cfg.Emotions.BaseURL,
-			GoogleCloudProject:  cfg.Emotions.GoogleCloudProject,
-			GoogleCloudLocation: cfg.Emotions.GoogleCloudLocation,
-		})
-		if emotionsErr != nil {
-			cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
-
-			return nil, fmt.Errorf("emotions config: %w", emotionsErr)
-		}
-
-		river.AddWorker(riverWorkers, workers.NewFeedbackEmotionsWorker(
-			feedbackRecordsService, tenantSettingsService, emotionsClient, emotionsMetrics))
-
-		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: 1}
-	}
-
-	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
-		Queues:  queues,
-		Workers: riverWorkers,
-	})
+	// Insert-only River client: this process enqueues jobs but works none of them, so it registers
+	// no workers and declares no queues (River requires Workers and Queues to be set together, and
+	// checks that a kind has a registered worker only when Workers is non-nil). hub-worker owns
+	// registration — see workers.NewRiverWorkersAndQueues, and the parity test that keeps the kinds
+	// this process inserts in step with the ones hub-worker registers.
+	//
+	// This is what keeps the API independent of enrichment credentials: sentiment, emotions, and
+	// translation clients are only ever needed by the process that runs their workers, so a missing
+	// or unreadable credential takes down hub-worker (loudly, on purpose) instead of the whole API.
+	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{})
 	if err != nil {
 		cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
 
@@ -747,16 +646,10 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 // riverDepthQueues is the fixed queue set the depth poller reports — every queue the Hub
-// declares. The list bounds the gauge's queue-label cardinality; a queue with no backlog is
-// reported as 0 so dashboards see the series exist.
-var riverDepthQueues = []string{
-	river.QueueDefault,
-	service.EmbeddingsQueueName,
-	service.TranslationsQueueName,
-	service.TranslationBackfillsQueueName,
-	service.SentimentsQueueName,
-	service.EmotionsQueueName,
-}
+// declares, derived from service.JobKindSpecs so a new job kind cannot be added without its
+// queue appearing on the gauge. The list bounds the gauge's queue-label cardinality; a queue with
+// no backlog is reported as 0 so dashboards see the series exist.
+var riverDepthQueues = service.JobQueueNames()
 
 // enrichmentBacklogPollConfig configures runEnrichmentBacklogPoller: the deployment default target
 // language and which enrichments are deployment-configured (only those emit a gauge).
