@@ -7,13 +7,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/formbricks/hub/internal/api/handlers"
@@ -179,6 +182,159 @@ func TestShutdownObservabilityWithProviders(t *testing.T) {
 
 	if err := shutdownObservability(context.Background(), tracerProvider, meterProvider); err != nil {
 		t.Fatalf("shutdownObservability() error = %v, want nil", err)
+	}
+}
+
+// lifecycleRecorder orders the shutdown steps a test cares about. Both the exporter below and the
+// test goroutine append to it, so it has to be mutex-guarded.
+type lifecycleRecorder struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (r *lifecycleRecorder) record(event string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.events = append(r.events, event)
+}
+
+func (r *lifecycleRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return slices.Clone(r.events)
+}
+
+// recordingExporter notes when the meter provider tears down. Its Shutdown is the step that must not
+// happen before the backlog poller has withdrawn its gauge; Export is recorded too so the final
+// collect is visible when instruments carry data.
+type recordingExporter struct {
+	recorder *lifecycleRecorder
+}
+
+func (e recordingExporter) Temporality(kind sdkmetric.InstrumentKind) metricdata.Temporality {
+	return sdkmetric.DefaultTemporalitySelector(kind)
+}
+
+func (e recordingExporter) Aggregation(kind sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	return sdkmetric.DefaultAggregationSelector(kind)
+}
+
+func (e recordingExporter) Export(_ context.Context, _ *metricdata.ResourceMetrics) error {
+	e.recorder.record("metrics-exported")
+
+	return nil
+}
+
+func (e recordingExporter) ForceFlush(context.Context) error { return nil }
+
+func (e recordingExporter) Shutdown(context.Context) error {
+	e.recorder.record("metrics-shutdown")
+
+	return nil
+}
+
+// TestShutdownWaitsForEnrichmentBacklogPoller pins the lifecycle ordering that makes the poller's
+// deferred ClearEnrichmentPending observable at all.
+//
+// Run returns the moment its context is cancelled without joining the poller, so Shutdown used to
+// race it: the meter provider's final collect-and-export could publish a backlog reading for a
+// process that had already lost leadership -- the exact stale series the clear exists to prevent.
+// The poller is slowed here so an unsynchronized Shutdown reliably loses the race. Verified by
+// deleting the awaitEnrichmentBacklogPoller defer: the recorded events become
+// [metrics-exported metrics-shutdown], i.e. the gauge is exported and the provider torn down before
+// the clear runs at all.
+func TestShutdownWaitsForEnrichmentBacklogPoller(t *testing.T) {
+	recorder := &lifecycleRecorder{}
+
+	riverClient, err := river.NewClient(riverpgxv5.New(nil), &river.Config{})
+	if err != nil {
+		t.Fatalf("river.NewClient() error = %v, want nil", err)
+	}
+
+	done := make(chan struct{})
+
+	app := &App{
+		cfg:     &config.Config{Server: config.ServerConfig{Port: "0"}},
+		server:  &http.Server{Addr: "127.0.0.1:0", ReadHeaderTimeout: time.Second},
+		river:   riverClient,
+		message: service.NewMessagePublisherManager(1, time.Second, nil),
+		meterProvider: sdkmetric.NewMeterProvider(
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(recordingExporter{recorder: recorder})),
+		),
+		enrichmentBacklogDone: done,
+	}
+
+	// Stands in for the poller returning: it withdraws the gauge, then signals. The delay is what
+	// makes the ordering assertion meaningful rather than incidentally true.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		recorder.record("backlog-cleared")
+		close(done)
+	}()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := app.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v, want nil", err)
+	}
+
+	events := recorder.snapshot()
+
+	clearedAt := slices.Index(events, "backlog-cleared")
+	if clearedAt < 0 {
+		t.Fatalf("Shutdown() events = %v, want the backlog clear to have happened", events)
+	}
+
+	shutdownAt := slices.Index(events, "metrics-shutdown")
+	if shutdownAt < 0 {
+		t.Fatalf("Shutdown() events = %v, want the meter provider to have been shut down", events)
+	}
+
+	if clearedAt > shutdownAt {
+		t.Fatalf("Shutdown() events = %v, want the backlog clear before the meter provider teardown", events)
+	}
+}
+
+// TestShutdownWithoutEnrichmentBacklogPollerDoesNotBlock covers the metrics-disabled path, where the
+// poller never started and there is nothing to join.
+func TestShutdownWithoutEnrichmentBacklogPollerDoesNotBlock(t *testing.T) {
+	riverClient, err := river.NewClient(riverpgxv5.New(nil), &river.Config{})
+	if err != nil {
+		t.Fatalf("river.NewClient() error = %v, want nil", err)
+	}
+
+	app := &App{
+		cfg:     &config.Config{Server: config.ServerConfig{Port: "0"}},
+		server:  &http.Server{Addr: "127.0.0.1:0", ReadHeaderTimeout: time.Second},
+		river:   riverClient,
+		message: service.NewMessagePublisherManager(1, time.Second, nil),
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := app.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v, want nil", err)
+	}
+}
+
+// TestAwaitEnrichmentBacklogPollerGivesUpOnDeadline pins the bound: a poller stuck in its leader
+// cleanup must not hold shutdown past its budget.
+func TestAwaitEnrichmentBacklogPollerGivesUpOnDeadline(t *testing.T) {
+	app := &App{enrichmentBacklogDone: make(chan struct{})} // never closed
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+
+	app.awaitEnrichmentBacklogPoller(ctx)
+
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("awaitEnrichmentBacklogPoller() blocked for %v, want it to give up on the deadline", elapsed)
 	}
 }
 

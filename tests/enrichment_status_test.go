@@ -290,8 +290,8 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	// Two independent pools stand in for two API replicas: a transaction-scoped advisory lock is
-	// held per session, so the contention is only observable across separate connections.
+	// Two independent pools stand in for two API replicas: the advisory lock is session-scoped and
+	// held on one connection, so contention is only observable across separate connections.
 	dbLeader, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
 	require.NoError(t, err)
 
@@ -345,4 +345,59 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	assert.True(t, promoted, "a follower is promoted once the leader releases")
 
 	leaderTwo.Close(ctx)
+}
+
+// TestEnrichmentBacklogLeaderLeavesNoSessionState pins the release path: the leader sets a
+// session-scoped idle_session_timeout on its connection, and pgxpool hands that same backend to
+// unrelated callers afterwards. If release() did not RESET it, Postgres would eventually terminate
+// some other component's pooled connection after 30 idle minutes. MaxConns=1 guarantees the
+// connection reused below is the very one leadership was held on.
+func TestEnrichmentBacklogLeaderLeavesNoSessionState(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL,
+		database.WithPoolConfig(database.PoolConfig{MaxConns: 1, MinConns: 1}))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	// Record the value the connection starts with, and prove this server/role actually honours the
+	// SET/RESET pair. tryAcquire applies the timeout best-effort and still grants leadership if the
+	// SET fails, so without this the assertion below could pass against an already-default value
+	// without ever exercising RESET.
+	var original string
+	require.NoError(t, db.QueryRow(ctx, `SELECT current_setting('idle_session_timeout')`).Scan(&original))
+
+	// set_config applies the value and returns it in one statement: pgx's extended protocol rejects
+	// a multi-statement "SET ...; SELECT ...", and going through the pool (rather than holding an
+	// acquired connection) means a failed assertion here cannot leave a connection checked out and
+	// wedge db.Close().
+	var probeSet string
+	require.NoError(t, db.QueryRow(ctx,
+		`SELECT set_config('idle_session_timeout', '30min', false)`).Scan(&probeSet))
+	require.Equal(t, "30min", probeSet, "server must honour idle_session_timeout for this test to mean anything")
+
+	_, err = db.Exec(ctx, `RESET idle_session_timeout`)
+	require.NoError(t, err)
+
+	leader := repository.NewEnrichmentBacklogLeader(db)
+
+	// Registered before leadership is taken: if a require below fails, cleanup must still return the
+	// connection or db.Close() would block on it and wedge the suite. Close is idempotent.
+	defer leader.Close(ctx)
+
+	_, isLeader, err := leader.CountIfLeader(ctx, "")
+	require.NoError(t, err)
+	require.True(t, isLeader, "single-connection pool must win leadership")
+
+	leader.Close(ctx)
+
+	// Same backend, borrowed as any other caller would: it must be back to what it started as, not
+	// carrying the leader's 30min timeout.
+	var afterRelease string
+	require.NoError(t, db.QueryRow(ctx, `SELECT current_setting('idle_session_timeout')`).Scan(&afterRelease))
+	assert.Equal(t, original, afterRelease, "the released connection must carry no leader-only session state")
 }

@@ -140,7 +140,13 @@ const (
 	// setLeaderIdleTimeoutSQL caps how long a stalled leader session can hold the lock. Applies to
 	// this session only (SET, not ALTER ROLE); comfortably above enrichmentBacklogInterval so a
 	// healthy leader, which queries every interval, is never affected. Requires PG14+.
+	//
+	// It cannot be SET LOCAL (the convention elsewhere in this package, e.g. embeddings_repository)
+	// because that is transaction-scoped and the leader deliberately holds no transaction -- which
+	// is exactly why release() must RESET it before the connection returns to the pool.
 	setLeaderIdleTimeoutSQL = `SET idle_session_timeout = '30min'`
+	// resetLeaderIdleTimeoutSQL restores the server default so the pooled connection goes back clean.
+	resetLeaderIdleTimeoutSQL = `RESET idle_session_timeout`
 )
 
 // CountEnrichmentStatus returns one tenant's eligible/done counts per enrichment. defaultLang is
@@ -263,24 +269,60 @@ func (l *EnrichmentBacklogLeader) tryAcquire(ctx context.Context) (bool, error) 
 	return true, nil
 }
 
-// release unlocks and returns the leader connection. The unlock uses a context detached from the
-// caller's, so shutdown (whose context is already cancelled) still releases the lock rather than
-// leaving it held until the backend session is reaped.
+// release relinquishes leadership and disposes of the leader connection.
+//
+// Both cleanup statements undo SESSION state that would otherwise ride the connection back into the
+// pool: the advisory lock (which survives Release and would wedge leadership for every replica) and
+// the leader-only idle timeout (which would let Postgres terminate whichever component borrowed the
+// connection next and left it idle). Each gets its OWN deadline, detached from the caller's context
+// so shutdown -- whose context is already cancelled -- still cleans up, and so a slow unlock cannot
+// eat the budget the reset needs.
+//
+// If either statement does not complete we cannot prove the session is clean, so the connection is
+// taken out of the pool (Hijack + Close) rather than handed to an unrelated caller. Losing one
+// pooled connection is strictly cheaper than leaking a lock or a timeout onto a shared one.
 func (l *EnrichmentBacklogLeader) release(ctx context.Context) {
 	if l.conn == nil {
 		return
 	}
 
-	unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), enrichmentBacklogUnlockTimeout)
+	conn := l.conn
+	l.conn = nil
+
+	unlockErr := l.execDetached(ctx, conn, sessionUnlockSQL, enrichmentBacklogLockKey)
+	resetErr := l.execDetached(ctx, conn, resetLeaderIdleTimeoutSQL)
+
+	if unlockErr != nil || resetErr != nil {
+		slog.WarnContext(ctx, "enrichment backlog: leader session cleanup incomplete, discarding connection",
+			"unlock_error", unlockErr, "reset_error", resetErr)
+
+		// Hijack removes the connection from the pool and transfers ownership here; closing it ends
+		// the backend session, which releases anything the statements above failed to undo.
+		hijacked := conn.Hijack()
+
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), enrichmentBacklogUnlockTimeout)
+		defer cancel()
+
+		_ = hijacked.Close(closeCtx)
+
+		return
+	}
+
+	conn.Release()
+}
+
+// execDetached runs one cleanup statement on its own deadline, independent of the caller's context.
+func (l *EnrichmentBacklogLeader) execDetached(
+	ctx context.Context, conn *pgxpool.Conn, sql string, args ...any,
+) error {
+	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), enrichmentBacklogUnlockTimeout)
 	defer cancel()
 
-	// Best effort: if this fails the connection is broken, and ending that session releases the
-	// lock anyway. Returning the connection WITHOUT unlocking would be the real leak, since a
-	// session lock survives being handed back to the pool.
-	_, _ = l.conn.Exec(unlockCtx, sessionUnlockSQL, enrichmentBacklogLockKey)
+	if _, err := conn.Exec(execCtx, sql, args...); err != nil {
+		return fmt.Errorf("enrichment backlog leader cleanup: %w", err)
+	}
 
-	l.conn.Release()
-	l.conn = nil
+	return nil
 }
 
 // scanEnrichmentCounts reads the six-column count row; the scan order matches enrichmentCountSelect.

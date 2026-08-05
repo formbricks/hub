@@ -545,8 +545,10 @@ const sentimentBackfillSelectSQL = classifyBackfillEligibleSQL + `
 // Both NULL checks are required. emotions IS NULL alone would re-send every record whose
 // classification legitimately found no emotion (stored as NULL) to the provider on every run;
 // emotions_classified_at IS NULL alone would re-classify rows enriched before that column existed
-// (migration 020). Together they select exactly the records never classified. The 016 partial index
-// covers the emotions IS NULL arm; the marker is an additional filter on top.
+// (migration 020). Together they select exactly the records never classified. Migration 020 also
+// realigned the 016 partial index to this same pair, so BOTH checks are served by the index instead
+// of the marker being re-checked as a post-filter -- and so a classified-empty row (which keeps
+// emotions NULL forever) leaves the index instead of being retained in it permanently.
 const emotionsBackfillSelectSQL = classifyBackfillEligibleSQL + `
 		AND emotions IS NULL
 		AND emotions_classified_at IS NULL
