@@ -42,6 +42,9 @@ type App struct {
 	tracerProvider *sdktrace.TracerProvider
 	metrics        *observability.Metrics
 	taxonomyRepo   *repository.TaxonomyRepository
+	// enrichmentBacklogDone closes when the enrichment-backlog poller goroutine has returned,
+	// including its deferred cleanup. Nil when the poller was never started (metrics disabled).
+	enrichmentBacklogDone chan struct{}
 }
 
 var (
@@ -609,14 +612,24 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	if a.metrics != nil && a.metrics.EnrichmentBacklog != nil {
-		go runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, enrichmentBacklogPollConfig{
-			// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
-			// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
-			defaultLang:           strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
-			translationConfigured: a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
-			sentimentConfigured:   a.cfg.Sentiment.Enabled(),
-			emotionsConfigured:    a.cfg.Emotions.Enabled(),
-		})
+		// Tracked, unlike the pollers above, because this one has cleanup that Shutdown must not
+		// race: it withdraws the backlog series and releases the leader's advisory lock on the way
+		// out. See App.awaitEnrichmentBacklogPoller.
+		done := make(chan struct{})
+		a.enrichmentBacklogDone = done
+
+		go func() {
+			defer close(done)
+
+			runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, enrichmentBacklogPollConfig{
+				// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
+				// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
+				defaultLang:           strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
+				translationConfigured: a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
+				sentimentConfigured:   a.cfg.Sentiment.Enabled(),
+				emotionsConfigured:    a.cfg.Emotions.Enabled(),
+			})
+		}()
 	}
 
 	// Reap taxonomy runs orphaned in a non-terminal state, but only when the taxonomy service is wired
@@ -960,6 +973,13 @@ func (a *App) Shutdown(ctx context.Context) (err error) {
 		}
 	}()
 
+	// Registered AFTER the observability defer so LIFO runs it FIRST: the meter provider's final
+	// collect-and-export must not happen until the poller has withdrawn the backlog series, or
+	// shutdown publishes one last reading for a backlog this process no longer owns -- the exact
+	// thing the poller's ClearEnrichmentPending exists to prevent. A defer (not an inline call)
+	// so the early-return error paths below are covered too.
+	defer a.awaitEnrichmentBacklogPoller(ctx)
+
 	if err = a.server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		if stopErr := a.river.Stop(ctx); stopErr != nil {
 			slog.Error("river stop during server shutdown", "error", stopErr)
@@ -973,4 +993,29 @@ func (a *App) Shutdown(ctx context.Context) (err error) {
 	}
 
 	return nil
+}
+
+// awaitEnrichmentBacklogPoller blocks until the enrichment-backlog poller goroutine has returned,
+// bounded by the shutdown context.
+//
+// Run returns as soon as its context is cancelled and does not join the poller, so without this the
+// two race: Shutdown could reach the meter provider's final collect first and export a backlog
+// reading for a process that is no longer the leader. Waiting also lets the leader's advisory-lock
+// release and idle-timeout reset finish, which previously raced process exit with nothing awaiting
+// them.
+//
+// On deadline this gives up rather than hanging shutdown past its budget -- the stale sample is a
+// cosmetic gauge artifact, and a wedged shutdown is not. Postgres releases the session lock when the
+// socket closes either way.
+func (a *App) awaitEnrichmentBacklogPoller(ctx context.Context) {
+	if a.enrichmentBacklogDone == nil {
+		return
+	}
+
+	select {
+	case <-a.enrichmentBacklogDone:
+	case <-ctx.Done():
+		slog.Warn("enrichment backlog poller did not finish before the shutdown deadline; " +
+			"its final gauge reading may still be exported")
+	}
 }
