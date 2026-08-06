@@ -13,8 +13,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrInvalidFieldType is returned when a field type string is invalid (err113).
-var ErrInvalidFieldType = errors.New("invalid field type")
+// Sentinel errors for the enum filters parsed out of query parameters (err113). Each has a
+// matching Invalid*Error carrying the rejected value, so a handler can report which parameter was
+// wrong without string-matching the message.
+var (
+	// ErrInvalidFieldType is returned when a field type string is invalid.
+	ErrInvalidFieldType = errors.New("invalid field type")
+	// ErrInvalidSentimentValue is returned when a sentiment label string is invalid.
+	ErrInvalidSentimentValue = errors.New("invalid sentiment")
+	// ErrInvalidEmotionValue is returned when an emotion label string is invalid.
+	ErrInvalidEmotionValue = errors.New("invalid emotion")
+)
 
 // FieldType represents the type of feedback field.
 type FieldType string
@@ -132,6 +141,52 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// parseEnumValues parses the repeated occurrences of one enum query parameter into deduplicated
+// labels, preserving first-seen order.
+//
+// Empty values are skipped, so `?field_type=` keeps behaving as an omitted filter — which is what
+// the single-value form has always done, and what a `dive` validate tag would have silently
+// turned into a 400. Deduplicating here means a repeated label cannot grow the bound array, so a
+// query string cannot inflate the IN-list past the enum's own cardinality.
+//
+// The nil it returns on "nothing parsed" is a TYPED nil slice, not a bare nil: the form decoder
+// assigns a custom type func's result with reflect.Value.Set, which panics on the zero Value that
+// reflect.ValueOf(nil) produces.
+func parseEnumValues[T ~string](vals []string, parse func(string) (T, error)) ([]T, error) {
+	parsed := make([]T, 0, len(vals))
+	seen := make(map[T]struct{}, len(vals))
+
+	for _, raw := range vals {
+		if raw == "" {
+			continue
+		}
+
+		value, err := parse(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+
+		seen[value] = struct{}{}
+		parsed = append(parsed, value)
+	}
+
+	if len(parsed) == 0 {
+		return nil, nil
+	}
+
+	return parsed, nil
+}
+
+// ParseFieldTypes parses repeated ?field_type= values into deduplicated field types. See
+// parseEnumValues for the empty-value and dedupe semantics.
+func ParseFieldTypes(vals []string) ([]FieldType, error) {
+	return parseEnumValues(vals, ParseFieldType)
+}
+
 // SentimentValue is the discrete sentiment label produced by the sentiment-enrichment
 // worker (ENG-1529). It is server-generated and persisted only after enrichment. Keep this
 // set in sync with the feedback_records_sentiment_valid DB CHECK and the OpenAPI enum.
@@ -196,6 +251,57 @@ func (s SentimentValue) IsValid() bool {
 	return ok
 }
 
+// validSentimentValuesString lists the labels for error messages, in the ordinal order of
+// sentimentValues so the message reads very_negative .. very_positive, mixed.
+var validSentimentValuesString = func() string {
+	names := make([]string, 0, len(sentimentValues))
+	for _, value := range sentimentValues {
+		names = append(names, string(value))
+	}
+
+	return strings.Join(names, ", ")
+}()
+
+// ValidSentimentValuesString returns a comma-separated list of valid sentiment values.
+func ValidSentimentValuesString() string {
+	return validSentimentValuesString
+}
+
+// InvalidSentimentValueError describes a rejected sentiment enum value.
+type InvalidSentimentValueError struct {
+	Value string
+}
+
+// Error implements the error interface.
+func (e *InvalidSentimentValueError) Error() string {
+	if e == nil {
+		return ErrInvalidSentimentValue.Error()
+	}
+
+	return fmt.Sprintf("%s: %s", ErrInvalidSentimentValue, e.Value)
+}
+
+// Unwrap allows errors.Is(err, ErrInvalidSentimentValue).
+func (e *InvalidSentimentValueError) Unwrap() error {
+	return ErrInvalidSentimentValue
+}
+
+// ParseSentimentValue parses a string to SentimentValue, returns error if invalid.
+func ParseSentimentValue(s string) (SentimentValue, error) {
+	value := SentimentValue(s)
+	if !value.IsValid() {
+		return "", &InvalidSentimentValueError{Value: s}
+	}
+
+	return value, nil
+}
+
+// ParseSentimentValues parses repeated ?sentiment= values into deduplicated labels. See
+// parseEnumValues for the empty-value and dedupe semantics.
+func ParseSentimentValues(vals []string) ([]SentimentValue, error) {
+	return parseEnumValues(vals, ParseSentimentValue)
+}
+
 // EmotionValue is a single emotion label produced by the emotion-enrichment worker (ENG-1573).
 // Emotions are multi-label — a record carries zero or more — server-generated and persisted only
 // after enrichment. Keep this set in sync with the feedback_records_emotions_valid DB CHECK and
@@ -252,6 +358,95 @@ func (e EmotionValue) IsValid() bool {
 	return ok
 }
 
+// validEmotionValuesString lists the labels for error messages, in the canonical order of
+// emotionValues.
+var validEmotionValuesString = func() string {
+	names := make([]string, 0, len(emotionValues))
+	for _, value := range emotionValues {
+		names = append(names, string(value))
+	}
+
+	return strings.Join(names, ", ")
+}()
+
+// ValidEmotionValuesString returns a comma-separated list of valid emotion values.
+func ValidEmotionValuesString() string {
+	return validEmotionValuesString
+}
+
+// InvalidEmotionValueError describes a rejected emotion enum value.
+type InvalidEmotionValueError struct {
+	Value string
+}
+
+// Error implements the error interface.
+func (e *InvalidEmotionValueError) Error() string {
+	if e == nil {
+		return ErrInvalidEmotionValue.Error()
+	}
+
+	return fmt.Sprintf("%s: %s", ErrInvalidEmotionValue, e.Value)
+}
+
+// Unwrap allows errors.Is(err, ErrInvalidEmotionValue).
+func (e *InvalidEmotionValueError) Unwrap() error {
+	return ErrInvalidEmotionValue
+}
+
+// ParseEmotionValue parses a string to EmotionValue, returns error if invalid.
+func ParseEmotionValue(s string) (EmotionValue, error) {
+	value := EmotionValue(s)
+	if !value.IsValid() {
+		return "", &InvalidEmotionValueError{Value: s}
+	}
+
+	return value, nil
+}
+
+// ParseEmotionValues parses repeated ?emotions= values into deduplicated labels. See
+// parseEnumValues for the empty-value and dedupe semantics.
+func ParseEmotionValues(vals []string) ([]EmotionValue, error) {
+	return parseEnumValues(vals, ParseEmotionValue)
+}
+
+// SortField is the column a feedback record listing is ordered by (ENG-2059).
+//
+// Every member must name a column that is both NOT NULL and IMMUTABLE after insert:
+//   - NOT NULL, because the keyset predicate has no NULL handling — `col < $t` is NULL for a NULL
+//     row, which would drop it from every page after the first.
+//   - immutable, because a mutable sort key lets a row move across the cursor between pages and be
+//     silently skipped. This is why updated_at is deliberately absent: the enrichment workers
+//     (SetTranslation, SetSentiment, writeEmotions) and every PATCH bump it, so `sort=updated_at`
+//     would lose rows under ordinary traffic. A change-feed needs an append-only sequence, not a
+//     sort parameter.
+//
+// Adding a member requires a case in the repository's resolveListOrdering (token -> SQL column)
+// and in FeedbackRecord.SortValue (token -> record field). Both switches are exhaustive-linted, so
+// a half-done addition fails lint instead of shipping cursors that bound the wrong column.
+type SortField string
+
+// Valid SortField values.
+const (
+	SortFieldCollectedAt SortField = "collected_at"
+	SortFieldCreatedAt   SortField = "created_at"
+)
+
+// SortOrder is the direction of a feedback record listing.
+type SortOrder string
+
+// Valid SortOrder values.
+const (
+	SortOrderAsc  SortOrder = "asc"
+	SortOrderDesc SortOrder = "desc"
+)
+
+// Defaults reproducing the ordering the list endpoint had before sort was configurable, so a
+// request that omits both parameters generates the same SQL it always has.
+const (
+	DefaultSortField = SortFieldCollectedAt
+	DefaultSortOrder = SortOrderDesc
+)
+
 // FeedbackRecord represents a single feedback record.
 type FeedbackRecord struct {
 	ID              uuid.UUID `json:"id"`
@@ -303,6 +498,22 @@ func (r *FeedbackRecord) IsTextField() bool {
 // present and not just whitespace).
 func (r *FeedbackRecord) HasOpenText() bool {
 	return r.ValueText != nil && strings.TrimSpace(*r.ValueText) != ""
+}
+
+// SortValue returns the timestamp this record is ordered by under field, so a next-page cursor
+// bounds the same column the keyset predicate will compare. It is the read-side counterpart of the
+// repository's resolveListOrdering; the two must stay in step or a cursor silently bounds the
+// wrong column. Unknown fields fall back to the default sort rather than a zero time, which would
+// restart pagination from the beginning of the range.
+func (r *FeedbackRecord) SortValue(field SortField) time.Time {
+	switch field {
+	case SortFieldCreatedAt:
+		return r.CreatedAt
+	case SortFieldCollectedAt:
+		return r.CollectedAt
+	default:
+		return r.CollectedAt
+	}
 }
 
 // CreateFeedbackRecordRequest represents the request to create a feedback record.
