@@ -134,6 +134,34 @@ func init() {
 	}, (*models.FieldType)(nil))
 
 	registerEnumSliceTypes()
+
+	// Cross-field rules. Registered here rather than checked in a service so the failure travels
+	// as validator.ValidationErrors, which the response layer already renders as RFC 9457
+	// invalid_params — one entry per offending pair, instead of collapsing to a single message.
+	validate.RegisterStructValidation(validateListFeedbackRecordsFilters, models.ListFeedbackRecordsFilters{})
+}
+
+// rangeBoundsTag marks a min/max filter pair supplied in the wrong order. It is a struct-level
+// rule rather than a field rule because the failure is a relationship between two fields, and the
+// error is attributed to the lower bound so invalid_params names one concrete, correctable
+// parameter.
+const rangeBoundsTag = "range_bounds"
+
+// validateListFeedbackRecordsFilters rejects inverted min/max filter pairs.
+//
+// An inverted range matches zero rows, so without this a swapped pair returns an empty page that
+// the caller reads as "there is no such feedback" rather than "your filter is backwards".
+func validateListFeedbackRecordsFilters(structLevel validator.StructLevel) {
+	filters, ok := structLevel.Current().Interface().(models.ListFeedbackRecordsFilters)
+	if !ok {
+		return
+	}
+
+	for _, inverted := range filters.InvertedRanges() {
+		// The snake_case form name is passed as the field name so FieldPath reports the parameter
+		// the client sent, not the Go identifier.
+		structLevel.ReportError(inverted.MinValue, inverted.MinParam, inverted.StructField, rangeBoundsTag, inverted.MaxParam)
+	}
 }
 
 // registerEnumSliceTypes registers decoders for the repeatable enum query filters.
@@ -335,6 +363,9 @@ func FormatFieldError(fieldErr validator.FieldError) string {
 		return "must be one of: " + fieldErr.Param()
 	case "field_type":
 		return "must be one of: " + models.ValidFieldTypeValuesString()
+	case rangeBoundsTag:
+		// Param carries the upper bound's parameter name, set by the struct-level validator.
+		return "must be less than or equal to " + fieldErr.Param()
 	case "uuid":
 		return "must be a valid UUID"
 	case "rfc3339":

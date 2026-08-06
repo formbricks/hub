@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -186,5 +187,100 @@ func TestFeedbackRecord_SortValue(t *testing.T) {
 func TestDefaultSort(t *testing.T) {
 	if DefaultSortField != SortFieldCollectedAt || DefaultSortOrder != SortOrderDesc {
 		t.Fatalf("defaults = (%q, %q), want (collected_at, desc)", DefaultSortField, DefaultSortOrder)
+	}
+}
+
+// TestInvertedRanges_ReportsEachInvertedPair verifies every range pair is checked, and that the
+// error is attributed to the lower bound so invalid_params names one correctable parameter.
+func TestInvertedRanges_ReportsEachInvertedPair(t *testing.T) {
+	filters := invertedFilters()
+
+	got := make(map[string]string, len(filters.InvertedRanges()))
+	for _, inverted := range filters.InvertedRanges() {
+		got[inverted.MinParam] = inverted.MaxParam
+	}
+
+	want := map[string]string{
+		"since":               "until",
+		"created_since":       "created_until",
+		"value_date_min":      "value_date_max",
+		"value_number_min":    "value_number_max",
+		"sentiment_score_min": "sentiment_score_max",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("InvertedRanges() reported %v, want %v", got, want)
+	}
+
+	for minParam, maxParam := range want {
+		if got[minParam] != maxParam {
+			t.Fatalf("InvertedRanges() paired %q with %q, want %q", minParam, got[minParam], maxParam)
+		}
+	}
+}
+
+// TestInvertedRanges_CoversEveryRangeFilter is the guard that stops the next range filter from
+// silently skipping validation. It reflects over the struct's form tags rather than restating the
+// list, so adding a *_min or *_since parameter without wiring it into InvertedRanges fails here
+// instead of shipping a filter that returns a confusing empty page when inverted.
+func TestInvertedRanges_CoversEveryRangeFilter(t *testing.T) {
+	checked := make(map[string]bool)
+	for _, inverted := range invertedFilters().InvertedRanges() {
+		checked[inverted.MinParam] = true
+	}
+
+	for field := range reflect.TypeFor[ListFeedbackRecordsFilters]().Fields() {
+		tag, _, _ := strings.Cut(field.Tag.Get("form"), ",")
+
+		// Lower bounds are spelled either `<thing>_min` or `[<thing>_]since`.
+		if !strings.HasSuffix(tag, "_min") && !strings.HasSuffix(tag, "since") {
+			continue
+		}
+
+		if !checked[tag] {
+			t.Fatalf("filter %q is a range lower bound but InvertedRanges() does not check it", tag)
+		}
+	}
+}
+
+// TestInvertedRanges_IgnoresValidAndPartialRanges verifies a well-ordered range, an equal pair
+// (inclusive bounds, so it selects exactly the boundary), and a half-open range all pass.
+func TestInvertedRanges_IgnoresValidAndPartialRanges(t *testing.T) {
+	early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	low, high := -0.5, 0.5
+
+	tests := []struct {
+		name    string
+		filters ListFeedbackRecordsFilters
+	}{
+		{name: "empty", filters: ListFeedbackRecordsFilters{}},
+		{name: "ordered", filters: ListFeedbackRecordsFilters{Since: &early, Until: &late}},
+		{name: "equal bounds", filters: ListFeedbackRecordsFilters{Since: &early, Until: &early}},
+		{name: "lower bound only", filters: ListFeedbackRecordsFilters{SentimentScoreMin: &high}},
+		{name: "upper bound only", filters: ListFeedbackRecordsFilters{SentimentScoreMax: &low}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.filters.InvertedRanges(); got != nil {
+				t.Fatalf("InvertedRanges() = %v, want nil", got)
+			}
+		})
+	}
+}
+
+// invertedFilters returns a filter set in which every range pair is supplied backwards.
+func invertedFilters() *ListFeedbackRecordsFilters {
+	early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	low, high := -0.5, 0.5
+
+	return &ListFeedbackRecordsFilters{
+		Since: &late, Until: &early,
+		CreatedSince: &late, CreatedUntil: &early,
+		ValueDateMin: &late, ValueDateMax: &early,
+		ValueNumberMin: &high, ValueNumberMax: &low,
+		SentimentScoreMin: &high, SentimentScoreMax: &low,
 	}
 }

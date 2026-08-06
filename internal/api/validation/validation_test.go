@@ -189,3 +189,75 @@ func TestDecodeEnumSliceQueryParams(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateInvertedRangeFilters verifies an inverted min/max pair is a 400 naming the lower
+// bound, rather than an empty result page the caller reads as "there is no such feedback".
+func TestValidateInvertedRangeFilters(t *testing.T) {
+	tenant := "org-123"
+
+	t.Run("inverted score range names the lower bound", func(t *testing.T) {
+		high, low := 0.9, 0.1
+		filters := models.ListFeedbackRecordsFilters{
+			TenantID:          &tenant,
+			SentimentScoreMin: &high,
+			SentimentScoreMax: &low,
+		}
+
+		err := ValidateStruct(filters)
+		require.Error(t, err)
+
+		var validationErrs validator.ValidationErrors
+		require.ErrorAs(t, err, &validationErrs)
+		require.Len(t, validationErrs, 1)
+		assert.Equal(t, "sentiment_score_min", FieldPath(validationErrs[0]))
+		assert.Equal(t, "must be less than or equal to sentiment_score_max", FormatFieldError(validationErrs[0]))
+	})
+
+	// Each pair is reported separately so a caller fixing a form sees every backwards filter at
+	// once rather than one per round trip.
+	t.Run("every inverted pair is reported", func(t *testing.T) {
+		early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		late := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+		filters := models.ListFeedbackRecordsFilters{
+			TenantID:     &tenant,
+			Since:        &late,
+			Until:        &early,
+			CreatedSince: &late,
+			CreatedUntil: &early,
+		}
+
+		err := ValidateStruct(filters)
+		require.Error(t, err)
+
+		var validationErrs validator.ValidationErrors
+		require.ErrorAs(t, err, &validationErrs)
+
+		names := make([]string, 0, len(validationErrs))
+		for _, fieldErr := range validationErrs {
+			names = append(names, FieldPath(fieldErr))
+		}
+
+		assert.ElementsMatch(t, []string{"since", "created_since"}, names)
+	})
+
+	// A lower bound with no counterpart is unbounded above, not inverted. Expressing this rule as
+	// `ltefield` instead would fail here, because validator treats a nil counterpart as a failure
+	// rather than skipping the comparison.
+	t.Run("a lone bound is accepted", func(t *testing.T) {
+		high := 0.9
+		filters := models.ListFeedbackRecordsFilters{TenantID: &tenant, SentimentScoreMin: &high}
+
+		assert.NoError(t, ValidateStruct(filters))
+	})
+
+	t.Run("an ordered range is accepted", func(t *testing.T) {
+		low, high := 0.1, 0.9
+		filters := models.ListFeedbackRecordsFilters{
+			TenantID:          &tenant,
+			SentimentScoreMin: &low,
+			SentimentScoreMax: &high,
+		}
+
+		assert.NoError(t, ValidateStruct(filters))
+	})
+}

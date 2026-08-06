@@ -605,82 +605,14 @@ func scanBackfillTargetIDs(rows pgx.Rows, name string) ([]uuid.UUID, error) {
 	return ids, nil
 }
 
-// buildFilterConditions builds WHERE clause conditions and arguments from filters.
-// Returns the WHERE clause (including " WHERE " prefix if conditions exist) and the args slice.
-func buildFilterConditions(filters *models.ListFeedbackRecordsFilters) (whereClause string, args []any) {
-	var conditions []string
-
-	// Each placeholder is len(args)+1, evaluated before that condition's arg is appended, so $N
-	// always equals the argument's 1-based position. Deriving it from the slice length (rather than
-	// a manual counter) means conditions stay correct in any order and a new filter can be added
-	// anywhere without desyncing a counter.
-	if filters.TenantID != nil {
-		conditions = append(conditions, fmt.Sprintf("tenant_id = $%d", len(args)+1))
-		args = append(args, *filters.TenantID)
-	}
-
-	if filters.SubmissionID != nil {
-		conditions = append(conditions, fmt.Sprintf("submission_id = $%d", len(args)+1))
-		args = append(args, *filters.SubmissionID)
-	}
-
-	if filters.SourceType != nil {
-		conditions = append(conditions, fmt.Sprintf("source_type = $%d", len(args)+1))
-		args = append(args, *filters.SourceType)
-	}
-
-	if filters.SourceID != nil {
-		conditions = append(conditions, fmt.Sprintf("source_id = $%d", len(args)+1))
-		args = append(args, *filters.SourceID)
-	}
-
-	if filters.FieldID != nil {
-		conditions = append(conditions, fmt.Sprintf("field_id = $%d", len(args)+1))
-		args = append(args, *filters.FieldID)
-	}
-
-	if filters.FieldGroupID != nil {
-		conditions = append(conditions, fmt.Sprintf("field_group_id = $%d", len(args)+1))
-		args = append(args, *filters.FieldGroupID)
-	}
-
-	if filters.FieldType != nil {
-		conditions = append(conditions, fmt.Sprintf("field_type = $%d", len(args)+1))
-		args = append(args, *filters.FieldType)
-	}
-
-	if filters.ValueID != nil {
-		conditions = append(conditions, fmt.Sprintf("value_id = $%d", len(args)+1))
-		args = append(args, *filters.ValueID)
-	}
-
-	if filters.UserID != nil {
-		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)+1))
-		args = append(args, *filters.UserID)
-	}
-
-	if filters.Since != nil {
-		conditions = append(conditions, fmt.Sprintf("collected_at >= $%d", len(args)+1))
-		args = append(args, *filters.Since)
-	}
-
-	if filters.Until != nil {
-		conditions = append(conditions, fmt.Sprintf("collected_at <= $%d", len(args)+1))
-		args = append(args, *filters.Until)
-	}
-
-	if len(conditions) > 0 {
-		whereClause = " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	return whereClause, args
-}
-
 // Count returns the number of feedback records matching the given filters.
 func (r *FeedbackRecordsRepository) Count(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 ) (int, error) {
-	query, args := buildCountQuery(filters)
+	query, args, err := buildCountQuery(filters)
+	if err != nil {
+		return 0, err
+	}
 
 	var count int
 	if err := r.db.QueryRow(ctx, query, args...).Scan(&count); err != nil {
@@ -691,13 +623,15 @@ func (r *FeedbackRecordsRepository) Count(
 }
 
 // buildCountQuery constructs the SELECT COUNT(*) query and args from filters.
-// Extracted for testability; mirrors the WHERE clause logic of List.
-func buildCountQuery(filters *models.ListFeedbackRecordsFilters) (string, []any) {
-	query := "SELECT COUNT(*) FROM feedback_records"
-	whereClause, args := buildFilterConditions(filters)
-	query += whereClause
+// Extracted for testability; shares buildFilterConditions with List, so a count always describes
+// exactly the set the list would return. Sort has no bearing on a COUNT(*).
+func buildCountQuery(filters *models.ListFeedbackRecordsFilters) (string, []any, error) {
+	whereClause, args, err := buildFilterConditions(filters)
+	if err != nil {
+		return "", nil, err
+	}
 
-	return query, args
+	return "SELECT COUNT(*) FROM feedback_records" + whereClause, args, nil
 }
 
 const feedbackRecordsListSelect = `SELECT ` + feedbackRecordColumns + `
@@ -709,13 +643,22 @@ const feedbackRecordsListSelect = `SELECT ` + feedbackRecordColumns + `
 func (r *FeedbackRecordsRepository) List(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 ) ([]models.FeedbackRecord, bool, error) {
+	ordering, err := resolveListOrdering(filters)
+	if err != nil {
+		return nil, false, err
+	}
+
 	query := feedbackRecordsListSelect
 
-	whereClause, args := buildFilterConditions(filters)
+	whereClause, args, err := buildFilterConditions(filters)
+	if err != nil {
+		return nil, false, err
+	}
+
 	query += whereClause
 	argCount := len(args) + 1
 
-	query += " ORDER BY collected_at DESC, id ASC"
+	query += ordering.orderByClause()
 
 	limit := filters.Limit
 	if limit <= 0 {
@@ -739,32 +682,45 @@ func (r *FeedbackRecordsRepository) List(
 	return records, hasMore, nil
 }
 
-// ListAfterCursor retrieves feedback records after the given keyset cursor (collected_at, id).
-// Order is collected_at DESC, id ASC. The cursor represents the last row of the previous page.
+// ListAfterCursor retrieves feedback records after the given keyset cursor.
+//
+// cursorValue is the previous page's last row read from the column the listing is sorted by, so
+// the caller and this predicate must agree on the ordering — which they do, because both derive it
+// from the same filters. The cursor represents the last row of the previous page.
 // Fetches limit+1 as sentinel to determine hasMore; returns trimmed slice and hasMore.
 func (r *FeedbackRecordsRepository) ListAfterCursor(
-	ctx context.Context, filters *models.ListFeedbackRecordsFilters, cursorCollectedAt time.Time, cursorID uuid.UUID,
+	ctx context.Context, filters *models.ListFeedbackRecordsFilters, cursorValue time.Time, cursorID uuid.UUID,
 ) ([]models.FeedbackRecord, bool, error) {
-	query := feedbackRecordsListSelect
-
-	whereClause, args := buildFilterConditions(filters)
-	query += whereClause
-
-	// Keyset condition: next page = (collected_at < cursor) OR (collected_at = cursor AND id > cursorID)
-	// For ORDER BY collected_at DESC, id ASC (two cursor params: collected_at, id)
-	argTime := len(args) + 1
-
-	argID := len(args) + 2 //nolint:mnd // second keyset param
-	if whereClause != "" {
-		query += fmt.Sprintf(" AND (collected_at < $%d OR (collected_at = $%d AND id > $%d))", argTime, argTime, argID)
-	} else {
-		query += fmt.Sprintf(" WHERE (collected_at < $%d OR (collected_at = $%d AND id > $%d))", argTime, argTime, argID)
+	ordering, err := resolveListOrdering(filters)
+	if err != nil {
+		return nil, false, err
 	}
 
-	args = append(args, cursorCollectedAt, cursorID)
+	query := feedbackRecordsListSelect
+
+	whereClause, args, err := buildFilterConditions(filters)
+	if err != nil {
+		return nil, false, err
+	}
+
+	query += whereClause
+
+	argTime := len(args) + 1
+	argID := len(args) + 2 //nolint:mnd // second keyset param
+
+	// buildFilterConditions always emits at least the tenant predicate, so the clause is never
+	// empty here; the joiner is written out anyway so the SQL stays valid if that ever changes.
+	joiner := " WHERE "
+	if whereClause != "" {
+		joiner = " AND "
+	}
+
+	query += joiner + ordering.keysetPredicate(argTime, argID)
+
+	args = append(args, cursorValue, cursorID)
 	argCount := len(args) + 1
 
-	query += " ORDER BY collected_at DESC, id ASC"
+	query += ordering.orderByClause()
 
 	limit := filters.Limit
 	if limit <= 0 {
