@@ -318,6 +318,16 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 		filters.Limit = 100
 	}
 
+	// Resolve the ordering once, here, so the keyset predicate, the ORDER BY and the next cursor
+	// are all derived from the same values and cannot disagree about what a page is ordered by.
+	if filters.Sort == "" {
+		filters.Sort = models.DefaultSortField
+	}
+
+	if filters.Order == "" {
+		filters.Order = models.DefaultSortOrder
+	}
+
 	cursorStr := strings.TrimSpace(filters.Cursor)
 
 	var (
@@ -327,12 +337,19 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 	)
 
 	if cursorStr != "" {
-		collectedAt, id, decErr := cursor.Decode(cursorStr)
+		key, decErr := cursor.DecodeKey(cursorStr)
 		if decErr != nil {
 			return nil, fmt.Errorf("decode cursor: %w", decErr)
 		}
 
-		records, hasMore, err = s.repo.ListAfterCursor(ctx, filters, collectedAt, id)
+		// A cursor bounds one column in one direction. Under a different ordering it still yields
+		// a valid-looking page that is not the continuation of the previous one, so refuse it
+		// rather than silently skipping and repeating rows.
+		if matchErr := key.Match(string(filters.Sort), string(filters.Order)); matchErr != nil {
+			return nil, fmt.Errorf("validate cursor ordering: %w", matchErr)
+		}
+
+		records, hasMore, err = s.repo.ListAfterCursor(ctx, filters, key.Timestamp, key.ID)
 	} else {
 		records, hasMore, err = s.repo.List(ctx, filters)
 	}
@@ -342,9 +359,21 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 	}
 
 	meta, err := BuildListPaginationMeta(filters.Limit, hasMore, func() (string, error) {
+		// hasMore is derived from len(records) > limit, so a non-empty page is implied here.
+		// Guarded anyway, mirroring the webhooks list path: an out-of-range index would panic in
+		// the request goroutine rather than surface as an error.
+		if len(records) == 0 {
+			return "", ErrPaginationInvariantViolated
+		}
+
 		last := records[len(records)-1]
 
-		return cursor.Encode(last.CollectedAt, last.ID)
+		return cursor.EncodeKey(cursor.Key{
+			Timestamp: last.SortValue(filters.Sort),
+			ID:        last.ID,
+			Sort:      string(filters.Sort),
+			Order:     string(filters.Order),
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode next cursor: %w", err)
