@@ -132,6 +132,35 @@ func init() {
 
 		return &ft, nil
 	}, (*models.FieldType)(nil))
+
+	registerEnumSliceTypes()
+}
+
+// registerEnumSliceTypes registers decoders for the repeatable enum query filters.
+//
+// The decoder resolves a custom type func from the *field's* type before it reaches its
+// reflect.Slice branch, and a top-level struct field is decoded at index 0 — so each of these
+// receives every repetition of the parameter at once and can parse the whole set.
+//
+// Doing it here rather than with a `validate:"dive,..."` tag buys three things: the filter struct
+// can never hold an unknown label once decoding succeeds, the 400 is attributed to the plain
+// parameter name rather than to "sentiment[2]" (which a client cannot address), and an empty
+// value stays a no-op filter — which is what ?field_type= has always been.
+//
+// Without a registration here, each element would fall through the decoder's plain-string branch
+// and be assigned unvalidated.
+func registerEnumSliceTypes() {
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
+		return models.ParseFieldTypes(vals)
+	}, []models.FieldType(nil))
+
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
+		return models.ParseSentimentValues(vals)
+	}, []models.SentimentValue(nil))
+
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
+		return models.ParseEmotionValues(vals)
+	}, []models.EmotionValue(nil))
 }
 
 // ValidateStruct validates a struct using go-playground/validator
@@ -248,6 +277,16 @@ func queryDecodeReason(err error) string {
 	var invalidFieldType *models.InvalidFieldTypeError
 	if errors.As(err, &invalidFieldType) {
 		return "must be one of: " + models.ValidFieldTypeValuesString()
+	}
+
+	var invalidSentiment *models.InvalidSentimentValueError
+	if errors.As(err, &invalidSentiment) {
+		return "must be one of: " + models.ValidSentimentValuesString()
+	}
+
+	var invalidEmotion *models.InvalidEmotionValueError
+	if errors.As(err, &invalidEmotion) {
+		return "must be one of: " + models.ValidEmotionValuesString()
 	}
 
 	text := strings.ToLower(err.Error())
