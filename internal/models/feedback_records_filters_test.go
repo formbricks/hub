@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -329,4 +330,74 @@ func TestInvalidEnumValueErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFilterValueCapsMatchTheirSets ties every repeatable filter's `max=` tag to the thing it is
+// supposed to mirror, because a struct tag cannot reference a constant and so drifts silently.
+//
+// The enum caps are the failure that motivated this: adding a seventh emotion would leave
+// `max=6` in place, and a request legitimately asking for all seven would start returning 400 with
+// no test going red. The string caps just pin MaxFilterValues as the single documented number.
+func TestFilterValueCapsMatchTheirSets(t *testing.T) {
+	enumCaps := map[string]int{
+		"field_type": len(ValidFieldTypeValues()),
+		"sentiment":  len(SentimentValues()),
+		"emotions":   len(EmotionValues()),
+	}
+
+	seen := map[string]bool{}
+
+	for field := range reflect.TypeFor[ListFeedbackRecordsFilters]().Fields() {
+		if field.Type.Kind() != reflect.Slice {
+			continue
+		}
+
+		name, _, _ := strings.Cut(field.Tag.Get("form"), ",")
+
+		limit, ok := maxTagValue(t, field.Tag.Get("validate"))
+		if !ok {
+			t.Fatalf("repeatable filter %q has no max= cap; an unbounded IN-list is the one thing these tags exist to prevent", name)
+		}
+
+		seen[name] = true
+
+		want := MaxFilterValues
+		if enumCap, isEnum := enumCaps[name]; isEnum {
+			want = enumCap
+		}
+
+		if limit != want {
+			t.Fatalf("filter %q caps at %d, want %d", name, limit, want)
+		}
+	}
+
+	for name := range enumCaps {
+		if !seen[name] {
+			t.Fatalf("enum filter %q is no longer a slice field; this test is checking nothing for it", name)
+		}
+	}
+}
+
+// maxTagValue returns the slice-level `max=N` from a validate tag — the portion before `dive`,
+// since anything after it constrains elements rather than length.
+func maxTagValue(t *testing.T, tag string) (int, bool) {
+	t.Helper()
+
+	sliceLevel, _, _ := strings.Cut(tag, ",dive")
+
+	for part := range strings.SplitSeq(sliceLevel, ",") {
+		raw, found := strings.CutPrefix(part, "max=")
+		if !found {
+			continue
+		}
+
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			t.Fatalf("unparseable max tag %q", part)
+		}
+
+		return value, true
+	}
+
+	return 0, false
 }

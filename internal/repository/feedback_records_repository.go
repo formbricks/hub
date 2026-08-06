@@ -709,8 +709,9 @@ func (r *FeedbackRecordsRepository) ListAfterCursor(
 	argID := len(args) + 2 //nolint:mnd // second keyset param
 
 	// Always " AND ": buildFilterConditions fails closed without a tenant, so it either returns an
-	// error or a clause that already contains at least the tenant predicate. TestListAfterCursor_
-	// AlwaysAndsOntoTheTenantClause pins that, so this cannot silently become invalid SQL.
+	// error or a clause that already contains at least the tenant predicate — never an empty one.
+	// Pinned by TestListAfterCursor_AlwaysAndsOntoTheTenantClause, so this cannot silently become
+	// invalid SQL.
 	query += " AND " + ordering.keysetPredicate(argTime, argID)
 
 	args = append(args, cursorValue, cursorID)

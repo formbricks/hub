@@ -45,12 +45,19 @@ const (
 	DefaultSortOrder = SortOrderDesc
 )
 
-// MaxFilterValues caps how many values one repeatable filter may carry.
+// MaxFilterValues caps how many values one repeatable *string* filter may carry. The enum filters
+// cap at their own label-set cardinality instead, since more entries than that can only be
+// duplicates.
 //
-// go-playground/form imposes no bound of its own on a repeated query parameter — its maxArraySize
-// only guards the indexed `x[0]=` form — so this tag is the only thing between a caller and an
-// arbitrarily long IN-list. The remaining exposure is bounded by net/http's MaxHeaderBytes, since
-// the values are materialized while decoding and rejected afterwards.
+// go-playground/form imposes no useful bound of its own on a repeated query parameter, so these
+// caps are the only thing between a caller and an arbitrarily long IN-list. The remaining exposure
+// is bounded by net/http's MaxHeaderBytes, since values are materialized while decoding and
+// rejected afterwards.
+//
+// Struct tags cannot reference a constant, so every cap below is written out as a literal.
+// TestFilterValueCapsMatchTheirSets reflects over the tags and enforces that they agree with this
+// constant and with the enum sets, which is what keeps adding a label from silently making a
+// legitimate request a 400. Keep the OpenAPI maxItems for these parameters in step by hand.
 const MaxFilterValues = 100
 
 // ListFeedbackRecordsFilters represents filters for listing feedback records. It is shared
