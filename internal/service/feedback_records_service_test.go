@@ -1137,3 +1137,18 @@ func TestListFeedbackRecords_RejectsCursorFromAnotherOrdering(t *testing.T) {
 		}
 	})
 }
+
+// TestListFeedbackRecords_PaginationInvariantViolation covers the guard on the last-row index.
+// A repository reporting "there is another page" while returning no rows is a contract violation,
+// and it must surface as an error rather than panicking on records[-1] in the request goroutine.
+func TestListFeedbackRecords_PaginationInvariantViolation(t *testing.T) {
+	tenant := "org-123"
+	repo := &mockFeedbackRecordsRepo{listRecords: nil, listHasMore: true}
+
+	_, err := newListTestService(repo).ListFeedbackRecords(
+		context.Background(), &models.ListFeedbackRecordsFilters{TenantID: &tenant},
+	)
+	if !errors.Is(err, ErrPaginationInvariantViolated) {
+		t.Fatalf("ListFeedbackRecords() error = %v, want ErrPaginationInvariantViolated", err)
+	}
+}

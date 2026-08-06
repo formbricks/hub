@@ -104,6 +104,17 @@ func init() {
 		slog.Error("Failed to register no_null_bytes validator", "error", err)
 	}
 
+	// Element validators for the repeatable enum filters, applied via `dive`. They are a second
+	// gate behind registerEnumSliceTypes, not a replacement: see the comment there for why the
+	// decoder alone cannot be trusted to have run.
+	if err := validate.RegisterValidation("sentiment", validateSentiment); err != nil {
+		slog.Error("Failed to register sentiment validator", "error", err)
+	}
+
+	if err := validate.RegisterValidation("emotion", validateEmotion); err != nil {
+		slog.Error("Failed to register emotion validator", "error", err)
+	}
+
 	// Register custom type converters for form decoding
 	// Handle *time.Time (pointer type used in our models)
 	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
@@ -170,13 +181,16 @@ func validateListFeedbackRecordsFilters(structLevel validator.StructLevel) {
 // reflect.Slice branch, and a top-level struct field is decoded at index 0 — so each of these
 // receives every repetition of the parameter at once and can parse the whole set.
 //
-// Doing it here rather than with a `validate:"dive,..."` tag buys three things: the filter struct
-// can never hold an unknown label once decoding succeeds, the 400 is attributed to the plain
-// parameter name rather than to "sentiment[2]" (which a client cannot address), and an empty
-// value stays a no-op filter — which is what ?field_type= has always been.
+// Parsing here rather than relying on `validate:"dive,..."` alone buys two things for the input
+// shape clients actually send: the 400 is attributed to the plain parameter name rather than to
+// "sentiment[2]" (which a client cannot address), and an empty value stays a no-op filter, which
+// is what ?field_type= has always been.
 //
-// Without a registration here, each element would fall through the decoder's plain-string branch
-// and be assigned unvalidated.
+// It is NOT sufficient on its own, which is why the struct also carries dive tags. The decoder
+// consults customTypeFuncs only when the plain query key is present; go-playground/form's indexed
+// form (?field_type[0]=x) takes a different branch, skips these funcs entirely, and assigns the
+// raw string. The dive tags run on the decoded struct regardless of how it was populated, so they
+// catch what this misses.
 func registerEnumSliceTypes() {
 	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
 		return models.ParseFieldTypes(vals)
@@ -363,6 +377,10 @@ func FormatFieldError(fieldErr validator.FieldError) string {
 		return "must be one of: " + fieldErr.Param()
 	case "field_type":
 		return "must be one of: " + models.ValidFieldTypeValuesString()
+	case "sentiment":
+		return "must be one of: " + models.ValidSentimentValuesString()
+	case "emotion":
+		return "must be one of: " + models.ValidEmotionValuesString()
 	case rangeBoundsTag:
 		// Param carries the upper bound's parameter name, set by the struct-level validator.
 		return "must be less than or equal to " + fieldErr.Param()
@@ -401,6 +419,32 @@ func validateFieldType(fl validator.FieldLevel) bool {
 	}
 
 	return false
+}
+
+// validateSentiment is a custom validator for the sentiment enum, applied per element of the
+// repeatable sentiment filter via `dive`.
+func validateSentiment(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if field.Kind() != reflect.String {
+		return false
+	}
+
+	_, err := models.ParseSentimentValue(field.String())
+
+	return err == nil
+}
+
+// validateEmotion is a custom validator for the emotion enum, applied per element of the
+// repeatable emotions filter via `dive`.
+func validateEmotion(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if field.Kind() != reflect.String {
+		return false
+	}
+
+	_, err := models.ParseEmotionValue(field.String())
+
+	return err == nil
 }
 
 // validateNoNullBytes checks that a string field does not contain NULL bytes

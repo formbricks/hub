@@ -284,3 +284,49 @@ func invertedFilters() *ListFeedbackRecordsFilters {
 		SentimentScoreMin: &high, SentimentScoreMax: &low,
 	}
 }
+
+// TestInvalidEnumValueErrors covers the message and nil-receiver behaviour of the two new error
+// types, mirroring InvalidFieldTypeError. The message carries the rejected value for logs; the
+// query-decode layer deliberately reports a canned reason instead, so the value never reaches the
+// response body.
+func TestInvalidEnumValueErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		nilErr   error
+		wantIn   string
+		sentinel error
+	}{
+		{
+			name:     "sentiment",
+			err:      &InvalidSentimentValueError{Value: "hostile"},
+			nilErr:   (*InvalidSentimentValueError)(nil),
+			wantIn:   "hostile",
+			sentinel: ErrInvalidSentimentValue,
+		},
+		{
+			name:     "emotion",
+			err:      &InvalidEmotionValueError{Value: "ennui"},
+			nilErr:   (*InvalidEmotionValueError)(nil),
+			wantIn:   "ennui",
+			sentinel: ErrInvalidEmotionValue,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.Contains(tt.err.Error(), tt.wantIn) {
+				t.Fatalf("Error() = %q, want it to carry the rejected value %q", tt.err.Error(), tt.wantIn)
+			}
+
+			if !errors.Is(tt.err, tt.sentinel) {
+				t.Fatalf("errors.Is(%v, %v) = false, want true", tt.err, tt.sentinel)
+			}
+
+			// A nil typed error must not panic — Error() is reached through fmt verbs in logs.
+			if got := tt.nilErr.Error(); got != tt.sentinel.Error() {
+				t.Fatalf("nil receiver Error() = %q, want %q", got, tt.sentinel.Error())
+			}
+		})
+	}
+}

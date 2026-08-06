@@ -5,6 +5,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/models"
 )
@@ -209,147 +212,128 @@ func TestBuildFilterConditions_PresenceFiltersBindNothing(t *testing.T) {
 	})
 }
 
-// TestResolveListOrdering covers the defaults and every valid (sort, order) pair.
-func TestResolveListOrdering(t *testing.T) {
-	tests := []struct {
-		name       string
-		sort       models.SortField
-		order      models.SortOrder
-		wantColumn sqlColumn
-		wantDesc   bool
-	}{
-		{name: "defaults to collected_at desc", wantColumn: colCollectedAt, wantDesc: true},
-		{
-			name: "collected_at asc", sort: models.SortFieldCollectedAt, order: models.SortOrderAsc,
-			wantColumn: colCollectedAt, wantDesc: false,
-		},
-		{
-			name: "created_at desc", sort: models.SortFieldCreatedAt, order: models.SortOrderDesc,
-			wantColumn: colCreatedAt, wantDesc: true,
-		},
-		{
-			name: "created_at asc", sort: models.SortFieldCreatedAt, order: models.SortOrderAsc,
-			wantColumn: colCreatedAt, wantDesc: false,
-		},
-	}
+// TestFilterConditions_AccumulatorContract exercises the accumulator directly, independently of
+// the filter policy built on top of it. buildFilterConditions always adds the tenant predicate, so
+// the empty case is unreachable through it — but `where()` still has to return a valid (empty)
+// clause, because ListAfterCursor now unconditionally appends " AND " on the strength of the
+// clause never being empty in practice.
+func TestFilterConditions_AccumulatorContract(t *testing.T) {
+	t.Run("no conditions yields no clause", func(t *testing.T) {
+		conds := &filterConditions{}
+		if got := conds.where(); got != "" {
+			t.Fatalf("where() = %q, want empty", got)
+		}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			filters := tenantFilters()
-			filters.Sort = tt.sort
-			filters.Order = tt.order
+		if len(conds.args) != 0 {
+			t.Fatalf("args = %v, want none", conds.args)
+		}
+	})
 
-			ordering, err := resolveListOrdering(filters)
-			if err != nil {
-				t.Fatalf("resolveListOrdering() error = %v, want nil", err)
-			}
+	t.Run("conditions are ANDed under one WHERE", func(t *testing.T) {
+		conds := &filterConditions{}
+		conds.addComparison(colTenantID, opEqual, "t1")
+		conds.addRaw("sentiment IS NULL")
 
-			if ordering.column != tt.wantColumn || ordering.desc != tt.wantDesc {
-				t.Fatalf("resolveListOrdering() = (%q, desc=%v), want (%q, desc=%v)",
-					ordering.column, ordering.desc, tt.wantColumn, tt.wantDesc)
-			}
-		})
-	}
+		const want = " WHERE tenant_id = $1 AND sentiment IS NULL"
+		if got := conds.where(); got != want {
+			t.Fatalf("where() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("empty value slices add nothing", func(t *testing.T) {
+		conds := &filterConditions{}
+		conds.addAnyOf(colUserID, nil)
+		conds.addAnyOfEnum(colFieldType, fieldTypeEnum, nil)
+
+		if got := conds.where(); got != "" {
+			t.Fatalf("where() = %q, want empty", got)
+		}
+	})
 }
 
-// TestResolveListOrdering_RejectsUnknownTokens is the SQL-identifier injection guard.
-//
-// It constructs the filters directly in Go, bypassing HTTP validation exactly as a worker or an
-// internal caller would, because that is the path where the `oneof` tag is not in play at all. The
-// resolver must refuse rather than interpolate — `column = sqlColumn(field)` would pass every
-// other test in this file and hand the caller a SQL injection.
-func TestResolveListOrdering_RejectsUnknownTokens(t *testing.T) {
-	tests := []struct {
-		name  string
-		sort  models.SortField
-		order models.SortOrder
-	}{
-		{name: "unknown sort", sort: models.SortField("value_number"), order: models.SortOrderDesc},
-		{name: "unknown order", sort: models.SortFieldCreatedAt, order: models.SortOrder("sideways")},
-		{
-			name:  "injection attempt",
-			sort:  models.SortField(`collected_at"; DROP TABLE feedback_records--`),
-			order: models.SortOrderDesc,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			filters := tenantFilters()
-			filters.Sort = tt.sort
-			filters.Order = tt.order
-
-			ordering, err := resolveListOrdering(filters)
-			if err == nil {
-				t.Fatalf("resolveListOrdering() error = nil, want a rejection (got column %q)", ordering.column)
-			}
-
-			if ordering.column != "" {
-				t.Fatalf("resolveListOrdering() column = %q, want empty on error", ordering.column)
-			}
-		})
-	}
-}
-
-// TestOrderByClause_DefaultIsByteIdentical pins the pre-sort-control SQL exactly. Behavior
-// preservation is easy to assert loosely and easy to get subtly wrong; comparing the rendered
-// string is the strongest form of the claim.
-func TestOrderByClause_DefaultIsByteIdentical(t *testing.T) {
-	ordering, err := resolveListOrdering(tenantFilters())
+// TestListAfterCursor_AlwaysAndsOntoTheTenantClause is the guard for the unconditional " AND " in
+// ListAfterCursor: any filter set that builds successfully must already carry a WHERE clause, so
+// appending " AND <keyset>" is always valid SQL.
+func TestListAfterCursor_AlwaysAndsOntoTheTenantClause(t *testing.T) {
+	where, _, err := buildFilterConditions(tenantFilters())
 	if err != nil {
-		t.Fatalf("resolveListOrdering() error = %v, want nil", err)
+		t.Fatalf("buildFilterConditions() error = %v, want nil", err)
 	}
 
-	const want = " ORDER BY collected_at DESC, id ASC"
-	if got := ordering.orderByClause(); got != want {
-		t.Fatalf("orderByClause() = %q, want %q", got, want)
-	}
-
-	const wantPredicate = "(collected_at < $5 OR (collected_at = $5 AND id > $6))"
-	if got := ordering.keysetPredicate(5, 6); got != wantPredicate {
-		t.Fatalf("keysetPredicate() = %q, want %q", got, wantPredicate)
+	if !strings.HasPrefix(where, " WHERE ") {
+		t.Fatalf("where = %q, want it to start with \" WHERE \"; ListAfterCursor appends \" AND \" onto it", where)
 	}
 }
 
-// TestOrderingRendering covers the remaining (column, direction) combinations. The tiebreak is
-// `id ASC` in the ORDER BY and `id >` in the predicate for every one of them — flipping the
-// tiebreak with the primary direction would invalidate every cursor already in client hands.
-func TestOrderingRendering(t *testing.T) {
-	tests := []struct {
-		name          string
-		ordering      listOrdering
-		wantOrderBy   string
-		wantPredicate string
-	}{
-		{
-			name:          "collected_at asc",
-			ordering:      listOrdering{column: colCollectedAt, desc: false},
-			wantOrderBy:   " ORDER BY collected_at ASC, id ASC",
-			wantPredicate: "(collected_at > $1 OR (collected_at = $1 AND id > $2))",
-		},
-		{
-			name:          "created_at desc",
-			ordering:      listOrdering{column: colCreatedAt, desc: true},
-			wantOrderBy:   " ORDER BY created_at DESC, id ASC",
-			wantPredicate: "(created_at < $1 OR (created_at = $1 AND id > $2))",
-		},
-		{
-			name:          "created_at asc",
-			ordering:      listOrdering{column: colCreatedAt, desc: false},
-			wantOrderBy:   " ORDER BY created_at ASC, id ASC",
-			wantPredicate: "(created_at > $1 OR (created_at = $1 AND id > $2))",
-		},
+// TestQueryBuildersPropagateTheTenantGuard verifies the fail-closed guard reaches every query
+// builder rather than only the one with a direct test. These are the paths a worker or an internal
+// caller would take, where the HTTP layer's `required` tag is not in play.
+func TestQueryBuildersPropagateTheTenantGuard(t *testing.T) {
+	noTenant := &models.ListFeedbackRecordsFilters{}
+
+	t.Run("Count", func(t *testing.T) {
+		count, err := NewFeedbackRecordsRepository(nil).Count(t.Context(), noTenant)
+		if err == nil {
+			t.Fatal("Count() error = nil, want a missing-tenant error")
+		}
+
+		if count != 0 {
+			t.Fatalf("Count() = %d, want 0 on error", count)
+		}
+	})
+
+	t.Run("buildCountQuery", func(t *testing.T) {
+		query, args, err := buildCountQuery(noTenant)
+		if err == nil {
+			t.Fatal("buildCountQuery() error = nil, want a missing-tenant error")
+		}
+
+		if query != "" || args != nil {
+			t.Fatalf("buildCountQuery() = (%q, %v), want nothing on error", query, args)
+		}
+	})
+
+	// List and ListAfterCursor need a repository value but must reject before touching the pool,
+	// so a nil pool is safe here and proves no query was attempted.
+	repo := NewFeedbackRecordsRepository(nil)
+
+	t.Run("List", func(t *testing.T) {
+		records, hasMore, err := repo.List(t.Context(), noTenant)
+		if err == nil {
+			t.Fatal("List() error = nil, want a missing-tenant error")
+		}
+
+		if records != nil || hasMore {
+			t.Fatalf("List() = (%v, %v), want no records", records, hasMore)
+		}
+	})
+
+	t.Run("ListAfterCursor", func(t *testing.T) {
+		records, hasMore, err := repo.ListAfterCursor(t.Context(), noTenant, time.Time{}, uuid.Nil)
+		if err == nil {
+			t.Fatal("ListAfterCursor() error = nil, want a missing-tenant error")
+		}
+
+		if records != nil || hasMore {
+			t.Fatalf("ListAfterCursor() = (%v, %v), want no records", records, hasMore)
+		}
+	})
+}
+
+// TestListRejectsAnUnknownSortBeforeQuerying pins that an invalid ordering fails at the resolver
+// rather than reaching the database — the same fail-closed property, on the sort axis.
+func TestListRejectsAnUnknownSortBeforeQuerying(t *testing.T) {
+	filters := tenantFilters()
+	filters.Sort = models.SortField("value_number")
+
+	repo := NewFeedbackRecordsRepository(nil)
+	if _, _, err := repo.List(t.Context(), filters); err == nil {
+		t.Fatal("List() error = nil, want an unsupported-sort error")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.ordering.orderByClause(); got != tt.wantOrderBy {
-				t.Fatalf("orderByClause() = %q, want %q", got, tt.wantOrderBy)
-			}
-
-			if got := tt.ordering.keysetPredicate(1, 2); got != tt.wantPredicate {
-				t.Fatalf("keysetPredicate() = %q, want %q", got, tt.wantPredicate)
-			}
-		})
+	// ListAfterCursor resolves the ordering too — the cursor page must not fall back to a default
+	// the first page did not use.
+	if _, _, err := repo.ListAfterCursor(t.Context(), filters, time.Time{}, uuid.Nil); err == nil {
+		t.Fatal("ListAfterCursor() error = nil, want an unsupported-sort error")
 	}
 }

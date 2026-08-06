@@ -3,6 +3,8 @@ package validation
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -259,5 +261,58 @@ func TestValidateInvertedRangeFilters(t *testing.T) {
 		}
 
 		assert.NoError(t, ValidateStruct(filters))
+	})
+}
+
+// TestDecodeEnumSliceIndexedFormIsValidated is the regression guard for a real gap: the decoder
+// consults its custom type funcs only when the plain query key is present, so
+// go-playground/form's indexed form takes a different branch and skips them entirely. Before the
+// dive tags were added, `?field_type[0]=bogus` decoded to []FieldType{"bogus"} with no error —
+// which then reached Postgres and failed the field_type_enum cast as an unmapped 500, and for
+// sentiment/emotions was accepted silently.
+//
+// The struct tags, not the decoder, are what actually hold the "no unknown label" invariant.
+func TestDecodeEnumSliceIndexedFormIsValidated(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		wantIn string
+	}{
+		{name: "field_type", query: "field_type[0]=bogus", wantIn: "categorical"},
+		{name: "sentiment", query: "sentiment[0]=hostile", wantIn: "very_negative"},
+		{name: "emotions", query: "emotions[0]=ennui", wantIn: "disgust"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			var filters models.ListFeedbackRecordsFilters
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+				"/v1/x?tenant_id=t1&"+testCase.query, http.NoBody)
+
+			err := ValidateAndDecodeQueryParams(req, &filters)
+			require.Error(t, err, "the indexed form must not bypass enum validation")
+
+			var validationErrs validator.ValidationErrors
+			require.ErrorAs(t, err, &validationErrs)
+			require.Len(t, validationErrs, 1)
+			assert.Contains(t, FormatFieldError(validationErrs[0]), testCase.wantIn)
+		})
+	}
+
+	// The same gate bounds element count on the path where the decoder's dedupe does not run.
+	t.Run("indexed form is length-capped", func(t *testing.T) {
+		var filters models.ListFeedbackRecordsFilters
+
+		var query strings.Builder
+
+		query.WriteString("/v1/x?tenant_id=t1")
+
+		for i := range 8 {
+			query.WriteString("&sentiment[" + strconv.Itoa(i) + "]=neutral")
+		}
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, query.String(), http.NoBody)
+		require.Error(t, ValidateAndDecodeQueryParams(req, &filters))
 	})
 }

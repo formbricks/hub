@@ -708,14 +708,10 @@ func (r *FeedbackRecordsRepository) ListAfterCursor(
 	argTime := len(args) + 1
 	argID := len(args) + 2 //nolint:mnd // second keyset param
 
-	// buildFilterConditions always emits at least the tenant predicate, so the clause is never
-	// empty here; the joiner is written out anyway so the SQL stays valid if that ever changes.
-	joiner := " WHERE "
-	if whereClause != "" {
-		joiner = " AND "
-	}
-
-	query += joiner + ordering.keysetPredicate(argTime, argID)
+	// Always " AND ": buildFilterConditions fails closed without a tenant, so it either returns an
+	// error or a clause that already contains at least the tenant predicate. TestListAfterCursor_
+	// AlwaysAndsOntoTheTenantClause pins that, so this cannot silently become invalid SQL.
+	query += " AND " + ordering.keysetPredicate(argTime, argID)
 
 	args = append(args, cursorValue, cursorID)
 	argCount := len(args) + 1
