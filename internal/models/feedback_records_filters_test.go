@@ -354,7 +354,9 @@ func TestFilterValueCapsMatchTheirSets(t *testing.T) {
 
 		name, _, _ := strings.Cut(field.Tag.Get("form"), ",")
 
-		limit, ok := maxTagValue(t, field.Tag.Get("validate"))
+		sliceLevel, _, _ := strings.Cut(field.Tag.Get("validate"), ",dive")
+
+		limit, ok := maxTagValue(t, sliceLevel)
 		if !ok {
 			t.Fatalf("repeatable filter %q has no max= cap; an unbounded IN-list is the one thing these tags exist to prevent", name)
 		}
@@ -378,14 +380,12 @@ func TestFilterValueCapsMatchTheirSets(t *testing.T) {
 	}
 }
 
-// maxTagValue returns the slice-level `max=N` from a validate tag — the portion before `dive`,
-// since anything after it constrains elements rather than length.
-func maxTagValue(t *testing.T, tag string) (int, bool) {
+// maxTagValue returns the `max=N` from one half of a validate tag. Pass the portion before `,dive`
+// for the slice-length cap, or the portion after it for the per-element cap.
+func maxTagValue(t *testing.T, tagPart string) (int, bool) {
 	t.Helper()
 
-	sliceLevel, _, _ := strings.Cut(tag, ",dive")
-
-	for part := range strings.SplitSeq(sliceLevel, ",") {
+	for part := range strings.SplitSeq(tagPart, ",") {
 		raw, found := strings.CutPrefix(part, "max=")
 		if !found {
 			continue
@@ -400,4 +400,58 @@ func maxTagValue(t *testing.T, tag string) (int, bool) {
 	}
 
 	return 0, false
+}
+
+// TestStringFilterElementCapsMatchTheStoredWidth pins the per-element `max=` on every repeatable
+// string filter to the width the column can actually hold.
+//
+// A filter value wider than the stored column can never match a row, so the cap costs nothing and
+// turns a pointless query into a 400. The risk it guards is the reverse: a cap set *below* the
+// stored width silently rejects a legitimate value. TestFilterValueCapsMatchTheirSets covers only
+// the slice-length half of these tags, so without this the element half is unpinned.
+func TestStringFilterElementCapsMatchTheStoredWidth(t *testing.T) {
+	// Column widths from the schema; language is VARCHAR(10), the rest VARCHAR(255).
+	const (
+		idWidth       = 255
+		languageWidth = 10
+	)
+
+	want := map[string]int{
+		"submission_id": idWidth, "source_type": idWidth, "source_id": idWidth,
+		"source_name": idWidth, "field_id": idWidth, "field_group_id": idWidth,
+		"value_id": idWidth, "user_id": idWidth, "language": languageWidth,
+	}
+
+	seen := map[string]bool{}
+
+	for field := range reflect.TypeFor[ListFeedbackRecordsFilters]().Fields() {
+		name, _, _ := strings.Cut(field.Tag.Get("form"), ",")
+
+		expected, tracked := want[name]
+		if !tracked {
+			continue
+		}
+
+		seen[name] = true
+
+		_, elementPart, hasDive := strings.Cut(field.Tag.Get("validate"), ",dive,")
+		if !hasDive {
+			t.Fatalf("filter %q has no dive section, so its elements are unvalidated", name)
+		}
+
+		limit, ok := maxTagValue(t, elementPart)
+		if !ok {
+			t.Fatalf("filter %q does not cap element length; a value wider than the column can never match", name)
+		}
+
+		if limit != expected {
+			t.Fatalf("filter %q caps elements at %d, want %d (the stored column width)", name, limit, expected)
+		}
+	}
+
+	for name := range want {
+		if !seen[name] {
+			t.Fatalf("filter %q is no longer a field on the struct; this test is checking nothing for it", name)
+		}
+	}
 }

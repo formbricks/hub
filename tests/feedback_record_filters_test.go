@@ -285,23 +285,31 @@ func TestFeedbackRecordFilters_CreatedAtIsDistinctFromCollectedAt(t *testing.T) 
 // TestFeedbackRecordFilters_PresencePartitions verifies each presence filter reads the column it
 // is supposed to, and that true/false partition the tenant exactly.
 //
-// The fixture is deliberately asymmetric: `both` carries sentiment, emotions AND a translation,
-// while `enrichedOnly` carries sentiment and emotions but no translation. Without that third
-// record every presence filter would return the same rows, and a predicate reading the wrong
-// column would pass.
+// The fixture gives every filter a distinct partition, which is what makes it able to catch a
+// predicate pointed at the wrong column. With fewer records two of the three filters return
+// identical sets and stay silently swappable:
+//
+//	record          sentiment  emotions  translation
+//	all                 ✓         ✓           ✓
+//	noTranslation       ✓         ✓           ·
+//	sentimentOnly       ✓         ·           ·
+//	plain               ·         ·           ·
 func TestFeedbackRecordFilters_PresencePartitions(t *testing.T) {
 	env := newFilterTestEnv(t, "presence")
 
-	both := env.seed(t)
-	enrichedOnly := env.seed(t)
+	all := env.seed(t)
+	noTranslation := env.seed(t)
+	sentimentOnly := env.seed(t)
 	plain := env.seed(t)
 
-	env.setSentimentScore(t, both.ID, models.SentimentPositive, 0.8)
-	env.setEmotions(t, both.ID, models.EmotionJoy)
-	env.setTranslation(t, both.ID, "en")
+	env.setSentimentScore(t, all.ID, models.SentimentPositive, 0.8)
+	env.setEmotions(t, all.ID, models.EmotionJoy)
+	env.setTranslation(t, all.ID, "en")
 
-	env.setSentimentScore(t, enrichedOnly.ID, models.SentimentNegative, -0.4)
-	env.setEmotions(t, enrichedOnly.ID, models.EmotionAnger)
+	env.setSentimentScore(t, noTranslation.ID, models.SentimentNegative, -0.4)
+	env.setEmotions(t, noTranslation.ID, models.EmotionAnger)
+
+	env.setSentimentScore(t, sentimentOnly.ID, models.SentimentNeutral, 0)
 
 	present, absent := true, false
 
@@ -314,19 +322,17 @@ func TestFeedbackRecordFilters_PresencePartitions(t *testing.T) {
 		{
 			name:     "has_sentiment",
 			set:      func(f *models.ListFeedbackRecordsFilters, v *bool) { f.HasSentiment = v },
-			wantWith: []uuid.UUID{both.ID, enrichedOnly.ID}, wantWithout: []uuid.UUID{plain.ID},
+			wantWith: []uuid.UUID{all.ID, noTranslation.ID, sentimentOnly.ID}, wantWithout: []uuid.UUID{plain.ID},
 		},
 		{
 			name:     "has_emotions",
 			set:      func(f *models.ListFeedbackRecordsFilters, v *bool) { f.HasEmotions = v },
-			wantWith: []uuid.UUID{both.ID, enrichedOnly.ID}, wantWithout: []uuid.UUID{plain.ID},
+			wantWith: []uuid.UUID{all.ID, noTranslation.ID}, wantWithout: []uuid.UUID{sentimentOnly.ID, plain.ID},
 		},
 		{
-			// Reads translation_lang_key. Only `both` has one, so a predicate pointed at the
-			// sentiment or emotions column would return enrichedOnly too and fail here.
 			name:     "has_translation",
 			set:      func(f *models.ListFeedbackRecordsFilters, v *bool) { f.HasTranslation = v },
-			wantWith: []uuid.UUID{both.ID}, wantWithout: []uuid.UUID{enrichedOnly.ID, plain.ID},
+			wantWith: []uuid.UUID{all.ID}, wantWithout: []uuid.UUID{noTranslation.ID, sentimentOnly.ID, plain.ID},
 		},
 	}
 

@@ -27,8 +27,10 @@ var ErrCursorSortMismatch = errors.New("cursor does not match the requested sort
 // Key is the position of the last row of a page, plus the ordering that produced it.
 //
 // Sort and Order are empty for cursors issued before sort control existed and for endpoints with
-// a single fixed ordering (webhooks). Empty means "unspecified": Match accepts it against any
-// ordering, which is what keeps already-issued cursors working across a deploy.
+// a single fixed ordering (webhooks). Empty does NOT mean "matches anything" — Match compares them
+// exactly. A caller that accepts such cursors first substitutes the ordering they were really
+// issued under, via ResolveOrdering; that is what keeps them working across a deploy without
+// letting one be replayed against a column it never referred to.
 type Key struct {
 	Timestamp time.Time
 	ID        uuid.UUID
