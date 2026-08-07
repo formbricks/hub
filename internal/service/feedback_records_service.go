@@ -345,6 +345,12 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 		// A cursor bounds one column in one direction. Under a different ordering it still yields
 		// a valid-looking page that is not the continuation of the previous one, so refuse it
 		// rather than silently skipping and repeating rows.
+		//
+		// A cursor issued before sort control carries no ordering, but it is not a wildcard: every
+		// one of them is a position in the ordering this endpoint had at the time, which is the
+		// default. Resolving it to that lets old cursors keep working on the default listing while
+		// still refusing to bind a collected_at position to a created_at keyset predicate.
+		key = key.ResolveOrdering(string(models.DefaultSortField), string(models.DefaultSortOrder))
 		if matchErr := key.Match(string(filters.Sort), string(filters.Order)); matchErr != nil {
 			return nil, fmt.Errorf("validate cursor ordering: %w", matchErr)
 		}

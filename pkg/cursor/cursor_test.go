@@ -112,7 +112,7 @@ func TestEncodeDecodeKey_RoundTrip(t *testing.T) {
 }
 
 // TestKey_Match verifies the guard that stops a client from carrying a cursor across a change of
-// ordering, and that a legacy cursor stays usable under any ordering.
+// ordering. Match compares exactly; the legacy-cursor rule lives in ResolveOrdering.
 func TestKey_Match(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -122,10 +122,14 @@ func TestKey_Match(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:  "unspecified ordering matches anything",
-			key:   Key{Timestamp: testTS, ID: testID},
-			sort:  "created_at",
-			order: "asc",
+			// Not a wildcard. A metadata-free cursor is a position in one specific ordering, so
+			// callers resolve it with ResolveOrdering before matching; unresolved, it matches only
+			// an equally-empty ordering.
+			name:    "unspecified ordering does not match a named one",
+			key:     Key{Timestamp: testTS, ID: testID},
+			sort:    "created_at",
+			order:   "asc",
+			wantErr: true,
 		},
 		{
 			name:  "same ordering matches",
@@ -164,6 +168,36 @@ func TestKey_Match(t *testing.T) {
 				t.Fatalf("Match() error = %v, want nil", err)
 			}
 		})
+	}
+}
+
+// TestKey_ResolveOrdering covers the legacy-cursor rule that Match deliberately does not encode.
+//
+// A cursor issued before sort control has no recorded ordering, but it is a position in whatever
+// single ordering the endpoint had then. Resolving it to that ordering is what lets it keep working
+// on the default listing while still being refused on any other — the alternative, treating empty
+// as "matches anything", binds a collected_at position to a created_at keyset predicate and
+// silently skips or repeats rows.
+func TestKey_ResolveOrdering(t *testing.T) {
+	legacy := Key{Timestamp: testTS, ID: testID}
+
+	resolved := legacy.ResolveOrdering("collected_at", "desc")
+	if resolved.Sort != "collected_at" || resolved.Order != "desc" {
+		t.Fatalf("ResolveOrdering() = (%q, %q), want (collected_at, desc)", resolved.Sort, resolved.Order)
+	}
+
+	if err := resolved.Match("collected_at", "desc"); err != nil {
+		t.Fatalf("a resolved legacy cursor must still work on the default ordering: %v", err)
+	}
+
+	if err := resolved.Match("created_at", "desc"); !errors.Is(err, ErrCursorSortMismatch) {
+		t.Fatalf("Match(created_at) = %v, want ErrCursorSortMismatch: a legacy cursor holds a collected_at position", err)
+	}
+
+	// A cursor that already records an ordering is left alone.
+	explicit := Key{Timestamp: testTS, ID: testID, Sort: "created_at", Order: "asc"}
+	if got := explicit.ResolveOrdering("collected_at", "desc"); got.Sort != "created_at" || got.Order != "asc" {
+		t.Fatalf("ResolveOrdering() overwrote a recorded ordering: (%q, %q)", got.Sort, got.Order)
 	}
 }
 

@@ -282,34 +282,51 @@ func TestFeedbackRecordFilters_CreatedAtIsDistinctFromCollectedAt(t *testing.T) 
 		"created_since bounds created_at, which is after the cutoff")
 }
 
-// TestFeedbackRecordFilters_PresencePartitions verifies each presence filter splits the tenant
-// exactly in two, with no row falling through both sides.
+// TestFeedbackRecordFilters_PresencePartitions verifies each presence filter reads the column it
+// is supposed to, and that true/false partition the tenant exactly.
+//
+// The fixture is deliberately asymmetric: `both` carries sentiment, emotions AND a translation,
+// while `enrichedOnly` carries sentiment and emotions but no translation. Without that third
+// record every presence filter would return the same rows, and a predicate reading the wrong
+// column would pass.
 func TestFeedbackRecordFilters_PresencePartitions(t *testing.T) {
 	env := newFilterTestEnv(t, "presence")
 
-	enriched := env.seed(t)
+	both := env.seed(t)
+	enrichedOnly := env.seed(t)
 	plain := env.seed(t)
 
-	env.setSentimentScore(t, enriched.ID, models.SentimentPositive, 0.8)
-	env.setEmotions(t, enriched.ID, models.EmotionJoy)
+	env.setSentimentScore(t, both.ID, models.SentimentPositive, 0.8)
+	env.setEmotions(t, both.ID, models.EmotionJoy)
+	env.setTranslation(t, both.ID, "en")
+
+	env.setSentimentScore(t, enrichedOnly.ID, models.SentimentNegative, -0.4)
+	env.setEmotions(t, enrichedOnly.ID, models.EmotionAnger)
 
 	present, absent := true, false
 
 	tests := []struct {
-		name       string
-		set        func(*models.ListFeedbackRecordsFilters, *bool)
-		wantWithID uuid.UUID
-		wantoutID  uuid.UUID
+		name        string
+		set         func(*models.ListFeedbackRecordsFilters, *bool)
+		wantWith    []uuid.UUID
+		wantWithout []uuid.UUID
 	}{
 		{
-			name:       "has_sentiment",
-			set:        func(f *models.ListFeedbackRecordsFilters, v *bool) { f.HasSentiment = v },
-			wantWithID: enriched.ID, wantoutID: plain.ID,
+			name:     "has_sentiment",
+			set:      func(f *models.ListFeedbackRecordsFilters, v *bool) { f.HasSentiment = v },
+			wantWith: []uuid.UUID{both.ID, enrichedOnly.ID}, wantWithout: []uuid.UUID{plain.ID},
 		},
 		{
-			name:       "has_emotions",
-			set:        func(f *models.ListFeedbackRecordsFilters, v *bool) { f.HasEmotions = v },
-			wantWithID: enriched.ID, wantoutID: plain.ID,
+			name:     "has_emotions",
+			set:      func(f *models.ListFeedbackRecordsFilters, v *bool) { f.HasEmotions = v },
+			wantWith: []uuid.UUID{both.ID, enrichedOnly.ID}, wantWithout: []uuid.UUID{plain.ID},
+		},
+		{
+			// Reads translation_lang_key. Only `both` has one, so a predicate pointed at the
+			// sentiment or emotions column would return enrichedOnly too and fail here.
+			name:     "has_translation",
+			set:      func(f *models.ListFeedbackRecordsFilters, v *bool) { f.HasTranslation = v },
+			wantWith: []uuid.UUID{both.ID}, wantWithout: []uuid.UUID{enrichedOnly.ID, plain.ID},
 		},
 	}
 
@@ -318,8 +335,8 @@ func TestFeedbackRecordFilters_PresencePartitions(t *testing.T) {
 			with := env.list(t, func(f *models.ListFeedbackRecordsFilters) { tt.set(f, &present) })
 			without := env.list(t, func(f *models.ListFeedbackRecordsFilters) { tt.set(f, &absent) })
 
-			assert.Equal(t, []uuid.UUID{tt.wantWithID}, with)
-			assert.Equal(t, []uuid.UUID{tt.wantoutID}, without)
+			assert.ElementsMatch(t, tt.wantWith, with)
+			assert.ElementsMatch(t, tt.wantWithout, without)
 			assert.Len(t, append(with, without...), env.count(t, nil), "the two sides must partition the tenant")
 		})
 	}
@@ -432,6 +449,16 @@ func (e *filterTestEnv) setEmotions(t *testing.T, id uuid.UUID, emotions ...mode
 	}
 
 	_, err := e.db.Exec(t.Context(), `UPDATE feedback_records SET emotions = $2 WHERE id = $1`, id, labels)
+	require.NoError(t, err)
+}
+
+// setTranslation writes translation output directly, bypassing the enrichment worker.
+func (e *filterTestEnv) setTranslation(t *testing.T, id uuid.UUID, langKey string) {
+	t.Helper()
+
+	_, err := e.db.Exec(t.Context(),
+		`UPDATE feedback_records SET value_text_translated = value_text, translation_lang_key = $2 WHERE id = $1`,
+		id, langKey)
 	require.NoError(t, err)
 }
 
@@ -573,18 +600,28 @@ func TestFeedbackRecordFilters_CursorIsBoundToItsOrdering(t *testing.T) {
 		require.ErrorIs(t, err, cursor.ErrCursorSortMismatch)
 	})
 
+	// Re-encode without the ordering fields — byte-for-byte what a pre-sort-control Hub issued.
+	key, err := cursor.DecodeKey(first.NextCursor)
+	require.NoError(t, err)
+
+	legacy, err := cursor.Encode(key.Timestamp, key.ID)
+	require.NoError(t, err)
+
 	t.Run("a legacy cursor is accepted under the default ordering", func(t *testing.T) {
-		key, err := cursor.DecodeKey(first.NextCursor)
-		require.NoError(t, err)
-
-		// Re-encode without the ordering fields — byte-for-byte what a pre-sort-control Hub issued.
-		legacy, err := cursor.Encode(key.Timestamp, key.ID)
-		require.NoError(t, err)
-
 		resp, err := svc.ListFeedbackRecords(t.Context(), &models.ListFeedbackRecordsFilters{
 			TenantID: &tenant, Limit: 1, Cursor: legacy,
 		})
 		require.NoError(t, err)
 		assert.Len(t, resp.Data, 1)
+	})
+
+	// It holds a collected_at position, so it is refused anywhere else rather than being compared
+	// against created_at — the same hazard as an explicitly-tagged mismatch, just implicit.
+	t.Run("a legacy cursor is refused under a non-default ordering", func(t *testing.T) {
+		_, err := svc.ListFeedbackRecords(t.Context(), &models.ListFeedbackRecordsFilters{
+			TenantID: &tenant, Limit: 1,
+			Sort: models.SortFieldCreatedAt, Order: models.SortOrderDesc, Cursor: legacy,
+		})
+		require.ErrorIs(t, err, cursor.ErrCursorSortMismatch)
 	})
 }

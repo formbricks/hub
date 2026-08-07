@@ -110,17 +110,30 @@ func DecodeKey(cursor string) (Key, error) {
 // just not the continuation of the previous one, with an arbitrary set of rows skipped and another
 // repeated, and no way for the client to notice. So it is refused rather than served.
 //
-// A cursor with no recorded ordering matches anything, which is what keeps legacy cursors valid.
+// The comparison is exact, including for a cursor with no recorded ordering. Such a cursor is NOT a
+// wildcard: it predates sort control, so it holds a position in whatever single ordering the
+// endpoint had at the time. Callers that accept legacy cursors resolve that ordering first — see
+// ResolveOrdering — rather than letting an empty value match everything.
 func (k Key) Match(sort, order string) error {
-	if k.Sort == "" && k.Order == "" {
-		return nil
-	}
-
 	if k.Sort != sort || k.Order != order {
 		return ErrCursorSortMismatch
 	}
 
 	return nil
+}
+
+// ResolveOrdering returns the ordering this cursor was issued under, substituting the endpoint's
+// original ordering for a cursor that predates sort control.
+//
+// The substitution is the whole point: a metadata-free cursor is a position in one known ordering,
+// and treating it as "matches anything" would let a client carry a collected_at position into a
+// created_at listing, where the keyset predicate compares its timestamp against the wrong column.
+func (k Key) ResolveOrdering(defaultSort, defaultOrder string) Key {
+	if k.Sort == "" && k.Order == "" {
+		k.Sort, k.Order = defaultSort, defaultOrder
+	}
+
+	return k
 }
 
 // Encode encodes a list cursor with no recorded ordering, for endpoints with a single fixed order

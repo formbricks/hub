@@ -147,8 +147,9 @@ paths:
                     Opaque (base64-encoded); keyset pagination.
 
                     A cursor is a position within one specific ordering. Presenting it with a different
-                    sort or order returns 400 — restart pagination without a cursor instead. Cursors
-                    issued before sort control existed carry no ordering and remain valid.
+                    sort or order returns 400 — restart pagination without a cursor instead. A cursor
+                    issued before sort control existed records no ordering; it is treated as a position
+                    in the default collected_at/desc listing and is accepted only there.
                   schema:
                     type: string
                     example: "eyJ0IjoiMjAyNC0wMS0xNVQxMDozMDowMFoiLCJpIjoiMDE4ZTEyMzQtNTY3OC05YWJjLWRlZjAtMTIzNDU2Nzg5YWJjIn0="
@@ -192,7 +193,7 @@ paths:
                                 inverted_range:
                                     summary: A range filter supplied backwards
                                     value:
-                                        type: "https://formbricks.com/docs/errors/validation"
+                                        type: "https://hub.formbricks.com/problems/validation"
                                         title: "Validation Failed"
                                         status: 400
                                         code: "validation"
@@ -204,7 +205,7 @@ paths:
                                 cursor_sort_mismatch:
                                     summary: A cursor carried across a change of ordering
                                     value:
-                                        type: "https://formbricks.com/docs/errors/validation"
+                                        type: "https://hub.formbricks.com/problems/validation"
                                         title: "Validation Failed"
                                         status: 400
                                         code: "validation"
@@ -2273,6 +2274,7 @@ components:
                 maxItems: 100
                 items:
                     type: string
+                    maxLength: 255
                     pattern: '^[^\x00]*$'
                 example: ["550e8400-e29b-41d4-a716-446655440000"]
         FeedbackRecordsSourceType:

@@ -77,7 +77,7 @@ type ListFeedbackRecordsFilters struct {
 	// Repeatable identity filters. A single occurrence behaves exactly as it did when these were
 	// scalars: the repository emits `col = ANY($n)` over a one-element array, which the planner
 	// treats as the same ScalarArrayOpExpr an equality produces.
-	SubmissionID []string    `form:"submission_id"  validate:"omitempty,max=100,dive,no_null_bytes"`
+	SubmissionID []string    `form:"submission_id"  validate:"omitempty,max=100,dive,no_null_bytes,max=255"`
 	SourceType   []string    `form:"source_type"    validate:"omitempty,max=100,dive,no_null_bytes,max=255"`
 	SourceID     []string    `form:"source_id"      validate:"omitempty,max=100,dive,no_null_bytes,max=255"`
 	SourceName   []string    `form:"source_name"    validate:"omitempty,max=100,dive,no_null_bytes,max=255"`
@@ -155,7 +155,7 @@ type InvertedRangeFilter struct {
 // the check, which TestInvertedRanges_CoversEveryRangeFilter guards against by reflecting over the
 // struct's form tags.
 func (f *ListFeedbackRecordsFilters) InvertedRanges() []InvertedRangeFilter {
-	inverted := make([]InvertedRangeFilter, 0, 4) //nolint:mnd // capacity hint: the four pairs below
+	inverted := make([]InvertedRangeFilter, 0, 5) //nolint:mnd // capacity hint: the five pairs below
 
 	appendInvertedTimeRange(&inverted, f.Since, f.Until, "Since", "since", "until")
 	appendInvertedTimeRange(&inverted, f.CreatedSince, f.CreatedUntil, "CreatedSince", "created_since", "created_until")

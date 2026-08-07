@@ -1118,7 +1118,32 @@ func TestListFeedbackRecords_RejectsCursorFromAnotherOrdering(t *testing.T) {
 		}
 	})
 
-	t.Run("a legacy cursor still works", func(t *testing.T) {
+	// A cursor issued before sort control holds a collected_at DESC position. Accepting it under
+	// created_at would bind that timestamp to the wrong keyset column and silently skip or repeat
+	// rows, so it is refused just like an explicitly-tagged mismatch.
+	t.Run("a legacy cursor is refused under a non-default ordering", func(t *testing.T) {
+		encoded, err := cursor.Encode(issued, id)
+		if err != nil {
+			t.Fatalf("Encode() error = %v, want nil", err)
+		}
+
+		repo := &mockFeedbackRecordsRepo{listRecords: listPage()}
+
+		_, err = newListTestService(repo).ListFeedbackRecords(context.Background(),
+			&models.ListFeedbackRecordsFilters{
+				TenantID: &tenant, Cursor: encoded,
+				Sort: models.SortFieldCreatedAt, Order: models.SortOrderAsc,
+			})
+		if !errors.Is(err, cursor.ErrCursorSortMismatch) {
+			t.Fatalf("ListFeedbackRecords() error = %v, want ErrCursorSortMismatch", err)
+		}
+
+		if repo.listCursorCalled {
+			t.Fatal("the repository was queried with a legacy cursor under a non-default ordering")
+		}
+	})
+
+	t.Run("a legacy cursor still works on the default ordering", func(t *testing.T) {
 		encoded, err := cursor.Encode(issued, id)
 		if err != nil {
 			t.Fatalf("Encode() error = %v, want nil", err)
