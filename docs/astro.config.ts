@@ -155,6 +155,10 @@ export default defineConfig({
                   slug: "core-concepts/sentiment-and-emotions",
                 },
                 {
+                  label: "Filtering & Sorting",
+                  slug: "core-concepts/filtering-and-sorting",
+                },
+                {
                   label: "Taxonomy",
                   slug: "core-concepts/taxonomy",
                 },

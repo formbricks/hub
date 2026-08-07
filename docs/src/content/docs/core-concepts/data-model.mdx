@@ -449,6 +449,10 @@ Hub automatically creates indexes for optimal query performance:
 - **`value_number`** - Numeric aggregations (averages, sums, counts)
 - **`(tenant_id, field_id, value_id)`** - Option-level lookups (all records for one choice); partial, only non-null `value_id`
 - **`user_id`** - User-level journey analysis
+- **`(tenant_id, created_at, id)`** - Ingestion-time range queries, and keyset paging when sorting by `created_at`
+- **`(tenant_id, value_date)`** - Range queries over date answers; partial, only non-null `value_date`
+- **`(tenant_id, source_name)`** - Filter by source display name; partial, only non-null `source_name`
+- **`(tenant_id, sentiment)`** / **`emotions`** - Filter by enrichment output; partial, only enriched records
 
 <Callout variant="note">
   All indexes are created automatically via database migrations. The combination

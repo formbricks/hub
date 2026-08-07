@@ -1,0 +1,168 @@
+---
+title: Filtering & Sorting
+description: Narrow a feedback record listing, and control the order you page through it.
+---
+
+import { Callout } from "@stainless-api/docs/components";
+
+## Core Concept
+
+`GET /v1/feedback-records` accepts a set of filters that narrow the result, and `sort`/`order` that
+control the sequence you page through. `GET /v1/feedback-records/count` accepts **exactly the same
+filters** (minus pagination), so a count always describes the list it is counting.
+
+The API reference lists every parameter individually. This page covers the part a per-parameter
+listing cannot express: how filters combine, and what they do with missing values.
+
+## How filters combine
+
+Two rules, and they are the whole model:
+
+| | |
+| --- | --- |
+| Repeating **one** parameter | the values are **OR**-ed |
+| **Different** parameters | the conditions are **AND**-ed |
+
+So this request:
+
+```bash
+curl -G "$HUB/v1/feedback-records" \
+  -H "Authorization: Bearer $HUB_API_KEY" \
+  -d tenant_id=org-123 \
+  -d source_type=survey \
+  -d source_type=review \
+  -d sentiment=negative
+```
+
+reads as **"(survey OR review) AND negative"**.
+
+Every filter that accepts an id or a label can be repeated this way — `source_type`, `source_id`,
+`source_name`, `field_id`, `field_group_id`, `field_type`, `value_id`, `user_id`, `submission_id`,
+`language`, `sentiment`, `emotions`. Repeat the parameter; do **not** pass a comma-separated list,
+which is read as one literal value:
+
+```bash
+-d source_type=survey -d source_type=review   # ✅ two values
+-d "source_type=survey,review"                # ❌ one value, literally "survey,review"
+```
+
+<Callout variant="note">
+  A single occurrence behaves exactly as it always has. Adding multi-value support did not change
+  the meaning of any request that passes one value per parameter.
+</Callout>
+
+### What this cannot express
+
+There is no way to OR across *different* fields — "negative sentiment **or** rating ≤ 2" is not
+expressible. Filters always AND across fields. If you need that, run two requests and merge, or
+narrow with the filters and post-process.
+
+## Ranges
+
+`collected_at`, `created_at`, `value_number`, `value_date` and `sentiment_score` take bounds. Every
+bound is **inclusive** — a record sitting exactly on it is included.
+
+| Filter | Bounds |
+| --- | --- |
+| `collected_at` — when the feedback was given | `since` / `until` |
+| `created_at` — when Hub stored it | `created_since` / `created_until` |
+| `value_number` | `value_number_min` / `value_number_max` |
+| `value_date` | `value_date_min` / `value_date_max` |
+| `sentiment_score` | `sentiment_score_min` / `sentiment_score_max` |
+
+<Callout variant="warning">
+  **A range filter excludes records whose column is empty.** `value_number_min=0` does not mean "all
+  records" — it selects only records that carry a number at all, so every text answer drops out.
+  Likewise `sentiment_score_min=-1` means "every *enriched* record", not "every record".
+</Callout>
+
+Supplying a range backwards — a minimum above its maximum — returns `400`, not an empty page:
+
+```json
+{
+  "status": 400,
+  "code": "validation",
+  "invalid_params": [
+    { "name": "value_number_min", "reason": "must be less than or equal to value_number_max" }
+  ]
+}
+```
+
+### collected_at is not created_at
+
+The two diverge whenever historical data is imported: the feedback was *collected* months ago but
+*created* in Hub today. Use `created_since` to answer "what did this import bring in", and `since`
+to answer "what did people tell us in this period".
+
+## Enrichment filters
+
+`sentiment`, `emotions` and `sentiment_score` filter on
+[sentiment and emotion](/core-concepts/sentiment-and-emotions) output. Records that have not been
+enriched carry no values and are therefore never matched by them.
+
+To find those records instead, use the presence filters — `has_sentiment`, `has_emotions` and
+`has_translation`. Each is a three-state switch: omit it for no constraint, `true` for records that
+have the value, `false` for records that do not.
+
+```bash
+# unenriched records, oldest first
+-d has_sentiment=false -d sort=collected_at -d order=asc
+```
+
+**`emotions` matches ANY of the labels you list, never all of them.** A record tagged `{joy}` and a
+record tagged `{joy, anger}` both match `?emotions=joy&emotions=anger`.
+
+<Callout variant="note">
+  `has_emotions=false` covers both "not yet classified" and "classified, no emotion detected". The
+  two are not distinguishable through this filter.
+</Callout>
+
+## Sorting
+
+`sort` accepts `collected_at` (the default) or `created_at`; `order` accepts `asc` or `desc`
+(default `desc`). Records tied on the sort column are ordered by `id` ascending, so the sequence is
+always total and stable.
+
+Sort by the column you filter on. Filtering `created_at` while ordering by `collected_at` cannot use
+the index for the ordering, and gets slower as a dataset grows.
+
+### Cursors are bound to their ordering
+
+A cursor marks a position *within one specific ordering*. Presenting it with a different `sort` or
+`order` returns `400` rather than a page that looks like a continuation but is not:
+
+```json
+{
+  "invalid_params": [
+    {
+      "name": "cursor",
+      "reason": "was issued for a different sort/order; restart pagination without a cursor, or keep sort and order unchanged"
+    }
+  ]
+}
+```
+
+Keep `sort` and `order` unchanged for the whole traversal. When the user changes the ordering, drop
+the cursor and start from the first page.
+
+## Worked example
+
+Negative or very negative feedback from two surveys, collected in Q1, newest first:
+
+```bash
+curl -G "$HUB/v1/feedback-records" \
+  -H "Authorization: Bearer $HUB_API_KEY" \
+  -d tenant_id=org-123 \
+  -d source_id=survey-arrivals \
+  -d source_id=survey-departures \
+  -d sentiment=negative \
+  -d sentiment=very_negative \
+  -d since=2026-01-01T00:00:00Z \
+  -d until=2026-03-31T23:59:59Z \
+  -d sort=collected_at \
+  -d order=desc \
+  -d limit=50
+```
+
+Swap the path for `/v1/feedback-records/count` — dropping `sort`, `order` and `limit` — to get the
+size of that set before fetching it.
