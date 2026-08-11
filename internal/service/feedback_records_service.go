@@ -307,6 +307,10 @@ func (s *FeedbackRecordsService) ClearEmotions(
 
 // ListFeedbackRecords retrieves a list of feedback records with optional filters.
 // Uses cursor-based pagination: omit cursor for first page, use next_cursor for subsequent pages.
+//
+// The provided *filters is mutated in-place to fill in the default Sort, Order and Limit when
+// the caller omits them. This is safe because the HTTP handler (the only caller) constructs a
+// fresh struct per request.
 func (s *FeedbackRecordsService) ListFeedbackRecords(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 ) (*models.ListFeedbackRecordsResponse, error) {

@@ -531,11 +531,27 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CountFeedbackRecordsOutputBody'
                 "400":
-                    description: Bad Request (e.g. validation error)
+                    description: |
+                        Bad Request. Returned for an unknown enum value (sentiment, emotions, field_type),
+                        an inverted range whose *_min/*_since exceeds its *_max/*_until, or a missing or
+                        blank tenant_id.
                     content:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                inverted_range:
+                                    summary: A range filter supplied backwards
+                                    value:
+                                        type: "https://hub.formbricks.com/problems/validation"
+                                        title: "Validation Failed"
+                                        status: 400
+                                        code: "validation"
+                                        detail: "One or more request parameters are invalid"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        invalid_params:
+                                            - name: "sentiment_score_min"
+                                              reason: "must be less than or equal to sentiment_score_max"
                 "401":
                     description: Unauthorized (missing or invalid API key)
                     content:
