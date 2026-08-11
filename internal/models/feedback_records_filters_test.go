@@ -409,8 +409,15 @@ func maxTagValue(t *testing.T, tagPart string) (int, bool) {
 // turns a pointless query into a 400. The risk it guards is the reverse: a cap set *below* the
 // stored width silently rejects a legitimate value. TestFilterValueCapsMatchTheirSets covers only
 // the slice-length half of these tags, so without this the element half is unpinned.
+//
+// Two of these are not column widths. source_type and source_name are bare unbounded VARCHAR in
+// migration 001, so 255 is an API-level cap chosen to match the sibling id columns rather than a
+// mirror of the schema — for those two the "costs nothing" argument does not hold, and a value
+// longer than 255 is storable but not filterable. Harmless for the short identifiers these
+// actually carry, but it is a real (if theoretical) narrowing rather than a free assertion.
 func TestStringFilterElementCapsMatchTheStoredWidth(t *testing.T) {
-	// Column widths from the schema; language is VARCHAR(10), the rest VARCHAR(255).
+	// Column widths from the schema; language is VARCHAR(10), the rest VARCHAR(255) — except
+	// source_type and source_name, which are unbounded VARCHAR and capped by API choice.
 	const (
 		idWidth       = 255
 		languageWidth = 10

@@ -12,9 +12,10 @@
 -- and is strict, so the planner can prove `emotions IS NOT NULL` and still match that index's
 -- predicate.
 --
--- Three filters had no usable index, and all three degrade the same way: the planner can only
--- satisfy them by walking idx_feedback_records_tenant_collected_at_id and discarding rows, which
--- gets worse exactly as a tenant grows large enough to care.
+-- Four filters have no index of their own, and used alone they all degrade the same way: the
+-- planner can only satisfy them by walking idx_feedback_records_tenant_collected_at_id and
+-- discarding rows, which gets worse exactly as a tenant grows large enough to care. Three are
+-- indexed below; sentiment_score is deliberately left out — see the note at the end for why.
 --
 -- Runs without a transaction (like the other index migrations) so it never holds a long lock on
 -- feedback_records, the primary high-write table: every index is built CONCURRENTLY. Every
@@ -63,6 +64,17 @@ CREATE INDEX CONCURRENTLY idx_feedback_records_tenant_source_name
 --   * value_number — idx_feedback_records_value_number (001) exists. It is not tenant-prefixed, so
 --     it can only be bitmap-ANDed with idx_feedback_records_tenant_id, but that is an acceptable
 --     plan and a tenant-prefixed replacement needs an EXPLAIN, not a guess.
+--   * sentiment_score — a range filter with no index of its own, so on its own it degrades like
+--     created_at above. Left out for two reasons. It is sparse where created_at is NOT NULL: the
+--     feedback_records_sentiment_pairing CHECK from 014 makes sentiment and sentiment_score NULL
+--     together, so only enriched rows carry it. And that same pairing means the partial
+--     (tenant_id, sentiment) index from 014 already narrows to exactly the candidate rows whenever
+--     the score filter is combined with a sentiment filter — the natural pairing, since the score
+--     is the continuous form of the same signal. The uncombined case is the only one left exposed,
+--     and a permanent write cost on the ingestion path is not worth paying for it on a guess.
+--     Revisit with an EXPLAIN against a large tenant:
+--       CREATE INDEX CONCURRENTLY idx_feedback_records_tenant_sentiment_score
+--         ON feedback_records (tenant_id, sentiment_score) WHERE sentiment_score IS NOT NULL;
 --   * has_sentiment / has_emotions / has_translation in their FALSE form — they select the NULL
 --     rows that the partial indexes from 013/014/015 deliberately exclude. Their TRUE form is
 --     already served by those indexes.

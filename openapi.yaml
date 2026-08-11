@@ -2494,9 +2494,10 @@ components:
             in: query
             description: |
                 Filter by sentiment label. Repeat the parameter to match any of several labels
-                (`?sentiment=negative&sentiment=very_negative`); the values are OR-ed. Records that have
-                not been enriched carry no sentiment and are therefore never matched — use
-                has_sentiment=false to find them.
+                (`?sentiment=negative&sentiment=very_negative`); the values are OR-ed. An empty value is
+                ignored rather than rejected, so `?sentiment=` is the same as omitting the filter.
+                Records that have not been enriched carry no sentiment and are therefore never matched
+                — use has_sentiment=false to find them.
             style: form
             explode: true
             schema:
@@ -2511,7 +2512,9 @@ components:
             description: |
                 Filter by emotion label. Repeat the parameter to match ANY of the listed emotions: a
                 record tagged {joy} and a record tagged {joy, anger} both match
-                `?emotions=joy&emotions=anger`. There is no "must carry all of them" form.
+                `?emotions=joy&emotions=anger`. There is no "must carry all of them" form. An empty
+                value is ignored rather than rejected, so `?emotions=` is the same as omitting the
+                filter.
             style: form
             explode: true
             schema:
