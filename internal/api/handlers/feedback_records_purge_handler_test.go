@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,20 +113,26 @@ func TestFeedbackRecordsPurgeHandler_Purge(t *testing.T) {
 		assert.Zero(t, mock.calls)
 	})
 
-	t.Run("a tenant write conflict surfaces as a retryable 409", func(t *testing.T) {
+	// Accepting a purge takes no tenant lock — the exclusive lock is taken by the worker — so this
+	// endpoint has no 409, and the spec documents none. A failure to schedule must not read as
+	// success, because the caller's next signal is the record count, which would look unchanged for
+	// a purge that was never queued.
+	t.Run("a scheduling failure is an error, not an accepted purge", func(t *testing.T) {
 		mock := &mockFeedbackRecordsPurgeService{
 			enqueueFunc: func(_ context.Context, _ string) (*models.FeedbackRecordsPurgeAcceptedResponse, error) {
-				return nil, huberrors.NewTenantWriteConflictError("tenant data purge in progress for this tenant; retry later")
+				return nil, errors.New("queue unavailable")
 			},
 		}
 
 		rec := httptest.NewRecorder()
 		NewFeedbackRecordsPurgeHandler(mock).Purge(rec, purgeRequest(`{"tenant_id":"org-123"}`))
 
-		require.Equal(t, http.StatusConflict, rec.Code)
+		require.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.NotEqual(t, http.StatusAccepted, rec.Code)
 
 		var problem map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &problem))
-		assert.Equal(t, "tenant_write_conflict", problem["code"])
+		// The internal failure reason is never relayed to the caller.
+		assert.NotContains(t, problem["detail"], "queue unavailable")
 	})
 }

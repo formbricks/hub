@@ -1,0 +1,274 @@
+package tests
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/repository"
+	"github.com/formbricks/hub/internal/service"
+	"github.com/formbricks/hub/pkg/database"
+)
+
+// newPurgeTestDB opens a pool against the integration database.
+func newPurgeTestDB(ctx context.Context, t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = defaultTestDatabaseURL
+	}
+
+	t.Setenv("API_KEY", testAPIKey)
+	t.Setenv("DATABASE_URL", databaseURL)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	t.Cleanup(db.Close)
+
+	return db
+}
+
+// newPurgeService builds the worker-side purge service (no inserter: this exercises the execution
+// half, which is what actually touches the database).
+func newPurgeService(t *testing.T, db *pgxpool.Pool) *service.FeedbackRecordsPurgeService {
+	t.Helper()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	return service.NewFeedbackRecordsPurgeService(
+		repository.NewTenantDataRepository(db, cfg.TenantData.PurgeLockTimeout.Duration()), nil,
+	)
+}
+
+func countRows(ctx context.Context, t *testing.T, db *pgxpool.Pool, query string, args ...any) int {
+	t.Helper()
+
+	var count int
+
+	require.NoError(t, db.QueryRow(ctx, query, args...).Scan(&count))
+
+	return count
+}
+
+// seedPurgeEmbedding attaches an embedding to a record so the cascade is observable.
+func seedPurgeEmbedding(ctx context.Context, t *testing.T, db *pgxpool.Pool, recordID uuid.UUID) {
+	t.Helper()
+
+	_, err := db.Exec(ctx, `
+		INSERT INTO embeddings (feedback_record_id, model, embedding)
+		VALUES ($1, 'test-model', array_fill(0.1::real, ARRAY[768])::halfvec)`, recordID)
+	require.NoError(t, err)
+}
+
+// TestPurgeFeedbackRecordsByTenant is the test that justifies this endpoint existing separately from
+// the tenant offboarding purge: the records go, and the taxonomy structure, webhooks and settings
+// stay. If the survival half ever regresses, a purged dataset silently loses its topic tree.
+func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
+	ctx := context.Background()
+	db := newPurgeTestDB(ctx, t)
+	purge := newPurgeService(t, db)
+
+	tenantID := "purge-tenant-" + uuid.NewString()
+	otherTenantID := "purge-other-" + uuid.NewString()
+
+	scope := models.TaxonomyScope{
+		TenantID:   tenantID,
+		SourceType: "formbricks",
+		SourceID:   "survey-1",
+		FieldID:    "field-1",
+	}
+	ids := seedTaxonomyGraph(ctx, t, db, scope)
+	seedPurgeEmbedding(ctx, t, db, ids.FeedbackRecordID)
+
+	// A second tenant with its own graph, to prove the purge does not reach across the boundary.
+	otherScope := models.TaxonomyScope{
+		TenantID:   otherTenantID,
+		SourceType: "formbricks",
+		SourceID:   "survey-1",
+		FieldID:    "field-1",
+	}
+	otherIDs := seedTaxonomyGraph(ctx, t, db, otherScope)
+	seedPurgeEmbedding(ctx, t, db, otherIDs.FeedbackRecordID)
+
+	// Tenant configuration that must outlive the purge.
+	_, err := db.Exec(ctx, `
+		INSERT INTO webhooks (tenant_id, url, signing_key, event_types)
+		VALUES ($1, 'https://example.test/hook', 'test-signing-key', ARRAY['feedback_record.created'])`, tenantID)
+	require.NoError(t, err)
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO tenant_settings (tenant_id, settings)
+		VALUES ($1, '{"target_language":"en-US"}'::jsonb)`, tenantID)
+	require.NoError(t, err)
+
+	counts, err := purge.Purge(ctx, tenantID)
+	require.NoError(t, err)
+
+	t.Run("reports exact counts for the records and their derived rows", func(t *testing.T) {
+		assert.Equal(t, int64(1), counts.DeletedFeedbackRecords)
+		assert.Equal(t, int64(1), counts.DeletedEmbeddings)
+		assert.Equal(t, int64(1), counts.DeletedTaxonomyClusterMemberships)
+	})
+
+	t.Run("removes the records and everything derived from them", func(t *testing.T) {
+		assert.Zero(t, countRows(ctx, t, db,
+			`SELECT count(*) FROM feedback_records WHERE tenant_id = $1`, tenantID))
+		assert.Zero(t, countRows(ctx, t, db,
+			`SELECT count(*) FROM embeddings WHERE feedback_record_id = $1`, ids.FeedbackRecordID))
+		assert.Zero(t, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_cluster_memberships WHERE tenant_id = $1`, tenantID))
+	})
+
+	// The reason this endpoint exists. The clusters keep existing with no members; per-node counts
+	// are derived from memberships at read time, so they report zero without being rewritten.
+	t.Run("keeps the taxonomy structure, webhooks and settings", func(t *testing.T) {
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_runs WHERE id = $1`, ids.RunID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_clusters WHERE id = $1`, ids.ClusterID))
+		assert.Equal(t, 3, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_nodes WHERE run_id = $1`, ids.RunID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_active_runs WHERE tenant_id = $1`, tenantID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_node_events WHERE tenant_id = $1`, tenantID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM webhooks WHERE tenant_id = $1`, tenantID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM tenant_settings WHERE tenant_id = $1`, tenantID))
+	})
+
+	t.Run("leaves other tenants untouched", func(t *testing.T) {
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM feedback_records WHERE tenant_id = $1`, otherTenantID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM embeddings WHERE feedback_record_id = $1`, otherIDs.FeedbackRecordID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_cluster_memberships WHERE tenant_id = $1`, otherTenantID))
+	})
+
+	t.Run("is idempotent", func(t *testing.T) {
+		repeat, err := purge.Purge(ctx, tenantID)
+		require.NoError(t, err)
+
+		assert.Zero(t, repeat.DeletedFeedbackRecords)
+		assert.Zero(t, repeat.DeletedEmbeddings)
+		assert.Zero(t, repeat.DeletedTaxonomyClusterMemberships)
+	})
+}
+
+// postPurge sends an authenticated purge request and returns the response, with the body already
+// read into a buffer so callers need not manage closing it.
+func postPurge(ctx context.Context, t *testing.T, url string, payload map[string]any) (int, []byte) {
+	t.Helper()
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	require.NoError(t, err)
+
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{}).Do(req)
+	require.NoError(t, err)
+
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	return resp.StatusCode, responseBody
+}
+
+// countPurgeJobs returns how many purge jobs are queued for a tenant.
+func countPurgeJobs(ctx context.Context, t *testing.T, db *pgxpool.Pool, tenantID string) int {
+	t.Helper()
+
+	return countRows(ctx, t, db, `
+		SELECT count(*) FROM river_job
+		WHERE kind = 'feedback_records_purge' AND args->>'tenant_id' = $1`, tenantID)
+}
+
+// TestPurgeFeedbackRecordsEndpoint covers the half the DB tests cannot: that the HTTP endpoint
+// actually schedules a real, correctly-shaped job. A 202 with nothing on the queue would look like
+// success to every caller while deleting nothing, forever.
+func TestPurgeFeedbackRecordsEndpoint(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	db := newPurgeTestDB(ctx, t)
+	tenantID := "purge-endpoint-" + uuid.NewString()
+
+	purgeURL := server.URL + "/v1/feedback-records/purge"
+
+	status, body := postPurge(ctx, t, purgeURL, map[string]any{"tenant_id": tenantID})
+	require.Equal(t, http.StatusAccepted, status, "body: %s", body)
+
+	var accepted models.FeedbackRecordsPurgeAcceptedResponse
+	require.NoError(t, json.Unmarshal(body, &accepted))
+	assert.Equal(t, tenantID, accepted.TenantID)
+	assert.Equal(t, models.FeedbackRecordsPurgeStatusAccepted, accepted.Status)
+
+	t.Run("enqueues exactly one job on the purge queue with the tenant in its args", func(t *testing.T) {
+		var queue string
+
+		require.NoError(t, db.QueryRow(ctx, `
+			SELECT coalesce(min(queue), '')
+			FROM river_job
+			WHERE kind = 'feedback_records_purge' AND args->>'tenant_id' = $1`, tenantID,
+		).Scan(&queue))
+
+		assert.Equal(t, 1, countPurgeJobs(ctx, t, db, tenantID))
+		assert.Equal(t, service.FeedbackRecordsPurgeQueueName, queue)
+	})
+
+	// Requesting a purge while one is pending must join it rather than queueing a second, so a
+	// double-click cannot stack purges.
+	t.Run("a repeat request collapses into the pending purge", func(t *testing.T) {
+		repeatStatus, _ := postPurge(ctx, t, purgeURL, map[string]any{"tenant_id": tenantID})
+		require.Equal(t, http.StatusAccepted, repeatStatus)
+
+		assert.Equal(t, 1, countPurgeJobs(ctx, t, db, tenantID),
+			"a second request must not queue a second purge")
+	})
+
+	t.Run("rejects a request without a tenant", func(t *testing.T) {
+		noTenantStatus, _ := postPurge(ctx, t, purgeURL, map[string]any{})
+		assert.Equal(t, http.StatusBadRequest, noTenantStatus)
+		assert.Zero(t, countPurgeJobs(ctx, t, db, ""))
+	})
+}
+
+// A purge for a tenant that has never held records must succeed with zero counts rather than error,
+// so a caller retrying (or purging an already-empty dataset) gets a clean result.
+func TestPurgeFeedbackRecordsByTenantUnknownTenant(t *testing.T) {
+	ctx := context.Background()
+	db := newPurgeTestDB(ctx, t)
+
+	counts, err := newPurgeService(t, db).Purge(ctx, "purge-unknown-"+uuid.NewString())
+	require.NoError(t, err)
+
+	assert.Zero(t, counts.DeletedFeedbackRecords)
+	assert.Zero(t, counts.DeletedEmbeddings)
+	assert.Zero(t, counts.DeletedTaxonomyClusterMemberships)
+}
