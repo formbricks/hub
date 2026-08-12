@@ -51,6 +51,28 @@ which is read as one literal value:
   the meaning of any request that passes one value per parameter.
 </Callout>
 
+### Limits
+
+A filter takes at most **100 values**, each at most **255 characters**. The enum filters —
+`field_type`, `sentiment`, `emotions` — are capped instead at the number of values they define,
+since repeating one past that point cannot narrow anything further.
+
+Crossing either bound is a `400`, naming the offending parameter. The request is rejected, never
+silently truncated to the first 100 — a filter that quietly dropped values would return a page that
+looks complete and is not.
+
+### An empty value is ignored
+
+`?source_type=` is the same request as omitting `source_type` altogether. It does **not** select
+records whose source type is blank, and it is not an error:
+
+```bash
+-d source_type=          # no constraint — identical to leaving it out
+```
+
+This holds for every query parameter, not just the repeatable filters, so a UI that always emits its
+whole filter set does not have to strip the empty ones before sending.
+
 ### What this cannot express
 
 There is no way to OR across *different* fields — "negative sentiment **or** rating ≤ 2" is not
