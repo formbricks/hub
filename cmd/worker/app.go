@@ -86,11 +86,18 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	webhookSender := service.NewWebhookSenderImpl(
 		webhooksRepo, webhookMetrics, cfg.Webhook.URLBlacklist, cfg.Webhook.HTTPTimeout.Duration(), nil)
 
+	// hub-worker performs feedback-records purges; it never enqueues them (the API does), so the
+	// service is built without an inserter.
+	tenantDataRepo := repository.NewTenantDataRepository(db, cfg.TenantData.PurgeLockTimeout.Duration())
+	feedbackRecordsPurgeService := service.NewFeedbackRecordsPurgeService(tenantDataRepo, nil)
+
 	deps := workers.RiverDeps{
 		WebhooksRepo:       webhooksRepo,
 		WebhookSender:      webhookSender,
 		WebhookHTTPTimeout: cfg.Webhook.HTTPTimeout.Duration(),
 		WebhookMetrics:     webhookMetrics,
+
+		FeedbackRecordsPurgeService: feedbackRecordsPurgeService,
 	}
 
 	providerName, embeddingModel := embeddingProviderAndModel(cfg)

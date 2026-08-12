@@ -370,6 +370,11 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 
+	// The API only ever enqueues the feedback-records purge; hub-worker performs it. The repo is
+	// still wired in because the service owns both halves, but this process never reaches Purge.
+	feedbackRecordsPurgeService := service.NewFeedbackRecordsPurgeService(tenantDataRepo, riverClient)
+	feedbackRecordsPurgeHandler := handlers.NewFeedbackRecordsPurgeHandler(feedbackRecordsPurgeService)
+
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
 
 	// Translation, sentiment, and emotion enqueue providers all resolve a per-tenant setting on
@@ -484,7 +489,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	server := newHTTPServer(
-		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler,
+		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, feedbackRecordsPurgeHandler,
+		webhooksHandler, tenantDataHandler,
 		tenantSettingsHandler, searchHandler,
 		taxonomyHandler, taxonomyInternalHandler, enrichmentStatusHandler,
 		meterProvider, tracerProvider,
@@ -511,6 +517,7 @@ func newHTTPServer(
 	health *handlers.HealthHandler,
 	openapi *handlers.OpenAPIHandler,
 	feedback *handlers.FeedbackRecordsHandler,
+	feedbackPurge *handlers.FeedbackRecordsPurgeHandler,
 	webhooks *handlers.WebhooksHandler,
 	tenantData *handlers.TenantDataHandler,
 	tenantSettings *handlers.TenantSettingsHandler,
@@ -534,6 +541,9 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/feedback-records/{id}", feedback.Update)
 	protected.HandleFunc("DELETE /v1/feedback-records/{id}", feedback.Delete)
 	protected.HandleFunc("DELETE /v1/feedback-records", feedback.DeleteByUser)
+	// Literal segment, so it takes precedence over /v1/feedback-records/{id} rather than shadowing
+	// it. Kept off the collection DELETE deliberately — see FeedbackRecordsPurgeHandler.Purge.
+	protected.HandleFunc("POST /v1/feedback-records/purge", feedbackPurge.Purge)
 
 	protected.HandleFunc("POST /v1/webhooks", webhooks.Create)
 	protected.HandleFunc("GET /v1/webhooks", webhooks.List)

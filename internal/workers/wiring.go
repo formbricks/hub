@@ -45,6 +45,10 @@ type RiverDeps struct {
 	EmotionsResolver tenantSettingsReader
 	EmotionsClient   service.EmotionsClient
 	EmotionsMetrics  observability.EmotionsMetrics
+
+	// Feedback-records purge worker (always registered; the purge is a core tenant operation, not
+	// an enrichment, so it has no client to gate on).
+	FeedbackRecordsPurgeService feedbackRecordsPurgeService
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps. Each optional
@@ -68,8 +72,15 @@ func NewRiverWorkersAndQueues(
 	maxSentiment := cfg.Sentiment.MaxConcurrent
 	maxEmotions := cfg.Emotions.MaxConcurrent
 
+	purgeWorker := NewFeedbackRecordsPurgeWorker(deps.FeedbackRecordsPurgeService)
+	river.AddWorker(workers, purgeWorker)
+
 	queues := map[string]river.QueueConfig{
 		river.QueueDefault: {MaxWorkers: maxDefault},
+		// Purges run one at a time. Each one is an unbounded delete that holds its tenant's write
+		// lock exclusively, so running several concurrently would multiply that load on Postgres for
+		// no gain — purges are rare and admin-initiated, and a queued one loses nothing by waiting.
+		service.FeedbackRecordsPurgeQueueName: {MaxWorkers: feedbackRecordsPurgeMaxWorkers},
 	}
 
 	if deps.EmbeddingClient != nil {
