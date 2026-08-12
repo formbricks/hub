@@ -16,16 +16,8 @@ type FeedbackRecordsPurgeCounts struct {
 	DeletedTaxonomyClusterMemberships int64
 }
 
-// FeedbackRecordsPurgeRequest is the body for POST /v1/feedback-records/purge.
-//
-// tenant_id is required and lives in the body rather than being an optional filter on the
-// collection delete: an omitted or empty value must never widen a narrower deletion into a
-// tenant-wide one.
-type FeedbackRecordsPurgeRequest struct {
-	TenantID string `json:"tenant_id" validate:"required,no_null_bytes,min=1,max=255"`
-}
-
-// FeedbackRecordsPurgeAcceptedResponse is the 202 body for POST /v1/feedback-records/purge.
+// FeedbackRecordsPurgeAcceptedResponse is the 202 body for
+// DELETE /v1/tenants/{tenant_id}/feedback-records.
 //
 // The purge runs as a background job, so there is no deleted count to report: the work has been
 // accepted, not done. Callers observe progress from the data instead, by polling
@@ -38,6 +30,6 @@ type FeedbackRecordsPurgeAcceptedResponse struct {
 	Message  string `json:"message"`
 }
 
-// FeedbackRecordsPurgeStatusAccepted is the only status POST /v1/feedback-records/purge reports.
-// The purge is fire-and-forget from the API's point of view; completion is observed from the data.
+// FeedbackRecordsPurgeStatusAccepted is the only status the purge endpoint reports. The purge is
+// fire-and-forget from the API's point of view; completion is observed from the data.
 const FeedbackRecordsPurgeStatusAccepted = "accepted"

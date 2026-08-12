@@ -77,9 +77,11 @@ func NewRiverWorkersAndQueues(
 
 	queues := map[string]river.QueueConfig{
 		river.QueueDefault: {MaxWorkers: maxDefault},
-		// Purges run one at a time. Each one is an unbounded delete that holds its tenant's write
-		// lock exclusively, so running several concurrently would multiply that load on Postgres for
-		// no gain — purges are rare and admin-initiated, and a queued one loses nothing by waiting.
+		// One purge at a time per replica (River's MaxWorkers is per-client, so N hub-worker replicas
+		// can still run N purges — for different tenants, which is fine). Each purge is a long
+		// sequence of batched deletes holding its tenant's write lock, so stacking several on one
+		// replica would multiply that load on Postgres for no gain: purges are rare and
+		// admin-initiated, and a queued one loses nothing by waiting.
 		service.FeedbackRecordsPurgeQueueName: {MaxWorkers: feedbackRecordsPurgeMaxWorkers},
 	}
 

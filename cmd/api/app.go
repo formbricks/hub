@@ -541,9 +541,6 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/feedback-records/{id}", feedback.Update)
 	protected.HandleFunc("DELETE /v1/feedback-records/{id}", feedback.Delete)
 	protected.HandleFunc("DELETE /v1/feedback-records", feedback.DeleteByUser)
-	// Literal segment, so it takes precedence over /v1/feedback-records/{id} rather than shadowing
-	// it. Kept off the collection DELETE deliberately — see FeedbackRecordsPurgeHandler.Purge.
-	protected.HandleFunc("POST /v1/feedback-records/purge", feedbackPurge.Purge)
 
 	protected.HandleFunc("POST /v1/webhooks", webhooks.Create)
 	protected.HandleFunc("GET /v1/webhooks", webhooks.List)
@@ -551,6 +548,9 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
 	protected.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantData.Delete)
+	// Under /v1/tenants (which the gateway does not route publicly) rather than beside the
+	// feedback-records collection — see FeedbackRecordsPurgeHandler.Purge.
+	protected.HandleFunc("DELETE /v1/tenants/{tenant_id}/feedback-records", feedbackPurge.Purge)
 	protected.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettings.Get)
 	protected.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettings.Update)
 	protected.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettings.Patch)

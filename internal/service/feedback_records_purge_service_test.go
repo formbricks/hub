@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -54,10 +55,13 @@ func TestFeedbackRecordsPurgeService_Enqueue(t *testing.T) {
 		assert.Equal(t, FeedbackRecordsPurgeMaxAttempts, inserter.opts[0].MaxAttempts)
 	})
 
-	// The regression test for the trap this codebase has already hit once: River's default unique
-	// states include `completed` and cannot be narrowed, so a ByPeriod here would make a purge
-	// requested after an earlier one finished silently do nothing. ByArgs alone dedupes only
-	// in-flight work, which is what "collapse concurrent requests, allow a later purge" needs.
+	// Regression test for the bug this shipped with: relying on River's DEFAULT unique states
+	// includes `completed`, and with no ByPeriod the window is unbounded — so the first purge of a
+	// tenant was the only one that ever ran, every later request being skipped as a duplicate while
+	// still returning 202. ByState must be set, and must not contain `completed`.
+	//
+	// tests/feedback_records_purge_test.go proves the resulting behaviour against a real River
+	// queue; this pins the option itself so the intent is readable at the enqueue site.
 	t.Run("dedupes by tenant across in-flight states only", func(t *testing.T) {
 		inserter := &recordingInserter{}
 
@@ -65,9 +69,19 @@ func TestFeedbackRecordsPurgeService_Enqueue(t *testing.T) {
 			Enqueue(context.Background(), "org-1")
 		require.NoError(t, err)
 
-		assert.True(t, inserter.opts[0].UniqueOpts.ByArgs, "purges must dedupe by tenant")
-		assert.Zero(t, inserter.opts[0].UniqueOpts.ByPeriod,
-			"ByPeriod would let River's completed state swallow a legitimate later purge")
+		unique := inserter.opts[0].UniqueOpts
+		assert.True(t, unique.ByArgs, "purges must dedupe by tenant")
+		assert.NotEmpty(t, unique.ByState,
+			"River's default state set includes completed, which would swallow every later purge")
+		assert.NotContains(t, unique.ByState, rivertype.JobStateCompleted,
+			"a completed purge must never block the next one")
+		// The four states River requires ByState to include; anything else would fail validation.
+		assert.ElementsMatch(t, []rivertype.JobState{
+			rivertype.JobStateAvailable,
+			rivertype.JobStatePending,
+			rivertype.JobStateRunning,
+			rivertype.JobStateScheduled,
+		}, unique.ByState)
 	})
 
 	t.Run("normalizes the tenant before enqueueing", func(t *testing.T) {

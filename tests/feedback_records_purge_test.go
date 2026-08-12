@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -174,19 +173,15 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 	})
 }
 
-// postPurge sends an authenticated purge request and returns the response, with the body already
-// read into a buffer so callers need not manage closing it.
-func postPurge(ctx context.Context, t *testing.T, url string, payload map[string]any) (int, []byte) {
+// postPurge sends an authenticated purge request (DELETE, tenant in the path) and returns the
+// status and body, already read so callers need not manage closing it.
+func postPurge(ctx context.Context, t *testing.T, url string) (int, []byte) {
 	t.Helper()
 
-	body, err := json.Marshal(payload)
-	require.NoError(t, err)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	require.NoError(t, err)
 
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := (&http.Client{}).Do(req)
 	require.NoError(t, err)
@@ -219,9 +214,9 @@ func TestPurgeFeedbackRecordsEndpoint(t *testing.T) {
 	db := newPurgeTestDB(ctx, t)
 	tenantID := "purge-endpoint-" + uuid.NewString()
 
-	purgeURL := server.URL + "/v1/feedback-records/purge"
+	purgeURL := server.URL + "/v1/tenants/" + tenantID + "/feedback-records"
 
-	status, body := postPurge(ctx, t, purgeURL, map[string]any{"tenant_id": tenantID})
+	status, body := postPurge(ctx, t, purgeURL)
 	require.Equal(t, http.StatusAccepted, status, "body: %s", body)
 
 	var accepted models.FeedbackRecordsPurgeAcceptedResponse
@@ -245,17 +240,41 @@ func TestPurgeFeedbackRecordsEndpoint(t *testing.T) {
 	// Requesting a purge while one is pending must join it rather than queueing a second, so a
 	// double-click cannot stack purges.
 	t.Run("a repeat request collapses into the pending purge", func(t *testing.T) {
-		repeatStatus, _ := postPurge(ctx, t, purgeURL, map[string]any{"tenant_id": tenantID})
+		repeatStatus, _ := postPurge(ctx, t, purgeURL)
 		require.Equal(t, http.StatusAccepted, repeatStatus)
 
 		assert.Equal(t, 1, countPurgeJobs(ctx, t, db, tenantID),
 			"a second request must not queue a second purge")
 	})
 
-	t.Run("rejects a request without a tenant", func(t *testing.T) {
-		noTenantStatus, _ := postPurge(ctx, t, purgeURL, map[string]any{})
-		assert.Equal(t, http.StatusBadRequest, noTenantStatus)
-		assert.Zero(t, countPurgeJobs(ctx, t, db, ""))
+	// The regression test for the shipped bug: with River's DEFAULT unique states a completed purge
+	// blocked every later one — the API kept returning 202 while no job was ever created, for as
+	// long as the completed row was retained. Only a real River insert can catch this; the unit test
+	// can pin the option but not the semantics.
+	t.Run("a purge requested after the previous one completed runs again", func(t *testing.T) {
+		_, err := db.Exec(ctx, `
+			UPDATE river_job SET state = 'completed', finalized_at = now()
+			WHERE kind = 'feedback_records_purge' AND args->>'tenant_id' = $1`, tenantID)
+		require.NoError(t, err)
+
+		againStatus, _ := postPurge(ctx, t, purgeURL)
+		require.Equal(t, http.StatusAccepted, againStatus)
+
+		runnable := countRows(ctx, t, db, `
+			SELECT count(*) FROM river_job
+			WHERE kind = 'feedback_records_purge' AND args->>'tenant_id' = $1
+				AND state NOT IN ('completed', 'cancelled', 'discarded')`, tenantID)
+
+		assert.Equal(t, 1, runnable,
+			"a completed purge must not block the next one — the tenant would be unpurgeable")
+	})
+
+	// A blank tenant segment must be rejected, not treated as "every tenant". The routing makes an
+	// omitted tenant impossible, so this is the only shape left to guard.
+	t.Run("rejects a blank tenant", func(t *testing.T) {
+		blankStatus, _ := postPurge(ctx, t, server.URL+"/v1/tenants/%20/feedback-records")
+		assert.Equal(t, http.StatusBadRequest, blankStatus)
+		assert.Zero(t, countPurgeJobs(ctx, t, db, " "))
 	})
 }
 

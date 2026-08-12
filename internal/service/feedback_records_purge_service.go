@@ -63,9 +63,16 @@ func (s *FeedbackRecordsPurgeService) Enqueue(
 	if _, err := s.inserter.Insert(ctx, FeedbackRecordsPurgeArgs{TenantID: normalizedTenantID}, &river.InsertOpts{
 		Queue:       FeedbackRecordsPurgeQueueName,
 		MaxAttempts: FeedbackRecordsPurgeMaxAttempts,
-		// Unique by TenantID across in-flight states (no ByPeriod): collapse concurrent requests
-		// into one purge, but let a purge requested after the previous one completed run again.
-		UniqueOpts: river.UniqueOpts{ByArgs: true},
+		// Unique by TenantID across the IN-FLIGHT states only. ByState must be spelled out:
+		// River's default set includes `completed`, and with no ByPeriod the uniqueness window is
+		// unbounded — so the default would make the first purge of a tenant the only one that ever
+		// runs, silently skipping every later request as a duplicate for as long as the completed
+		// row is retained (forever, if a deployment disables completed-job cleanup).
+		//
+		// Available/Pending/Running/Scheduled are exactly the states River requires ByState to
+		// include, so this is the narrowest legal set: concurrent requests still collapse into the
+		// running purge, and a purge requested after the previous one finished starts a new run.
+		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: feedbackRecordsPurgeUniqueStates()},
 	}); err != nil {
 		return nil, fmt.Errorf("enqueue feedback records purge: %w", err)
 	}

@@ -1,6 +1,9 @@
 package service
 
-import "github.com/riverqueue/river"
+import (
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
+)
 
 const (
 	feedbackRecordsPurgeKind = "feedback_records_purge"
@@ -22,17 +25,30 @@ const (
 // has no per-tenant cap, and the API server's write timeout would cut the response long before a
 // large tenant finished deleting.
 //
-// Uniqueness is by TenantID across the default (in-flight) states — the enqueue site sets ByArgs
-// without a ByPeriod — so a second purge request while one is already running collapses into it,
-// while a purge requested after the previous one completed runs again. ByPeriod must not be added:
-// River's default unique states include `completed` and cannot be narrowed, so a period-based
-// dedupe would silently swallow a legitimate later purge (the same trap documented on the
-// enrichment event path).
+// Uniqueness is by TenantID across the in-flight states only, spelled out explicitly at the enqueue
+// site (see feedbackRecordsPurgeUniqueStates). A second request while a purge is running collapses
+// into it; a purge requested after the previous one finished starts a new run.
+//
+// Do not fall back to River's default state set here. It includes `completed`, and with no ByPeriod
+// the uniqueness window is unbounded, so the first purge of a tenant would be the only one that
+// ever runs — every later request skipped as a duplicate while still returning 202.
 //
 // The worker re-reads the tenant from these args and scopes every statement by it; nothing about
 // the purge is resolved at enqueue time.
 type FeedbackRecordsPurgeArgs struct {
 	TenantID string `json:"tenant_id" river:"unique"`
+}
+
+// feedbackRecordsPurgeUniqueStates is the in-flight state set the purge dedupes across. These four
+// are exactly the states River requires ByState to contain, so this is the narrowest legal set —
+// and, crucially, it excludes `completed`.
+func feedbackRecordsPurgeUniqueStates() []rivertype.JobState {
+	return []rivertype.JobState{
+		rivertype.JobStateAvailable,
+		rivertype.JobStatePending,
+		rivertype.JobStateRunning,
+		rivertype.JobStateScheduled,
+	}
 }
 
 // Kind returns the River job kind.

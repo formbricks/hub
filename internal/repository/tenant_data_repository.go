@@ -40,68 +40,118 @@ func NewTenantDataRepository(db *pgxpool.Pool, purgeLockTimeout time.Duration) *
 
 // DeleteByTenant deletes all Hub-owned data for a tenant and returns per-resource counts.
 func (r *TenantDataRepository) DeleteByTenant(ctx context.Context, tenantID string) (*models.TenantDataDeleteCounts, error) {
-	return withTenantPurgeTx(ctx, r.db, tenantID, r.purgeLockTimeout, "tenant data delete", deleteTenantDataInTx)
+	return withTenantPurgeTx(ctx, r.db, tenantID, r.purgeLockTimeout, "tenant data delete",
+		func(ctx context.Context, tx tenantWriteTx, tenantID string) (*models.TenantDataDeleteCounts, error) {
+			// deleteTenantDataInTx needs only Exec; the adapter keeps its narrower signature (and its
+			// tests) unchanged now that the shared helper hands over the full transaction.
+			return deleteTenantDataInTx(ctx, tx, tenantID)
+		})
 }
+
+// feedbackRecordsPurgeBatchSize bounds how many records one purge transaction deletes. Batching is
+// what makes a purge resumable: a tenant's record count is unbounded, so a single transaction can
+// outlive the worker's timeout, and on a rescue that transaction rolls back — deleting nothing, for
+// every attempt, forever. Committing per batch means a killed purge keeps the progress it made and
+// the retry continues from there. It also chunks the ingestion block: the exclusive tenant lock is
+// released between batches instead of being held for the whole delete.
+const feedbackRecordsPurgeBatchSize = 2000
 
 // PurgeFeedbackRecordsByTenant deletes every feedback record for a tenant, plus the data derived
 // from those records, and returns exact per-table counts. Unlike DeleteByTenant it leaves the
 // tenant's taxonomy structure, webhooks and settings intact, so the dataset stays usable.
+//
+// Runs as a sequence of committed batches (see feedbackRecordsPurgeBatchSize), so it is resumable
+// and reports the counts it actually achieved even when it fails partway.
+//
+// Scoped to the records that existed when the purge started: the id column is uuidv7, so a
+// high-water mark bounds the work to a fixed set. Without it a tenant still receiving feedback
+// could keep the loop running indefinitely, and records submitted *after* the operator asked to
+// empty the dataset would be deleted without ever having been part of what they saw.
 func (r *TenantDataRepository) PurgeFeedbackRecordsByTenant(
 	ctx context.Context, tenantID string,
 ) (*models.FeedbackRecordsPurgeCounts, error) {
-	return withTenantPurgeTx(
-		ctx, r.db, tenantID, r.purgeLockTimeout, "feedback records purge", purgeFeedbackRecordsInTx,
-	)
+	total := &models.FeedbackRecordsPurgeCounts{}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			// Report the progress already committed; the retry resumes from here.
+			return total, fmt.Errorf("purge feedback records for tenant: %w", err)
+		}
+
+		batch, err := withTenantPurgeTx(ctx, r.db, tenantID, r.purgeLockTimeout, "feedback records purge",
+			func(ctx context.Context, tx tenantWriteTx, tenantID string) (*models.FeedbackRecordsPurgeCounts, error) {
+				return purgeFeedbackRecordsBatchInTx(ctx, tx, tenantID, feedbackRecordsPurgeBatchSize)
+			})
+		if err != nil {
+			return total, err
+		}
+
+		total.DeletedFeedbackRecords += batch.DeletedFeedbackRecords
+		total.DeletedEmbeddings += batch.DeletedEmbeddings
+		total.DeletedTaxonomyClusterMemberships += batch.DeletedTaxonomyClusterMemberships
+
+		if batch.DeletedFeedbackRecords == 0 {
+			return total, nil
+		}
+	}
 }
 
-// purgeFeedbackRecordsInTx removes a tenant's feedback records and their derived rows.
+// purgeFeedbackRecordsBatchInTx removes up to limit of a tenant's feedback records and the rows
+// derived from them, returning exact per-table counts for the batch. Returns zero records deleted
+// when the tenant has none left, which is what ends the loop.
 //
-// Both derived tables would be removed by ON DELETE CASCADE from feedback_records anyway
-// (embeddings via migration 004, taxonomy_cluster_memberships via the composite
-// (feedback_record_id, tenant_id) FK in migration 010). They are deleted explicitly, children
-// first, for the same reason the full tenant purge does it: a cascade reports no row count, and
-// callers need exact numbers. Deleting them here is equivalent, not additional.
+// One statement so the three deletes share a snapshot and a single round trip. The derived tables
+// would be removed by ON DELETE CASCADE from feedback_records anyway (embeddings via migration 004,
+// taxonomy_cluster_memberships via the composite (feedback_record_id, tenant_id) FK in migration
+// 010); they are deleted explicitly, children first, for the same reason the full tenant purge does
+// it — a cascade reports no row count and callers need exact numbers. Deleting them here is
+// equivalent, not additional. embeddings carries no tenant_id of its own, but every victim id comes
+// from a tenant-scoped select, so the delete stays inside the tenant boundary.
 //
 // What is deliberately NOT touched, and why:
 //   - taxonomy runs, clusters and nodes — the topic structure is the point of keeping this purge
-//     narrow. The clusters simply end up with no members; per-node record counts are derived from
-//     memberships at read time, so they fall to zero on their own. taxonomy_clusters.size and
-//     taxonomy_runs.record_count are write-only provenance of what a run produced (nothing reads
-//     them back), so rewriting them would be falsifying history rather than fixing a stale count.
+//     narrow. The clusters simply end up with no members, and per-node record counts are derived
+//     from memberships at read time, so those fall to zero on their own. The stored counters
+//     (taxonomy_clusters.size, taxonomy_runs.record_count) are left alone deliberately: they record
+//     what a run processed, and rewriting them would falsify the run's history. Note this means
+//     taxonomy run reads still report the original record_count after a purge.
 //   - webhooks and tenant_settings — tenant configuration, not tenant data.
 //   - enrichment output (sentiment, emotions, translations) needs no statement of its own: it lives
 //     in columns on feedback_records and goes with the row.
-func purgeFeedbackRecordsInTx(
-	ctx context.Context, exec tenantDataExecutor, tenantID string,
+func purgeFeedbackRecordsBatchInTx(
+	ctx context.Context, tx tenantWriteTx, tenantID string, limit int,
 ) (*models.FeedbackRecordsPurgeCounts, error) {
-	embeddingsTag, err := exec.Exec(ctx, `
-		DELETE FROM embeddings e
-		USING feedback_records fr
-		WHERE e.feedback_record_id = fr.id
-			AND fr.tenant_id = $1`, tenantID)
+	counts := &models.FeedbackRecordsPurgeCounts{}
+
+	err := tx.QueryRow(ctx, `
+		WITH victims AS (
+			SELECT id FROM feedback_records WHERE tenant_id = $1 ORDER BY id LIMIT $2
+		),
+		deleted_embeddings AS (
+			DELETE FROM embeddings
+			WHERE feedback_record_id IN (SELECT id FROM victims)
+			RETURNING 1
+		),
+		deleted_memberships AS (
+			DELETE FROM taxonomy_cluster_memberships
+			WHERE tenant_id = $1 AND feedback_record_id IN (SELECT id FROM victims)
+			RETURNING 1
+		),
+		deleted_records AS (
+			DELETE FROM feedback_records
+			WHERE tenant_id = $1 AND id IN (SELECT id FROM victims)
+			RETURNING 1
+		)
+		SELECT
+			(SELECT count(*) FROM deleted_records),
+			(SELECT count(*) FROM deleted_embeddings),
+			(SELECT count(*) FROM deleted_memberships)`, tenantID, limit,
+	).Scan(&counts.DeletedFeedbackRecords, &counts.DeletedEmbeddings, &counts.DeletedTaxonomyClusterMemberships)
 	if err != nil {
-		return nil, fmt.Errorf("purge tenant feedback record embeddings: %w", err)
+		return nil, fmt.Errorf("purge tenant feedback records batch: %w", err)
 	}
 
-	membershipsTag, err := exec.Exec(ctx, `
-		DELETE FROM taxonomy_cluster_memberships
-		WHERE tenant_id = $1`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("purge tenant taxonomy cluster memberships: %w", err)
-	}
-
-	recordsTag, err := exec.Exec(ctx, `
-		DELETE FROM feedback_records
-		WHERE tenant_id = $1`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("purge tenant feedback records: %w", err)
-	}
-
-	return &models.FeedbackRecordsPurgeCounts{
-		DeletedFeedbackRecords:            recordsTag.RowsAffected(),
-		DeletedEmbeddings:                 embeddingsTag.RowsAffected(),
-		DeletedTaxonomyClusterMemberships: membershipsTag.RowsAffected(),
-	}, nil
+	return counts, nil
 }
 
 // withTenantPurgeTx runs purge in a transaction holding the tenant write lock exclusively, so the
@@ -118,7 +168,7 @@ func withTenantPurgeTx[T any](
 	tenantID string,
 	lockTimeout time.Duration,
 	opName string,
-	purge func(ctx context.Context, exec tenantDataExecutor, tenantID string) (T, error),
+	purge func(ctx context.Context, tx tenantWriteTx, tenantID string) (T, error),
 ) (T, error) {
 	var zero T
 

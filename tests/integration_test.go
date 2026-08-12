@@ -144,7 +144,7 @@ func setupTestServerWithEventProviders(
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.DeleteByUser)
-	protectedMux.HandleFunc("POST /v1/feedback-records/purge", feedbackRecordsPurgeHandler.Purge)
+	protectedMux.HandleFunc("DELETE /v1/tenants/{tenant_id}/feedback-records", feedbackRecordsPurgeHandler.Purge)
 	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
 	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
 	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)

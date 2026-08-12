@@ -34,9 +34,11 @@ func NewFeedbackRecordsPurgeWorker(svc feedbackRecordsPurgeService) *FeedbackRec
 // in wiring.go for why it is one.
 const feedbackRecordsPurgeMaxWorkers = 1
 
-// feedbackRecordsPurgeTimeout bounds a single purge attempt. River rescues a job that exceeds it;
-// because the purge is idempotent and tenant-scoped, the retry simply deletes whatever survived the
-// killed attempt, so a rescued purge converges without continuation bookkeeping.
+// feedbackRecordsPurgeTimeout bounds a single purge attempt. River rescues a job that exceeds it,
+// and the retry resumes rather than restarting: the purge commits in batches, so the records
+// deleted before the timeout stay deleted and the next attempt continues from there. That is the
+// property the batching exists for — a single-transaction purge would roll back on every rescue and
+// a tenant too large for one attempt could never be purged at all.
 const feedbackRecordsPurgeTimeout = 30 * time.Minute
 
 // Timeout limits how long a single purge attempt can run.

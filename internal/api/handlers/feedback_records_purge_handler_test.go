@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,13 +17,13 @@ import (
 
 type mockFeedbackRecordsPurgeService struct {
 	enqueueFunc func(ctx context.Context, tenantID string) (*models.FeedbackRecordsPurgeAcceptedResponse, error)
-	calls       int
+	tenantIDs   []string
 }
 
 func (m *mockFeedbackRecordsPurgeService) Enqueue(
 	ctx context.Context, tenantID string,
 ) (*models.FeedbackRecordsPurgeAcceptedResponse, error) {
-	m.calls++
+	m.tenantIDs = append(m.tenantIDs, tenantID)
 
 	if m.enqueueFunc != nil {
 		return m.enqueueFunc(ctx, tenantID)
@@ -36,11 +35,14 @@ func (m *mockFeedbackRecordsPurgeService) Enqueue(
 	}, nil
 }
 
-func purgeRequest(body string) *http.Request {
+// The handler reads the tenant from the path value, not the URL, so the URL stays fixed — a raw
+// blank tenant in the path would not even be a parseable request line.
+func purgeRequest(tenantID string) *http.Request {
 	req := httptest.NewRequestWithContext(
-		context.Background(), http.MethodPost, "http://test/v1/feedback-records/purge", strings.NewReader(body),
+		context.Background(), http.MethodDelete,
+		"http://test/v1/tenants/tenant/feedback-records", http.NoBody,
 	)
-	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("tenant_id", tenantID)
 
 	return req
 }
@@ -49,20 +51,19 @@ func TestFeedbackRecordsPurgeHandler_Purge(t *testing.T) {
 	t.Run("accepted returns 202 and does not report a deleted count", func(t *testing.T) {
 		mock := &mockFeedbackRecordsPurgeService{
 			enqueueFunc: func(_ context.Context, tenantID string) (*models.FeedbackRecordsPurgeAcceptedResponse, error) {
-				assert.Equal(t, "org-123", tenantID)
-
 				return &models.FeedbackRecordsPurgeAcceptedResponse{
-					TenantID: "org-123",
+					TenantID: tenantID,
 					Status:   models.FeedbackRecordsPurgeStatusAccepted,
-					Message:  "Feedback records purge accepted for org-123",
+					Message:  "Feedback records purge accepted for " + tenantID,
 				}, nil
 			},
 		}
 
 		rec := httptest.NewRecorder()
-		NewFeedbackRecordsPurgeHandler(mock).Purge(rec, purgeRequest(`{"tenant_id":"org-123"}`))
+		NewFeedbackRecordsPurgeHandler(mock).Purge(rec, purgeRequest("org-123"))
 
 		require.Equal(t, http.StatusAccepted, rec.Code)
+		assert.Equal(t, []string{"org-123"}, mock.tenantIDs)
 
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -72,46 +73,28 @@ func TestFeedbackRecordsPurgeHandler_Purge(t *testing.T) {
 		assert.NotContains(t, body, "deleted_count")
 	})
 
-	// A missing or empty tenant_id must fail, never fall back to a wider scope.
+	// The tenant is a path segment, so it cannot be omitted — the request would route elsewhere.
+	// An empty or blank value still has to be rejected rather than treated as "all tenants".
 	for _, testCase := range []struct {
-		name string
-		body string
+		name     string
+		tenantID string
 	}{
-		{name: "missing tenant_id", body: `{}`},
-		{name: "empty tenant_id", body: `{"tenant_id":""}`},
-		{name: "blank tenant_id", body: `{"tenant_id":"   "}`},
+		{name: "empty tenant", tenantID: ""},
+		{name: "blank tenant", tenantID: "   "},
 	} {
-		t.Run(testCase.name+" is rejected without enqueueing", func(t *testing.T) {
+		t.Run(testCase.name+" is rejected", func(t *testing.T) {
 			mock := &mockFeedbackRecordsPurgeService{
-				enqueueFunc: func(_ context.Context, tenantID string) (*models.FeedbackRecordsPurgeAcceptedResponse, error) {
-					// Reached only for values that pass body validation; the service still
-					// normalizes, so a blank value is rejected here instead.
-					if strings.TrimSpace(tenantID) == "" {
-						return nil, huberrors.NewValidationError("tenant_id", "tenant_id is required")
-					}
-
-					return &models.FeedbackRecordsPurgeAcceptedResponse{TenantID: tenantID}, nil
+				enqueueFunc: func(_ context.Context, _ string) (*models.FeedbackRecordsPurgeAcceptedResponse, error) {
+					return nil, huberrors.NewValidationError("tenant_id", "tenant_id is required")
 				},
 			}
 
 			rec := httptest.NewRecorder()
-			NewFeedbackRecordsPurgeHandler(mock).Purge(rec, purgeRequest(testCase.body))
+			NewFeedbackRecordsPurgeHandler(mock).Purge(rec, purgeRequest(testCase.tenantID))
 
 			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		})
 	}
-
-	t.Run("unknown fields are rejected", func(t *testing.T) {
-		mock := &mockFeedbackRecordsPurgeService{}
-
-		rec := httptest.NewRecorder()
-		NewFeedbackRecordsPurgeHandler(mock).Purge(rec, purgeRequest(`{"tenant_id":"org-123","user_id":"u-1"}`))
-
-		// A caller narrowing the purge with a filter the endpoint does not honor must get an error,
-		// not a silently wider deletion than they asked for.
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-		assert.Zero(t, mock.calls)
-	})
 
 	// Accepting a purge takes no tenant lock — the exclusive lock is taken by the worker — so this
 	// endpoint has no 409, and the spec documents none. A failure to schedule must not read as
@@ -125,10 +108,9 @@ func TestFeedbackRecordsPurgeHandler_Purge(t *testing.T) {
 		}
 
 		rec := httptest.NewRecorder()
-		NewFeedbackRecordsPurgeHandler(mock).Purge(rec, purgeRequest(`{"tenant_id":"org-123"}`))
+		NewFeedbackRecordsPurgeHandler(mock).Purge(rec, purgeRequest("org-123"))
 
 		require.Equal(t, http.StatusInternalServerError, rec.Code)
-		assert.NotEqual(t, http.StatusAccepted, rec.Code)
 
 		var problem map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &problem))

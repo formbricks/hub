@@ -564,83 +564,6 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
-    /v1/feedback-records/purge:
-        post:
-            tags:
-                - Feedback Records
-            summary: Purge all feedback records for a tenant
-            description: |
-                Permanently deletes every feedback record for the specified tenant_id, along with the data derived
-                from those records: embeddings, taxonomy cluster memberships, and the enrichment stored on each
-                record (sentiment, emotions, translations).
-
-                This is intended for emptying a dataset that stays in use. The tenant's taxonomy structure (runs,
-                clusters and nodes), its webhooks, and its settings are left in place — the clusters simply end up
-                with no members, and per-node record counts, which are derived at read time, fall to zero. To
-                remove everything Hub holds for a tenant during offboarding, use
-                `DELETE /v1/tenants/{tenant_id}/data` instead.
-
-                tenant_id is required. This is a distinct endpoint rather than a filter on
-                `DELETE /v1/feedback-records` precisely so that it cannot be reached by omitting a parameter: that
-                endpoint erases one data subject's records, and widening it to a whole tenant when a filter is left
-                out is how a narrow deletion silently becomes a dataset wipe.
-
-                Asynchronous: the request enqueues the purge and returns 202 immediately, because the deletion is
-                unbounded and can outlive a request. There is therefore no deleted count in the response. Poll
-                `GET /v1/feedback-records/count?tenant_id=...` to observe progress; the purge is complete when it
-                reaches zero.
-
-                Idempotent and safe to repeat. Requesting a purge while one is already running for the same tenant
-                joins the running purge rather than queueing a second one, and still returns 202. A purge requested
-                after an earlier one finished starts a new run.
-
-                While the purge runs it holds the tenant's write lock exclusively, so Hub-owned writes for that
-                tenant are rejected with HTTP 409 (code `tenant_write_conflict`) until it completes; writes for
-                other tenants are unaffected. Note this affects other endpoints, not this one: accepting a purge
-                takes no lock, so this request does not return 409. If in-flight writes do not drain within the
-                configured lock timeout, the purge attempt is retried by the job queue without any caller action.
-
-                No webhook events are published for a purge, and no webhooks are deleted. Enrichment jobs already
-                queued for purged records no-op when they run, since the record they reference is gone.
-            operationId: purge-feedback-records
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/FeedbackRecordsPurgeInputBody'
-            responses:
-                "202":
-                    description: Purge accepted and scheduled
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/FeedbackRecordsPurgeOutputBody'
-                            examples:
-                                accepted:
-                                    summary: Purge accepted
-                                    value:
-                                        tenant_id: "org-123"
-                                        status: "accepted"
-                                        message: "Feedback records purge accepted for org-123"
-                "400":
-                    description: Bad Request (e.g. missing or invalid tenant_id, or unknown fields in the body)
-                    content:
-                        application/problem+json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorModel'
-                "401":
-                    description: Unauthorized (missing or invalid API key)
-                    content:
-                        application/problem+json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorModel'
-                default:
-                    description: Error
-                    content:
-                        application/problem+json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorModel'
     /v1/feedback-records/{id}:
         get:
             tags:
@@ -1352,6 +1275,93 @@ paths:
                     description: |
                         Conflict – tenant-owned writes were in flight and did not drain within the purge
                         lock timeout (code `tenant_write_conflict`). No data was deleted; retry the purge.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/tenants/{tenant_id}/feedback-records:
+        delete:
+            tags:
+                - Feedback Records
+            summary: Purge all feedback records for a tenant
+            description: |
+                Permanently deletes every feedback record for the specified tenant_id, along with the data derived
+                from those records: embeddings, taxonomy cluster memberships, and the enrichment stored on each
+                record (sentiment, emotions, translations).
+
+                This is intended for emptying a dataset that stays in use. The tenant's taxonomy structure (runs,
+                clusters, nodes, active-run pointers and node events), its webhooks, and its settings are all left
+                in place — the clusters simply end up with no members. Note that a taxonomy run's own stored
+                counters (`record_count`, `cluster_count`, and a cluster's `size`) are NOT rewritten: they record
+                what that run processed, so a run read back after a purge still reports its original counts. The
+                per-node record counts returned by the taxonomy tree are derived from memberships at read time and
+                do fall to zero. To remove everything Hub holds for a tenant during offboarding, use
+                `DELETE /v1/tenants/{tenant_id}/data` instead.
+
+                The tenant is a required path segment, so it cannot be omitted the way a filter on a collection
+                delete could be — dropping it routes elsewhere rather than widening the operation to every tenant.
+
+                Asynchronous: the request schedules the purge and returns 202 immediately, because the deletion is
+                unbounded and can outlive a request. There is therefore no deleted count in the response. Poll
+                `GET /v1/feedback-records/count?tenant_id=...` to observe progress. For a dataset that is no longer
+                receiving feedback the count reaching zero means the purge is complete; for one still ingesting,
+                the count reflects newly arrived records rather than purge failure, since the purge only removes
+                what existed when it started.
+
+                Idempotent and safe to repeat. Requesting a purge while one is already running for the same tenant
+                joins the running purge rather than queueing a second one, and still returns 202. A purge requested
+                after an earlier one finished starts a new run.
+
+                The delete is committed in batches, so a purge interrupted by a restart or a timeout keeps the
+                progress it made and resumes on retry. While each batch runs, the tenant's write lock is held
+                exclusively and Hub-owned writes for that tenant are rejected with HTTP 409 (code
+                `tenant_write_conflict`); the lock is released between batches, and writes for other tenants are
+                never affected. This does not apply to the request below — scheduling a purge takes no lock, so
+                this endpoint does not return 409. A batch that cannot acquire the lock is retried by the job
+                queue without any caller action, up to a bounded number of attempts.
+
+                No webhook events are published for a purge, and no webhooks are deleted. Enrichment jobs already
+                queued for purged records no-op when they run, since the record they reference is gone.
+            operationId: purge-tenant-feedback-records
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  description: Tenant ID whose feedback records should be purged. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "202":
+                    description: Purge accepted and scheduled
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/FeedbackRecordsPurgeOutputBody'
+                            examples:
+                                accepted:
+                                    summary: Purge accepted
+                                    value:
+                                        tenant_id: "org-123"
+                                        status: "accepted"
+                                        message: "Feedback records purge accepted for org-123"
+                "400":
+                    description: Bad Request (e.g. missing or invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
                     content:
                         application/problem+json:
                             schema:
@@ -2715,21 +2725,6 @@ components:
                     example: 42
             required:
                 - count
-        FeedbackRecordsPurgeInputBody:
-            type: object
-            additionalProperties: false
-            required:
-                - tenant_id
-            properties:
-                tenant_id:
-                    type: string
-                    description: |
-                        Tenant ID whose feedback records should be purged. Required — there is no "all tenants"
-                        form of this operation. Empty strings and NULL bytes are not allowed.
-                    minLength: 1
-                    maxLength: 255
-                    pattern: '^[^\x00]*$'
-                    example: "org-123"
         FeedbackRecordsPurgeOutputBody:
             type: object
             additionalProperties: false

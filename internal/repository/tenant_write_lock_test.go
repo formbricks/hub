@@ -42,13 +42,53 @@ type fakeTenantWriteTx struct {
 	rollbackErr error
 	committed   bool
 	rolledBack  bool
+
+	// Batched-purge support. The purge runs one committed transaction per batch, so the fake is
+	// reused across batches: purgeBatchRows supplies each batch's
+	// (records, embeddings, memberships) counts, commits counts the successful transactions, and
+	// afterBatch lets a test interfere (e.g. cancel the context) between batches.
+	purgeBatchRows    [][]int64
+	purgeBatchErrAt   int
+	purgeBatchQueries []string
+	purgeBatchArgs    [][]any
+	commits           int
+	afterBatch        func(batches int)
+}
+
+// fakeTenantPurgeBatchRow returns one batch's three counts, or an error.
+type fakeTenantPurgeBatchRow struct {
+	counts  []int64
+	scanErr error
+}
+
+func (r fakeTenantPurgeBatchRow) Scan(dest ...any) error {
+	if r.scanErr != nil {
+		return r.scanErr
+	}
+
+	for i, d := range dest {
+		target, ok := d.(*int64)
+		if !ok {
+			return errors.New("unexpected scan target in purge batch fake")
+		}
+
+		if i < len(r.counts) {
+			*target = r.counts[i]
+		}
+	}
+
+	return nil
 }
 
 func (f *fakeTenantWriteTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
 	return nil, errors.New("query not implemented in fake")
 }
 
-func (f *fakeTenantWriteTx) QueryRow(_ context.Context, _ string, args ...any) pgx.Row {
+func (f *fakeTenantWriteTx) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	if len(args) == 2 {
+		return f.queryRowPurgeBatch(sql, args)
+	}
+
 	if len(args) == 1 {
 		if key, ok := args[0].(string); ok {
 			f.lockKeys = append(f.lockKeys, key)
@@ -68,15 +108,43 @@ func (f *fakeTenantWriteTx) QueryRow(_ context.Context, _ string, args ...any) p
 }
 
 func (f *fakeTenantWriteTx) Commit(context.Context) error {
-	f.committed = true
+	if f.commitErr != nil {
+		return f.commitErr
+	}
 
-	return f.commitErr
+	f.committed = true
+	f.commits++
+
+	return nil
 }
 
 func (f *fakeTenantWriteTx) Rollback(context.Context) error {
 	f.rolledBack = true
 
 	return f.rollbackErr
+}
+
+// queryRowPurgeBatch serves the purge's batch statement, which is the only QueryRow taking two
+// arguments (tenant id + batch size); the advisory-lock query takes one.
+func (f *fakeTenantWriteTx) queryRowPurgeBatch(sql string, args []any) pgx.Row {
+	f.purgeBatchQueries = append(f.purgeBatchQueries, sql)
+	f.purgeBatchArgs = append(f.purgeBatchArgs, args)
+
+	batchIndex := len(f.purgeBatchQueries) - 1
+
+	if f.afterBatch != nil {
+		defer f.afterBatch(len(f.purgeBatchQueries))
+	}
+
+	if f.purgeBatchErrAt == len(f.purgeBatchQueries) {
+		return fakeTenantPurgeBatchRow{scanErr: errors.New("batch failed")}
+	}
+
+	if batchIndex < len(f.purgeBatchRows) {
+		return fakeTenantPurgeBatchRow{counts: f.purgeBatchRows[batchIndex]}
+	}
+
+	return fakeTenantPurgeBatchRow{counts: []int64{0, 0, 0}}
 }
 
 type fakeTenantWriteDB struct {
