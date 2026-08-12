@@ -2,6 +2,7 @@ package repository
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -102,21 +103,30 @@ func clearsColumn(query, col string) bool {
 func TestBuildCountQuery(t *testing.T) {
 	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	t.Run("no filters", func(t *testing.T) {
-		query, args := buildCountQuery(&models.ListFeedbackRecordsFilters{})
-		if query != "SELECT COUNT(*) FROM feedback_records" {
-			t.Fatalf("query = %q, want SELECT COUNT(*) FROM feedback_records", query)
+	// A listing with no tenant would span every tenant. The HTTP layer marks tenant_id required,
+	// but this builder is also reachable from workers and tests that construct filters directly in
+	// Go, so it fails closed rather than emitting a tenant-free WHERE.
+	t.Run("no filters is rejected", func(t *testing.T) {
+		if _, _, err := buildCountQuery(&models.ListFeedbackRecordsFilters{}); err == nil {
+			t.Fatal("buildCountQuery() error = nil, want a missing-tenant error")
 		}
+	})
 
-		if len(args) != 0 {
-			t.Fatalf("args = %v, want empty", args)
+	t.Run("blank tenant_id is rejected", func(t *testing.T) {
+		blank := "   "
+		if _, _, err := buildCountQuery(&models.ListFeedbackRecordsFilters{TenantID: &blank}); err == nil {
+			t.Fatal("buildCountQuery() error = nil, want a missing-tenant error")
 		}
 	})
 
 	t.Run("tenant_id only", func(t *testing.T) {
 		tenantID := "org-123"
 
-		query, args := buildCountQuery(&models.ListFeedbackRecordsFilters{TenantID: &tenantID})
+		query, args, err := buildCountQuery(&models.ListFeedbackRecordsFilters{TenantID: &tenantID})
+		if err != nil {
+			t.Fatalf("buildCountQuery() error = %v, want nil", err)
+		}
+
 		if !strings.Contains(query, "WHERE tenant_id = $1") {
 			t.Fatalf("query = %q, want WHERE tenant_id = $1", query)
 		}
@@ -126,28 +136,27 @@ func TestBuildCountQuery(t *testing.T) {
 		}
 	})
 
-	t.Run("all filters combined", func(t *testing.T) {
+	// The pre-existing filters keep their placeholder positions when each carries a single value.
+	// That is the backward-compatibility contract of converting them to multi-value: same rows,
+	// same bind layout, just `= ANY` over a one-element array instead of `=`.
+	t.Run("legacy single-value filters keep their placeholder layout", func(t *testing.T) {
 		tenantID := "org-123"
-		sourceType := "formbricks"
-		fieldID := "field-1"
-		userID := "user-1"
-		submissionID := "sub-1"
-		sourceID := "src-1"
-		fieldGroupID := "fg-1"
-		fieldType := models.FieldTypeText
 
-		query, args := buildCountQuery(&models.ListFeedbackRecordsFilters{
+		query, args, err := buildCountQuery(&models.ListFeedbackRecordsFilters{
 			TenantID:     &tenantID,
-			SourceType:   &sourceType,
-			FieldID:      &fieldID,
-			UserID:       &userID,
-			SubmissionID: &submissionID,
-			SourceID:     &sourceID,
-			FieldGroupID: &fieldGroupID,
-			FieldType:    &fieldType,
+			SourceType:   []string{"formbricks"},
+			FieldID:      []string{"field-1"},
+			UserID:       []string{"user-1"},
+			SubmissionID: []string{"sub-1"},
+			SourceID:     []string{"src-1"},
+			FieldGroupID: []string{"fg-1"},
+			FieldType:    []models.FieldType{models.FieldTypeText},
 			Since:        &now,
 			Until:        &now,
 		})
+		if err != nil {
+			t.Fatalf("buildCountQuery() error = %v, want nil", err)
+		}
 
 		// Must start with base SELECT.
 		if !strings.HasPrefix(query, "SELECT COUNT(*) FROM feedback_records WHERE ") {
@@ -157,13 +166,13 @@ func TestBuildCountQuery(t *testing.T) {
 		// Must contain every expected condition (order doesn't matter within AND).
 		wantConditions := []string{
 			"tenant_id = $1",
-			"submission_id = $2",
-			"source_type = $3",
-			"source_id = $4",
-			"field_id = $5",
-			"field_group_id = $6",
-			"field_type = $7",
-			"user_id = $8",
+			"submission_id = ANY($2)",
+			"source_type = ANY($3)",
+			"source_id = ANY($4)",
+			"field_id = ANY($5)",
+			"field_group_id = ANY($6)",
+			"field_type = ANY($7::text[]::field_type_enum[])",
+			"user_id = ANY($8)",
 			"collected_at >= $9",
 			"collected_at <= $10",
 		}
@@ -217,39 +226,72 @@ func TestBuildUpdateQuery_ValueID(t *testing.T) {
 // order and each column's placeholder must equal its position.
 func TestBuildFilterConditions_PlaceholdersMatchArgs(t *testing.T) {
 	tenant := "t1"
-	submission := "s1"
-	sourceType := "survey"
-	sourceID := "src1"
-	fieldID := "q1"
-	fieldGroupID := "g1"
-	fieldType := models.FieldTypeCategorical
-	valueID := "opt_a"
-	userID := "u1"
 	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	until := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	createdSince := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	createdUntil := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	valueDateMin := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	valueDateMax := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	numberMin, numberMax := 1.5, 9.5
+	scoreMin, scoreMax := -0.5, 0.5
+	hasSentiment, hasEmotions, hasTranslation := true, false, true
 
-	where, args := buildFilterConditions(&models.ListFeedbackRecordsFilters{
-		TenantID: &tenant, SubmissionID: &submission, SourceType: &sourceType,
-		SourceID: &sourceID, FieldID: &fieldID, FieldGroupID: &fieldGroupID,
-		FieldType: &fieldType, ValueID: &valueID, UserID: &userID,
+	where, args, err := buildFilterConditions(&models.ListFeedbackRecordsFilters{
+		TenantID:     &tenant,
+		SubmissionID: []string{"s1"},
+		SourceType:   []string{"survey", "review"},
+		SourceID:     []string{"src1"},
+		FieldID:      []string{"q1"},
+		FieldGroupID: []string{"g1"},
+		FieldType:    []models.FieldType{models.FieldTypeCategorical, models.FieldTypeText},
+		ValueID:      []string{"opt_a"},
+		UserID:       []string{"u1"},
+		SourceName:   []string{"After match"},
+		Language:     []string{"en", "ar"},
+
 		Since: &since, Until: &until,
+		CreatedSince: &createdSince, CreatedUntil: &createdUntil,
+		ValueDateMin: &valueDateMin, ValueDateMax: &valueDateMax,
+		ValueNumberMin: &numberMin, ValueNumberMax: &numberMax,
+
+		Sentiment:         []models.SentimentValue{models.SentimentNegative, models.SentimentVeryNegative},
+		SentimentScoreMin: &scoreMin, SentimentScoreMax: &scoreMax,
+		Emotions:       []models.EmotionValue{models.EmotionAnger},
+		HasSentiment:   &hasSentiment,
+		HasEmotions:    &hasEmotions,
+		HasTranslation: &hasTranslation,
 	})
+	if err != nil {
+		t.Fatalf("buildFilterConditions() error = %v, want nil", err)
+	}
 
 	expected := []struct {
 		clause string
 		value  any
 	}{
 		{"tenant_id = $1", tenant},
-		{"submission_id = $2", submission},
-		{"source_type = $3", sourceType},
-		{"source_id = $4", sourceID},
-		{"field_id = $5", fieldID},
-		{"field_group_id = $6", fieldGroupID},
-		{"field_type = $7", fieldType},
-		{"value_id = $8", valueID},
-		{"user_id = $9", userID},
-		{"collected_at >= $10", since},
-		{"collected_at <= $11", until},
+		{"submission_id = ANY($2)", []string{"s1"}},
+		{"source_type = ANY($3)", []string{"survey", "review"}},
+		{"source_id = ANY($4)", []string{"src1"}},
+		{"field_id = ANY($5)", []string{"q1"}},
+		{"field_group_id = ANY($6)", []string{"g1"}},
+		{"field_type = ANY($7::text[]::field_type_enum[])", []string{"categorical", "text"}},
+		{"value_id = ANY($8)", []string{"opt_a"}},
+		{"user_id = ANY($9)", []string{"u1"}},
+		{"source_name = ANY($10)", []string{"After match"}},
+		{"language = ANY($11)", []string{"en", "ar"}},
+		{"collected_at >= $12", since},
+		{"collected_at <= $13", until},
+		{"created_at >= $14", createdSince},
+		{"created_at <= $15", createdUntil},
+		{"value_date >= $16", valueDateMin},
+		{"value_date <= $17", valueDateMax},
+		{"value_number >= $18", numberMin},
+		{"value_number <= $19", numberMax},
+		{"sentiment = ANY($20)", []string{"negative", "very_negative"}},
+		{"sentiment_score >= $21", scoreMin},
+		{"sentiment_score <= $22", scoreMax},
+		{"emotions && $23", []string{"anger"}},
 	}
 
 	if len(args) != len(expected) {
@@ -261,8 +303,17 @@ func TestBuildFilterConditions_PlaceholdersMatchArgs(t *testing.T) {
 			t.Fatalf("where clause missing %q\ngot: %s", exp.clause, where)
 		}
 
-		if args[i] != exp.value {
+		// DeepEqual, not !=: a multi-value filter binds a []string, and comparing two interfaces
+		// holding an uncomparable dynamic type panics at runtime rather than failing.
+		if !reflect.DeepEqual(args[i], exp.value) {
 			t.Fatalf("args[%d] = %v, want %v (placeholder in %q must bind that arg)", i, args[i], exp.value, exp.clause)
+		}
+	}
+
+	// The presence filters bind nothing, so they must not consume a placeholder.
+	for _, clause := range []string{"sentiment IS NOT NULL", "emotions IS NULL", "translation_lang_key IS NOT NULL"} {
+		if !strings.Contains(where, clause) {
+			t.Fatalf("where clause missing %q\ngot: %s", clause, where)
 		}
 	}
 }

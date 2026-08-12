@@ -25,6 +25,12 @@ const (
 // InvalidCursorReason explains how clients should recover from a malformed pagination cursor.
 const InvalidCursorReason = "omit it for the first page, or use the exact next_cursor value from the previous response"
 
+// InvalidCursorSortReason explains how clients should recover from presenting a cursor under a
+// different ordering than the one it was issued for. A cursor is a position within one specific
+// ordering, so it cannot be carried across a change of sort or order.
+const InvalidCursorSortReason = "was issued for a different sort/order; " +
+	"restart pagination without a cursor, or keep sort and order unchanged"
+
 // problemFromError translates a Go error into an RFC 9457 problem. Domain and
 // sentinel errors map to specific statuses, codes, and invalid_params; anything
 // unrecognized maps to a generic 500 whose cause is logged but not exposed.
@@ -100,6 +106,16 @@ func problemFromError(err error) ProblemDetails {
 	var limitErr *huberrors.LimitExceededError
 	if errors.As(err, &limitErr) {
 		return newProblem(http.StatusForbidden, limitErr.Error())
+	}
+
+	// Checked before ErrInvalidCursor purely for clarity — ErrCursorSortMismatch is a standalone
+	// sentinel that does not wrap it, so the order is not load-bearing. Keep it that way: making
+	// one wrap the other would silently route mismatches to the malformed-cursor advice.
+	if errors.Is(err, cursor.ErrCursorSortMismatch) {
+		problem := newValidationProblem()
+		problem.InvalidParams = []InvalidParam{{Name: "cursor", Reason: InvalidCursorSortReason}}
+
+		return problem
 	}
 
 	if errors.Is(err, cursor.ErrInvalidCursor) {

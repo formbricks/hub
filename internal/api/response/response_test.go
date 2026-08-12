@@ -84,6 +84,10 @@ func TestRespondErrorMapping(t *testing.T) {
 			wantStatus: http.StatusBadRequest, wantCode: CodeValidation, wantType: ProblemTypeValidation,
 		},
 		{
+			name: "cursor sort mismatch", err: cursor.ErrCursorSortMismatch,
+			wantStatus: http.StatusBadRequest, wantCode: CodeValidation, wantType: ProblemTypeValidation,
+		},
+		{
 			name: "invalid field type", err: &models.InvalidFieldTypeError{Value: "textt"},
 			wantStatus: http.StatusBadRequest, wantCode: CodeValidation, wantType: ProblemTypeValidation,
 		},
@@ -455,6 +459,22 @@ func TestRespondErrorInvalidCursorIsValidationParam(t *testing.T) {
 	assert.Equal(t, CodeValidation, problem.Code)
 	require.Len(t, problem.InvalidParams, 1)
 	assert.Equal(t, "cursor", problem.InvalidParams[0].Name)
+	assert.Equal(t, InvalidCursorReason, problem.InvalidParams[0].Reason)
+}
+
+// A cursor presented under a different ordering than it was issued for is a distinct failure from
+// a malformed one, and the two must not collapse: "start over" and "keep sort unchanged" are
+// different instructions, and only one of them fixes the client's problem.
+func TestRespondErrorCursorSortMismatchHasItsOwnReason(t *testing.T) {
+	rec := httptest.NewRecorder()
+	RespondError(rec, newReq(t, http.MethodGet, "/v1/x"), cursor.ErrCursorSortMismatch)
+
+	problem := decodeProblem(t, rec)
+	assert.Equal(t, CodeValidation, problem.Code)
+	require.Len(t, problem.InvalidParams, 1)
+	assert.Equal(t, "cursor", problem.InvalidParams[0].Name)
+	assert.Equal(t, InvalidCursorSortReason, problem.InvalidParams[0].Reason)
+	assert.NotEqual(t, InvalidCursorReason, problem.InvalidParams[0].Reason)
 }
 
 func TestRespondErrorTruncatedJSONIsBadRequest(t *testing.T) {

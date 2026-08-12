@@ -17,3 +17,6 @@ __pycache__/
 
 # Python virtual environments
 .venv/
+
+# Schemathesis run cache (crash fixtures, local runs only)
+.schemathesis/

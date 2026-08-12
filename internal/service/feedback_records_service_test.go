@@ -12,6 +12,7 @@ import (
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/pkg/cursor"
 )
 
 type mockFeedbackRecordsRepo struct {
@@ -41,6 +42,15 @@ type mockFeedbackRecordsRepo struct {
 	setEmotionsCalled   bool
 	setEmotionsLabels   []models.EmotionValue
 	clearEmotionsCalled bool
+
+	// List/ListAfterCursor: the page to return, plus what the service passed in. listFilters is
+	// captured so tests can assert the sort defaults the service resolves before delegating.
+	listRecords      []models.FeedbackRecord
+	listHasMore      bool
+	listFilters      *models.ListFeedbackRecordsFilters
+	listCursorCalled bool
+	listCursorValue  time.Time
+	listCursorID     uuid.UUID
 }
 
 func (m *mockFeedbackRecordsRepo) Create(
@@ -61,15 +71,22 @@ func (m *mockFeedbackRecordsRepo) GetByID(_ context.Context, _ uuid.UUID) (*mode
 }
 
 func (m *mockFeedbackRecordsRepo) List(
-	_ context.Context, _ *models.ListFeedbackRecordsFilters,
+	_ context.Context, filters *models.ListFeedbackRecordsFilters,
 ) ([]models.FeedbackRecord, bool, error) {
-	return nil, false, errors.New("not implemented")
+	m.listFilters = filters
+
+	return m.listRecords, m.listHasMore, nil
 }
 
 func (m *mockFeedbackRecordsRepo) ListAfterCursor(
-	_ context.Context, _ *models.ListFeedbackRecordsFilters, _ time.Time, _ uuid.UUID,
+	_ context.Context, filters *models.ListFeedbackRecordsFilters, cursorValue time.Time, cursorID uuid.UUID,
 ) ([]models.FeedbackRecord, bool, error) {
-	return nil, false, errors.New("not implemented")
+	m.listFilters = filters
+	m.listCursorCalled = true
+	m.listCursorValue = cursorValue
+	m.listCursorID = cursorID
+
+	return m.listRecords, m.listHasMore, nil
 }
 
 func (m *mockFeedbackRecordsRepo) Update(
@@ -983,5 +1000,180 @@ func TestFeedbackRecordsService_BackfillTranslations_CountsUniqueSkipsSeparately
 
 	if enqueued != 1 {
 		t.Fatalf("enqueued = %d, want 1 (the duplicate is skipped, not counted)", enqueued)
+	}
+}
+
+// newListTestService builds a service with only the repository wired, matching the constructor
+// call the other tests in this file use.
+func newListTestService(repo *mockFeedbackRecordsRepo) *FeedbackRecordsService {
+	return NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+}
+
+// listPage returns two records whose collected_at and created_at deliberately disagree, so a
+// cursor built from the wrong column is visible in the assertions.
+func listPage() []models.FeedbackRecord {
+	first := models.FeedbackRecord{
+		ID:          uuid.MustParse("018e1234-0000-7000-8000-000000000001"),
+		CollectedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+		CreatedAt:   time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC),
+	}
+	last := models.FeedbackRecord{
+		ID:          uuid.MustParse("018e1234-0000-7000-8000-000000000002"),
+		CollectedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		CreatedAt:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	return []models.FeedbackRecord{first, last}
+}
+
+// TestListFeedbackRecords_AppliesSortDefaults verifies the service resolves the ordering before
+// delegating, so the repository and the cursor encoder see the same values.
+func TestListFeedbackRecords_AppliesSortDefaults(t *testing.T) {
+	tenant := "org-123"
+	repo := &mockFeedbackRecordsRepo{listRecords: listPage()}
+
+	_, err := newListTestService(repo).ListFeedbackRecords(
+		context.Background(), &models.ListFeedbackRecordsFilters{TenantID: &tenant},
+	)
+	if err != nil {
+		t.Fatalf("ListFeedbackRecords() error = %v, want nil", err)
+	}
+
+	if repo.listFilters.Sort != models.SortFieldCollectedAt || repo.listFilters.Order != models.SortOrderDesc {
+		t.Fatalf("repository saw sort (%q, %q), want the defaults (collected_at, desc)",
+			repo.listFilters.Sort, repo.listFilters.Order)
+	}
+}
+
+// TestListFeedbackRecords_NextCursorBoundsTheSortColumn is the test that catches SortValue and
+// resolveListOrdering drifting apart: under sort=created_at the cursor must carry the last row's
+// created_at, not its collected_at, or the next page's keyset predicate compares a value from one
+// column against another.
+func TestListFeedbackRecords_NextCursorBoundsTheSortColumn(t *testing.T) {
+	tenant := "org-123"
+	page := listPage()
+	last := page[len(page)-1]
+
+	tests := []struct {
+		name  string
+		sort  models.SortField
+		order models.SortOrder
+		want  time.Time
+	}{
+		{name: "collected_at", sort: models.SortFieldCollectedAt, order: models.SortOrderDesc, want: last.CollectedAt},
+		{name: "created_at", sort: models.SortFieldCreatedAt, order: models.SortOrderAsc, want: last.CreatedAt},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockFeedbackRecordsRepo{listRecords: page, listHasMore: true}
+
+			resp, err := newListTestService(repo).ListFeedbackRecords(
+				context.Background(),
+				&models.ListFeedbackRecordsFilters{TenantID: &tenant, Limit: 1, Sort: tt.sort, Order: tt.order},
+			)
+			if err != nil {
+				t.Fatalf("ListFeedbackRecords() error = %v, want nil", err)
+			}
+
+			key, err := cursor.DecodeKey(resp.NextCursor)
+			if err != nil {
+				t.Fatalf("DecodeKey(next_cursor) error = %v, want nil", err)
+			}
+
+			if !key.Timestamp.Equal(tt.want) {
+				t.Fatalf("next_cursor bounds %v, want the last row's %s (%v)", key.Timestamp, tt.sort, tt.want)
+			}
+
+			if key.Sort != string(tt.sort) || key.Order != string(tt.order) {
+				t.Fatalf("next_cursor records ordering (%q, %q), want (%q, %q)", key.Sort, key.Order, tt.sort, tt.order)
+			}
+		})
+	}
+}
+
+// TestListFeedbackRecords_RejectsCursorFromAnotherOrdering covers the guard, and its companion
+// case: a cursor issued before sort control recorded no ordering and must stay usable.
+func TestListFeedbackRecords_RejectsCursorFromAnotherOrdering(t *testing.T) {
+	tenant := "org-123"
+	issued := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	id := uuid.MustParse("018e1234-0000-7000-8000-000000000009")
+
+	t.Run("mismatched ordering is refused", func(t *testing.T) {
+		encoded, err := cursor.EncodeKey(cursor.Key{Timestamp: issued, ID: id, Sort: "collected_at", Order: "desc"})
+		if err != nil {
+			t.Fatalf("EncodeKey() error = %v, want nil", err)
+		}
+
+		repo := &mockFeedbackRecordsRepo{listRecords: listPage()}
+
+		_, err = newListTestService(repo).ListFeedbackRecords(context.Background(),
+			&models.ListFeedbackRecordsFilters{TenantID: &tenant, Cursor: encoded, Sort: models.SortFieldCreatedAt})
+		if !errors.Is(err, cursor.ErrCursorSortMismatch) {
+			t.Fatalf("ListFeedbackRecords() error = %v, want ErrCursorSortMismatch", err)
+		}
+
+		if repo.listCursorCalled {
+			t.Fatal("the repository was queried with a cursor from a different ordering")
+		}
+	})
+
+	// A cursor issued before sort control holds a collected_at DESC position. Accepting it under
+	// created_at would bind that timestamp to the wrong keyset column and silently skip or repeat
+	// rows, so it is refused just like an explicitly-tagged mismatch.
+	t.Run("a legacy cursor is refused under a non-default ordering", func(t *testing.T) {
+		encoded, err := cursor.Encode(issued, id)
+		if err != nil {
+			t.Fatalf("Encode() error = %v, want nil", err)
+		}
+
+		repo := &mockFeedbackRecordsRepo{listRecords: listPage()}
+
+		_, err = newListTestService(repo).ListFeedbackRecords(context.Background(),
+			&models.ListFeedbackRecordsFilters{
+				TenantID: &tenant, Cursor: encoded,
+				Sort: models.SortFieldCreatedAt, Order: models.SortOrderAsc,
+			})
+		if !errors.Is(err, cursor.ErrCursorSortMismatch) {
+			t.Fatalf("ListFeedbackRecords() error = %v, want ErrCursorSortMismatch", err)
+		}
+
+		if repo.listCursorCalled {
+			t.Fatal("the repository was queried with a legacy cursor under a non-default ordering")
+		}
+	})
+
+	t.Run("a legacy cursor still works on the default ordering", func(t *testing.T) {
+		encoded, err := cursor.Encode(issued, id)
+		if err != nil {
+			t.Fatalf("Encode() error = %v, want nil", err)
+		}
+
+		repo := &mockFeedbackRecordsRepo{listRecords: listPage()}
+
+		if _, err = newListTestService(repo).ListFeedbackRecords(context.Background(),
+			&models.ListFeedbackRecordsFilters{TenantID: &tenant, Cursor: encoded}); err != nil {
+			t.Fatalf("ListFeedbackRecords() error = %v, want nil", err)
+		}
+
+		if !repo.listCursorCalled || !repo.listCursorValue.Equal(issued) || repo.listCursorID != id {
+			t.Fatalf("repository saw cursor (%v, %v), want (%v, %v)",
+				repo.listCursorValue, repo.listCursorID, issued, id)
+		}
+	})
+}
+
+// TestListFeedbackRecords_PaginationInvariantViolation covers the guard on the last-row index.
+// A repository reporting "there is another page" while returning no rows is a contract violation,
+// and it must surface as an error rather than panicking on records[-1] in the request goroutine.
+func TestListFeedbackRecords_PaginationInvariantViolation(t *testing.T) {
+	tenant := "org-123"
+	repo := &mockFeedbackRecordsRepo{listRecords: nil, listHasMore: true}
+
+	_, err := newListTestService(repo).ListFeedbackRecords(
+		context.Background(), &models.ListFeedbackRecordsFilters{TenantID: &tenant},
+	)
+	if !errors.Is(err, ErrPaginationInvariantViolated) {
+		t.Fatalf("ListFeedbackRecords() error = %v, want ErrPaginationInvariantViolated", err)
 	}
 }

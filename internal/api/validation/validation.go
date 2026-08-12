@@ -104,6 +104,17 @@ func init() {
 		slog.Error("Failed to register no_null_bytes validator", "error", err)
 	}
 
+	// Element validators for the repeatable enum filters, applied via `dive`. They are a second
+	// gate behind registerEnumSliceTypes, not a replacement: see the comment there for why the
+	// decoder alone cannot be trusted to have run.
+	if err := validate.RegisterValidation("sentiment", validateSentiment); err != nil {
+		slog.Error("Failed to register sentiment validator", "error", err)
+	}
+
+	if err := validate.RegisterValidation("emotion", validateEmotion); err != nil {
+		slog.Error("Failed to register emotion validator", "error", err)
+	}
+
 	// Register custom type converters for form decoding
 	// Handle *time.Time (pointer type used in our models)
 	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
@@ -132,6 +143,66 @@ func init() {
 
 		return &ft, nil
 	}, (*models.FieldType)(nil))
+
+	registerEnumSliceTypes()
+
+	// Cross-field rules. Registered here rather than checked in a service so the failure travels
+	// as validator.ValidationErrors, which the response layer already renders as RFC 9457
+	// invalid_params — one entry per offending pair, instead of collapsing to a single message.
+	validate.RegisterStructValidation(validateListFeedbackRecordsFilters, models.ListFeedbackRecordsFilters{})
+}
+
+// rangeBoundsTag marks a min/max filter pair supplied in the wrong order. It is a struct-level
+// rule rather than a field rule because the failure is a relationship between two fields, and the
+// error is attributed to the lower bound so invalid_params names one concrete, correctable
+// parameter.
+const rangeBoundsTag = "range_bounds"
+
+// validateListFeedbackRecordsFilters rejects inverted min/max filter pairs.
+//
+// An inverted range matches zero rows, so without this a swapped pair returns an empty page that
+// the caller reads as "there is no such feedback" rather than "your filter is backwards".
+func validateListFeedbackRecordsFilters(structLevel validator.StructLevel) {
+	filters, ok := structLevel.Current().Interface().(models.ListFeedbackRecordsFilters)
+	if !ok {
+		return
+	}
+
+	for _, inverted := range filters.InvertedRanges() {
+		// The snake_case form name is passed as the field name so FieldPath reports the parameter
+		// the client sent, not the Go identifier.
+		structLevel.ReportError(inverted.MinValue, inverted.MinParam, inverted.StructField, rangeBoundsTag, inverted.MaxParam)
+	}
+}
+
+// registerEnumSliceTypes registers decoders for the repeatable enum query filters.
+//
+// The decoder resolves a custom type func from the *field's* type before it reaches its
+// reflect.Slice branch, and a top-level struct field is decoded at index 0 — so each of these
+// receives every repetition of the parameter at once and can parse the whole set.
+//
+// Parsing here rather than relying on `validate:"dive,..."` alone buys two things for the input
+// shape clients actually send: the 400 is attributed to the plain parameter name rather than to
+// "sentiment[2]" (which a client cannot address), and an empty value stays a no-op filter, which
+// is what ?field_type= has always been.
+//
+// It is NOT sufficient on its own, which is why the struct also carries dive tags. The decoder
+// consults customTypeFuncs only when the plain query key is present; go-playground/form's indexed
+// form (?field_type[0]=x) takes a different branch, skips these funcs entirely, and assigns the
+// raw string. The dive tags run on the decoded struct regardless of how it was populated, so they
+// catch what this misses.
+func registerEnumSliceTypes() {
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
+		return models.ParseFieldTypes(vals)
+	}, []models.FieldType(nil))
+
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
+		return models.ParseSentimentValues(vals)
+	}, []models.SentimentValue(nil))
+
+	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
+		return models.ParseEmotionValues(vals)
+	}, []models.EmotionValue(nil))
 }
 
 // ValidateStruct validates a struct using go-playground/validator
@@ -250,6 +321,16 @@ func queryDecodeReason(err error) string {
 		return "must be one of: " + models.ValidFieldTypeValuesString()
 	}
 
+	var invalidSentiment *models.InvalidSentimentValueError
+	if errors.As(err, &invalidSentiment) {
+		return "must be one of: " + models.ValidSentimentValuesString()
+	}
+
+	var invalidEmotion *models.InvalidEmotionValueError
+	if errors.As(err, &invalidEmotion) {
+		return "must be one of: " + models.ValidEmotionValuesString()
+	}
+
 	text := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(text, "invalid date format"):
@@ -296,6 +377,13 @@ func FormatFieldError(fieldErr validator.FieldError) string {
 		return "must be one of: " + fieldErr.Param()
 	case "field_type":
 		return "must be one of: " + models.ValidFieldTypeValuesString()
+	case "sentiment":
+		return "must be one of: " + models.ValidSentimentValuesString()
+	case "emotion":
+		return "must be one of: " + models.ValidEmotionValuesString()
+	case rangeBoundsTag:
+		// Param carries the upper bound's parameter name, set by the struct-level validator.
+		return "must be less than or equal to " + fieldErr.Param()
 	case "uuid":
 		return "must be a valid UUID"
 	case "rfc3339":
@@ -331,6 +419,32 @@ func validateFieldType(fl validator.FieldLevel) bool {
 	}
 
 	return false
+}
+
+// validateSentiment is a custom validator for the sentiment enum, applied per element of the
+// repeatable sentiment filter via `dive`.
+func validateSentiment(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if field.Kind() != reflect.String {
+		return false
+	}
+
+	_, err := models.ParseSentimentValue(field.String())
+
+	return err == nil
+}
+
+// validateEmotion is a custom validator for the emotion enum, applied per element of the
+// repeatable emotions filter via `dive`.
+func validateEmotion(fl validator.FieldLevel) bool {
+	field := fl.Field()
+	if field.Kind() != reflect.String {
+		return false
+	}
+
+	_, err := models.ParseEmotionValue(field.String())
+
+	return err == nil
 }
 
 // validateNoNullBytes checks that a string field does not contain NULL bytes

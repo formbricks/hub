@@ -92,8 +92,44 @@ paths:
                 - $ref: '#/components/parameters/FeedbackRecordsFieldType'
                 - $ref: '#/components/parameters/FeedbackRecordsValueId'
                 - $ref: '#/components/parameters/FeedbackRecordsUserId'
+                - $ref: '#/components/parameters/FeedbackRecordsSourceName'
+                - $ref: '#/components/parameters/FeedbackRecordsLanguage'
                 - $ref: '#/components/parameters/FeedbackRecordsSince'
                 - $ref: '#/components/parameters/FeedbackRecordsUntil'
+                - $ref: '#/components/parameters/FeedbackRecordsCreatedSince'
+                - $ref: '#/components/parameters/FeedbackRecordsCreatedUntil'
+                - $ref: '#/components/parameters/FeedbackRecordsValueNumberMin'
+                - $ref: '#/components/parameters/FeedbackRecordsValueNumberMax'
+                - $ref: '#/components/parameters/FeedbackRecordsValueDateMin'
+                - $ref: '#/components/parameters/FeedbackRecordsValueDateMax'
+                - $ref: '#/components/parameters/FeedbackRecordsSentiment'
+                - $ref: '#/components/parameters/FeedbackRecordsEmotions'
+                - $ref: '#/components/parameters/FeedbackRecordsSentimentScoreMin'
+                - $ref: '#/components/parameters/FeedbackRecordsSentimentScoreMax'
+                - $ref: '#/components/parameters/FeedbackRecordsHasSentiment'
+                - $ref: '#/components/parameters/FeedbackRecordsHasEmotions'
+                - $ref: '#/components/parameters/FeedbackRecordsHasTranslation'
+                - name: sort
+                  in: query
+                  description: |
+                    Column to order by. Defaults to collected_at. Only columns that are non-null and
+                    immutable after insert are offered: a mutable sort key would let a row move across
+                    the cursor between pages and be silently skipped.
+                  schema:
+                    type: string
+                    default: collected_at
+                    enum:
+                        - collected_at
+                        - created_at
+                - name: order
+                  in: query
+                  description: Sort direction. Defaults to desc. Rows tied on the sort column are ordered by id ascending.
+                  schema:
+                    type: string
+                    default: desc
+                    enum:
+                        - asc
+                        - desc
                 - name: limit
                   in: query
                   description: Number of results to return (max 1000)
@@ -109,6 +145,11 @@ paths:
                   description: |
                     Omit for the first page. For the next page, use the exact value from the previous response's next_cursor.
                     Opaque (base64-encoded); keyset pagination.
+
+                    A cursor is a position within one specific ordering. Presenting it with a different
+                    sort or order returns 400 — restart pagination without a cursor instead. A cursor
+                    issued before sort control existed records no ordering; it is treated as a position
+                    in the default collected_at/desc listing and is accepted only there.
                   schema:
                     type: string
                     example: "eyJ0IjoiMjAyNC0wMS0xNVQxMDozMDowMFoiLCJpIjoiMDE4ZTEyMzQtNTY3OC05YWJjLWRlZjAtMTIzNDU2Nzg5YWJjIn0="
@@ -140,7 +181,41 @@ paths:
                                               submission_id: "550e8400-e29b-41d4-a716-446655440000"
                                         limit: 100
                 "400":
-                    description: Bad Request (e.g. invalid cursor)
+                    description: |
+                        Bad Request. Returned for an unknown enum value (sentiment, emotions, field_type,
+                        sort, order), an inverted range whose *_min/*_since exceeds its *_max/*_until, a
+                        malformed cursor, or a cursor issued for a different sort/order.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                inverted_range:
+                                    summary: A range filter supplied backwards
+                                    value:
+                                        type: "https://hub.formbricks.com/problems/validation"
+                                        title: "Validation Failed"
+                                        status: 400
+                                        code: "validation"
+                                        detail: "One or more request parameters are invalid"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        invalid_params:
+                                            - name: "sentiment_score_min"
+                                              reason: "must be less than or equal to sentiment_score_max"
+                                cursor_sort_mismatch:
+                                    summary: A cursor carried across a change of ordering
+                                    value:
+                                        type: "https://hub.formbricks.com/problems/validation"
+                                        title: "Validation Failed"
+                                        status: 400
+                                        code: "validation"
+                                        detail: "One or more request parameters are invalid"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        invalid_params:
+                                            - name: "cursor"
+                                              reason: "was issued for a different sort/order; restart pagination without a cursor, or keep sort and order unchanged"
+                "401":
+                    description: Unauthorized (missing or invalid API key)
                     content:
                         application/problem+json:
                             schema:
@@ -431,8 +506,23 @@ paths:
                 - $ref: '#/components/parameters/FeedbackRecordsFieldType'
                 - $ref: '#/components/parameters/FeedbackRecordsValueId'
                 - $ref: '#/components/parameters/FeedbackRecordsUserId'
+                - $ref: '#/components/parameters/FeedbackRecordsSourceName'
+                - $ref: '#/components/parameters/FeedbackRecordsLanguage'
                 - $ref: '#/components/parameters/FeedbackRecordsSince'
                 - $ref: '#/components/parameters/FeedbackRecordsUntil'
+                - $ref: '#/components/parameters/FeedbackRecordsCreatedSince'
+                - $ref: '#/components/parameters/FeedbackRecordsCreatedUntil'
+                - $ref: '#/components/parameters/FeedbackRecordsValueNumberMin'
+                - $ref: '#/components/parameters/FeedbackRecordsValueNumberMax'
+                - $ref: '#/components/parameters/FeedbackRecordsValueDateMin'
+                - $ref: '#/components/parameters/FeedbackRecordsValueDateMax'
+                - $ref: '#/components/parameters/FeedbackRecordsSentiment'
+                - $ref: '#/components/parameters/FeedbackRecordsEmotions'
+                - $ref: '#/components/parameters/FeedbackRecordsSentimentScoreMin'
+                - $ref: '#/components/parameters/FeedbackRecordsSentimentScoreMax'
+                - $ref: '#/components/parameters/FeedbackRecordsHasSentiment'
+                - $ref: '#/components/parameters/FeedbackRecordsHasEmotions'
+                - $ref: '#/components/parameters/FeedbackRecordsHasTranslation'
             responses:
                 "200":
                     description: OK
@@ -441,7 +531,29 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/CountFeedbackRecordsOutputBody'
                 "400":
-                    description: Bad Request (e.g. validation error)
+                    description: |
+                        Bad Request. Returned for an unknown enum value (sentiment, emotions, field_type),
+                        an inverted range whose *_min/*_since exceeds its *_max/*_until, or a missing or
+                        blank tenant_id.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                            examples:
+                                inverted_range:
+                                    summary: A range filter supplied backwards
+                                    value:
+                                        type: "https://hub.formbricks.com/problems/validation"
+                                        title: "Validation Failed"
+                                        status: 400
+                                        code: "validation"
+                                        detail: "One or more request parameters are invalid"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        invalid_params:
+                                            - name: "sentiment_score_min"
+                                              reason: "must be less than or equal to sentiment_score_max"
+                "401":
+                    description: Unauthorized (missing or invalid API key)
                     content:
                         application/problem+json:
                             schema:
@@ -2166,84 +2278,322 @@ components:
         FeedbackRecordsSubmissionId:
             name: submission_id
             in: query
-            description: Filter by submission ID to group records belonging to one logical submission. NULL bytes not allowed.
+            description: |
+                Filter by submission ID to group records belonging to one logical submission.
+                Repeat the parameter to match any of several submissions; the values are OR-ed, and a
+                single occurrence behaves exactly as it always has. Comma-separated values are NOT split.
+                NULL bytes not allowed.
+            style: form
+            explode: true
             schema:
-                type: string
-                description: Filter by submission ID (e.g. UUID from webhook idempotency). NULL bytes not allowed.
-                pattern: '^[^\x00]*$'
-                example: "550e8400-e29b-41d4-a716-446655440000"
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                example: ["550e8400-e29b-41d4-a716-446655440000"]
         FeedbackRecordsSourceType:
             name: source_type
             in: query
-            description: Filter by source type. NULL bytes not allowed.
+            description: |
+                Filter by source type. Repeat the parameter to match any of several source types; the
+                values are OR-ed. NULL bytes not allowed.
+            style: form
+            explode: true
             schema:
-                type: string
-                description: Filter by source type. NULL bytes not allowed.
-                pattern: '^[^\x00]*$'
-                example: "survey"
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                example: ["survey", "review"]
         FeedbackRecordsSourceId:
             name: source_id
             in: query
-            description: Filter by source ID (NULL bytes not allowed)
+            description: |
+                Filter by source ID. Repeat the parameter to match any of several sources; the values
+                are OR-ed. NULL bytes not allowed.
+            style: form
+            explode: true
             schema:
-                type: string
-                description: Filter by source ID (NULL bytes not allowed)
-                pattern: '^[^\x00]*$'
-                example: "survey-123"
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                example: ["survey-123"]
+        FeedbackRecordsSourceName:
+            name: source_name
+            in: query
+            description: |
+                Filter by source display name — the human-readable label stored alongside source_id.
+                Prefer source_id where the records carry one: a name can be edited or translated, while
+                the id is stable. Repeat the parameter to match any of several names; the values are
+                OR-ed. NULL bytes not allowed.
+            style: form
+            explode: true
+            schema:
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                example: ["After match survey"]
         FeedbackRecordsFieldId:
             name: field_id
             in: query
-            description: Filter by field ID. NULL bytes not allowed.
+            description: |
+                Filter by field ID — every answer to one question. Repeat the parameter to match any of
+                several fields; the values are OR-ed. NULL bytes not allowed.
+            style: form
+            explode: true
             schema:
-                type: string
-                pattern: '^[^\x00]*$'
-                example: "q1"
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                example: ["q1"]
         FeedbackRecordsFieldGroupId:
             name: field_group_id
             in: query
-            description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
+            description: |
+                Filter by field group ID (for ranking/matrix questions). Repeat the parameter to match
+                any of several groups; the values are OR-ed. NULL bytes not allowed.
+            style: form
+            explode: true
             schema:
-                type: string
-                description: Filter by field group ID (for ranking/matrix questions). NULL bytes not allowed.
-                pattern: '^[^\x00]*$'
-                example: "feature_priority"
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                example: ["feature_priority"]
         FeedbackRecordsFieldType:
             name: field_type
             in: query
-            description: Filter by field type. NULL bytes not allowed.
+            description: |
+                Filter by field type. Repeat the parameter to match any of several types; the values are
+                OR-ed. An empty value is ignored rather than rejected, so `?field_type=` is the same as
+                omitting the filter.
+            style: form
+            explode: true
             schema:
-                type: string
-                description: Filter by field type. NULL bytes not allowed.
-                enum:
-                    - text
-                    - categorical
-                    - nps
-                    - csat
-                    - ces
-                    - rating
-                    - number
-                    - boolean
-                    - date
-                pattern: '^[^\x00]*$'
+                type: array
+                maxItems: 9
+                items:
+                    $ref: '#/components/schemas/FieldType'
+                example: ["text", "rating"]
         FeedbackRecordsValueId:
             name: value_id
             in: query
-            description: Filter by the source system's stable option id (e.g. all records for one survey choice). NULL bytes not allowed.
+            description: |
+                Filter by the source system's stable option id (e.g. all records for one survey choice).
+                Repeat the parameter to match any of several options; the values are OR-ed. NULL bytes
+                not allowed.
+            style: form
+            explode: true
             schema:
-                type: string
-                description: Filter by the source system's stable option id. NULL bytes not allowed.
-                pattern: '^[^\x00]*$'
-                maxLength: 255
-                example: "opt_very_satisfied"
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                example: ["opt_very_satisfied"]
         FeedbackRecordsUserId:
             name: user_id
             in: query
-            description: Filter by user ID. NULL bytes not allowed.
+            description: |
+                Filter by end-user identifier — everything one person submitted. Repeat the parameter to
+                match any of several users; the values are OR-ed. NULL bytes not allowed.
+            style: form
+            explode: true
+            schema:
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                example: ["user-abc-123"]
+        FeedbackRecordsLanguage:
+            name: language
+            in: query
+            description: |
+                Filter by the language the feedback was given in. Repeat the parameter to match any of
+                several languages; the values are OR-ed. NULL bytes not allowed.
+            style: form
+            explode: true
+            schema:
+                type: array
+                maxItems: 100
+                items:
+                    type: string
+                    maxLength: 10
+                    pattern: '^[^\x00]*$'
+                example: ["en", "ar"]
+        FeedbackRecordsCreatedSince:
+            name: created_since
+            in: query
+            description: |
+                Filter by created_at >= created_since (ISO 8601, inclusive). created_at is when Hub
+                stored the record; collected_at (see `since`) is when the feedback was given. They
+                diverge on a historical re-import, so this is the parameter for "what did this import
+                bring in". Must be between 1970-01-01 and 2080-12-31.
             schema:
                 type: string
-                description: Filter by user ID. NULL bytes not allowed.
-                pattern: '^[^\x00]*$'
-                example: "user-abc-123"
+                format: date-time
+                example: "2026-01-01T00:00:00Z"
+        FeedbackRecordsCreatedUntil:
+            name: created_until
+            in: query
+            description: |
+                Filter by created_at <= created_until (ISO 8601, inclusive). See created_since for how
+                created_at differs from collected_at. Must be between 1970-01-01 and 2080-12-31.
+            schema:
+                type: string
+                format: date-time
+                example: "2026-12-31T00:00:00Z"
+        FeedbackRecordsValueNumberMin:
+            name: value_number_min
+            in: query
+            description: |
+                Filter by value_number >= value_number_min (inclusive) — e.g. NPS promoters with
+                value_number_min=9. Records whose value_number is NULL (every non-numeric answer) are
+                excluded, so this is never a no-op filter.
+            schema:
+                type: number
+                format: double
+                example: 9
+        FeedbackRecordsValueNumberMax:
+            name: value_number_max
+            in: query
+            description: |
+                Filter by value_number <= value_number_max (inclusive). Paired with value_number_min it
+                selects a band: 9..10 is the NPS promoters, 0..6 the detractors. Records whose
+                value_number is NULL are excluded. Supplying a max below the min is a 400, not an empty
+                result.
+            schema:
+                type: number
+                format: double
+                example: 10
+        FeedbackRecordsValueDateMin:
+            name: value_date_min
+            in: query
+            description: |
+                Filter by value_date >= value_date_min (ISO 8601, inclusive) — bounds the answer to a
+                date question, not when the feedback was collected. Records whose value_date is NULL
+                are excluded.
+            schema:
+                type: string
+                format: date-time
+                example: "2026-01-01T00:00:00Z"
+        FeedbackRecordsValueDateMax:
+            name: value_date_max
+            in: query
+            description: |
+                Filter by value_date <= value_date_max (ISO 8601, inclusive). Records whose value_date
+                is NULL are excluded.
+            schema:
+                type: string
+                format: date-time
+                example: "2026-12-31T00:00:00Z"
+        FeedbackRecordsSentiment:
+            name: sentiment
+            in: query
+            description: |
+                Filter by sentiment label. Repeat the parameter to match any of several labels
+                (`?sentiment=negative&sentiment=very_negative`); the values are OR-ed. An empty value is
+                ignored rather than rejected, so `?sentiment=` is the same as omitting the filter.
+                Records that have not been enriched carry no sentiment and are therefore never matched
+                — use has_sentiment=false to find them.
+            style: form
+            explode: true
+            schema:
+                type: array
+                maxItems: 6
+                items:
+                    $ref: '#/components/schemas/SentimentValue'
+                example: ["negative", "very_negative"]
+        FeedbackRecordsEmotions:
+            name: emotions
+            in: query
+            description: |
+                Filter by emotion label. Repeat the parameter to match ANY of the listed emotions: a
+                record tagged {joy} and a record tagged {joy, anger} both match
+                `?emotions=joy&emotions=anger`. There is no "must carry all of them" form. An empty
+                value is ignored rather than rejected, so `?emotions=` is the same as omitting the
+                filter.
+            style: form
+            explode: true
+            schema:
+                type: array
+                maxItems: 6
+                items:
+                    $ref: '#/components/schemas/EmotionValue'
+                example: ["anger", "fear"]
+        FeedbackRecordsSentimentScoreMin:
+            name: sentiment_score_min
+            in: query
+            description: |
+                Filter by sentiment_score >= sentiment_score_min (inclusive). The score is continuous
+                where the label is bucketed, so this is the parameter for "the most negative feedback".
+                Records that have not been enriched are excluded.
+            schema:
+                type: number
+                format: double
+                minimum: -1.0
+                maximum: 1.0
+                example: -0.5
+        FeedbackRecordsSentimentScoreMax:
+            name: sentiment_score_max
+            in: query
+            description: |
+                Filter by sentiment_score <= sentiment_score_max (inclusive). Records that have not
+                been enriched are excluded.
+            schema:
+                type: number
+                format: double
+                minimum: -1.0
+                maximum: 1.0
+                example: 0.5
+        FeedbackRecordsHasSentiment:
+            name: has_sentiment
+            in: query
+            description: |
+                Filter on whether sentiment enrichment has produced a label: true selects records where
+                sentiment IS NOT NULL, false selects those where it IS NULL. Omit for no constraint.
+            schema:
+                type: boolean
+                example: true
+        FeedbackRecordsHasEmotions:
+            name: has_emotions
+            in: query
+            description: |
+                Filter on whether the record carries emotion labels: true selects records where emotions
+                IS NOT NULL, false selects those where it IS NULL. Note that false covers both "not yet
+                classified" and "classified, no emotion detected" — the two are indistinguishable here.
+                Omit for no constraint.
+            schema:
+                type: boolean
+                example: true
+        FeedbackRecordsHasTranslation:
+            name: has_translation
+            in: query
+            description: |
+                Filter on whether the record has been translated: true selects records where
+                translation_lang_key IS NOT NULL, false selects those where it IS NULL. Omit for no
+                constraint.
+            schema:
+                type: boolean
+                example: false
         FeedbackRecordsSince:
             name: since
             in: query
@@ -2772,18 +3122,8 @@ components:
                     type: string
                     description: Human-readable question text for the group
                 field_type:
-                    type: string
+                    $ref: '#/components/schemas/FieldType'
                     description: Type of field
-                    enum:
-                        - text
-                        - categorical
-                        - nps
-                        - csat
-                        - ces
-                        - rating
-                        - number
-                        - boolean
-                        - date
                 id:
                     type: string
                     format: uuid
@@ -2797,15 +3137,8 @@ components:
                     description: Additional context
                     additionalProperties: {}
                 sentiment:
-                    type: string
+                    $ref: '#/components/schemas/SentimentValue'
                     description: Sentiment polarity inferred from value_text (sentiment enrichment). Read-only; absent until the record is enriched.
-                    enum:
-                        - very_negative
-                        - negative
-                        - neutral
-                        - positive
-                        - very_positive
-                        - mixed
                 sentiment_score:
                     type: number
                     description: Signed sentiment polarity from -1.0 (very negative) to 1.0 (very positive) (sentiment enrichment). Read-only; absent until the record is enriched.
@@ -2817,14 +3150,7 @@ components:
                     description: Emotions inferred from value_text (emotion enrichment); multi-label from a fixed set. Read-only; absent until the record is enriched, and never an empty array.
                     minItems: 1
                     items:
-                        type: string
-                        enum:
-                            - joy
-                            - anger
-                            - sadness
-                            - fear
-                            - surprise
-                            - disgust
+                        $ref: '#/components/schemas/EmotionValue'
                 source_id:
                     type: string
                     description: Reference to survey/form/ticket ID
@@ -3207,6 +3533,46 @@ components:
                     description: Update the stable id of the selected option in the source system (e.g. a survey choice id), stored alongside value_text for durable option identity. Opaque to Hub. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
                     maxLength: 255
+        FieldType:
+            type: string
+            description: |
+                The type of a feedback field, which determines which value_* member carries the answer.
+                Mirrors the field_type_enum database type; keep the three in sync.
+            enum:
+                - text
+                - categorical
+                - nps
+                - csat
+                - ces
+                - rating
+                - number
+                - boolean
+                - date
+        SentimentValue:
+            type: string
+            description: |
+                Sentiment polarity label inferred from value_text by the sentiment enrichment: the five
+                ordinal levels plus a distinct "mixed". Server-generated and read-only.
+            enum:
+                - very_negative
+                - negative
+                - neutral
+                - positive
+                - very_positive
+                - mixed
+        EmotionValue:
+            type: string
+            description: |
+                A single emotion label inferred from value_text by the emotion enrichment (the six Ekman
+                basic emotions). Emotions are multi-label, so a record carries zero or more of these;
+                "mixed" is not a label, it is two or more present at once. Server-generated and read-only.
+            enum:
+                - joy
+                - anger
+                - sadness
+                - fear
+                - surprise
+                - disgust
         TaxonomyRunStatus:
             type: string
             description: Lifecycle state of a taxonomy run. Allowed transitions are pending -> running|failed|canceled and running -> succeeded|failed|canceled.

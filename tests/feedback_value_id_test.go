@@ -108,7 +108,7 @@ func TestFeedbackRecords_ListFilterByValueID(t *testing.T) {
 	createOption(testTenantID("sub-b"), wantID)
 	createOption(testTenantID("sub-c"), otherID)
 
-	records, _, err := repo.List(ctx, &models.ListFeedbackRecordsFilters{TenantID: &tenantID, ValueID: &wantID})
+	records, _, err := repo.List(ctx, &models.ListFeedbackRecordsFilters{TenantID: &tenantID, ValueID: []string{wantID}})
 	require.NoError(t, err)
 	assert.Len(t, records, 2, "only the two records with the target value_id are returned")
 

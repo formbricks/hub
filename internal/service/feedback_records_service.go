@@ -307,6 +307,10 @@ func (s *FeedbackRecordsService) ClearEmotions(
 
 // ListFeedbackRecords retrieves a list of feedback records with optional filters.
 // Uses cursor-based pagination: omit cursor for first page, use next_cursor for subsequent pages.
+//
+// The provided *filters is mutated in-place to fill in the default Sort, Order and Limit when
+// the caller omits them. This is safe because the HTTP handler (the only caller) constructs a
+// fresh struct per request.
 func (s *FeedbackRecordsService) ListFeedbackRecords(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 ) (*models.ListFeedbackRecordsResponse, error) {
@@ -318,6 +322,16 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 		filters.Limit = 100
 	}
 
+	// Resolve the ordering once, here, so the keyset predicate, the ORDER BY and the next cursor
+	// are all derived from the same values and cannot disagree about what a page is ordered by.
+	if filters.Sort == "" {
+		filters.Sort = models.DefaultSortField
+	}
+
+	if filters.Order == "" {
+		filters.Order = models.DefaultSortOrder
+	}
+
 	cursorStr := strings.TrimSpace(filters.Cursor)
 
 	var (
@@ -327,12 +341,25 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 	)
 
 	if cursorStr != "" {
-		collectedAt, id, decErr := cursor.Decode(cursorStr)
+		key, decErr := cursor.DecodeKey(cursorStr)
 		if decErr != nil {
 			return nil, fmt.Errorf("decode cursor: %w", decErr)
 		}
 
-		records, hasMore, err = s.repo.ListAfterCursor(ctx, filters, collectedAt, id)
+		// A cursor bounds one column in one direction. Under a different ordering it still yields
+		// a valid-looking page that is not the continuation of the previous one, so refuse it
+		// rather than silently skipping and repeating rows.
+		//
+		// A cursor issued before sort control carries no ordering, but it is not a wildcard: every
+		// one of them is a position in the ordering this endpoint had at the time, which is the
+		// default. Resolving it to that lets old cursors keep working on the default listing while
+		// still refusing to bind a collected_at position to a created_at keyset predicate.
+		key = key.ResolveOrdering(string(models.DefaultSortField), string(models.DefaultSortOrder))
+		if matchErr := key.Match(string(filters.Sort), string(filters.Order)); matchErr != nil {
+			return nil, fmt.Errorf("validate cursor ordering: %w", matchErr)
+		}
+
+		records, hasMore, err = s.repo.ListAfterCursor(ctx, filters, key.Timestamp, key.ID)
 	} else {
 		records, hasMore, err = s.repo.List(ctx, filters)
 	}
@@ -342,9 +369,21 @@ func (s *FeedbackRecordsService) ListFeedbackRecords(
 	}
 
 	meta, err := BuildListPaginationMeta(filters.Limit, hasMore, func() (string, error) {
+		// hasMore is derived from len(records) > limit, so a non-empty page is implied here.
+		// Guarded anyway, mirroring the webhooks list path: an out-of-range index would panic in
+		// the request goroutine rather than surface as an error.
+		if len(records) == 0 {
+			return "", ErrPaginationInvariantViolated
+		}
+
 		last := records[len(records)-1]
 
-		return cursor.Encode(last.CollectedAt, last.ID)
+		return cursor.EncodeKey(cursor.Key{
+			Timestamp: last.SortValue(filters.Sort),
+			ID:        last.ID,
+			Sort:      string(filters.Sort),
+			Order:     string(filters.Order),
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode next cursor: %w", err)
