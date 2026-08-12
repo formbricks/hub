@@ -1,6 +1,6 @@
 // backfill-embeddings enqueues River embedding jobs for feedback records that have
 // non-empty value_text and null embedding. Run this when the API server is not
-// handling backfill (e.g. one-off or scheduled). Workers in the API process the jobs.
+// handling backfill (e.g. one-off or scheduled). hub-worker processes the jobs.
 //
 // With -prune-stale-models it instead deletes embedding rows left behind by previous
 // EMBEDDING_MODEL values. Run the prune only AFTER a model migration's backfill has
@@ -51,8 +51,23 @@ func run() int {
 			"(run only after a model migration's backfill has completed)")
 	taxonomyMode := flag.Bool("taxonomy", false,
 		"backfill taxonomy embeddings from translated text using TAXONOMY_EMBEDDING_MODEL or taxonomy:<EMBEDDING_MODEL>:translated-v1")
+	tenantID := flag.String("tenant-id", "", "restrict the backfill to one tenant ID")
+	countOnly := flag.Bool("count-only", false, "count eligible missing embeddings without enqueueing jobs")
+	maxRecords := flag.Int("max-records", 0, "maximum candidates to enqueue; 0 means unlimited")
 
 	flag.Parse()
+
+	if *maxRecords < 0 {
+		slog.Error("-max-records cannot be negative")
+
+		return exitFailure
+	}
+
+	if *pruneStaleModels && (*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0) {
+		slog.Error("-prune-stale-models cannot be combined with backfill scope or preview flags")
+
+		return exitFailure
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -128,12 +143,6 @@ func run() int {
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 
 	if *pruneStaleModels {
-		if *taxonomyMode {
-			slog.Error("-taxonomy cannot be combined with -prune-stale-models")
-
-			return exitFailure
-		}
-
 		deleted, pruneErr := embeddingsRepo.DeleteEmbeddingsForOtherModels(
 			ctx, embeddingModelForDB, pruneBatchSize, taxonomyEmbeddingModel)
 		if pruneErr != nil {
@@ -145,6 +154,32 @@ func run() int {
 		slog.Info("Prune complete", "deleted", deleted, "kept_models", []string{embeddingModelForDB, taxonomyEmbeddingModel})
 		fmt.Printf("Deleted %d stale-model embedding row(s); kept models %q and %q.\n",
 			deleted, embeddingModelForDB, taxonomyEmbeddingModel)
+
+		return exitSuccess
+	}
+
+	if *countOnly {
+		var count int
+		if *tenantID == "" {
+			count, err = embeddingsRepo.CountFeedbackRecordsForBackfillByInputKind(ctx, targetModel, inputKind)
+		} else {
+			count, err = embeddingsRepo.CountTenantFeedbackRecordsForBackfillByInputKind(
+				ctx, *tenantID, targetModel, inputKind)
+		}
+
+		if err != nil {
+			slog.Error("Backfill count failed", "error", err)
+
+			return exitFailure
+		}
+
+		selected := count
+		if *maxRecords > 0 && selected > *maxRecords {
+			selected = *maxRecords
+		}
+
+		fmt.Printf("Found %d eligible missing embedding(s) for model %q; %d would be selected.\n",
+			count, targetModel, selected)
 
 		return exitSuccess
 	}
@@ -188,7 +223,15 @@ func run() int {
 
 	feedbackRecordsService.SetEmbeddingInserter(riverClient)
 
-	enqueued, err := feedbackRecordsService.BackfillEmbeddingsWithInputKind(ctx, targetModel, inputKind)
+	var enqueued int
+	if *tenantID == "" {
+		enqueued, err = feedbackRecordsService.BackfillEmbeddingsWithInputKindLimit(
+			ctx, targetModel, inputKind, *maxRecords)
+	} else {
+		enqueued, err = feedbackRecordsService.BackfillTenantEmbeddingsWithInputKind(
+			ctx, *tenantID, targetModel, inputKind, *maxRecords)
+	}
+
 	if err != nil {
 		slog.Error("Backfill failed", "error", err)
 
@@ -199,6 +242,8 @@ func run() int {
 		"enqueued", enqueued,
 		"model", targetModel,
 		"input_kind", inputKind,
+		"tenant_scoped", *tenantID != "",
+		"max_records", *maxRecords,
 	) // #nosec G706 -- enqueued is an int, not user input
 
 	fmt.Printf("Enqueued %d embedding job(s) for model %q.\n", enqueued, targetModel)

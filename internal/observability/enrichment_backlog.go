@@ -12,9 +12,10 @@ import (
 // Enrichment type label values for MetricNameEnrichmentPendingRecords — a fixed, bounded set that
 // keeps the gauge's cardinality low. Callers pass these to SetEnrichmentPending.
 const (
-	EnrichmentTypeTranslation = "translation"
-	EnrichmentTypeSentiment   = "sentiment"
-	EnrichmentTypeEmotions    = "emotions"
+	EnrichmentTypeTranslation       = "translation"
+	EnrichmentTypeSentiment         = "sentiment"
+	EnrichmentTypeEmotions          = "emotions"
+	EnrichmentTypeTaxonomyEmbedding = "taxonomy_embedding"
 )
 
 // EnrichmentBacklogMetrics reports the aggregate (cross-tenant) count of eligible-but-unenriched
@@ -61,7 +62,8 @@ func NewEnrichmentBacklogMetrics(meter metric.Meter) (EnrichmentBacklogMetrics, 
 		MetricNameEnrichmentPendingRecords,
 		metric.WithDescription(
 			"Eligible-but-unenriched feedback records per enrichment type (translation, sentiment, "+
-				"emotions), aggregated across all tenants. A data-derived backlog/completeness signal; "+
+				"emotions, taxonomy_embedding), aggregated across all tenants. A data-derived "+
+				"backlog/completeness signal; "+
 				"unlike the River queue depth it persists across queue drains.",
 		),
 		metric.WithUnit("1"),

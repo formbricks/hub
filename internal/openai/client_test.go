@@ -3,12 +3,14 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -104,6 +106,137 @@ func TestCreateEmbedding_UsesEnvironmentBaseURLWhenExplicitBaseURLIsUnset(t *tes
 	require.NoError(t, err)
 	assert.Equal(t, []float32{3, 4}, embedding)
 	assert.Equal(t, int32(1), envHits.Load())
+}
+
+func TestCreateEmbeddingsMapsOutOfOrderResponseAndMatchesSingle(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var request struct {
+			Input json.RawMessage `json:"input"`
+		}
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+			w.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+
+		var inputs []string
+		if request.Input[0] == '[' {
+			if !assert.NoError(t, json.Unmarshal(request.Input, &inputs)) {
+				w.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+		} else {
+			var input string
+			if !assert.NoError(t, json.Unmarshal(request.Input, &input)) {
+				w.WriteHeader(http.StatusBadRequest)
+
+				return
+			}
+
+			inputs = []string{input}
+		}
+
+		data := make([]map[string]any, 0, len(inputs))
+		for i := len(inputs) - 1; i >= 0; i-- {
+			data = append(data, map[string]any{
+				"object": "embedding", "index": i, "embedding": []float64{float64(len(inputs[i])), float64(i + 1)},
+			})
+		}
+
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"object": "list", "data": data, "model": "test-model",
+			"usage": map[string]any{"prompt_tokens": 1, "total_tokens": 1},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithDimensions(2), WithModel("test-model"))
+	vectors, err := client.CreateEmbeddings(context.Background(), []string{"a", "longer"})
+	require.NoError(t, err)
+	assert.Equal(t, [][]float32{{1, 1}, {6, 2}}, vectors)
+
+	single, err := client.CreateEmbedding(context.Background(), "a")
+	require.NoError(t, err)
+	assert.Equal(t, vectors[0], single)
+}
+
+func TestCreateEmbeddingsRejectsMalformedResponses(t *testing.T) {
+	tests := []struct {
+		name string
+		data []map[string]any
+		want error
+	}{
+		{name: "missing vector", data: []map[string]any{{"index": 0, "embedding": []float64{1, 2}}}, want: ErrEmbeddingCountMismatch},
+		{
+			name: "duplicate index",
+			data: []map[string]any{
+				{"index": 0, "embedding": []float64{1, 2}},
+				{"index": 0, "embedding": []float64{3, 4}},
+			},
+			want: ErrEmbeddingIndexInvalid,
+		},
+		{
+			name: "out of range index",
+			data: []map[string]any{
+				{"index": 0, "embedding": []float64{1, 2}},
+				{"index": 2, "embedding": []float64{3, 4}},
+			},
+			want: ErrEmbeddingIndexInvalid,
+		},
+		{
+			name: "dimension mismatch",
+			data: []map[string]any{
+				{"index": 0, "embedding": []float64{1}},
+				{"index": 1, "embedding": []float64{3, 4}},
+			},
+			want: ErrDimensionMismatch,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"object": "list", "data": tt.data, "model": "test-model",
+					"usage": map[string]any{"prompt_tokens": 1, "total_tokens": 1},
+				}))
+			}))
+			t.Cleanup(server.Close)
+
+			client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithDimensions(2), WithModel("test-model"))
+			_, err := client.CreateEmbeddings(context.Background(), []string{"one", "two"})
+			require.ErrorIs(t, err, tt.want)
+		})
+	}
+}
+
+func TestDecodeEmbeddingResponseRejectsNonFiniteValues(t *testing.T) {
+	client := NewClient("sk-test", WithDimensions(2), WithModel("test-model"))
+	for _, invalid := range []float64{math.Inf(1), math.NaN(), math.MaxFloat64} {
+		_, err := client.decodeEmbeddingResponse([]openaisdk.Embedding{
+			{Index: 0, Embedding: []float64{invalid, 2}},
+		}, 1)
+		require.ErrorIs(t, err, ErrEmbeddingValueInvalid)
+	}
+}
+
+func TestCreateEmbeddingsRateLimitReturnsRateLimitError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"))
+	_, err := client.CreateEmbeddings(context.Background(), []string{"one", "two"})
+
+	var rateLimited *huberrors.RateLimitError
+	require.ErrorAs(t, err, &rateLimited)
+	assert.Equal(t, 7*time.Second, rateLimited.RetryAfter)
 }
 
 // newChatCompletionServer drives the real SDK against a stub /v1/chat/completions endpoint so

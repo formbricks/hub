@@ -89,6 +89,9 @@ type EmbeddingsRepository interface {
 	ListFeedbackRecordIDsForBackfillByInputKind(
 		ctx context.Context, model string, inputKind models.EmbeddingInputKind, afterID uuid.UUID, limit int,
 	) ([]uuid.UUID, error)
+	ListTenantFeedbackRecordIDsForBackfillByInputKind(
+		ctx context.Context, tenantID, model string, inputKind models.EmbeddingInputKind, afterID uuid.UUID, limit int,
+	) ([]uuid.UUID, error)
 }
 
 // EnrichmentClearMetrics records enrichment outputs nulled by an edit's eager-clear, labeled by
@@ -598,6 +601,51 @@ func (s *FeedbackRecordsService) BackfillEmbeddingsWithInputKind(
 	model string,
 	inputKind models.EmbeddingInputKind,
 ) (int, error) {
+	return s.BackfillEmbeddingsWithInputKindLimit(ctx, model, inputKind, 0)
+}
+
+// BackfillEmbeddingsWithInputKindLimit enqueues global missing embedding jobs, stopping after
+// maxRecords candidates when maxRecords is positive. Zero means unlimited.
+func (s *FeedbackRecordsService) BackfillEmbeddingsWithInputKindLimit(
+	ctx context.Context,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	maxRecords int,
+) (int, error) {
+	return s.backfillEmbeddingsWithInputKind(ctx, model, inputKind, maxRecords,
+		func(ctx context.Context, afterID uuid.UUID, limit int) ([]uuid.UUID, error) {
+			return s.embeddingsRepo.ListFeedbackRecordIDsForBackfillByInputKind(
+				ctx, model, inputKind, afterID, limit)
+		})
+}
+
+// BackfillTenantEmbeddingsWithInputKind enqueues one tenant's missing embedding jobs, stopping
+// after maxRecords candidates when maxRecords is positive. Zero means unlimited.
+func (s *FeedbackRecordsService) BackfillTenantEmbeddingsWithInputKind(
+	ctx context.Context,
+	tenantID string,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	maxRecords int,
+) (int, error) {
+	if tenantID == "" {
+		return 0, ErrMissingTenantID
+	}
+
+	return s.backfillEmbeddingsWithInputKind(ctx, model, inputKind, maxRecords,
+		func(ctx context.Context, afterID uuid.UUID, limit int) ([]uuid.UUID, error) {
+			return s.embeddingsRepo.ListTenantFeedbackRecordIDsForBackfillByInputKind(
+				ctx, tenantID, model, inputKind, afterID, limit)
+		})
+}
+
+func (s *FeedbackRecordsService) backfillEmbeddingsWithInputKind( //nolint:funcorder // shared helper stays with public backfill entrypoints
+	ctx context.Context,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	maxRecords int,
+	listPage func(context.Context, uuid.UUID, int) ([]uuid.UUID, error),
+) (int, error) {
 	if s.embeddingInserter == nil || s.embeddingQueueName == "" {
 		return 0, ErrEmbeddingBackfillNotConfigured
 	}
@@ -612,11 +660,20 @@ func (s *FeedbackRecordsService) BackfillEmbeddingsWithInputKind(
 
 	enqueued := 0
 	skipped := 0
+	processed := 0
 	afterID := uuid.Nil
 
 	for {
-		ids, err := s.embeddingsRepo.ListFeedbackRecordIDsForBackfillByInputKind(
-			ctx, model, inputKind, afterID, embeddingBackfillPageSize)
+		pageSize := embeddingBackfillPageSize
+		if maxRecords > 0 && maxRecords-processed < pageSize {
+			pageSize = maxRecords - processed
+		}
+
+		if pageSize <= 0 {
+			break
+		}
+
+		ids, err := listPage(ctx, afterID, pageSize)
 		if err != nil {
 			return enqueued, fmt.Errorf("list ids for embedding backfill: %w", err)
 		}
@@ -626,6 +683,8 @@ func (s *FeedbackRecordsService) BackfillEmbeddingsWithInputKind(
 		}
 
 		for _, id := range ids {
+			processed++
+
 			res, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
 				FeedbackRecordID: id,
 				Model:            model,

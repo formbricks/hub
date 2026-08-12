@@ -30,10 +30,12 @@ func TestEnrichmentBacklogMetricsGauge(t *testing.T) {
 	metrics.SetEnrichmentPending("translation", 12)
 	metrics.SetEnrichmentPending("sentiment", 5)
 	metrics.SetEnrichmentPending("emotions", 0)
+	metrics.SetEnrichmentPending(EnrichmentTypeTaxonomyEmbedding, 7)
 
 	assert.Equal(t, int64(12), backlogGaugeValue(t, reader, "translation"))
 	assert.Equal(t, int64(5), backlogGaugeValue(t, reader, "sentiment"))
 	assert.Equal(t, int64(0), backlogGaugeValue(t, reader, "emotions"))
+	assert.Equal(t, int64(7), backlogGaugeValue(t, reader, EnrichmentTypeTaxonomyEmbedding))
 
 	// A gauge reports the latest value, not a running sum.
 	metrics.SetEnrichmentPending("translation", 3)

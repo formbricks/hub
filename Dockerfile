@@ -40,10 +40,11 @@ RUN mkdir -p /tmp/migration-tools && \
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Build the application (hub-api and hub-worker)
+# Build the application and controlled embedding backfill utility.
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/hub-api ./cmd/api && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/hub-worker ./cmd/worker
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/hub-worker ./cmd/worker && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/backfill-embeddings ./cmd/backfill-embeddings
 
 # =============================================================================
 # Stage 2: Runtime (default: hub-api)
@@ -60,6 +61,7 @@ WORKDIR /app
 # Copy binaries and migration tools from builder
 COPY --from=builder /build/bin/hub-api /app/hub-api
 COPY --from=builder /build/bin/hub-worker /app/hub-worker
+COPY --from=builder /build/bin/backfill-embeddings /app/backfill-embeddings
 COPY --from=builder /go/bin/goose /usr/local/bin/goose
 COPY --from=builder /go/bin/river /usr/local/bin/river
 

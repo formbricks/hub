@@ -612,6 +612,15 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	if a.metrics != nil && a.metrics.EnrichmentBacklog != nil {
+		embeddingProvider, embeddingModel := embeddingProviderAndModel(a.cfg)
+
+		taxonomyEmbeddingModel := ""
+		if embeddingProvider != "" &&
+			(a.cfg.Taxonomy.ServiceURL != "" || a.cfg.Taxonomy.ServiceToken != "") {
+			taxonomyEmbeddingModel = service.TaxonomyEmbeddingModel(
+				embeddingModel, a.cfg.Taxonomy.EmbeddingModel)
+		}
+
 		// Tracked, unlike the pollers above, because this one has cleanup that Shutdown must not
 		// race: it withdraws the backlog series and releases the leader's advisory lock on the way
 		// out. See App.awaitEnrichmentBacklogPoller.
@@ -624,10 +633,11 @@ func (a *App) Run(ctx context.Context) error {
 			runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, enrichmentBacklogPollConfig{
 				// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
 				// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
-				defaultLang:           strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
-				translationConfigured: a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
-				sentimentConfigured:   a.cfg.Sentiment.Enabled(),
-				emotionsConfigured:    a.cfg.Emotions.Enabled(),
+				defaultLang:            strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
+				translationConfigured:  a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
+				sentimentConfigured:    a.cfg.Sentiment.Enabled(),
+				emotionsConfigured:     a.cfg.Emotions.Enabled(),
+				taxonomyEmbeddingModel: taxonomyEmbeddingModel,
 			})
 		}()
 	}
@@ -667,10 +677,11 @@ var riverDepthQueues = service.JobQueueNames()
 // enrichmentBacklogPollConfig configures runEnrichmentBacklogPoller: the deployment default target
 // language and which enrichments are deployment-configured (only those emit a gauge).
 type enrichmentBacklogPollConfig struct {
-	defaultLang           string
-	translationConfigured bool
-	sentimentConfigured   bool
-	emotionsConfigured    bool
+	defaultLang            string
+	translationConfigured  bool
+	sentimentConfigured    bool
+	emotionsConfigured     bool
+	taxonomyEmbeddingModel string
 }
 
 // runEnrichmentBacklogPoller periodically refreshes the aggregate enrichment-backlog gauge
@@ -702,7 +713,8 @@ func runEnrichmentBacklogPoller(
 		defer cancel()
 
 		// Exactly one replica holds leadership and scans; the rest skip until it goes away.
-		counts, isLeader, err := leader.CountIfLeader(queryCtx, cfg.defaultLang)
+		counts, isLeader, err := leader.CountIfLeader(
+			queryCtx, cfg.defaultLang, cfg.taxonomyEmbeddingModel)
 		if err != nil {
 			// Shutdown cancels the scan mid-flight. That is not a poll failure, and counting it
 			// would fire the very alert this counter exists for on every rolling deploy.
@@ -753,6 +765,11 @@ func runEnrichmentBacklogPoller(
 
 		if cfg.emotionsConfigured {
 			backlog.SetEnrichmentPending(observability.EnrichmentTypeEmotions, counts.EmotionsEligible-counts.EmotionsDone)
+		}
+
+		if cfg.taxonomyEmbeddingModel != "" {
+			backlog.SetEnrichmentPending(
+				observability.EnrichmentTypeTaxonomyEmbedding, counts.TaxonomyEmbeddingPending)
 		}
 	}
 

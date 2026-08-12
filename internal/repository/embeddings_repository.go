@@ -20,6 +20,8 @@ import (
 	"github.com/formbricks/hub/internal/models"
 )
 
+var errEmbeddingBackfillTenantRequired = errors.New("tenant id is required for tenant embedding backfill")
+
 const (
 	// hnswEfSearch increases HNSW graph traversal candidates (default 40); higher improves recall.
 	hnswEfSearch = 200
@@ -265,10 +267,55 @@ func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfillByInputKind(
 	afterID uuid.UUID,
 	limit int,
 ) ([]uuid.UUID, error) {
+	return r.listFeedbackRecordIDsForBackfillByInputKind(ctx, model, inputKind, "", false, afterID, limit)
+}
+
+// ListTenantFeedbackRecordIDsForBackfillByInputKind returns one tenant's feedback-record IDs that
+// are missing an embedding for model and eligible for the requested input kind.
+func (r *EmbeddingsRepository) ListTenantFeedbackRecordIDsForBackfillByInputKind(
+	ctx context.Context,
+	tenantID string,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	afterID uuid.UUID,
+	limit int,
+) ([]uuid.UUID, error) {
+	if tenantID == "" {
+		return nil, errEmbeddingBackfillTenantRequired
+	}
+
+	return r.listFeedbackRecordIDsForBackfillByInputKind(ctx, model, inputKind, tenantID, true, afterID, limit)
+}
+
+//nolint:funcorder // scoped helper stays with the public backfill methods
+func (r *EmbeddingsRepository) listFeedbackRecordIDsForBackfillByInputKind(
+	ctx context.Context,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	tenantID string,
+	tenantScoped bool,
+	afterID uuid.UUID,
+	limit int,
+) ([]uuid.UUID, error) {
+	eligibility := `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
+	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
+		eligibility = `COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`
+	}
+
+	tenantClause := ""
+	args := []any{model, afterID, limit}
+
+	if tenantScoped {
+		tenantClause = "AND fr.tenant_id = $4"
+
+		args = append(args, tenantID)
+	}
+
 	query := `
 		SELECT fr.id FROM feedback_records fr
-		WHERE fr.value_text IS NOT NULL AND trim(fr.value_text) != ''
+		WHERE ` + eligibility + `
 		  AND fr.id > $2
+		  ` + tenantClause + `
 		  AND NOT EXISTS (
 		    SELECT 1 FROM embeddings e
 		    WHERE e.feedback_record_id = fr.id AND e.model = $1
@@ -276,21 +323,8 @@ func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfillByInputKind(
 		ORDER BY fr.id
 		LIMIT $3
 	`
-	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
-		query = `
-			SELECT fr.id FROM feedback_records fr
-			WHERE COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
-			  AND fr.id > $2
-			  AND NOT EXISTS (
-			    SELECT 1 FROM embeddings e
-			    WHERE e.feedback_record_id = fr.id AND e.model = $1
-			  )
-			ORDER BY fr.id
-			LIMIT $3
-		`
-	}
 
-	rows, err := r.db.Query(ctx, query, model, afterID, limit)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list feedback record ids for backfill: %w", err)
 	}
@@ -312,6 +346,69 @@ func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfillByInputKind(
 	}
 
 	return ids, nil
+}
+
+// CountFeedbackRecordsForBackfillByInputKind counts globally eligible records missing model.
+func (r *EmbeddingsRepository) CountFeedbackRecordsForBackfillByInputKind(
+	ctx context.Context,
+	model string,
+	inputKind models.EmbeddingInputKind,
+) (int, error) {
+	return r.countFeedbackRecordsForBackfillByInputKind(ctx, model, inputKind, "", false)
+}
+
+// CountTenantFeedbackRecordsForBackfillByInputKind counts one tenant's eligible records missing model.
+func (r *EmbeddingsRepository) CountTenantFeedbackRecordsForBackfillByInputKind(
+	ctx context.Context,
+	tenantID string,
+	model string,
+	inputKind models.EmbeddingInputKind,
+) (int, error) {
+	if tenantID == "" {
+		return 0, errEmbeddingBackfillTenantRequired
+	}
+
+	return r.countFeedbackRecordsForBackfillByInputKind(ctx, model, inputKind, tenantID, true)
+}
+
+//nolint:funcorder // scoped helper stays with the public backfill methods
+func (r *EmbeddingsRepository) countFeedbackRecordsForBackfillByInputKind(
+	ctx context.Context,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	tenantID string,
+	tenantScoped bool,
+) (int, error) {
+	eligibility := `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
+	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
+		eligibility = `COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`
+	}
+
+	tenantClause := ""
+	args := []any{model}
+
+	if tenantScoped {
+		tenantClause = "AND fr.tenant_id = $2"
+
+		args = append(args, tenantID)
+	}
+
+	query := `
+		SELECT count(*) FROM feedback_records fr
+		WHERE ` + eligibility + `
+		  ` + tenantClause + `
+		  AND NOT EXISTS (
+		    SELECT 1 FROM embeddings e
+		    WHERE e.feedback_record_id = fr.id AND e.model = $1
+		  )
+	`
+
+	var count int
+	if err := r.db.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count feedback records for embedding backfill: %w", err)
+	}
+
+	return count, nil
 }
 
 // ErrEmbeddingNotFound is returned when no embedding row exists for the given feedback record and model.

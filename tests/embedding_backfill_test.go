@@ -203,6 +203,67 @@ func TestBackfillEmbeddings_TaxonomyInputKind(t *testing.T) {
 	assert.True(t, found, "taxonomy backfill should enqueue the created record")
 }
 
+// TestTenantEmbeddingBackfillStaysInsideTenant verifies the operator-facing tenant scope at both
+// repository and enqueue boundaries. A global backfill may see both tenants, but the tenant path
+// must never return or enqueue the other tenant's records.
+func TestTenantEmbeddingBackfillStaysInsideTenant(t *testing.T) {
+	ctx := context.Background()
+	feedbackRepo, embeddingsRepo := embeddingBackfillRepos(t)
+
+	model := "tenant-backfill-" + uuid.NewString()
+	tenantA := uuid.NewString()
+	tenantB := uuid.NewString()
+
+	create := func(tenantID, value string) uuid.UUID {
+		record, err := feedbackRepo.Create(ctx, &models.CreateFeedbackRecordRequest{
+			SourceType:   "formbricks",
+			SubmissionID: uuid.NewString(),
+			TenantID:     tenantID,
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			ValueText:    &value,
+		})
+		require.NoError(t, err)
+
+		return record.ID
+	}
+
+	aIDs := map[uuid.UUID]bool{
+		create(tenantA, "one"): true,
+		create(tenantA, "two"): true,
+	}
+	bID := create(tenantB, "other tenant")
+
+	count, err := embeddingsRepo.CountTenantFeedbackRecordsForBackfillByInputKind(
+		ctx, tenantA, model, models.EmbeddingInputKindTaxonomyTranslated)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	page, err := embeddingsRepo.ListTenantFeedbackRecordIDsForBackfillByInputKind(
+		ctx, tenantA, model, models.EmbeddingInputKindTaxonomyTranslated, uuid.Nil, 10)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+
+	for _, id := range page {
+		assert.Truef(t, aIDs[id], "tenant-scoped repository returned foreign id %s", id)
+		assert.NotEqual(t, bID, id)
+	}
+
+	inserter := &countingEmbeddingInserter{}
+	svc := service.NewFeedbackRecordsService(feedbackRepo, embeddingsRepo, model, nil, inserter, "embeddings", 3, "")
+	enqueued, err := svc.BackfillTenantEmbeddingsWithInputKind(
+		ctx, tenantA, model, models.EmbeddingInputKindTaxonomyTranslated, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, enqueued, "maxRecords must bound the canary")
+	require.Len(t, inserter.ids, 1)
+	assert.True(t, aIDs[inserter.ids[0]], "tenant-scoped service must enqueue only tenant A")
+	assert.NotEqual(t, bID, inserter.ids[0])
+
+	_, err = svc.BackfillTenantEmbeddingsWithInputKind(
+		ctx, "", model, models.EmbeddingInputKindTaxonomyTranslated, 0)
+	require.ErrorIs(t, err, service.ErrMissingTenantID)
+}
+
 // TestEmbeddingsUpsert_StaleWriteGuard locks the concurrent-jobs guard: an upsert (or clear)
 // whose stillCurrent check fails against the record's current content is skipped with
 // ErrEmbeddingSuperseded, so a slower job that read older content can never clobber the vector

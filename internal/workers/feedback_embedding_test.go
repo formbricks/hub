@@ -38,6 +38,9 @@ func (m *countingEmbeddingMetrics) RecordWorkerError(_ context.Context, reason s
 }
 
 func (m *countingEmbeddingMetrics) RecordEmbeddingDuration(context.Context, time.Duration, string) {}
+func (m *countingEmbeddingMetrics) RecordEmbeddingBatch(context.Context, int64, time.Duration, string) {
+}
+func (m *countingEmbeddingMetrics) AddEmbeddingBatchInFlight(context.Context, int64) {}
 
 var _ observability.EmbeddingMetrics = (*countingEmbeddingMetrics)(nil)
 
