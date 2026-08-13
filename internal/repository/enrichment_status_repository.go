@@ -27,12 +27,13 @@ func NewEnrichmentStatusRepository(db *pgxpool.Pool) *EnrichmentStatusRepository
 // switched on, translation only records with a resolvable effective target language. The
 // deployment-level (provider/model) gate is applied by the caller.
 type EnrichmentStatusCounts struct {
-	TranslationEligible int64
-	TranslationDone     int64
-	SentimentEligible   int64
-	SentimentDone       int64
-	EmotionsEligible    int64
-	EmotionsDone        int64
+	TranslationEligible      int64
+	TranslationDone          int64
+	SentimentEligible        int64
+	SentimentDone            int64
+	EmotionsEligible         int64
+	EmotionsDone             int64
+	TaxonomyEmbeddingPending int64
 }
 
 // enrichmentEligibleText is the data-level eligibility predicate: an open-text field with content.
@@ -123,6 +124,22 @@ const countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + enrichmentC
 const countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
 	WHERE fr.field_type = 'text'`
 
+// countTaxonomyEmbeddingBacklogAggregateSQL counts text records eligible for the
+// taxonomy-translated input but still missing the exact configured taxonomy model. field_type is
+// load-bearing here: only text records enter the live translation-to-taxonomy pipeline, so counting
+// categorical rows carrying value_text would create a permanent non-zero gauge floor. $1 = taxonomy
+// embedding model.
+const countTaxonomyEmbeddingBacklogAggregateSQL = `
+	SELECT COUNT(*)
+	FROM feedback_records fr
+	WHERE fr.field_type = 'text'
+	  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+	  AND NOT EXISTS (
+		SELECT 1
+		FROM embeddings e
+		WHERE e.feedback_record_id = fr.id AND e.model = $1
+	  )`
+
 // enrichmentBacklogLockKey names the advisory lock that elects the single backlog-poller process
 // across API replicas. Hashed with hashtextextended like the other advisory locks in this package.
 const enrichmentBacklogLockKey = "hub:enrichment-backlog-poller"
@@ -202,7 +219,7 @@ func NewEnrichmentBacklogLeader(pool *pgxpool.Pool) *EnrichmentBacklogLeader {
 // reports whether it did. Not being the leader is the normal steady state for all but one replica,
 // so it is signalled by a false second return rather than an error.
 func (l *EnrichmentBacklogLeader) CountIfLeader(
-	ctx context.Context, defaultLang string,
+	ctx context.Context, defaultLang, taxonomyEmbeddingModel string,
 ) (EnrichmentStatusCounts, bool, error) {
 	if l.conn == nil {
 		acquired, err := l.tryAcquire(ctx)
@@ -219,6 +236,16 @@ func (l *EnrichmentBacklogLeader) CountIfLeader(
 		l.release(ctx)
 
 		return EnrichmentStatusCounts{}, false, err
+	}
+
+	if taxonomyEmbeddingModel != "" {
+		if err := l.conn.QueryRow(
+			ctx, countTaxonomyEmbeddingBacklogAggregateSQL, taxonomyEmbeddingModel,
+		).Scan(&counts.TaxonomyEmbeddingPending); err != nil {
+			l.release(ctx)
+
+			return EnrichmentStatusCounts{}, false, fmt.Errorf("count taxonomy embedding backlog aggregate: %w", err)
+		}
 	}
 
 	return counts, true, nil

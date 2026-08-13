@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -46,10 +47,20 @@ type EmbeddingMetrics interface {
 	RecordEmbeddingOutcome(ctx context.Context, status string)
 	RecordWorkerError(ctx context.Context, reason string)
 	RecordEmbeddingDuration(ctx context.Context, duration time.Duration, status string)
+	RecordEmbeddingBatch(ctx context.Context, inputs int64, duration time.Duration, status string)
+	AddEmbeddingBatchInFlight(ctx context.Context, delta int64)
 }
 
 // embeddingMetrics adapts the shared impl to the EmbeddingMetrics outcome/duration names.
-type embeddingMetrics struct{ *enrichmentMetrics }
+type embeddingMetrics struct {
+	*enrichmentMetrics
+
+	batchSize     metric.Int64Histogram
+	batchInputs   metric.Int64Counter
+	batchRequests metric.Int64Counter
+	batchDuration metric.Float64Histogram
+	batchInFlight metric.Int64UpDownCounter
+}
 
 func (m embeddingMetrics) RecordEmbeddingOutcome(ctx context.Context, status string) {
 	m.recordOutcome(ctx, status)
@@ -57,6 +68,28 @@ func (m embeddingMetrics) RecordEmbeddingOutcome(ctx context.Context, status str
 
 func (m embeddingMetrics) RecordEmbeddingDuration(ctx context.Context, duration time.Duration, status string) {
 	m.recordDuration(ctx, duration, status)
+}
+
+func (m embeddingMetrics) RecordEmbeddingBatch(
+	ctx context.Context,
+	inputs int64,
+	duration time.Duration,
+	status string,
+) {
+	if status != "success" && status != "error" {
+		status = "other"
+	}
+
+	attrs := metric.WithAttributes(attribute.String(AttrStatus, status))
+
+	m.batchSize.Record(ctx, inputs)
+	m.batchInputs.Add(ctx, inputs)
+	m.batchRequests.Add(ctx, 1, attrs)
+	m.batchDuration.Record(ctx, duration.Seconds(), attrs)
+}
+
+func (m embeddingMetrics) AddEmbeddingBatchInFlight(ctx context.Context, delta int64) {
+	m.batchInFlight.Add(ctx, delta)
 }
 
 // NewEmbeddingMetrics creates EmbeddingMetrics. Returns (nil, nil) when meter is nil (metrics disabled).
@@ -78,5 +111,53 @@ func NewEmbeddingMetrics(meter metric.Meter) (EmbeddingMetrics, error) {
 		return nil, err
 	}
 
-	return embeddingMetrics{shared}, nil
+	batchSize, err := meter.Int64Histogram(
+		MetricNameEmbeddingBatchSize,
+		metric.WithDescription("Document inputs per embedding provider batch request"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", MetricNameEmbeddingBatchSize, err)
+	}
+
+	batchInputs, err := meter.Int64Counter(
+		MetricNameEmbeddingBatchInputs,
+		metric.WithDescription("Total document inputs sent in embedding batch requests"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", MetricNameEmbeddingBatchInputs, err)
+	}
+
+	batchRequests, err := meter.Int64Counter(
+		MetricNameEmbeddingBatchRequests,
+		metric.WithDescription("Total embedding batch requests by outcome"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", MetricNameEmbeddingBatchRequests, err)
+	}
+
+	batchDuration, err := meter.Float64Histogram(
+		MetricNameEmbeddingBatchDuration,
+		metric.WithDescription("Embedding batch provider request duration"),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", MetricNameEmbeddingBatchDuration, err)
+	}
+
+	batchInFlight, err := meter.Int64UpDownCounter(
+		MetricNameEmbeddingBatchInFlight,
+		metric.WithDescription("Embedding batch provider requests currently in flight"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", MetricNameEmbeddingBatchInFlight, err)
+	}
+
+	return embeddingMetrics{
+		enrichmentMetrics: shared,
+		batchSize:         batchSize,
+		batchInputs:       batchInputs,
+		batchRequests:     batchRequests,
+		batchDuration:     batchDuration,
+		batchInFlight:     batchInFlight,
+	}, nil
 }

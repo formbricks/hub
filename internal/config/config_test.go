@@ -361,6 +361,30 @@ func TestLoad_EmbeddingBaseURL(t *testing.T) {
 	}
 }
 
+func TestLoad_EmbeddingBatchSettings(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("EMBEDDING_BATCH_SIZE", "8")
+	t.Setenv("EMBEDDING_BATCH_MAX_WAIT_MS", "37")
+	t.Setenv("EMBEDDING_BATCH_MAX_IN_FLIGHT", "3")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.BatchSize != 8 {
+		t.Errorf("Embedding.BatchSize = %d, want 8", cfg.Embedding.BatchSize)
+	}
+
+	if cfg.Embedding.BatchMaxWaitMs != 37 {
+		t.Errorf("Embedding.BatchMaxWaitMs = %d, want 37", cfg.Embedding.BatchMaxWaitMs)
+	}
+
+	if cfg.Embedding.BatchMaxInFlight != 3 {
+		t.Errorf("Embedding.BatchMaxInFlight = %d, want 3", cfg.Embedding.BatchMaxInFlight)
+	}
+}
+
 func TestLoad_EmbeddingBaseURLValidation(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -658,6 +682,11 @@ func TestApplyDefaults(t *testing.T) {
 
 	if cfg.Embedding.MaxAttempts != 3 {
 		t.Errorf("Embedding.MaxAttempts = %d, want 3", cfg.Embedding.MaxAttempts)
+	}
+
+	if cfg.Embedding.BatchSize != 1 || cfg.Embedding.BatchMaxWaitMs != 25 || cfg.Embedding.BatchMaxInFlight != 1 {
+		t.Errorf("Embedding batch defaults = (%d, %d, %d), want (1, 25, 1)",
+			cfg.Embedding.BatchSize, cfg.Embedding.BatchMaxWaitMs, cfg.Embedding.BatchMaxInFlight)
 	}
 }
 

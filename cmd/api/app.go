@@ -612,6 +612,9 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	if a.metrics != nil && a.metrics.EnrichmentBacklog != nil {
+		translationConfigured := a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != ""
+		taxonomyEmbeddingModel := taxonomyEmbeddingBacklogModel(a.cfg)
+
 		// Tracked, unlike the pollers above, because this one has cleanup that Shutdown must not
 		// race: it withdraws the backlog series and releases the leader's advisory lock on the way
 		// out. See App.awaitEnrichmentBacklogPoller.
@@ -624,10 +627,11 @@ func (a *App) Run(ctx context.Context) error {
 			runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, enrichmentBacklogPollConfig{
 				// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
 				// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
-				defaultLang:           strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
-				translationConfigured: a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
-				sentimentConfigured:   a.cfg.Sentiment.Enabled(),
-				emotionsConfigured:    a.cfg.Emotions.Enabled(),
+				defaultLang:            strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
+				translationConfigured:  translationConfigured,
+				sentimentConfigured:    a.cfg.Sentiment.Enabled(),
+				emotionsConfigured:     a.cfg.Emotions.Enabled(),
+				taxonomyEmbeddingModel: taxonomyEmbeddingModel,
 			})
 		}()
 	}
@@ -658,6 +662,19 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+// taxonomyEmbeddingBacklogModel returns the model whose missing text records should be reported.
+// Taxonomy embeddings are produced by successful translation writes, so the gauge is absent unless
+// embeddings, translation, and the taxonomy integration are all configured.
+func taxonomyEmbeddingBacklogModel(cfg *config.Config) string {
+	provider, embeddingModel := embeddingProviderAndModel(cfg)
+	if provider == "" || cfg.Translation.Provider == "" || cfg.Translation.Model == "" ||
+		(cfg.Taxonomy.ServiceURL == "" && cfg.Taxonomy.ServiceToken == "") {
+		return ""
+	}
+
+	return service.TaxonomyEmbeddingModel(embeddingModel, cfg.Taxonomy.EmbeddingModel)
+}
+
 // riverDepthQueues is the fixed queue set the depth poller reports — every queue the Hub
 // declares, derived from service.JobKindSpecs so a new job kind cannot be added without its
 // queue appearing on the gauge. The list bounds the gauge's queue-label cardinality; a queue with
@@ -667,10 +684,11 @@ var riverDepthQueues = service.JobQueueNames()
 // enrichmentBacklogPollConfig configures runEnrichmentBacklogPoller: the deployment default target
 // language and which enrichments are deployment-configured (only those emit a gauge).
 type enrichmentBacklogPollConfig struct {
-	defaultLang           string
-	translationConfigured bool
-	sentimentConfigured   bool
-	emotionsConfigured    bool
+	defaultLang            string
+	translationConfigured  bool
+	sentimentConfigured    bool
+	emotionsConfigured     bool
+	taxonomyEmbeddingModel string
 }
 
 // runEnrichmentBacklogPoller periodically refreshes the aggregate enrichment-backlog gauge
@@ -702,7 +720,8 @@ func runEnrichmentBacklogPoller(
 		defer cancel()
 
 		// Exactly one replica holds leadership and scans; the rest skip until it goes away.
-		counts, isLeader, err := leader.CountIfLeader(queryCtx, cfg.defaultLang)
+		counts, isLeader, err := leader.CountIfLeader(
+			queryCtx, cfg.defaultLang, cfg.taxonomyEmbeddingModel)
 		if err != nil {
 			// Shutdown cancels the scan mid-flight. That is not a poll failure, and counting it
 			// would fire the very alert this counter exists for on every rolling deploy.
@@ -753,6 +772,11 @@ func runEnrichmentBacklogPoller(
 
 		if cfg.emotionsConfigured {
 			backlog.SetEnrichmentPending(observability.EnrichmentTypeEmotions, counts.EmotionsEligible-counts.EmotionsDone)
+		}
+
+		if cfg.taxonomyEmbeddingModel != "" {
+			backlog.SetEnrichmentPending(
+				observability.EnrichmentTypeTaxonomyEmbedding, counts.TaxonomyEmbeddingPending)
 		}
 	}
 

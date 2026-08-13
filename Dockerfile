@@ -40,10 +40,11 @@ RUN mkdir -p /tmp/migration-tools && \
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Build the application (hub-api and hub-worker)
+# Build the application and controlled embedding backfill utility.
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/hub-api ./cmd/api && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/hub-worker ./cmd/worker
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/hub-worker ./cmd/worker && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/backfill-embeddings ./cmd/backfill-embeddings
 
 # =============================================================================
 # Stage 2: Runtime (default: hub-api)
@@ -60,6 +61,7 @@ WORKDIR /app
 # Copy binaries and migration tools from builder
 COPY --from=builder /build/bin/hub-api /app/hub-api
 COPY --from=builder /build/bin/hub-worker /app/hub-worker
+COPY --from=builder /build/bin/backfill-embeddings /app/backfill-embeddings
 COPY --from=builder /go/bin/goose /usr/local/bin/goose
 COPY --from=builder /go/bin/river /usr/local/bin/river
 
@@ -72,10 +74,11 @@ USER app
 
 EXPOSE 8080
 
-# Health check for hub-api. Disable or override when running hub-worker (e.g. docker run ... hub-worker)
-# since workers do not expose HTTP.
+# Health check only hub-api. hub-worker and backfill-embeddings do not expose HTTP, so commands
+# that reuse this image must not inherit a failing API probe.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-	CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+	CMD [ "$(readlink /proc/1/exe)" != "/app/hub-api" ] || wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-# Default: run hub-api. Override with command to run hub-worker: docker run ... hub-worker
+# Default: run hub-api. Override the entrypoint for another binary, for example
+# docker run --entrypoint /app/hub-worker ... or --entrypoint /app/backfill-embeddings ...
 ENTRYPOINT ["/app/hub-api"]

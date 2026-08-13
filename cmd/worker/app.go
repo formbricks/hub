@@ -25,6 +25,7 @@ type WorkerApp struct {
 	cfg            *config.Config
 	db             *pgxpool.Pool
 	river          *river.Client[pgx.Tx]
+	embeddingBatch *service.BatchingEmbeddingClient
 	meterProvider  *sdkmetric.MeterProvider
 	tracerProvider *sdktrace.TracerProvider
 }
@@ -102,7 +103,10 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		taxonomyEmbeddingEnqueueModel = ""
 	}
 
-	var translationRecordsService *service.FeedbackRecordsService
+	var (
+		translationRecordsService *service.FeedbackRecordsService
+		embeddingBatch            *service.BatchingEmbeddingClient
+	)
 
 	if providerName != "" {
 		embeddingCfg := service.EmbeddingClientConfig{
@@ -125,6 +129,28 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			shutdownObservability(context.Background(), meterProvider, tracerProvider)
 
 			return nil, fmt.Errorf("create embedding client: %w", err)
+		}
+
+		if batchClient, enabled := service.NewBatchingEmbeddingClient(
+			embeddingClient,
+			service.EmbeddingBatchConfig{
+				BatchSize:   cfg.Embedding.BatchSize,
+				MaxWait:     time.Duration(cfg.Embedding.BatchMaxWaitMs) * time.Millisecond,
+				MaxInFlight: cfg.Embedding.BatchMaxInFlight,
+			},
+			embeddingMetrics,
+		); enabled {
+			embeddingClient = batchClient
+			embeddingBatch = batchClient
+
+			slog.Info("embedding document batching enabled",
+				"batch_size", cfg.Embedding.BatchSize,
+				"max_wait_ms", cfg.Embedding.BatchMaxWaitMs,
+				"max_in_flight", cfg.Embedding.BatchMaxInFlight,
+			)
+		} else if cfg.Embedding.BatchSize > 1 {
+			slog.Info("embedding document batching unavailable for provider; using single requests",
+				"provider", providerName)
 		}
 
 		feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
@@ -292,6 +318,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		cfg:            cfg,
 		db:             db,
 		river:          riverClient,
+		embeddingBatch: embeddingBatch,
 		meterProvider:  meterProvider,
 		tracerProvider: tracerProvider,
 	}, nil
@@ -349,12 +376,25 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 
 	<-a.river.Stopped()
 
+	if a.embeddingBatch != nil {
+		batchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), embeddingBatchFlushTimeout)
+		defer cancel()
+
+		if err := a.embeddingBatch.Shutdown(batchCtx); err != nil {
+			return fmt.Errorf("embedding batch shutdown: %w", err)
+		}
+	}
+
 	return nil
 }
 
 // riverStopAndCancelTimeout bounds the escalated (job-cancelling) stop after the graceful stop
 // timed out; kept short so the pod exits within the orchestrator's termination grace period.
 const riverStopAndCancelTimeout = 5 * time.Second
+
+// embeddingBatchFlushTimeout bounds the one final partial-batch flush without extending River's
+// graceful shutdown by another full server shutdown period.
+const embeddingBatchFlushTimeout = 5 * time.Second
 
 func shutdownObservability(ctx context.Context, meter *sdkmetric.MeterProvider, tracer *sdktrace.TracerProvider) {
 	if tracer != nil {
@@ -372,6 +412,16 @@ func shutdownObservability(ctx context.Context, meter *sdkmetric.MeterProvider, 
 func (a *WorkerApp) Shutdown(ctx context.Context) (err error) {
 	if stopErr := a.river.Stop(ctx); stopErr != nil {
 		err = fmt.Errorf("river stop: %w", stopErr)
+	}
+
+	if a.embeddingBatch != nil {
+		if batchErr := a.embeddingBatch.Shutdown(ctx); batchErr != nil {
+			if err == nil {
+				err = fmt.Errorf("embedding batch shutdown: %w", batchErr)
+			} else {
+				slog.Error("shutdown embedding batcher", "error", batchErr)
+			}
+		}
 	}
 
 	if a.tracerProvider != nil {

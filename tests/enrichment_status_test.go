@@ -304,6 +304,9 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 
 	leaderOne := repository.NewEnrichmentBacklogLeader(dbLeader)
 	leaderTwo := repository.NewEnrichmentBacklogLeader(dbRival)
+	fallbackRepo := repository.NewFeedbackRecordsRepository(dbLeader)
+
+	taxonomyModel := "taxonomy:leader-test:translated-v1"
 
 	// Release leadership before the pools close. Close is idempotent, and without this an early
 	// require failure would unwind into pgxpool.Close with the leader's connection still checked
@@ -311,10 +314,20 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	defer leaderOne.Close(ctx)
 	defer leaderTwo.Close(ctx)
 
-	// First replica wins leadership and gets real counts.
-	counts, isLeader, err := leaderOne.CountIfLeader(ctx, "")
+	// First replica wins leadership and establishes the existing taxonomy backlog baseline.
+	before, isLeader, err := leaderOne.CountIfLeader(ctx, "", taxonomyModel)
 	require.NoError(t, err)
 	require.True(t, isLeader, "the first replica to poll becomes the leader")
+
+	seedEnrichmentRecord(t, fallbackRepo, testTenantID("taxonomy-backlog-text"), models.FieldTypeText, "taxonomy pending")
+	seedEnrichmentRecord(
+		t, fallbackRepo, testTenantID("taxonomy-backlog-categorical"), models.FieldTypeCategorical, "not enrichable")
+
+	counts, isLeader, err := leaderOne.CountIfLeader(ctx, "", taxonomyModel)
+	require.NoError(t, err)
+	require.True(t, isLeader)
+	assert.Equal(t, before.TaxonomyEmbeddingPending+1, counts.TaxonomyEmbeddingPending,
+		"only the text record enters the live translation-to-taxonomy backlog")
 
 	// Prove the leader returns the real aggregate, not a zero value.
 	want, err := repository.NewEnrichmentStatusRepository(dbLeader).CountEnrichmentBacklogAggregate(ctx, "")
@@ -322,25 +335,25 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	assert.Equal(t, want.SentimentEligible, counts.SentimentEligible, "leader returns the true aggregate")
 
 	// The second replica is denied — a normal skip, not an error — and must NOT publish counts.
-	zero, isLeader, err := leaderTwo.CountIfLeader(ctx, "")
+	zero, isLeader, err := leaderTwo.CountIfLeader(ctx, "", "")
 	require.NoError(t, err, "losing the leader election is not an error")
 	assert.False(t, isLeader, "a second replica must not scan or export the global gauge")
 	assert.Equal(t, repository.EnrichmentStatusCounts{}, zero, "non-leader returns no counts to publish")
 
 	// Leadership is STICKY: unlike a scan-scoped lock, it persists across polls, so the same
 	// replica keeps exporting the series instead of it flapping between replicas.
-	_, stillLeader, err := leaderOne.CountIfLeader(ctx, "")
+	_, stillLeader, err := leaderOne.CountIfLeader(ctx, "", "")
 	require.NoError(t, err)
 	assert.True(t, stillLeader, "leadership is held for the process lifetime, not per scan")
 
-	_, stillDenied, err := leaderTwo.CountIfLeader(ctx, "")
+	_, stillDenied, err := leaderTwo.CountIfLeader(ctx, "", "")
 	require.NoError(t, err)
 	assert.False(t, stillDenied, "the follower stays a follower while the leader lives")
 
 	// Releasing hands leadership over promptly rather than waiting for a session timeout.
 	leaderOne.Close(ctx)
 
-	_, promoted, err := leaderTwo.CountIfLeader(ctx, "")
+	_, promoted, err := leaderTwo.CountIfLeader(ctx, "", "")
 	require.NoError(t, err)
 	assert.True(t, promoted, "a follower is promoted once the leader releases")
 
@@ -389,7 +402,7 @@ func TestEnrichmentBacklogLeaderLeavesNoSessionState(t *testing.T) {
 	// connection or db.Close() would block on it and wedge the suite. Close is idempotent.
 	defer leader.Close(ctx)
 
-	_, isLeader, err := leader.CountIfLeader(ctx, "")
+	_, isLeader, err := leader.CountIfLeader(ctx, "", "")
 	require.NoError(t, err)
 	require.True(t, isLeader, "single-connection pool must win leadership")
 

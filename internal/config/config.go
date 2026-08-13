@@ -138,6 +138,9 @@ type EmbeddingConfig struct {
 	BaseURL             string `env:"EMBEDDING_BASE_URL"`
 	MaxConcurrent       int    `env:"EMBEDDING_MAX_CONCURRENT"        env-default:"5"`
 	MaxAttempts         int    `env:"EMBEDDING_MAX_ATTEMPTS"          env-default:"3"`
+	BatchSize           int    `env:"EMBEDDING_BATCH_SIZE"            env-default:"1"`
+	BatchMaxWaitMs      int    `env:"EMBEDDING_BATCH_MAX_WAIT_MS"     env-default:"25"`
+	BatchMaxInFlight    int    `env:"EMBEDDING_BATCH_MAX_IN_FLIGHT"   env-default:"1"`
 	Normalize           bool   `env:"EMBEDDING_NORMALIZE"             env-default:"false"`
 	GoogleCloudProject  string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
 	GoogleCloudLocation string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
@@ -414,6 +417,18 @@ func applyDefaults(cfg *Config) {
 		if *tunables.maxAttempts <= 0 {
 			*tunables.maxAttempts = 3
 		}
+	}
+
+	if cfg.Embedding.BatchSize <= 0 {
+		cfg.Embedding.BatchSize = 1
+	}
+
+	if cfg.Embedding.BatchMaxWaitMs <= 0 {
+		cfg.Embedding.BatchMaxWaitMs = 25
+	}
+
+	if cfg.Embedding.BatchMaxInFlight <= 0 {
+		cfg.Embedding.BatchMaxInFlight = 1
 	}
 
 	// Default the cache size only when the operator did not set it. An explicit 0 (or

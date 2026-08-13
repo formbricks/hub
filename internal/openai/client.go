@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,6 +32,12 @@ var (
 	ErrNoEmbeddingInResponse = errors.New("openai: no embedding in response")
 	// ErrDimensionMismatch is returned when the response embedding length does not match configured dimensions.
 	ErrDimensionMismatch = errors.New("openai: embedding dimension mismatch")
+	// ErrEmbeddingCountMismatch is returned when a batch response does not contain exactly one vector per input.
+	ErrEmbeddingCountMismatch = errors.New("openai: embedding response count mismatch")
+	// ErrEmbeddingIndexInvalid is returned when a batch response contains an out-of-range or duplicate index.
+	ErrEmbeddingIndexInvalid = errors.New("openai: embedding response index invalid")
+	// ErrEmbeddingValueInvalid is returned when a response vector contains NaN or infinity.
+	ErrEmbeddingValueInvalid = errors.New("openai: embedding value is not finite")
 	// ErrNoCompletionInResponse is returned when a chat completion response contains no usable text.
 	ErrNoCompletionInResponse = errors.New("openai: no completion in response")
 )
@@ -132,25 +139,91 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		return nil, wrapOpenAIError("openai embedding", err)
 	}
 
-	if len(resp.Data) == 0 {
+	vectors, err := c.decodeEmbeddingResponse(resp.Data, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	return vectors[0], nil
+}
+
+// CreateEmbeddings returns one embedding per input. Results are reordered by the response index so
+// callers always receive vectors in input order, even when an OpenAI-compatible provider returns
+// data out of order.
+func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]float32, error) {
+	if len(inputs) == 0 {
+		return nil, ErrEmptyInput
+	}
+
+	trimmed := make([]string, len(inputs))
+	for i, input := range inputs {
+		trimmed[i] = strings.TrimSpace(input)
+		if trimmed[i] == "" {
+			return nil, fmt.Errorf("%w: input %d", ErrEmptyInput, i)
+		}
+	}
+
+	if c.dimensions <= 0 {
+		return nil, ErrInvalidDims
+	}
+
+	resp, err := c.sdk.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
+		Input: openaisdk.EmbeddingNewParamsInputUnion{
+			OfArrayOfStrings: trimmed,
+		},
+		Model:      c.model,
+		Dimensions: param.NewOpt(int64(c.dimensions)),
+	})
+	if err != nil {
+		return nil, wrapOpenAIError("openai embeddings batch", err)
+	}
+
+	return c.decodeEmbeddingResponse(resp.Data, len(trimmed))
+}
+
+func (c *Client) decodeEmbeddingResponse( //nolint:funcorder // shared decoder stays next to the embedding methods
+	data []openaisdk.Embedding,
+	expected int,
+) ([][]float32, error) {
+	if len(data) == 0 {
 		return nil, ErrNoEmbeddingInResponse
 	}
 
-	emb := resp.Data[0].Embedding
-	if len(emb) != c.dimensions {
-		return nil, fmt.Errorf("%w: got %d, want %d", ErrDimensionMismatch, len(emb), c.dimensions)
+	if len(data) != expected {
+		return nil, fmt.Errorf("%w: got %d, want %d", ErrEmbeddingCountMismatch, len(data), expected)
 	}
 
-	// SDK returns float64; convert to float32 so we match EmbeddingClient and the Google SDK (which already returns
-	// float32). Precision loss (64→32, and later 32→16 in the DB driver for halfvec) is acceptable for embeddings;
-	// similarity results are unchanged in practice.
-	out := make([]float32, len(emb))
-	for i := range emb {
-		out[i] = float32(emb[i])
-	}
+	out := make([][]float32, expected)
+	seen := make([]bool, expected)
 
-	if c.normalize {
-		embeddings.NormalizeL2(out)
+	for _, item := range data {
+		if item.Index < 0 || item.Index >= int64(expected) || seen[item.Index] {
+			return nil, fmt.Errorf("%w: %d", ErrEmbeddingIndexInvalid, item.Index)
+		}
+
+		if len(item.Embedding) != c.dimensions {
+			return nil, fmt.Errorf("%w: index %d got %d, want %d",
+				ErrDimensionMismatch, item.Index, len(item.Embedding), c.dimensions)
+		}
+
+		vector := make([]float32, len(item.Embedding))
+		for i, value := range item.Embedding {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil, fmt.Errorf("%w: index %d dimension %d", ErrEmbeddingValueInvalid, item.Index, i)
+			}
+
+			vector[i] = float32(value)
+			if math.IsInf(float64(vector[i]), 0) {
+				return nil, fmt.Errorf("%w: index %d dimension %d", ErrEmbeddingValueInvalid, item.Index, i)
+			}
+		}
+
+		if c.normalize {
+			embeddings.NormalizeL2(vector)
+		}
+
+		out[item.Index] = vector
+		seen[item.Index] = true
 	}
 
 	return out, nil
