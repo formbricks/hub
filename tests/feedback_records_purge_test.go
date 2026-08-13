@@ -76,9 +76,10 @@ func seedPurgeEmbedding(ctx context.Context, t *testing.T, db *pgxpool.Pool, rec
 	require.NoError(t, err)
 }
 
-// TestPurgeFeedbackRecordsByTenant is the test that justifies this endpoint existing separately from
-// the tenant offboarding purge: the records go, and the taxonomy structure, webhooks and settings
-// stay. If the survival half ever regresses, a purged dataset silently loses its topic tree.
+// TestPurgeFeedbackRecordsByTenant pins the line that justifies this endpoint existing separately
+// from the tenant offboarding purge: the tenant's DATA goes — records, embeddings and the taxonomy
+// built on them — while its CONFIGURATION stays. If the configuration half ever regresses, a purge
+// silently destroys integrator webhooks and enrichment opt-outs that nothing can restore.
 func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 	ctx := context.Background()
 	db := newPurgeTestDB(ctx, t)
@@ -123,7 +124,10 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 	t.Run("reports exact counts for the records and their derived rows", func(t *testing.T) {
 		assert.Equal(t, int64(1), counts.DeletedFeedbackRecords)
 		assert.Equal(t, int64(1), counts.DeletedEmbeddings)
-		assert.Equal(t, int64(1), counts.DeletedTaxonomyClusterMemberships)
+		assert.Equal(t, int64(1), counts.ClusterMemberships)
+		assert.Equal(t, int64(1), counts.Runs)
+		assert.Equal(t, int64(3), counts.Nodes)
+		assert.Equal(t, int64(1), counts.ActiveRuns)
 	})
 
 	t.Run("removes the records and everything derived from them", func(t *testing.T) {
@@ -135,19 +139,27 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 			`SELECT count(*) FROM taxonomy_cluster_memberships WHERE tenant_id = $1`, tenantID))
 	})
 
-	// The reason this endpoint exists. The clusters keep existing with no members; per-node counts
-	// are derived from memberships at read time, so they report zero without being rewritten.
-	t.Run("keeps the taxonomy structure, webhooks and settings", func(t *testing.T) {
-		assert.Equal(t, 1, countRows(ctx, t, db,
+	// The taxonomy goes with the records it describes. Keeping it would leave a tree the dashboard
+	// hides behind its minimum-records gate, whose run header still advertised the old record_count,
+	// and which would resurface over unrelated data once the dataset refilled.
+	t.Run("removes the taxonomy built on those records", func(t *testing.T) {
+		assert.Zero(t, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_runs WHERE id = $1`, ids.RunID))
-		assert.Equal(t, 1, countRows(ctx, t, db,
+		assert.Zero(t, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_clusters WHERE id = $1`, ids.ClusterID))
-		assert.Equal(t, 3, countRows(ctx, t, db,
+		assert.Zero(t, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_nodes WHERE run_id = $1`, ids.RunID))
-		assert.Equal(t, 1, countRows(ctx, t, db,
+		assert.Zero(t, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_active_runs WHERE tenant_id = $1`, tenantID))
-		assert.Equal(t, 1, countRows(ctx, t, db,
+		assert.Zero(t, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_node_events WHERE tenant_id = $1`, tenantID))
+	})
+
+	// The line between this purge and the offboarding one. Webhooks are integrator-configured
+	// directly against the Hub (with signing keys reads never return) and tenant_settings holds
+	// enrichment opt-outs that silently revert to enabled once the row is gone — neither is this
+	// operation's business.
+	t.Run("keeps the tenant's configuration", func(t *testing.T) {
 		assert.Equal(t, 1, countRows(ctx, t, db,
 			`SELECT count(*) FROM webhooks WHERE tenant_id = $1`, tenantID))
 		assert.Equal(t, 1, countRows(ctx, t, db,
@@ -161,6 +173,10 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 			`SELECT count(*) FROM embeddings WHERE feedback_record_id = $1`, otherIDs.FeedbackRecordID))
 		assert.Equal(t, 1, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_cluster_memberships WHERE tenant_id = $1`, otherTenantID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_runs WHERE id = $1`, otherIDs.RunID))
+		assert.Equal(t, 3, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_nodes WHERE run_id = $1`, otherIDs.RunID))
 	})
 
 	t.Run("is idempotent", func(t *testing.T) {
@@ -169,7 +185,9 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 
 		assert.Zero(t, repeat.DeletedFeedbackRecords)
 		assert.Zero(t, repeat.DeletedEmbeddings)
-		assert.Zero(t, repeat.DeletedTaxonomyClusterMemberships)
+		assert.Zero(t, repeat.ClusterMemberships)
+		assert.Zero(t, repeat.Runs)
+		assert.Zero(t, repeat.Nodes)
 	})
 }
 
@@ -289,5 +307,5 @@ func TestPurgeFeedbackRecordsByTenantUnknownTenant(t *testing.T) {
 
 	assert.Zero(t, counts.DeletedFeedbackRecords)
 	assert.Zero(t, counts.DeletedEmbeddings)
-	assert.Zero(t, counts.DeletedTaxonomyClusterMemberships)
+	assert.Zero(t, counts.ClusterMemberships)
 }

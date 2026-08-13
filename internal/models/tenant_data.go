@@ -1,5 +1,17 @@
 package models
 
+// TenantTaxonomyDeleteCounts is the per-table result of removing a tenant's taxonomy artifacts.
+// Shared by both purges — the offboarding purge and the narrower feedback-records purge each take
+// the whole taxonomy, so they report the same numbers.
+type TenantTaxonomyDeleteCounts struct {
+	Runs               int64
+	Clusters           int64
+	ClusterMemberships int64
+	Nodes              int64
+	ActiveRuns         int64
+	NodeEvents         int64
+}
+
 // TenantDataDeleteCounts is the repository result for a tenant data purge.
 type TenantDataDeleteCounts struct {
 	DeletedFeedbackRecords int64

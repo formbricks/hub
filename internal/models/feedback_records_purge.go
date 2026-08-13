@@ -2,18 +2,18 @@ package models
 
 // FeedbackRecordsPurgeCounts is the repository result for a tenant's feedback-records purge.
 //
-// Deliberately narrower than TenantDataDeleteCounts: this purge removes the tenant's feedback
-// records and the data derived from them, and leaves the tenant's taxonomy structure, webhooks and
-// settings in place. Cluster memberships are counted because they are derived per record (a
-// membership is "this record belongs to that cluster"); the clusters, nodes and runs themselves
-// survive.
+// Narrower than TenantDataDeleteCounts in exactly one respect: this purge removes the tenant's
+// feedback records, everything derived from them, and the taxonomy built on them, but leaves the
+// tenant's *configuration* — its webhooks and its settings — alone.
 type FeedbackRecordsPurgeCounts struct {
+	// The taxonomy goes with the records it describes. Keeping it would leave a tree whose nodes
+	// all count zero while the run header still reported its original record_count, and which the
+	// dashboard hides behind its minimum-records gate anyway — so it would be neither usable nor
+	// visible, only misleading if the dataset later refilled.
+	TenantTaxonomyDeleteCounts
+
 	DeletedFeedbackRecords int64
 	DeletedEmbeddings      int64
-
-	// DeletedTaxonomyClusterMemberships counts the record→cluster links dropped with the records.
-	// The clusters keep existing; they simply end up with no members.
-	DeletedTaxonomyClusterMemberships int64
 }
 
 // FeedbackRecordsPurgeAcceptedResponse is the 202 body for

@@ -106,7 +106,9 @@ func (s *FeedbackRecordsPurgeService) Purge(
 		"tenant_id_length", len(normalizedTenantID),
 		"deleted_feedback_records", counts.DeletedFeedbackRecords,
 		"deleted_embeddings", counts.DeletedEmbeddings,
-		"deleted_taxonomy_cluster_memberships", counts.DeletedTaxonomyClusterMemberships,
+		"deleted_taxonomy_cluster_memberships", counts.ClusterMemberships,
+		"deleted_taxonomy_runs", counts.Runs,
+		"deleted_taxonomy_nodes", counts.Nodes,
 	)
 
 	return counts, nil

@@ -133,9 +133,12 @@ func TestFeedbackRecordsPurgeService_Enqueue(t *testing.T) {
 func TestFeedbackRecordsPurgeService_Purge(t *testing.T) {
 	t.Run("purges the tenant and returns counts", func(t *testing.T) {
 		repo := &stubPurgeRepo{counts: &models.FeedbackRecordsPurgeCounts{
-			DeletedFeedbackRecords:            3,
-			DeletedEmbeddings:                 2,
-			DeletedTaxonomyClusterMemberships: 5,
+			DeletedFeedbackRecords: 3,
+			DeletedEmbeddings:      2,
+			TenantTaxonomyDeleteCounts: models.TenantTaxonomyDeleteCounts{
+				ClusterMemberships: 5,
+				Runs:               1,
+			},
 		}}
 
 		counts, err := NewFeedbackRecordsPurgeService(repo, nil).Purge(context.Background(), "org-1")
@@ -143,7 +146,8 @@ func TestFeedbackRecordsPurgeService_Purge(t *testing.T) {
 
 		assert.Equal(t, int64(3), counts.DeletedFeedbackRecords)
 		assert.Equal(t, int64(2), counts.DeletedEmbeddings)
-		assert.Equal(t, int64(5), counts.DeletedTaxonomyClusterMemberships)
+		assert.Equal(t, int64(5), counts.ClusterMemberships)
+		assert.Equal(t, int64(1), counts.Runs)
 		assert.Equal(t, []string{"org-1"}, repo.tenantIDs)
 	})
 

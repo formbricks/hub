@@ -56,17 +56,19 @@ func (r *TenantDataRepository) DeleteByTenant(ctx context.Context, tenantID stri
 // released between batches instead of being held for the whole delete.
 const feedbackRecordsPurgeBatchSize = 2000
 
-// PurgeFeedbackRecordsByTenant deletes every feedback record for a tenant, plus the data derived
-// from those records, and returns exact per-table counts. Unlike DeleteByTenant it leaves the
-// tenant's taxonomy structure, webhooks and settings intact, so the dataset stays usable.
+// PurgeFeedbackRecordsByTenant deletes every feedback record for a tenant, everything derived from
+// those records, and the taxonomy built on them, returning exact per-table counts. Unlike
+// DeleteByTenant it leaves the tenant's *configuration* — webhooks and settings — intact, so the
+// dataset stays usable and any integrator setup survives.
 //
-// Runs as a sequence of committed batches (see feedbackRecordsPurgeBatchSize), so it is resumable
-// and reports the counts it actually achieved even when it fails partway.
+// Two phases, because the two halves have different shapes. Records are unbounded, so they go in
+// committed batches (see feedbackRecordsPurgeBatchSize): resumable, and the counts reported are the
+// ones actually achieved even on a partial failure. Taxonomy artifacts are bounded by the number of
+// runs, so once the records are gone they are removed in one final transaction.
 //
-// Scoped to the records that existed when the purge started: the id column is uuidv7, so a
-// high-water mark bounds the work to a fixed set. Without it a tenant still receiving feedback
-// could keep the loop running indefinitely, and records submitted *after* the operator asked to
-// empty the dataset would be deleted without ever having been part of what they saw.
+// Ordering matters: the taxonomy phase runs last so that a purge interrupted midway leaves records
+// missing but the tree still standing, rather than the reverse — a tree with no records is the
+// misleading state, and it is exactly what the final phase removes.
 func (r *TenantDataRepository) PurgeFeedbackRecordsByTenant(
 	ctx context.Context, tenantID string,
 ) (*models.FeedbackRecordsPurgeCounts, error) {
@@ -88,12 +90,31 @@ func (r *TenantDataRepository) PurgeFeedbackRecordsByTenant(
 
 		total.DeletedFeedbackRecords += batch.DeletedFeedbackRecords
 		total.DeletedEmbeddings += batch.DeletedEmbeddings
-		total.DeletedTaxonomyClusterMemberships += batch.DeletedTaxonomyClusterMemberships
+		// Memberships are removed per batch alongside the records they belong to, so they are summed
+		// across both phases; the final taxonomy pass finds none left and adds zero.
+		total.ClusterMemberships += batch.ClusterMemberships
 
 		if batch.DeletedFeedbackRecords == 0 {
-			return total, nil
+			break
 		}
 	}
+
+	taxonomy, err := withTenantPurgeTx(ctx, r.db, tenantID, r.purgeLockTimeout, "feedback records purge taxonomy",
+		func(ctx context.Context, tx tenantWriteTx, tenantID string) (*models.TenantTaxonomyDeleteCounts, error) {
+			return deleteTenantTaxonomyInTx(ctx, tx, tenantID)
+		})
+	if err != nil {
+		return total, err
+	}
+
+	total.Runs = taxonomy.Runs
+	total.Clusters = taxonomy.Clusters
+	total.Nodes = taxonomy.Nodes
+	total.ActiveRuns = taxonomy.ActiveRuns
+	total.NodeEvents = taxonomy.NodeEvents
+	total.ClusterMemberships += taxonomy.ClusterMemberships
+
+	return total, nil
 }
 
 // purgeFeedbackRecordsBatchInTx removes up to limit of a tenant's feedback records and the rows
@@ -108,16 +129,11 @@ func (r *TenantDataRepository) PurgeFeedbackRecordsByTenant(
 // equivalent, not additional. embeddings carries no tenant_id of its own, but every victim id comes
 // from a tenant-scoped select, so the delete stays inside the tenant boundary.
 //
-// What is deliberately NOT touched, and why:
-//   - taxonomy runs, clusters and nodes — the topic structure is the point of keeping this purge
-//     narrow. The clusters simply end up with no members, and per-node record counts are derived
-//     from memberships at read time, so those fall to zero on their own. The stored counters
-//     (taxonomy_clusters.size, taxonomy_runs.record_count) are left alone deliberately: they record
-//     what a run processed, and rewriting them would falsify the run's history. Note this means
-//     taxonomy run reads still report the original record_count after a purge.
-//   - webhooks and tenant_settings — tenant configuration, not tenant data.
-//   - enrichment output (sentiment, emotions, translations) needs no statement of its own: it lives
-//     in columns on feedback_records and goes with the row.
+// The rest of the taxonomy (runs, clusters, nodes, active-run pointers, node events) is removed by
+// the caller's final phase once the records are gone — see PurgeFeedbackRecordsByTenant. What this
+// purge never touches is webhooks and tenant_settings: those are tenant configuration, not tenant
+// data. Enrichment output (sentiment, emotions, translations) needs no statement of its own — it
+// lives in columns on feedback_records and goes with the row.
 func purgeFeedbackRecordsBatchInTx(
 	ctx context.Context, tx tenantWriteTx, tenantID string, limit int,
 ) (*models.FeedbackRecordsPurgeCounts, error) {
@@ -146,7 +162,7 @@ func purgeFeedbackRecordsBatchInTx(
 			(SELECT count(*) FROM deleted_records),
 			(SELECT count(*) FROM deleted_embeddings),
 			(SELECT count(*) FROM deleted_memberships)`, tenantID, limit,
-	).Scan(&counts.DeletedFeedbackRecords, &counts.DeletedEmbeddings, &counts.DeletedTaxonomyClusterMemberships)
+	).Scan(&counts.DeletedFeedbackRecords, &counts.DeletedEmbeddings, &counts.ClusterMemberships)
 	if err != nil {
 		return nil, fmt.Errorf("purge tenant feedback records batch: %w", err)
 	}
@@ -227,58 +243,9 @@ func deleteTenantDataInTx(
 		return nil, fmt.Errorf("delete tenant embeddings: %w", err)
 	}
 
-	// Taxonomy generation artifacts are run-scoped Hub data. Deleting
-	// feedback_records only cascades cluster memberships (via the membership ->
-	// feedback_records FK), leaving runs, clusters, nodes, active-run rows, and
-	// node events orphaned. Remove every taxonomy table explicitly here, children
-	// before parents, so each delete count is exact and the purge never relies on
-	// cascades. Ordering rules:
-	//   - node_events and cluster_memberships reference runs/nodes/clusters, so
-	//     they go first.
-	//   - taxonomy_clusters and taxonomy_nodes have no tenant_id column; they are
-	//     scoped through their run via a taxonomy_runs subquery, which means
-	//     taxonomy_runs MUST be deleted last (after nodes and clusters) or the
-	//     subquery would match nothing and orphan them.
-	taxonomyNodeEventsTag, err := exec.Exec(ctx, `
-		DELETE FROM taxonomy_node_events
-		WHERE tenant_id = $1`, tenantID)
+	taxonomy, err := deleteTenantTaxonomyInTx(ctx, exec, tenantID)
 	if err != nil {
-		return nil, fmt.Errorf("delete tenant taxonomy node events: %w", err)
-	}
-
-	taxonomyClusterMembershipsTag, err := exec.Exec(ctx, `
-		DELETE FROM taxonomy_cluster_memberships
-		WHERE tenant_id = $1`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("delete tenant taxonomy cluster memberships: %w", err)
-	}
-
-	taxonomyNodesTag, err := exec.Exec(ctx, `
-		DELETE FROM taxonomy_nodes
-		WHERE run_id IN (SELECT id FROM taxonomy_runs WHERE tenant_id = $1)`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("delete tenant taxonomy nodes: %w", err)
-	}
-
-	taxonomyClustersTag, err := exec.Exec(ctx, `
-		DELETE FROM taxonomy_clusters
-		WHERE run_id IN (SELECT id FROM taxonomy_runs WHERE tenant_id = $1)`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("delete tenant taxonomy clusters: %w", err)
-	}
-
-	taxonomyActiveRunsTag, err := exec.Exec(ctx, `
-		DELETE FROM taxonomy_active_runs
-		WHERE tenant_id = $1`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("delete tenant taxonomy active runs: %w", err)
-	}
-
-	taxonomyRunsTag, err := exec.Exec(ctx, `
-		DELETE FROM taxonomy_runs
-		WHERE tenant_id = $1`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("delete tenant taxonomy runs: %w", err)
+		return nil, err
 	}
 
 	feedbackRecordsTag, err := exec.Exec(ctx, `
@@ -288,6 +255,11 @@ func deleteTenantDataInTx(
 		return nil, fmt.Errorf("delete tenant feedback records: %w", err)
 	}
 
+	// Configuration, not data — and the only thing this purge removes that the narrower
+	// feedback-records purge deliberately keeps. Webhooks are integrator-configured directly against
+	// the Hub (including a signing_key that reads never return), and tenant_settings holds
+	// enrichment opt-outs that silently revert to "enabled" once the row is gone. Both are
+	// appropriate to drop when a tenant is being deprovisioned, and only then.
 	webhooksTag, err := exec.Exec(ctx, `
 		DELETE FROM webhooks
 		WHERE tenant_id = $1`, tenantID)
@@ -295,8 +267,7 @@ func deleteTenantDataInTx(
 		return nil, fmt.Errorf("delete tenant webhooks: %w", err)
 	}
 
-	// tenant_settings is tenant-owned, so a purge must remove it too. The count is
-	// not surfaced (at most one row per tenant), mirroring the taxonomy_runs delete.
+	// The count is not surfaced (at most one row per tenant), mirroring the taxonomy_runs delete.
 	if _, err = exec.Exec(ctx, `
 		DELETE FROM tenant_settings
 		WHERE tenant_id = $1`, tenantID); err != nil {
@@ -307,11 +278,78 @@ func deleteTenantDataInTx(
 		DeletedFeedbackRecords:            feedbackRecordsTag.RowsAffected(),
 		DeletedEmbeddings:                 embeddingTag.RowsAffected(),
 		DeletedWebhooks:                   webhooksTag.RowsAffected(),
-		DeletedTaxonomyRuns:               taxonomyRunsTag.RowsAffected(),
-		DeletedTaxonomyClusters:           taxonomyClustersTag.RowsAffected(),
-		DeletedTaxonomyClusterMemberships: taxonomyClusterMembershipsTag.RowsAffected(),
-		DeletedTaxonomyNodes:              taxonomyNodesTag.RowsAffected(),
-		DeletedTaxonomyActiveRuns:         taxonomyActiveRunsTag.RowsAffected(),
-		DeletedTaxonomyNodeEvents:         taxonomyNodeEventsTag.RowsAffected(),
+		DeletedTaxonomyRuns:               taxonomy.Runs,
+		DeletedTaxonomyClusters:           taxonomy.Clusters,
+		DeletedTaxonomyClusterMemberships: taxonomy.ClusterMemberships,
+		DeletedTaxonomyNodes:              taxonomy.Nodes,
+		DeletedTaxonomyActiveRuns:         taxonomy.ActiveRuns,
+		DeletedTaxonomyNodeEvents:         taxonomy.NodeEvents,
+	}, nil
+}
+
+// deleteTenantTaxonomyInTx removes every taxonomy artifact for a tenant and returns exact per-table
+// counts. Shared by both purges: the offboarding purge and the narrower feedback-records purge both
+// take the taxonomy, and this is the one place the ordering below is encoded.
+//
+// Taxonomy generation artifacts are run-scoped Hub data. Deleting feedback_records only cascades
+// cluster memberships (via the membership -> feedback_records FK), leaving runs, clusters, nodes,
+// active-run rows and node events orphaned. Every table is removed explicitly, children before
+// parents, so each count is exact and the purge never relies on cascades. Ordering rules:
+//   - node_events and cluster_memberships reference runs/nodes/clusters, so they go first.
+//   - taxonomy_clusters and taxonomy_nodes have no tenant_id column; they are scoped through their
+//     run via a taxonomy_runs subquery, which means taxonomy_runs MUST be deleted last (after nodes
+//     and clusters) or the subquery would match nothing and orphan them.
+func deleteTenantTaxonomyInTx(
+	ctx context.Context, exec tenantDataExecutor, tenantID string,
+) (*models.TenantTaxonomyDeleteCounts, error) {
+	nodeEventsTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_node_events
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy node events: %w", err)
+	}
+
+	clusterMembershipsTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_cluster_memberships
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy cluster memberships: %w", err)
+	}
+
+	nodesTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_nodes
+		WHERE run_id IN (SELECT id FROM taxonomy_runs WHERE tenant_id = $1)`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy nodes: %w", err)
+	}
+
+	clustersTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_clusters
+		WHERE run_id IN (SELECT id FROM taxonomy_runs WHERE tenant_id = $1)`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy clusters: %w", err)
+	}
+
+	activeRunsTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_active_runs
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy active runs: %w", err)
+	}
+
+	runsTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_runs
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy runs: %w", err)
+	}
+
+	return &models.TenantTaxonomyDeleteCounts{
+		Runs:               runsTag.RowsAffected(),
+		Clusters:           clustersTag.RowsAffected(),
+		ClusterMemberships: clusterMembershipsTag.RowsAffected(),
+		Nodes:              nodesTag.RowsAffected(),
+		ActiveRuns:         activeRunsTag.RowsAffected(),
+		NodeEvents:         nodeEventsTag.RowsAffected(),
 	}, nil
 }

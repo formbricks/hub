@@ -46,8 +46,8 @@ func TestTenantDataRepository_PurgeFeedbackRecordsByTenant(t *testing.T) {
 			t.Fatalf("DeletedEmbeddings = %d, want 1512", counts.DeletedEmbeddings)
 		}
 
-		if counts.DeletedTaxonomyClusterMemberships != 308 {
-			t.Fatalf("DeletedTaxonomyClusterMemberships = %d, want 308", counts.DeletedTaxonomyClusterMemberships)
+		if counts.ClusterMemberships != 308 {
+			t.Fatalf("DeletedTaxonomyClusterMemberships = %d, want 308", counts.ClusterMemberships)
 		}
 	})
 
@@ -94,14 +94,18 @@ func TestTenantDataRepository_PurgeFeedbackRecordsByTenant(t *testing.T) {
 			}
 		}
 
-		if lockAcquisitions != 2 {
-			t.Fatalf("exclusive lock taken %d times, want once per batch (2)", lockAcquisitions)
+		// One per record batch (2 here, the second returning zero) plus one for the final taxonomy
+		// transaction.
+		if lockAcquisitions != 3 {
+			t.Fatalf("exclusive lock taken %d times, want one per batch plus the taxonomy pass (3)", lockAcquisitions)
 		}
 	})
 
-	// The purge must stay narrower than the offboarding purge. If it ever starts deleting the
-	// taxonomy structure, webhooks or settings, a purged dataset silently loses its topic tree.
-	t.Run("touches only records and rows derived from them", func(t *testing.T) {
+	// The line this purge draws: it takes the data AND the taxonomy built on that data, but never the
+	// tenant's configuration. Deleting webhooks would destroy integrator setup (including signing keys
+	// that reads never return); deleting tenant_settings would silently revert enrichment opt-outs to
+	// enabled. Both are the offboarding purge's job, not this one's.
+	t.Run("takes the records and the taxonomy but never the configuration", func(t *testing.T) {
 		transaction := purgeBatches([]int64{10, 5, 3}, []int64{0, 0, 0})
 
 		if _, err := newRecordsPurgeRepo(transaction).
@@ -109,26 +113,54 @@ func TestTenantDataRepository_PurgeFeedbackRecordsByTenant(t *testing.T) {
 			t.Fatalf("PurgeFeedbackRecordsByTenant() error = %v", err)
 		}
 
-		statements := strings.Join(transaction.purgeBatchQueries, "\n")
-		for _, table := range []string{
-			"taxonomy_runs",
-			"taxonomy_clusters",
-			"taxonomy_nodes",
-			"taxonomy_active_runs",
-			"taxonomy_node_events",
-			"webhooks",
-			"tenant_settings",
-		} {
-			if strings.Contains(statements, "DELETE FROM "+table+"\n") ||
-				strings.Contains(statements, "DELETE FROM "+table+" ") {
-				t.Fatalf("purge deleted from %q; it must only remove records and rows derived from them", table)
+		statements := strings.Join(append(append([]string{}, transaction.purgeBatchQueries...), transaction.queries...), "\n")
+
+		for _, table := range []string{"webhooks", "tenant_settings"} {
+			if strings.Contains(statements, "DELETE FROM "+table) {
+				t.Fatalf("purge deleted from %q; that is tenant configuration, not tenant data", table)
 			}
 		}
 
-		for _, want := range []string{"DELETE FROM embeddings", "DELETE FROM taxonomy_cluster_memberships", "DELETE FROM feedback_records"} {
+		for _, want := range []string{
+			"DELETE FROM embeddings",
+			"DELETE FROM feedback_records",
+			"DELETE FROM taxonomy_cluster_memberships",
+			"DELETE FROM taxonomy_node_events",
+			"DELETE FROM taxonomy_nodes",
+			"DELETE FROM taxonomy_clusters",
+			"DELETE FROM taxonomy_active_runs",
+			"DELETE FROM taxonomy_runs",
+		} {
 			if !strings.Contains(statements, want) {
 				t.Fatalf("purge statement missing %q", want)
 			}
+		}
+	})
+
+	// The taxonomy goes last: a purge interrupted midway should leave records missing but the tree
+	// standing, never a tree describing records that are already gone.
+	t.Run("removes the taxonomy only after the records", func(t *testing.T) {
+		transaction := purgeBatches([]int64{10, 0, 0}, []int64{0, 0, 0})
+
+		if _, err := newRecordsPurgeRepo(transaction).
+			PurgeFeedbackRecordsByTenant(context.Background(), "org-123"); err != nil {
+			t.Fatalf("PurgeFeedbackRecordsByTenant() error = %v", err)
+		}
+
+		if len(transaction.purgeBatchQueries) == 0 {
+			t.Fatal("no record batches ran")
+		}
+
+		taxonomyStarted := false
+
+		for _, query := range transaction.queries {
+			if strings.Contains(query, "DELETE FROM taxonomy_runs") {
+				taxonomyStarted = true
+			}
+		}
+
+		if !taxonomyStarted {
+			t.Fatal("taxonomy was never removed")
 		}
 	})
 

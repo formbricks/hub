@@ -1291,18 +1291,21 @@ paths:
                 - Feedback Records
             summary: Purge all feedback records for a tenant
             description: |
-                Permanently deletes every feedback record for the specified tenant_id, along with the data derived
-                from those records: embeddings, taxonomy cluster memberships, and the enrichment stored on each
-                record (sentiment, emotions, translations).
+                Permanently deletes every feedback record for the specified tenant_id, everything derived from
+                those records — embeddings and the enrichment stored on each record (sentiment, emotions,
+                translations) — and the taxonomy built on them: runs, clusters, nodes, cluster memberships,
+                active-run pointers and node events.
 
-                This is intended for emptying a dataset that stays in use. The tenant's taxonomy structure (runs,
-                clusters, nodes, active-run pointers and node events), its webhooks, and its settings are all left
-                in place — the clusters simply end up with no members. Note that a taxonomy run's own stored
-                counters (`record_count`, `cluster_count`, and a cluster's `size`) are NOT rewritten: they record
-                what that run processed, so a run read back after a purge still reports its original counts. The
-                per-node record counts returned by the taxonomy tree are derived from memberships at read time and
-                do fall to zero. To remove everything Hub holds for a tenant during offboarding, use
-                `DELETE /v1/tenants/{tenant_id}/data` instead.
+                This is intended for emptying a dataset that stays in use, so it removes the tenant's DATA but
+                never its CONFIGURATION: webhooks and tenant settings are left untouched. That is the difference
+                from `DELETE /v1/tenants/{tenant_id}/data`, which additionally deletes both and is meant for
+                offboarding a deprovisioned tenant.
+
+                The taxonomy is removed rather than preserved because it describes records that no longer exist:
+                its per-node counts are derived from memberships and would all read zero, while a run's own stored
+                counters (`record_count`, `cluster_count`, a cluster's `size`) are historical and would keep
+                advertising the old numbers. A new taxonomy can be generated once the dataset has enough feedback
+                again; manual node renames and removals are per-run and do not survive a regeneration in any case.
 
                 The tenant is a required path segment, so it cannot be omitted the way a filter on a collection
                 delete could be — dropping it routes elsewhere rather than widening the operation to every tenant.
@@ -1318,11 +1321,11 @@ paths:
                 joins the running purge rather than queueing a second one, and still returns 202. A purge requested
                 after an earlier one finished starts a new run.
 
-                The delete is committed in batches, so a purge interrupted by a restart or a timeout keeps the
-                progress it made and resumes on retry. While each batch runs, the tenant's write lock is held
-                exclusively and Hub-owned writes for that tenant are rejected with HTTP 409 (code
-                `tenant_write_conflict`); the lock is released between batches, and writes for other tenants are
-                never affected. This does not apply to the request below — scheduling a purge takes no lock, so
+                Records are deleted in committed batches, so a purge interrupted by a restart or a timeout keeps
+                the progress it made and resumes on retry; the taxonomy is removed in a final step once the records
+                are gone. While each step runs, the tenant's write lock is held exclusively and Hub-owned writes
+                for that tenant are rejected with HTTP 409 (code `tenant_write_conflict`); the lock is released
+                between steps, and writes for other tenants are never affected. This does not apply to the request below — scheduling a purge takes no lock, so
                 this endpoint does not return 409. A batch that cannot acquire the lock is retried by the job
                 queue without any caller action, up to a bounded number of attempts.
 
