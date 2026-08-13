@@ -45,9 +45,12 @@ func NewFeedbackRecordsPurgeService(
 
 // Enqueue accepts a purge request for a tenant and schedules the job that performs it.
 //
-// Idempotent by design: the job is unique by tenant across River's in-flight states, so requesting
-// a purge while one is already running collapses into that run and still reports accepted. A purge
-// requested after the previous one finished is a new run (see FeedbackRecordsPurgeArgs).
+// Idempotent by design: the job is unique by tenant across River's in-flight states, so requesting a
+// purge while one is queued or running collapses into it and still reports accepted. A purge
+// requested after the previous one finished is a new run (see FeedbackRecordsPurgeArgs). One gap is
+// deliberate: `retryable` is not in the unique set, so a request arriving while a purge sits in
+// backoff inserts a second job — River then discards the older one when it schedules, so the tenant
+// still ends up with exactly one purge.
 func (s *FeedbackRecordsPurgeService) Enqueue(
 	ctx context.Context, tenantID string,
 ) (*models.FeedbackRecordsPurgeAcceptedResponse, error) {
@@ -103,7 +106,7 @@ func (s *FeedbackRecordsPurgeService) Purge(
 	}
 
 	slog.Info("feedback records purge: complete",
-		"tenant_id_length", len(normalizedTenantID),
+		"tenant_id", normalizedTenantID,
 		"deleted_feedback_records", counts.DeletedFeedbackRecords,
 		"deleted_embeddings", counts.DeletedEmbeddings,
 		"deleted_taxonomy_cluster_memberships", counts.ClusterMemberships,

@@ -16,9 +16,10 @@ type feedbackRecordsPurgeService interface {
 	Purge(ctx context.Context, tenantID string) (*models.FeedbackRecordsPurgeCounts, error)
 }
 
-// FeedbackRecordsPurgeWorker deletes every feedback record for one tenant, plus the data derived
-// from those records. It runs off the request path because the delete is unbounded and would
-// otherwise outlive the API server's write timeout on a large tenant.
+// FeedbackRecordsPurgeWorker deletes every feedback record for one tenant, everything derived from
+// those records, and the taxonomy built on them, keeping the tenant's configuration. It runs off the
+// request path because the delete is unbounded and would otherwise outlive the API server's write
+// timeout on a large tenant.
 type FeedbackRecordsPurgeWorker struct {
 	river.WorkerDefaults[service.FeedbackRecordsPurgeArgs]
 

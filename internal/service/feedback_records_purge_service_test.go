@@ -75,10 +75,12 @@ func TestFeedbackRecordsPurgeService_Enqueue(t *testing.T) {
 			"River's default state set includes completed, which would swallow every later purge")
 		assert.NotContains(t, unique.ByState, rivertype.JobStateCompleted,
 			"a completed purge must never block the next one")
-		// The four states River requires ByState to include; anything else would fail validation.
+		// The four states River requires, plus retryable so a request during backoff collapses into
+		// the existing purge rather than inserting a second one that fights it for the tenant lock.
 		assert.ElementsMatch(t, []rivertype.JobState{
 			rivertype.JobStateAvailable,
 			rivertype.JobStatePending,
+			rivertype.JobStateRetryable,
 			rivertype.JobStateRunning,
 			rivertype.JobStateScheduled,
 		}, unique.ByState)

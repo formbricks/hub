@@ -3,9 +3,11 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -47,12 +49,41 @@ type fakeTenantWriteTx struct {
 	// reused across batches: purgeBatchRows supplies each batch's
 	// (records, embeddings, memberships) counts, commits counts the successful transactions, and
 	// afterBatch lets a test interfere (e.g. cancel the context) between batches.
+	// highWaterMark is the ceiling the purge reads before its first batch; nil means the tenant has
+	// no records and the loop never runs.
+	highWaterMark      *uuid.UUID
+	highWaterMarkReads int
+
 	purgeBatchRows    [][]int64
 	purgeBatchErrAt   int
 	purgeBatchQueries []string
 	purgeBatchArgs    [][]any
 	commits           int
 	afterBatch        func(batches int)
+}
+
+// fakeTenantHighWaterMarkRow serves the purge's ceiling read.
+type fakeTenantHighWaterMarkRow struct {
+	id *uuid.UUID
+}
+
+func (r fakeTenantHighWaterMarkRow) Scan(dest ...any) error {
+	if r.id == nil {
+		return pgx.ErrNoRows
+	}
+
+	if len(dest) != 1 {
+		return errors.New("unexpected scan targets for the high-water mark")
+	}
+
+	target, ok := dest[0].(*uuid.UUID)
+	if !ok {
+		return errors.New("unexpected scan target type for the high-water mark")
+	}
+
+	*target = *r.id
+
+	return nil
 }
 
 // fakeTenantPurgeBatchRow returns one batch's three counts, or an error.
@@ -85,7 +116,15 @@ func (f *fakeTenantWriteTx) Query(context.Context, string, ...any) (pgx.Rows, er
 }
 
 func (f *fakeTenantWriteTx) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
-	if len(args) == 2 {
+	// Routed by statement rather than by argument count: the purge issues three different QueryRows
+	// (advisory lock, high-water mark, batch delete) and two of them take a single argument.
+	if strings.Contains(sql, "ORDER BY id DESC LIMIT 1") {
+		f.highWaterMarkReads++
+
+		return fakeTenantHighWaterMarkRow{id: f.highWaterMark}
+	}
+
+	if strings.Contains(sql, "WITH victims") {
 		return f.queryRowPurgeBatch(sql, args)
 	}
 
@@ -127,6 +166,9 @@ func (f *fakeTenantWriteTx) Rollback(context.Context) error {
 // queryRowPurgeBatch serves the purge's batch statement, which is the only QueryRow taking two
 // arguments (tenant id + batch size); the advisory-lock query takes one.
 func (f *fakeTenantWriteTx) queryRowPurgeBatch(sql string, args []any) pgx.Row {
+	// Into the embedded executor's log too, so batch and taxonomy statements share one ordered
+	// sequence and their relative ordering is assertable.
+	f.statements = append(f.statements, sql)
 	f.purgeBatchQueries = append(f.purgeBatchQueries, sql)
 	f.purgeBatchArgs = append(f.purgeBatchArgs, args)
 

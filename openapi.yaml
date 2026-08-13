@@ -1288,7 +1288,7 @@ paths:
     /v1/tenants/{tenant_id}/feedback-records:
         delete:
             tags:
-                - Feedback Records
+                - Tenant Data
             summary: Purge all feedback records for a tenant
             description: |
                 Permanently deletes every feedback record for the specified tenant_id, everything derived from
@@ -1312,10 +1312,13 @@ paths:
 
                 Asynchronous: the request schedules the purge and returns 202 immediately, because the deletion is
                 unbounded and can outlive a request. There is therefore no deleted count in the response. Poll
-                `GET /v1/feedback-records/count?tenant_id=...` to observe progress. For a dataset that is no longer
+                `GET /v1/feedback-records/count?tenant_id=...` to observe progress.
+
+                The purge removes only the records that existed when it started — it takes a high-water mark up
+                front — so feedback ingested while it runs is never deleted. For a dataset that is no longer
                 receiving feedback the count reaching zero means the purge is complete; for one still ingesting,
-                the count reflects newly arrived records rather than purge failure, since the purge only removes
-                what existed when it started.
+                a nonzero count is those newer records. Note this means the count alone cannot distinguish
+                "finished" from "failed" on an active dataset.
 
                 Idempotent and safe to repeat. Requesting a purge while one is already running for the same tenant
                 joins the running purge rather than queueing a second one, and still returns 202. A purge requested

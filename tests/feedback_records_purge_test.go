@@ -126,8 +126,10 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 		assert.Equal(t, int64(1), counts.DeletedEmbeddings)
 		assert.Equal(t, int64(1), counts.ClusterMemberships)
 		assert.Equal(t, int64(1), counts.Runs)
+		assert.Equal(t, int64(1), counts.Clusters)
 		assert.Equal(t, int64(3), counts.Nodes)
 		assert.Equal(t, int64(1), counts.ActiveRuns)
+		assert.Equal(t, int64(1), counts.NodeEvents)
 	})
 
 	t.Run("removes the records and everything derived from them", func(t *testing.T) {
@@ -308,4 +310,30 @@ func TestPurgeFeedbackRecordsByTenantUnknownTenant(t *testing.T) {
 	assert.Zero(t, counts.DeletedFeedbackRecords)
 	assert.Zero(t, counts.DeletedEmbeddings)
 	assert.Zero(t, counts.ClusterMemberships)
+}
+
+// TestPurgeFeedbackRecordsMultipleBatches exercises the batch loop against a real database: the
+// unit tests drive it through a fake that hands back the same transaction every time, so the loop,
+// its per-batch commits and the high-water mark are only meaningfully covered here.
+func TestPurgeFeedbackRecordsMultipleBatches(t *testing.T) {
+	ctx := context.Background()
+	db := newPurgeTestDB(ctx, t)
+
+	tenantID := "purge-batches-" + uuid.NewString()
+
+	// More than two batches at a batch size of 2000.
+	const seeded = 4500
+
+	_, err := db.Exec(ctx, `
+		INSERT INTO feedback_records (source_type, field_id, field_label, field_type, value_text, tenant_id, submission_id)
+		SELECT 'formbricks', 'f1', 'Feedback', 'text'::field_type_enum, 'r ' || g, $1, 's-' || g
+		FROM generate_series(1, $2) g`, tenantID, seeded)
+	require.NoError(t, err)
+
+	counts, err := newPurgeService(t, db).Purge(ctx, tenantID)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(seeded), counts.DeletedFeedbackRecords)
+	assert.Zero(t, countRows(ctx, t, db,
+		`SELECT count(*) FROM feedback_records WHERE tenant_id = $1`, tenantID))
 }

@@ -18,8 +18,9 @@ const (
 	FeedbackRecordsPurgeMaxAttempts = 5
 )
 
-// FeedbackRecordsPurgeArgs deletes every feedback record for one tenant, plus the data derived
-// from those records, leaving the tenant's taxonomy structure, webhooks and settings intact.
+// FeedbackRecordsPurgeArgs deletes every feedback record for one tenant, everything derived from
+// those records, and the taxonomy built on them — leaving the tenant's configuration (its webhooks
+// and its settings) intact.
 //
 // The purge runs as a job rather than on the request path because it is unbounded: feedback_records
 // has no per-tenant cap, and the API server's write timeout would cut the response long before a
@@ -39,13 +40,21 @@ type FeedbackRecordsPurgeArgs struct {
 	TenantID string `json:"tenant_id" river:"unique"`
 }
 
-// feedbackRecordsPurgeUniqueStates is the in-flight state set the purge dedupes across. These four
-// are exactly the states River requires ByState to contain, so this is the narrowest legal set —
-// and, crucially, it excludes `completed`.
+// feedbackRecordsPurgeUniqueStates is the in-flight state set the purge dedupes across: the four
+// states River requires ByState to contain, plus `retryable`.
+//
+// `retryable` is included so a request arriving while a purge sits in backoff between attempts
+// collapses into it, like every other in-flight state. Without it that request inserts a second
+// purge job, and the two then contend for the same exclusive tenant lock — each one's timeouts
+// eating the other's retry budget.
+//
+// `completed` is the one that must stay out: River's default set includes it, and with no ByPeriod
+// the window is unbounded, so the first purge of a tenant would be the only one that ever ran.
 func feedbackRecordsPurgeUniqueStates() []rivertype.JobState {
 	return []rivertype.JobState{
 		rivertype.JobStateAvailable,
 		rivertype.JobStatePending,
+		rivertype.JobStateRetryable,
 		rivertype.JobStateRunning,
 		rivertype.JobStateScheduled,
 	}

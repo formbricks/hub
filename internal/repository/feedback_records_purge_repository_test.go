@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -21,8 +22,11 @@ func newRecordsPurgeRepo(transaction *fakeTenantWriteTx) *TenantDataRepository {
 // each entry is one batch's (records, embeddings, memberships) counts, and a zero-record batch ends
 // the purge.
 func purgeBatches(batches ...[]int64) *fakeTenantWriteTx {
+	highWaterMark := uuid.New()
+
 	return &fakeTenantWriteTx{
 		fakeTenantDataExecutor: fakeTenantDataExecutor{tags: purgeLockTags()},
+		highWaterMark:          &highWaterMark,
 		purgeBatchRows:         batches,
 		rollbackErr:            pgx.ErrTxClosed,
 	}
@@ -138,7 +142,8 @@ func TestTenantDataRepository_PurgeFeedbackRecordsByTenant(t *testing.T) {
 	})
 
 	// The taxonomy goes last: a purge interrupted midway should leave records missing but the tree
-	// standing, never a tree describing records that are already gone.
+	// standing, never a tree describing records that are already gone. Asserted against the single
+	// ordered statement log — comparing the per-phase slices would pass with the phases swapped.
 	t.Run("removes the taxonomy only after the records", func(t *testing.T) {
 		transaction := purgeBatches([]int64{10, 0, 0}, []int64{0, 0, 0})
 
@@ -147,20 +152,29 @@ func TestTenantDataRepository_PurgeFeedbackRecordsByTenant(t *testing.T) {
 			t.Fatalf("PurgeFeedbackRecordsByTenant() error = %v", err)
 		}
 
-		if len(transaction.purgeBatchQueries) == 0 {
-			t.Fatal("no record batches ran")
-		}
+		lastBatch, firstTaxonomy := -1, -1
 
-		taxonomyStarted := false
+		for i, statement := range transaction.statements {
+			if strings.Contains(statement, "WITH victims") {
+				lastBatch = i
+			}
 
-		for _, query := range transaction.queries {
-			if strings.Contains(query, "DELETE FROM taxonomy_runs") {
-				taxonomyStarted = true
+			if firstTaxonomy == -1 && strings.Contains(statement, "DELETE FROM taxonomy_runs") {
+				firstTaxonomy = i
 			}
 		}
 
-		if !taxonomyStarted {
+		if lastBatch == -1 {
+			t.Fatal("no record batches ran")
+		}
+
+		if firstTaxonomy == -1 {
 			t.Fatal("taxonomy was never removed")
+		}
+
+		if firstTaxonomy < lastBatch {
+			t.Fatalf("taxonomy removed at statement %d, before the last record batch at %d",
+				firstTaxonomy, lastBatch)
 		}
 	})
 
@@ -179,13 +193,78 @@ func TestTenantDataRepository_PurgeFeedbackRecordsByTenant(t *testing.T) {
 			t.Fatalf("batch is not tenant-scoped: %s", statement)
 		}
 
-		if !strings.Contains(statement, "LIMIT $2") {
+		if !strings.Contains(statement, "LIMIT $3") {
 			t.Fatalf("batch is not bounded: %s", statement)
 		}
 
+		if !strings.Contains(statement, "id <= $2") {
+			t.Fatalf("batch is not bounded to the records that existed at purge start: %s", statement)
+		}
+
 		args := transaction.purgeBatchArgs[0]
-		if len(args) != 2 || args[0] != "org-123" || args[1] != feedbackRecordsPurgeBatchSize {
-			t.Fatalf("batch args = %#v, want tenant + batch size", args)
+		if len(args) != 3 || args[0] != "org-123" || args[2] != feedbackRecordsPurgeBatchSize {
+			t.Fatalf("batch args = %#v, want tenant + high-water mark + batch size", args)
+		}
+
+		if args[1] != *transaction.highWaterMark {
+			t.Fatalf("batch high-water mark = %v, want the ceiling read at purge start", args[1])
+		}
+	})
+
+	// Without a ceiling, a tenant that keeps ingesting keeps feeding the loop: the purge might never
+	// reach a zero batch, and it would delete feedback that arrived after the operator asked to empty
+	// the dataset.
+	t.Run("reads the ceiling once, before any batch", func(t *testing.T) {
+		transaction := purgeBatches([]int64{10, 0, 0}, []int64{0, 0, 0})
+
+		if _, err := newRecordsPurgeRepo(transaction).
+			PurgeFeedbackRecordsByTenant(context.Background(), "org-123"); err != nil {
+			t.Fatalf("PurgeFeedbackRecordsByTenant() error = %v", err)
+		}
+
+		if transaction.highWaterMarkReads != 1 {
+			t.Fatalf("high-water mark read %d times, want exactly once", transaction.highWaterMarkReads)
+		}
+
+		for _, args := range transaction.purgeBatchArgs {
+			if args[1] != *transaction.highWaterMark {
+				t.Fatalf("a batch used a different ceiling: %v", args[1])
+			}
+		}
+	})
+
+	// A tenant with no records at all must not run a batch, but must still clear any taxonomy left
+	// behind by an earlier run.
+	t.Run("skips the record loop when the tenant has none", func(t *testing.T) {
+		transaction := &fakeTenantWriteTx{
+			fakeTenantDataExecutor: fakeTenantDataExecutor{tags: purgeLockTags()},
+			rollbackErr:            pgx.ErrTxClosed,
+		}
+
+		counts, err := newRecordsPurgeRepo(transaction).
+			PurgeFeedbackRecordsByTenant(context.Background(), "org-123")
+		if err != nil {
+			t.Fatalf("PurgeFeedbackRecordsByTenant() error = %v", err)
+		}
+
+		if len(transaction.purgeBatchQueries) != 0 {
+			t.Fatalf("ran %d batches for a tenant with no records", len(transaction.purgeBatchQueries))
+		}
+
+		if counts.DeletedFeedbackRecords != 0 {
+			t.Fatalf("DeletedFeedbackRecords = %d, want 0", counts.DeletedFeedbackRecords)
+		}
+
+		taxonomyRan := false
+
+		for _, query := range transaction.queries {
+			if strings.Contains(query, "DELETE FROM taxonomy_runs") {
+				taxonomyRan = true
+			}
+		}
+
+		if !taxonomyRan {
+			t.Fatal("taxonomy was not cleared for a tenant with no records")
 		}
 	})
 
