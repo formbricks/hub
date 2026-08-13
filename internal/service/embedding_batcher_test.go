@@ -18,13 +18,18 @@ type batcherTestClient struct {
 	batchBlock  <-chan struct{}
 	queryCalls  int
 	singleCalls int
+	singleErrs  map[string]error
 }
 
 func (c *batcherTestClient) CreateEmbedding(_ context.Context, input string) ([]float32, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.singleCalls++
+	err := c.singleErrs[input]
+	c.mu.Unlock()
+
+	if err != nil {
+		return nil, err
+	}
 
 	return []float32{float32(len(input))}, nil
 }
@@ -128,26 +133,49 @@ func TestBatchingEmbeddingClientPartialBatchAndQueryBypass(t *testing.T) {
 	}
 }
 
-func TestBatchingEmbeddingClientProviderErrorReachesEveryRequest(t *testing.T) {
-	wantErr := errors.New("provider unavailable")
-	provider := &batcherTestClient{batchErr: wantErr}
+func TestBatchingEmbeddingClientProviderErrorRetriesRequestsIndividually(t *testing.T) {
+	batchErr := errors.New("batch rejected")
+	badInputErr := errors.New("input rejected")
+	provider := &batcherTestClient{
+		batchErr:   batchErr,
+		singleErrs: map[string]error{"bad": badInputErr},
+	}
 	batcher, _ := NewBatchingEmbeddingClient(provider, EmbeddingBatchConfig{
-		BatchSize: 2, MaxWait: time.Second, MaxInFlight: 1,
+		BatchSize: 3, MaxWait: time.Second, MaxInFlight: 1,
 	}, nil)
 
-	errs := make(chan error, 2)
+	inputs := []string{"first", "bad", "third"}
+	results := make([][]float32, len(inputs))
+	errs := make([]error, len(inputs))
 
-	for _, input := range []string{"first", "second"} {
-		go func() {
-			_, err := batcher.CreateEmbedding(context.Background(), input)
-			errs <- err
-		}()
+	var waitGroup sync.WaitGroup
+	for i := range inputs {
+		waitGroup.Go(func() {
+			results[i], errs[i] = batcher.CreateEmbedding(context.Background(), inputs[i])
+		})
 	}
 
-	for range 2 {
-		if err := <-errs; !errors.Is(err, wantErr) {
-			t.Fatalf("error = %v, want provider error", err)
+	waitGroup.Wait()
+
+	for i := range inputs {
+		if inputs[i] == "bad" {
+			if !errors.Is(errs[i], badInputErr) {
+				t.Fatalf("bad input error = %v, want input rejection", errs[i])
+			}
+
+			continue
 		}
+
+		if errs[i] != nil || !reflect.DeepEqual(results[i], []float32{float32(len(inputs[i]))}) {
+			t.Fatalf("input %q result = %v, %v", inputs[i], results[i], errs[i])
+		}
+	}
+
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+
+	if provider.singleCalls != len(inputs) {
+		t.Fatalf("single calls = %d, want %d", provider.singleCalls, len(inputs))
 	}
 }
 

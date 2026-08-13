@@ -238,13 +238,18 @@ func run() int {
 		return exitFailure
 	}
 
-	slog.Info("Backfill complete",
+	logAttrs := []any{
 		"enqueued", enqueued,
 		"model", targetModel,
 		"input_kind", inputKind,
 		"tenant_scoped", *tenantID != "",
 		"max_records", *maxRecords,
-	) // #nosec G706 -- enqueued is an int, not user input
+	}
+	if *tenantID != "" {
+		logAttrs = append(logAttrs, "tenant_id", *tenantID)
+	}
+
+	slog.Info("Backfill complete", logAttrs...) // #nosec G706 -- values are structured log attributes
 
 	fmt.Printf("Enqueued %d embedding job(s) for model %q.\n", enqueued, targetModel)
 

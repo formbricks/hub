@@ -256,7 +256,27 @@ func (b *BatchingEmbeddingClient) dispatch(batch []*embeddingBatchRequest) {
 		b.metrics.RecordEmbeddingBatch(context.WithoutCancel(providerCtx), int64(len(inputs)), time.Since(started), status)
 	}
 
+	if err != nil && len(active) > 1 {
+		b.retryIndividually(active)
+
+		return
+	}
+
 	b.deliver(active, vectors, err)
+}
+
+// retryIndividually isolates a rejected input after a provider rejects the all-or-nothing batch.
+// Every request gets its own provider call so one invalid document cannot consume its peers' retries.
+func (b *BatchingEmbeddingClient) retryIndividually(requests []*embeddingBatchRequest) {
+	for _, request := range requests {
+		providerCtx, cancel, cleanupContext := b.providerContext([]*embeddingBatchRequest{request})
+		vector, err := b.client.CreateEmbedding(providerCtx, request.input)
+
+		cancel()
+		cleanupContext()
+
+		request.result <- embeddingBatchResult{vector: vector, err: err}
+	}
 }
 
 func (b *BatchingEmbeddingClient) providerContext(

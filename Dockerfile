@@ -74,10 +74,11 @@ USER app
 
 EXPOSE 8080
 
-# Health check for hub-api. Disable or override when running hub-worker (e.g. docker run ... hub-worker)
-# since workers do not expose HTTP.
+# Health check only hub-api. hub-worker and backfill-embeddings do not expose HTTP, so commands
+# that reuse this image must not inherit a failing API probe.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-	CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+	CMD [ "$(readlink /proc/1/exe)" != "/app/hub-api" ] || wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-# Default: run hub-api. Override with command to run hub-worker: docker run ... hub-worker
+# Default: run hub-api. Override the entrypoint for another binary, for example
+# docker run --entrypoint /app/hub-worker ... or --entrypoint /app/backfill-embeddings ...
 ENTRYPOINT ["/app/hub-api"]

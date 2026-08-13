@@ -377,7 +377,7 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 	<-a.river.Stopped()
 
 	if a.embeddingBatch != nil {
-		batchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.cfg.Server.ShutdownTimeout.Duration())
+		batchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), embeddingBatchFlushTimeout)
 		defer cancel()
 
 		if err := a.embeddingBatch.Shutdown(batchCtx); err != nil {
@@ -391,6 +391,10 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 // riverStopAndCancelTimeout bounds the escalated (job-cancelling) stop after the graceful stop
 // timed out; kept short so the pod exits within the orchestrator's termination grace period.
 const riverStopAndCancelTimeout = 5 * time.Second
+
+// embeddingBatchFlushTimeout bounds the one final partial-batch flush without extending River's
+// graceful shutdown by another full server shutdown period.
+const embeddingBatchFlushTimeout = 5 * time.Second
 
 func shutdownObservability(ctx context.Context, meter *sdkmetric.MeterProvider, tracer *sdktrace.TracerProvider) {
 	if tracer != nil {

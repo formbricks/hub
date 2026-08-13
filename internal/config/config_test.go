@@ -364,7 +364,7 @@ func TestLoad_EmbeddingBaseURL(t *testing.T) {
 func TestLoad_EmbeddingBatchSettings(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
 	t.Setenv("EMBEDDING_BATCH_SIZE", "8")
-	t.Setenv("EMBEDDING_BATCH_MAX_WAIT_MS", "25")
+	t.Setenv("EMBEDDING_BATCH_MAX_WAIT_MS", "37")
 	t.Setenv("EMBEDDING_BATCH_MAX_IN_FLIGHT", "3")
 
 	cfg, err := Load()
@@ -376,8 +376,8 @@ func TestLoad_EmbeddingBatchSettings(t *testing.T) {
 		t.Errorf("Embedding.BatchSize = %d, want 8", cfg.Embedding.BatchSize)
 	}
 
-	if cfg.Embedding.BatchMaxWaitMs != 25 {
-		t.Errorf("Embedding.BatchMaxWaitMs = %d, want 25", cfg.Embedding.BatchMaxWaitMs)
+	if cfg.Embedding.BatchMaxWaitMs != 37 {
+		t.Errorf("Embedding.BatchMaxWaitMs = %d, want 37", cfg.Embedding.BatchMaxWaitMs)
 	}
 
 	if cfg.Embedding.BatchMaxInFlight != 3 {
