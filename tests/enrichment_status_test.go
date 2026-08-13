@@ -305,7 +305,6 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	leaderOne := repository.NewEnrichmentBacklogLeader(dbLeader)
 	leaderTwo := repository.NewEnrichmentBacklogLeader(dbRival)
 	fallbackRepo := repository.NewFeedbackRecordsRepository(dbLeader)
-	seedEnrichmentRecord(t, fallbackRepo, testTenantID("taxonomy-backlog"), models.FieldTypeText, "taxonomy pending")
 
 	taxonomyModel := "taxonomy:leader-test:translated-v1"
 
@@ -315,17 +314,25 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	defer leaderOne.Close(ctx)
 	defer leaderTwo.Close(ctx)
 
-	// First replica wins leadership and gets real counts.
-	counts, isLeader, err := leaderOne.CountIfLeader(ctx, "", taxonomyModel)
+	// First replica wins leadership and establishes the existing taxonomy backlog baseline.
+	before, isLeader, err := leaderOne.CountIfLeader(ctx, "", taxonomyModel)
 	require.NoError(t, err)
 	require.True(t, isLeader, "the first replica to poll becomes the leader")
+
+	seedEnrichmentRecord(t, fallbackRepo, testTenantID("taxonomy-backlog-text"), models.FieldTypeText, "taxonomy pending")
+	seedEnrichmentRecord(
+		t, fallbackRepo, testTenantID("taxonomy-backlog-categorical"), models.FieldTypeCategorical, "not enrichable")
+
+	counts, isLeader, err := leaderOne.CountIfLeader(ctx, "", taxonomyModel)
+	require.NoError(t, err)
+	require.True(t, isLeader)
+	assert.Equal(t, before.TaxonomyEmbeddingPending+1, counts.TaxonomyEmbeddingPending,
+		"only the text record enters the live translation-to-taxonomy backlog")
 
 	// Prove the leader returns the real aggregate, not a zero value.
 	want, err := repository.NewEnrichmentStatusRepository(dbLeader).CountEnrichmentBacklogAggregate(ctx, "")
 	require.NoError(t, err)
 	assert.Equal(t, want.SentimentEligible, counts.SentimentEligible, "leader returns the true aggregate")
-	assert.Positive(t, counts.TaxonomyEmbeddingPending,
-		"the leader reports records missing the configured taxonomy embedding model")
 
 	// The second replica is denied — a normal skip, not an error — and must NOT publish counts.
 	zero, isLeader, err := leaderTwo.CountIfLeader(ctx, "", "")

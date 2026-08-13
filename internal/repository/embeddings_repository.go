@@ -371,6 +371,29 @@ func (r *EmbeddingsRepository) CountTenantFeedbackRecordsForBackfillByInputKind(
 	return r.countFeedbackRecordsForBackfillByInputKind(ctx, model, inputKind, tenantID, true)
 }
 
+// TenantExistsForEmbeddingBackfill reports whether Hub knows the tenant through feedback records
+// or tenant settings. Hub has no authoritative tenants table, so checking both data sources lets the
+// operator distinguish a likely typo from an existing tenant with no eligible missing embeddings.
+func (r *EmbeddingsRepository) TenantExistsForEmbeddingBackfill(ctx context.Context, tenantID string) (bool, error) {
+	if tenantID == "" {
+		return false, errEmbeddingBackfillTenantRequired
+	}
+
+	const query = `
+		SELECT EXISTS (
+			SELECT 1 FROM feedback_records WHERE tenant_id = $1
+			UNION ALL
+			SELECT 1 FROM tenant_settings WHERE tenant_id = $1
+		)`
+
+	var exists bool
+	if err := r.db.QueryRow(ctx, query, tenantID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check tenant for embedding backfill: %w", err)
+	}
+
+	return exists, nil
+}
+
 //nolint:funcorder // scoped helper stays with the public backfill methods
 func (r *EmbeddingsRepository) countFeedbackRecordsForBackfillByInputKind(
 	ctx context.Context,

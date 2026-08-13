@@ -76,6 +76,48 @@ func TestEmbeddingProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestTaxonomyEmbeddingBacklogModelRequiresCompletePipeline(t *testing.T) {
+	complete := config.Config{
+		Embedding: config.EmbeddingConfig{
+			Provider: service.EmbeddingProviderOpenAI,
+			Model:    "embedding-model",
+		},
+		Translation: config.TranslationConfig{
+			Provider: "openai",
+			Model:    "translation-model",
+		},
+		Taxonomy: config.TaxonomyConfig{
+			ServiceURL:     "http://taxonomy",
+			EmbeddingModel: "taxonomy-model",
+		},
+	}
+
+	if got := taxonomyEmbeddingBacklogModel(&complete); got != "taxonomy-model" {
+		t.Fatalf("taxonomyEmbeddingBacklogModel(complete) = %q, want taxonomy-model", got)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*config.Config)
+	}{
+		{name: "embeddings disabled", mutate: func(cfg *config.Config) { cfg.Embedding.Provider = "" }},
+		{name: "translation provider missing", mutate: func(cfg *config.Config) { cfg.Translation.Provider = "" }},
+		{name: "translation model missing", mutate: func(cfg *config.Config) { cfg.Translation.Model = "" }},
+		{name: "taxonomy disabled", mutate: func(cfg *config.Config) { cfg.Taxonomy.ServiceURL = "" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := complete
+			tt.mutate(&cfg)
+
+			if got := taxonomyEmbeddingBacklogModel(&cfg); got != "" {
+				t.Fatalf("taxonomyEmbeddingBacklogModel() = %q, want disabled", got)
+			}
+		})
+	}
+}
+
 func TestSetupMetricsDisabled(t *testing.T) {
 	meterProvider, metrics, err := setupMetrics(&config.Config{})
 	if err != nil {

@@ -19,13 +19,27 @@ type batcherTestClient struct {
 	queryCalls  int
 	singleCalls int
 	singleErrs  map[string]error
+	singleBlock <-chan struct{}
+	singleStart chan<- string
 }
 
-func (c *batcherTestClient) CreateEmbedding(_ context.Context, input string) ([]float32, error) {
+func (c *batcherTestClient) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {
 	c.mu.Lock()
 	c.singleCalls++
 	err := c.singleErrs[input]
 	c.mu.Unlock()
+
+	if c.singleStart != nil {
+		c.singleStart <- input
+	}
+
+	if c.singleBlock != nil {
+		select {
+		case <-c.singleBlock:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("test single provider: %w", ctx.Err())
+		}
+	}
 
 	if err != nil {
 		return nil, err
@@ -136,9 +150,13 @@ func TestBatchingEmbeddingClientPartialBatchAndQueryBypass(t *testing.T) {
 func TestBatchingEmbeddingClientProviderErrorRetriesRequestsIndividually(t *testing.T) {
 	batchErr := errors.New("batch rejected")
 	badInputErr := errors.New("input rejected")
+	singleBlock := make(chan struct{})
+	singleStart := make(chan string, 3)
 	provider := &batcherTestClient{
-		batchErr:   batchErr,
-		singleErrs: map[string]error{"bad": badInputErr},
+		batchErr:    batchErr,
+		singleErrs:  map[string]error{"bad": badInputErr},
+		singleBlock: singleBlock,
+		singleStart: singleStart,
 	}
 	batcher, _ := NewBatchingEmbeddingClient(provider, EmbeddingBatchConfig{
 		BatchSize: 3, MaxWait: time.Second, MaxInFlight: 1,
@@ -154,6 +172,20 @@ func TestBatchingEmbeddingClientProviderErrorRetriesRequestsIndividually(t *test
 			results[i], errs[i] = batcher.CreateEmbedding(context.Background(), inputs[i])
 		})
 	}
+
+	deadline := time.After(time.Second)
+
+	for range inputs {
+		select {
+		case <-singleStart:
+		case <-deadline:
+			close(singleBlock)
+			waitGroup.Wait()
+			t.Fatal("individual retries did not start concurrently")
+		}
+	}
+
+	close(singleBlock)
 
 	waitGroup.Wait()
 

@@ -266,17 +266,24 @@ func (b *BatchingEmbeddingClient) dispatch(batch []*embeddingBatchRequest) {
 }
 
 // retryIndividually isolates a rejected input after a provider rejects the all-or-nothing batch.
-// Every request gets its own provider call so one invalid document cannot consume its peers' retries.
+// Every request gets its own concurrent provider call so one invalid document cannot consume its
+// peers' retries or hold the batch's in-flight slot for N sequential round trips.
 func (b *BatchingEmbeddingClient) retryIndividually(requests []*embeddingBatchRequest) {
+	var waitGroup sync.WaitGroup
+
 	for _, request := range requests {
-		providerCtx, cancel, cleanupContext := b.providerContext([]*embeddingBatchRequest{request})
-		vector, err := b.client.CreateEmbedding(providerCtx, request.input)
+		waitGroup.Go(func() {
+			providerCtx, cancel, cleanupContext := b.providerContext([]*embeddingBatchRequest{request})
+			vector, err := b.client.CreateEmbedding(providerCtx, request.input)
 
-		cancel()
-		cleanupContext()
+			cancel()
+			cleanupContext()
 
-		request.result <- embeddingBatchResult{vector: vector, err: err}
+			request.result <- embeddingBatchResult{vector: vector, err: err}
+		})
 	}
+
+	waitGroup.Wait()
 }
 
 func (b *BatchingEmbeddingClient) providerContext(

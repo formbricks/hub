@@ -234,6 +234,14 @@ func TestTenantEmbeddingBackfillStaysInsideTenant(t *testing.T) {
 	}
 	bID := create(tenantB, "other tenant")
 
+	exists, err := embeddingsRepo.TenantExistsForEmbeddingBackfill(ctx, tenantA)
+	require.NoError(t, err)
+	assert.True(t, exists, "a tenant with feedback records is known to the backfill command")
+
+	exists, err = embeddingsRepo.TenantExistsForEmbeddingBackfill(ctx, uuid.NewString())
+	require.NoError(t, err)
+	assert.False(t, exists, "an unknown tenant ID is distinguishable from a fully backfilled tenant")
+
 	count, err := embeddingsRepo.CountTenantFeedbackRecordsForBackfillByInputKind(
 		ctx, tenantA, model, models.EmbeddingInputKindTaxonomyTranslated)
 	require.NoError(t, err)

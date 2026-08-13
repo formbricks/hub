@@ -158,6 +158,21 @@ func run() int {
 		return exitSuccess
 	}
 
+	if *tenantID != "" {
+		tenantExists, tenantErr := embeddingsRepo.TenantExistsForEmbeddingBackfill(ctx, *tenantID)
+		if tenantErr != nil {
+			slog.Error("Backfill tenant validation failed", "error", tenantErr, "tenant_id", *tenantID)
+
+			return exitFailure
+		}
+
+		if !tenantExists {
+			slog.Error("No Hub data found for tenant; check -tenant-id", "tenant_id", *tenantID)
+
+			return exitFailure
+		}
+	}
+
 	if *countOnly {
 		var count int
 		if *tenantID == "" {

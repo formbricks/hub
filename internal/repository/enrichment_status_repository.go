@@ -124,14 +124,16 @@ const countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + enrichmentC
 const countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
 	WHERE fr.field_type = 'text'`
 
-// countTaxonomyEmbeddingBacklogAggregateSQL counts records eligible for the taxonomy-translated
-// input but still missing the exact configured taxonomy model. It deliberately mirrors the
-// taxonomy backfill eligibility predicate so the operational gauge and the repair command agree
-// about what remains. $1 = taxonomy embedding model.
+// countTaxonomyEmbeddingBacklogAggregateSQL counts text records eligible for the
+// taxonomy-translated input but still missing the exact configured taxonomy model. field_type is
+// load-bearing here: only text records enter the live translation-to-taxonomy pipeline, so counting
+// categorical rows carrying value_text would create a permanent non-zero gauge floor. $1 = taxonomy
+// embedding model.
 const countTaxonomyEmbeddingBacklogAggregateSQL = `
 	SELECT COUNT(*)
 	FROM feedback_records fr
-	WHERE COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+	WHERE fr.field_type = 'text'
+	  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
 	  AND NOT EXISTS (
 		SELECT 1
 		FROM embeddings e

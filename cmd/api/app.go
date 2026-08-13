@@ -612,14 +612,8 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	if a.metrics != nil && a.metrics.EnrichmentBacklog != nil {
-		embeddingProvider, embeddingModel := embeddingProviderAndModel(a.cfg)
-
-		taxonomyEmbeddingModel := ""
-		if embeddingProvider != "" &&
-			(a.cfg.Taxonomy.ServiceURL != "" || a.cfg.Taxonomy.ServiceToken != "") {
-			taxonomyEmbeddingModel = service.TaxonomyEmbeddingModel(
-				embeddingModel, a.cfg.Taxonomy.EmbeddingModel)
-		}
+		translationConfigured := a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != ""
+		taxonomyEmbeddingModel := taxonomyEmbeddingBacklogModel(a.cfg)
 
 		// Tracked, unlike the pollers above, because this one has cleanup that Shutdown must not
 		// race: it withdraws the backlog series and releases the leader's advisory lock on the way
@@ -634,7 +628,7 @@ func (a *App) Run(ctx context.Context) error {
 				// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
 				// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
 				defaultLang:            strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
-				translationConfigured:  a.cfg.Translation.Provider != "" && a.cfg.Translation.Model != "",
+				translationConfigured:  translationConfigured,
 				sentimentConfigured:    a.cfg.Sentiment.Enabled(),
 				emotionsConfigured:     a.cfg.Emotions.Enabled(),
 				taxonomyEmbeddingModel: taxonomyEmbeddingModel,
@@ -666,6 +660,19 @@ func (a *App) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		return nil
 	}
+}
+
+// taxonomyEmbeddingBacklogModel returns the model whose missing text records should be reported.
+// Taxonomy embeddings are produced by successful translation writes, so the gauge is absent unless
+// embeddings, translation, and the taxonomy integration are all configured.
+func taxonomyEmbeddingBacklogModel(cfg *config.Config) string {
+	provider, embeddingModel := embeddingProviderAndModel(cfg)
+	if provider == "" || cfg.Translation.Provider == "" || cfg.Translation.Model == "" ||
+		(cfg.Taxonomy.ServiceURL == "" && cfg.Taxonomy.ServiceToken == "") {
+		return ""
+	}
+
+	return service.TaxonomyEmbeddingModel(embeddingModel, cfg.Taxonomy.EmbeddingModel)
 }
 
 // riverDepthQueues is the fixed queue set the depth poller reports — every queue the Hub
