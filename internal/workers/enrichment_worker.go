@@ -41,9 +41,15 @@ type FailureRecorder interface {
 	RecordFailure(ctx context.Context, failure models.EnrichmentFailure) error
 }
 
-// enrichmentFailureWriteTimeout bounds the detached marker write. Short on purpose: it runs after
-// a job has already failed, often while the provider is unhealthy, and must not extend the job.
-const enrichmentFailureWriteTimeout = 5 * time.Second
+// enrichmentFailureWriteTimeout bounds the detached marker write.
+//
+// It DOES extend the failing job by up to this long, because the write runs inside Work() before
+// it returns. That is the cost of recording the failure at all, and it is bounded deliberately:
+// the write happens only on a final or terminal attempt, and a correlated outage — a provider
+// failing every call while the database is also slow — is exactly when many jobs reach that point
+// at once and worker slots are scarcest. One second is enough for a healthy write and cheap to
+// lose when nothing is healthy.
+const enrichmentFailureWriteTimeout = time.Second
 
 // enrichmentJobTimeout limits one enrichment job run; shared by all four pipelines (LLM and
 // embedding calls dominate, and every provider client keeps its own shorter HTTP timeout).
@@ -332,7 +338,9 @@ func (w *enrichmentWorker[A, R]) markFailed(
 		return
 	}
 
-	if errors.Is(err, huberrors.ErrTenantWriteConflict) {
+	// Both mean the record is going away, so there is nothing left to describe: a purge holds the
+	// tenant, or the record was deleted between the enrichment attempt and this write.
+	if errors.Is(err, huberrors.ErrTenantWriteConflict) || errors.Is(err, huberrors.ErrNotFound) {
 		log.Info(w.cfg.name+": failure marker skipped, record or tenant is going away", "error", err)
 
 		return

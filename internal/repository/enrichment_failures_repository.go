@@ -30,6 +30,10 @@ func NewEnrichmentFailuresRepository(db *pgxpool.Pool) *EnrichmentFailuresReposi
 	return &EnrichmentFailuresRepository{db: db}
 }
 
+// enrichmentFailureLockKeyParam is the placeholder carrying the tenant write-lock key, after the
+// six inserted values.
+const enrichmentFailureLockKeyParam = 7
+
 // recordEnrichmentFailureSQL upserts the marker for one (record, enrichment).
 //
 // Upsert rather than insert because a record can fail again after a later edit re-enqueues it, and
@@ -41,10 +45,6 @@ func NewEnrichmentFailuresRepository(db *pgxpool.Pool) *EnrichmentFailuresReposi
 // deliberately NOT updated on conflict — a record cannot change tenant, so an incoming value that
 // disagreed with the stored one would be a bug worth preserving the evidence of rather than
 // silently overwriting.
-// enrichmentFailureLockKeyParam is the placeholder carrying the tenant write-lock key, after the
-// six inserted values.
-const enrichmentFailureLockKeyParam = 7
-
 // A var rather than a const because tenantWriteLockGate is a function call; built once at package
 // init, and every fragment is a compile-time literal, never caller input.
 var recordEnrichmentFailureSQL = `
@@ -60,11 +60,17 @@ var recordEnrichmentFailureSQL = `
 
 // RecordFailure persists one enrichment failure.
 //
-// Two outcomes are reported as ErrTenantWriteConflict rather than as errors of their own, because
-// both mean "the record is going away and the marker is moot": the tenant write lock being refused
-// (a purge is running), and the foreign key failing (the record was deleted between the enrichment
-// attempt and this write). Callers treat that as a benign skip — a marker is bookkeeping, and
-// failing an enrichment job over it would be the wrong trade.
+// Two outcomes are benign skips rather than errors worth failing a job over, and they are reported
+// SEPARATELY because the rest of the worker treats them differently:
+//
+//   - ErrTenantWriteConflict — the tenant write lock was refused, so a purge is running. Elsewhere
+//     in this worker that error means "retry".
+//   - ErrNotFound — the foreign key failed, so the record was deleted between the enrichment
+//     attempt and this write. Retrying that could only fail again.
+//
+// markFailed swallows both today, but collapsing them into one type would leave a trap for the
+// next caller that propagates instead of swallowing: a deleted record would read as a transient
+// conflict and be retried forever.
 func (r *EnrichmentFailuresRepository) RecordFailure(ctx context.Context, failure models.EnrichmentFailure) error {
 	tag, err := r.db.Exec(ctx, recordEnrichmentFailureSQL,
 		failure.FeedbackRecordID,
@@ -78,7 +84,7 @@ func (r *EnrichmentFailuresRepository) RecordFailure(ctx context.Context, failur
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolationSQLState {
-			return huberrors.NewTenantWriteConflictError("feedback record no longer exists; failure marker skipped")
+			return huberrors.NewNotFoundError("feedback record", "feedback record no longer exists; failure marker skipped")
 		}
 
 		return fmt.Errorf("record enrichment failure: %w", err)

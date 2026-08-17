@@ -526,3 +526,30 @@ func TestFeedbackSentimentWorker_FailureMarkerErrorDoesNotChangeOutcome(t *testi
 		"the job must fail for the provider reason, not the bookkeeping one")
 	assert.Equal(t, 1, metrics.outcomes["failed_final"])
 }
+
+// TestFeedbackSentimentWorker_MarkerSkipConditionsAreBenign covers both ways the marker write can
+// legitimately not happen. They are distinct error types on purpose — elsewhere in this worker a
+// tenant write conflict means "retry" while a missing record means "skip" — but for bookkeeping
+// both are benign, and neither may change the job's outcome.
+func TestFeedbackSentimentWorker_MarkerSkipConditionsAreBenign(t *testing.T) {
+	for name, recorderErr := range map[string]error{
+		"purge holds the tenant": huberrors.NewTenantWriteConflictError("purge in progress"),
+		"record already deleted": huberrors.NewNotFoundError("feedback record", "gone"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := "Bonjour"
+			metrics := newCountingSentimentMetrics()
+			failures := &recordingFailureRecorder{err: recorderErr}
+			svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
+			client := &stubSentimentClient{err: errors.New("provider down")}
+			worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, failures)
+
+			err := worker.Work(context.Background(), sentimentJob(3))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "provider down",
+				"the job still fails for the provider reason")
+			assert.Equal(t, 1, metrics.outcomes["failed_final"],
+				"a skipped marker must not change the recorded outcome")
+		})
+	}
+}
