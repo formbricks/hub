@@ -230,12 +230,18 @@ func generateContentText(resp *genai.GenerateContentResponse) (string, error) {
 	// Checked BEFORE the text, because MAX_TOKENS usually truncates rather than blanks the output.
 	// Returning a truncated result would store a half-finished translation as complete, or produce
 	// invalid JSON that reads as a transient parse failure when it is permanent for this input.
-	if len(resp.Candidates) > 0 && resp.Candidates[0].FinishReason == genai.FinishReasonMaxTokens {
+	if firstFinishReason(resp) == genai.FinishReasonMaxTokens {
 		return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength,
 			fmt.Errorf("%w: finish reason: %s", ErrNoCompletionInResponse, genai.FinishReasonMaxTokens))
 	}
 
-	out := strings.TrimSpace(resp.Text())
+	// resp.Text() guards an empty Candidates slice and a nil Content, but NOT a nil candidate
+	// pointer (genai types.go), so it panics on `"candidates": [null]`. Guard before calling it.
+	out := ""
+	if firstCandidate(resp) != nil {
+		out = strings.TrimSpace(resp.Text())
+	}
+
 	if out != "" {
 		return out, nil
 	}
@@ -247,6 +253,32 @@ func generateContentText(resp *genai.GenerateContentResponse) (string, error) {
 	}
 
 	return "", err
+}
+
+// firstCandidate returns the first usable candidate, or nil when the response carries none.
+//
+// Candidates is a slice of POINTERS, so `"candidates": [null]` on the wire unmarshals to a slice
+// holding nil, and every bare resp.Candidates[0].X in this file would panic on it. The SDK's own
+// Text() has the same gap — it checks the slice length and a nil Content but not a nil candidate —
+// so callers must guard before reaching it. Reading candidates through one accessor keeps that in
+// a single place.
+func firstCandidate(resp *genai.GenerateContentResponse) *genai.Candidate {
+	if resp == nil || len(resp.Candidates) == 0 {
+		return nil
+	}
+
+	return resp.Candidates[0]
+}
+
+// firstFinishReason reads the first candidate's finish reason, or "" when there is no usable
+// candidate.
+func firstFinishReason(resp *genai.GenerateContentResponse) genai.FinishReason {
+	candidate := firstCandidate(resp)
+	if candidate == nil {
+		return ""
+	}
+
+	return candidate.FinishReason
 }
 
 // terminalEmptyReason classifies an empty response as permanent for this input, or leaves it
@@ -262,11 +294,7 @@ func terminalEmptyReason(resp *genai.GenerateContentResponse) (huberrors.Termina
 		return huberrors.TerminalReasonContentFilter, true
 	}
 
-	if len(resp.Candidates) == 0 {
-		return "", false
-	}
-
-	switch resp.Candidates[0].FinishReason {
+	switch firstFinishReason(resp) {
 	case genai.FinishReasonSafety, genai.FinishReasonProhibitedContent,
 		genai.FinishReasonBlocklist, genai.FinishReasonSPII,
 		genai.FinishReasonImageSafety, genai.FinishReasonImageProhibitedContent:
@@ -302,11 +330,8 @@ func emptyResponseDetail(resp *genai.GenerateContentResponse) string {
 		return detail
 	}
 
-	if len(resp.Candidates) > 0 {
-		candidate := resp.Candidates[0]
-		if candidate.FinishReason != "" && candidate.FinishReason != genai.FinishReasonStop {
-			return fmt.Sprintf(": finish reason: %s", candidate.FinishReason)
-		}
+	if finish := firstFinishReason(resp); finish != "" && finish != genai.FinishReasonStop {
+		return fmt.Sprintf(": finish reason: %s", finish)
 	}
 
 	return ""

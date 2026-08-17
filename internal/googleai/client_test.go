@@ -414,3 +414,27 @@ func TestGenerateContentTextTruncatedIsTerminal(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, huberrors.TerminalReasonLength, reason)
 }
+
+// TestNilCandidateDoesNotPanic covers a response carrying a nil candidate pointer. Candidates is a
+// slice of POINTERS, so `"candidates": [null]` on the wire produces exactly this, and a bare
+// resp.Candidates[0].FinishReason panics. It matters more than it looks: the MAX_TOKENS check runs
+// before the text is read, so this path is taken by every response, not only empty ones.
+func TestNilCandidateDoesNotPanic(t *testing.T) {
+	resp := &genai.GenerateContentResponse{Candidates: []*genai.Candidate{nil}}
+
+	require.NotPanics(t, func() {
+		_, err := generateContentText(resp)
+		require.Error(t, err, "a response with no usable candidate has no text")
+		// Nothing about a nil candidate says the input is at fault, so it must stay retryable.
+		require.NotErrorIs(t, err, huberrors.ErrTerminalProvider)
+	})
+
+	require.NotPanics(t, func() {
+		_, terminal := terminalEmptyReason(resp)
+		require.False(t, terminal)
+	})
+
+	require.NotPanics(t, func() {
+		_ = emptyResponseDetail(resp)
+	})
+}

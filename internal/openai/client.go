@@ -369,8 +369,13 @@ func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 		if choice.FinishReason != "" && choice.FinishReason != "stop" {
 			err := fmt.Errorf("%w: finish reason %q", ErrNoCompletionInResponse, choice.FinishReason)
 
-			if reason, terminal := terminalFinishReason(choice.FinishReason); terminal {
-				return "", huberrors.NewTerminalProviderError(reason, err)
+			// content_filter is the only terminal reason reachable here: length returns above,
+			// before the content is read, because it usually truncates rather than blanks the
+			// output. Everything else — including the tool finishes we never request — stays
+			// retryable, since a false terminal abandons a record while a false transient only
+			// costs a few calls.
+			if choice.FinishReason == "content_filter" {
+				return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonContentFilter, err)
 			}
 
 			return "", err
@@ -380,24 +385,6 @@ func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 	}
 
 	return out, nil
-}
-
-// terminalFinishReason classifies a non-stop finish reason as permanent for this input, or leaves
-// it retryable.
-//
-// Only the two reasons determined by the CONTENT are terminal. Everything else — including an
-// empty response with no reason at all, and tool/function finishes we do not request — stays
-// retryable on purpose: a false terminal abandons a record for good, while a false transient
-// costs a few wasted calls. When in doubt, retry.
-func terminalFinishReason(finish string) (huberrors.TerminalReason, bool) {
-	switch finish {
-	case "content_filter":
-		return huberrors.TerminalReasonContentFilter, true
-	case "length":
-		return huberrors.TerminalReasonLength, true
-	default:
-		return "", false
-	}
 }
 
 // wrapChatCompletionError wraps a chat-completion SDK error, mapping a 429 to a
