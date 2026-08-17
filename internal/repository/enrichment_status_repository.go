@@ -27,12 +27,23 @@ func NewEnrichmentStatusRepository(db *pgxpool.Pool) *EnrichmentStatusRepository
 // switched on, translation only records with a resolvable effective target language. The
 // deployment-level (provider/model) gate is applied by the caller.
 type EnrichmentStatusCounts struct {
-	TranslationEligible      int64
-	TranslationDone          int64
-	SentimentEligible        int64
-	SentimentDone            int64
-	EmotionsEligible         int64
-	EmotionsDone             int64
+	TranslationEligible int64
+	TranslationDone     int64
+	SentimentEligible   int64
+	SentimentDone       int64
+	EmotionsEligible    int64
+	EmotionsDone        int64
+
+	// Failed counts records whose last enrichment attempt gave up and which are STILL un-enriched,
+	// split by whether retrying could ever help. FailedTerminal is a property of the record's own
+	// text, so it will not resolve on its own; Failed can, and is what a retry acts on.
+	TranslationFailed         int64
+	TranslationFailedTerminal int64
+	SentimentFailed           int64
+	SentimentFailedTerminal   int64
+	EmotionsFailed            int64
+	EmotionsFailedTerminal    int64
+
 	TaxonomyEmbeddingPending int64
 }
 
@@ -78,11 +89,31 @@ const (
 // the classify backfill re-processes them.
 const enrichmentEmotionsDone = `(fr.emotions_classified_at IS NOT NULL OR fr.emotions IS NOT NULL)`
 
-// enrichmentCountSelect is the shared six-column SELECT list — {sentiment, emotions, translation} ×
-// {eligible, done} — used by both the per-tenant and aggregate queries so the predicates can't
-// drift between them. Column order must match the EnrichmentStatusCounts scan order below. All
-// fragments are static constants (never user input).
-const enrichmentCountSelect = `
+// enrichmentFailedFor builds the two failure predicates for one enrichment from its already-joined
+// marker row and its own done-predicate.
+//
+// A failure counts only while the record is still UN-ENRICHED. That is what makes the marker rows
+// advisory rather than authoritative: a later success needs no cleanup write, because a stale row
+// stops counting the moment the record is done. It also means the count can never contradict the
+// record itself.
+func enrichmentFailedFor(alias, notDone string) (failed, terminal string) {
+	present := alias + ".feedback_record_id IS NOT NULL AND " + notDone
+
+	return present + " AND NOT " + alias + ".terminal", present + " AND " + alias + ".terminal"
+}
+
+// The three done-predicates, negated, as used by the failure counts above.
+const (
+	enrichmentSentimentNotDone   = `fr.sentiment IS NULL`
+	enrichmentEmotionsNotDone    = `NOT ` + enrichmentEmotionsDone
+	enrichmentTranslationNotDone = `(fr.translation_lang_key IS DISTINCT FROM ` + enrichmentEffectiveTarget + `)`
+)
+
+// enrichmentCountSelect is the shared twelve-column SELECT list — {sentiment, emotions,
+// translation} × {eligible, done, failed, failed_terminal} — used by both the per-tenant and
+// aggregate queries so the predicates can't drift between them. Column order must match the
+// EnrichmentStatusCounts scan order below. All fragments are static constants (never user input).
+var enrichmentCountSelect = `
 		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentSentimentOn + `),
 		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentSentimentOn + ` AND fr.sentiment IS NOT NULL),
 		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentEmotionsOn + `),
@@ -91,11 +122,46 @@ const enrichmentCountSelect = `
 		COUNT(*) FILTER (
 			WHERE ` + enrichmentEligibleText + `
 			AND ` + enrichmentEffectiveTarget + ` <> ''
-			AND fr.translation_lang_key = ` + enrichmentEffectiveTarget + `)`
+			AND fr.translation_lang_key = ` + enrichmentEffectiveTarget + `),` +
+	failureCountColumns()
 
+// failureCountColumns renders the six failure columns, in the same {sentiment, emotions,
+// translation} order as the eligible/done columns above. Each pair is gated by the same
+// eligibility and per-tenant switch as its enrichment, so a tenant that switched sentiment off
+// never reports sentiment failures for work that will not run.
+func failureCountColumns() string {
+	sentimentFailed, sentimentTerminal := enrichmentFailedFor("fs", enrichmentSentimentNotDone)
+	emotionsFailed, emotionsTerminal := enrichmentFailedFor("fe", enrichmentEmotionsNotDone)
+	translationFailed, translationTerminal := enrichmentFailedFor("ft", enrichmentTranslationNotDone)
+
+	col := func(gate, predicate string) string {
+		return "\n\t\tCOUNT(*) FILTER (WHERE " + enrichmentEligibleText + " AND " + gate + " AND " + predicate + ")"
+	}
+
+	return col(enrichmentSentimentOn, sentimentFailed) + "," +
+		col(enrichmentSentimentOn, sentimentTerminal) + "," +
+		col(enrichmentEmotionsOn, emotionsFailed) + "," +
+		col(enrichmentEmotionsOn, emotionsTerminal) + "," +
+		col(enrichmentEffectiveTarget+" <> ''", translationFailed) + "," +
+		col(enrichmentEffectiveTarget+" <> ''", translationTerminal)
+}
+
+// enrichmentCountFrom joins the failure markers once per enrichment. Each join hits the table's
+// primary key (feedback_record_id, enrichment) and can match at most one row, so this stays a
+// lookup rather than a fan-out — the counts would be wrong if it did not.
+//
+// The join is on feedback_record_id ONLY. The markers carry a tenant_id column, but it exists for
+// its own index and is never the tenant boundary: that stays fr.tenant_id in the outer WHERE, so
+// the boundary has exactly one source of truth. See migration 022.
 const enrichmentCountFrom = `
 	FROM feedback_records fr
-	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id`
+	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+	LEFT JOIN feedback_record_enrichment_failures fs
+		ON fs.feedback_record_id = fr.id AND fs.enrichment = 'sentiment'
+	LEFT JOIN feedback_record_enrichment_failures fe
+		ON fe.feedback_record_id = fr.id AND fe.enrichment = 'emotions'
+	LEFT JOIN feedback_record_enrichment_failures ft
+		ON ft.feedback_record_id = fr.id AND ft.enrichment = 'translation'`
 
 // The `fr.field_type = 'text'` predicate in the outer WHERE of both queries below is redundant
 // with enrichmentEligibleText inside every FILTER (so it can never change a count); it is hoisted
@@ -104,7 +170,7 @@ const enrichmentCountFrom = `
 // countEnrichmentStatusSQL counts eligible/done per enrichment for ONE tenant. $1 = deployment
 // default target language, $2 = tenant_id. The (tenant_id, field_type) pair matches
 // idx_feedback_records_tenant_field_type, so cost scales with the tenant's text-record count.
-const countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
+var countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
 	WHERE fr.tenant_id = $2 AND fr.field_type = 'text'`
 
 // countEnrichmentBacklogAggregateSQL is the same SELECT without the tenant filter: it sums
@@ -121,7 +187,7 @@ const countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + enrichmentC
 // for a whole-table aggregate.) The cost is instead bounded by running the scan infrequently
 // (enrichmentBacklogInterval), under a statement timeout, and on exactly ONE replica via the
 // leader election below.
-const countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
+var countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
 	WHERE fr.field_type = 'text'`
 
 // countTaxonomyEmbeddingBacklogAggregateSQL counts text records eligible for the
@@ -360,6 +426,9 @@ func scanEnrichmentCounts(row pgx.Row, what string) (EnrichmentStatusCounts, err
 		&counts.SentimentEligible, &counts.SentimentDone,
 		&counts.EmotionsEligible, &counts.EmotionsDone,
 		&counts.TranslationEligible, &counts.TranslationDone,
+		&counts.SentimentFailed, &counts.SentimentFailedTerminal,
+		&counts.EmotionsFailed, &counts.EmotionsFailedTerminal,
+		&counts.TranslationFailed, &counts.TranslationFailedTerminal,
 	); err != nil {
 		return EnrichmentStatusCounts{}, fmt.Errorf("%s: %w", what, err)
 	}

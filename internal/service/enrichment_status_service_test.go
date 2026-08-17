@@ -52,6 +52,11 @@ var fullCounts = repository.EnrichmentStatusCounts{
 	TranslationEligible: 10, TranslationDone: 4,
 	SentimentEligible: 8, SentimentDone: 3,
 	EmotionsEligible: 6, EmotionsDone: 2,
+	// Distinct values per bucket so a transposition between failed and failed_terminal, or across
+	// enrichments, shows up as a wrong number rather than a coincidence.
+	TranslationFailed: 5, TranslationFailedTerminal: 1,
+	SentimentFailed: 4, SentimentFailedTerminal: 2,
+	EmotionsFailed: 3, EmotionsFailedTerminal: 7,
 }
 
 func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
@@ -72,9 +77,9 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 				DefaultLang: "en-US", TranslationConfigured: true, SentimentConfigured: true, EmotionsConfigured: true,
 			},
 			settings:    &models.TenantSettings{Settings: models.EnrichmentSettings{TargetLanguage: "de-DE"}},
-			wantTrans:   models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
-			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
-			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+			wantTrans:   models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4, Failed: 5, FailedTerminal: 1},
+			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3, Failed: 4, FailedTerminal: 2},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2, Failed: 3, FailedTerminal: 7},
 		},
 		{
 			name: "sentiment not deployment-configured is zeroed",
@@ -82,11 +87,11 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 				DefaultLang: "en-US", TranslationConfigured: true, SentimentConfigured: false, EmotionsConfigured: true,
 			},
 			settings:  &models.TenantSettings{Settings: models.EnrichmentSettings{TargetLanguage: "de-DE"}},
-			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
+			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4, Failed: 5, FailedTerminal: 1},
 			wantSent: models.EnrichmentTypeStatus{
 				Enabled: false, DisabledReason: models.DisabledReasonNotConfigured,
 			},
-			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2, Failed: 3, FailedTerminal: 7},
 		},
 		{
 			name: "tenant emotions switch off is zeroed",
@@ -96,8 +101,8 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			settings: &models.TenantSettings{Settings: models.EnrichmentSettings{
 				TargetLanguage: "de-DE", EmotionsEnabled: &emotionsOff,
 			}},
-			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
-			wantSent:  models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
+			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4, Failed: 5, FailedTerminal: 1},
+			wantSent:  models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3, Failed: 4, FailedTerminal: 2},
 			wantEmotion: models.EnrichmentTypeStatus{
 				Enabled: false, DisabledReason: models.DisabledReasonSwitchedOff,
 			},
@@ -111,8 +116,8 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			wantTrans: models.EnrichmentTypeStatus{
 				Enabled: false, DisabledReason: models.DisabledReasonNoTargetLanguage,
 			},
-			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
-			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3, Failed: 4, FailedTerminal: 2},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2, Failed: 3, FailedTerminal: 7},
 		},
 		{
 			// Translation has a perfectly good target, so only the deployment gate can be the
@@ -125,8 +130,8 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			wantTrans: models.EnrichmentTypeStatus{
 				Enabled: false, DisabledReason: models.DisabledReasonNotConfigured,
 			},
-			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
-			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3, Failed: 4, FailedTerminal: 2},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2, Failed: 3, FailedTerminal: 7},
 		},
 		{
 			name: "tenant sentiment switch off is reported as switched_off",
@@ -136,11 +141,11 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			settings: &models.TenantSettings{Settings: models.EnrichmentSettings{
 				TargetLanguage: "de-DE", SentimentEnabled: &sentimentOff,
 			}},
-			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
+			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4, Failed: 5, FailedTerminal: 1},
 			wantSent: models.EnrichmentTypeStatus{
 				Enabled: false, DisabledReason: models.DisabledReasonSwitchedOff,
 			},
-			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2, Failed: 3, FailedTerminal: 7},
 		},
 		{
 			// Both gates closed at once. The deployment gate must win: sending a tenant to a switch
@@ -152,11 +157,11 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			settings: &models.TenantSettings{Settings: models.EnrichmentSettings{
 				TargetLanguage: "de-DE", SentimentEnabled: &sentimentOff,
 			}},
-			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
+			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4, Failed: 5, FailedTerminal: 1},
 			wantSent: models.EnrichmentTypeStatus{
 				Enabled: false, DisabledReason: models.DisabledReasonNotConfigured,
 			},
-			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2, Failed: 3, FailedTerminal: 7},
 		},
 		{
 			name: "translation enabled via default-language fallback",
@@ -164,9 +169,9 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 				DefaultLang: "en-US", TranslationConfigured: true, SentimentConfigured: true, EmotionsConfigured: true,
 			},
 			settings:    &models.TenantSettings{Settings: models.EnrichmentSettings{}},
-			wantTrans:   models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
-			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
-			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+			wantTrans:   models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4, Failed: 5, FailedTerminal: 1},
+			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3, Failed: 4, FailedTerminal: 2},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2, Failed: 3, FailedTerminal: 7},
 		},
 	}
 
@@ -198,6 +203,17 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			assert.False(t, got.AsOf.IsZero(), "as_of is stamped")
 			assert.WithinDuration(t, time.Now().UTC(), got.AsOf, time.Hour, "as_of is a current stamp")
 			assert.Equal(t, time.UTC, got.AsOf.Location(), "as_of is UTC")
+
+			// A disabled enrichment reports no counts at all, including failures: the API must not
+			// show a backlog of failed work for a pipeline that will never run.
+			for name, status := range map[string]models.EnrichmentTypeStatus{
+				"translation": got.Translation, "sentiment": got.Sentiment, "emotions": got.Emotions,
+			} {
+				if !status.Enabled {
+					assert.Zero(t, status.Failed, "%s: disabled must report no failures", name)
+					assert.Zero(t, status.FailedTerminal, "%s: disabled must report no terminal failures", name)
+				}
+			}
 
 			// enabled and disabled_reason are derived from one decision, so they can never disagree.
 			for name, status := range map[string]models.EnrichmentTypeStatus{

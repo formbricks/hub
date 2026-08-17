@@ -33,9 +33,20 @@ const (
 // DisabledReason is present exactly when Enabled is false, and absent otherwise — the two are
 // derived from one decision (see enrichmentTypeStatus), so they cannot contradict each other.
 type EnrichmentTypeStatus struct {
-	Enabled        bool           `json:"enabled"`
-	Eligible       int64          `json:"eligible"`
-	Done           int64          `json:"done"`
+	Enabled  bool  `json:"enabled"`
+	Eligible int64 `json:"eligible"`
+	Done     int64 `json:"done"`
+	// Failed is eligible records whose last attempt gave up but which a retry could still rescue —
+	// a provider outage, a timeout. FailedTerminal is those the provider will never accept,
+	// because the outcome is a property of the record's own text: a content-policy block, a
+	// refusal, an input past the model's limit.
+	//
+	// The split is the difference between "3 failed — retry" and "1 can't be processed", and it is
+	// also what stops anything re-enqueueing unfinished work from looping on the second group
+	// forever. Both count only while the record is still un-enriched, so a later success removes it
+	// from either without a cleanup write.
+	Failed         int64          `json:"failed"`
+	FailedTerminal int64          `json:"failed_terminal"`
 	DisabledReason DisabledReason `json:"disabled_reason,omitempty"`
 }
 

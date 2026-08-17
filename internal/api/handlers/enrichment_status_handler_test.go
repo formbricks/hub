@@ -76,9 +76,11 @@ func TestEnrichmentStatusHandler_GetStatus(t *testing.T) {
 	// check them.
 	t.Run("wire format matches the published schema", func(t *testing.T) {
 		resp := &models.EnrichmentStatusResponse{
-			TenantID:    "t1",
-			AsOf:        time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC),
-			Translation: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
+			TenantID: "t1",
+			AsOf:     time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC),
+			Translation: models.EnrichmentTypeStatus{
+				Enabled: true, Eligible: 10, Done: 4, Failed: 2, FailedTerminal: 1,
+			},
 			Sentiment: models.EnrichmentTypeStatus{
 				Enabled: false, DisabledReason: models.DisabledReasonSwitchedOff,
 			},
@@ -96,6 +98,21 @@ func TestEnrichmentStatusHandler_GetStatus(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 
 		assert.Equal(t, "t1", body["tenant_id"])
+
+		// failed / failed_terminal are REQUIRED in the schema, so they must be present even when
+		// zero — an omitted required field breaks a strict generated client.
+		for _, name := range []string{"translation", "sentiment", "emotions"} {
+			enrichment, isObj := body[name].(map[string]any)
+			require.True(t, isObj, "%s is an object", name)
+
+			for _, field := range []string{"enabled", "eligible", "done", "failed", "failed_terminal"} {
+				_, present := enrichment[field]
+				assert.True(t, present, "%s.%s must always be present", name, field)
+			}
+		}
+
+		assert.InDelta(t, 2, body["translation"].(map[string]any)["failed"], 0.001)
+		assert.InDelta(t, 1, body["translation"].(map[string]any)["failed_terminal"], 0.001)
 		// RFC 3339 in UTC, matching `format: date-time` in the schema. Parsing it back is what
 		// proves the client can, which is the whole reason the field exists.
 		asOf, parseErr := time.Parse(time.RFC3339Nano, body["as_of"].(string))

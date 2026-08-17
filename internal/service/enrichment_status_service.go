@@ -89,15 +89,24 @@ func (s *EnrichmentStatusService) GetEnrichmentStatus(
 		Translation: enrichmentTypeStatus(
 			translationDisabledReason(s.translationConfigured,
 				resolveTargetLang(settings.Settings.TargetLanguage, s.defaultLang)),
-			counts.TranslationEligible, counts.TranslationDone),
+			enrichmentCounts{
+				eligible: counts.TranslationEligible, done: counts.TranslationDone,
+				failed: counts.TranslationFailed, failedTerminal: counts.TranslationFailedTerminal,
+			}),
 		Sentiment: enrichmentTypeStatus(
 			switchedEnrichmentDisabledReason(s.sentimentConfigured,
 				settings.Settings.SentimentEnrichmentEnabled()),
-			counts.SentimentEligible, counts.SentimentDone),
+			enrichmentCounts{
+				eligible: counts.SentimentEligible, done: counts.SentimentDone,
+				failed: counts.SentimentFailed, failedTerminal: counts.SentimentFailedTerminal,
+			}),
 		Emotions: enrichmentTypeStatus(
 			switchedEnrichmentDisabledReason(s.emotionsConfigured,
 				settings.Settings.EmotionsEnrichmentEnabled()),
-			counts.EmotionsEligible, counts.EmotionsDone),
+			enrichmentCounts{
+				eligible: counts.EmotionsEligible, done: counts.EmotionsDone,
+				failed: counts.EmotionsFailed, failedTerminal: counts.EmotionsFailedTerminal,
+			}),
 	}, nil
 }
 
@@ -141,10 +150,25 @@ func translationDisabledReason(configured bool, effectiveTarget string) models.D
 //
 // Enabled and DisabledReason are derived from the same value here rather than passed separately, so
 // the response cannot carry an enabled enrichment with a reason, or a disabled one without.
-func enrichmentTypeStatus(reason models.DisabledReason, eligible, done int64) models.EnrichmentTypeStatus {
+// enrichmentCounts groups one enrichment's four numbers so they travel together. Passing them as
+// four positional int64s invited a silent transposition every time another pair was added.
+type enrichmentCounts struct {
+	eligible       int64
+	done           int64
+	failed         int64
+	failedTerminal int64
+}
+
+func enrichmentTypeStatus(reason models.DisabledReason, counts enrichmentCounts) models.EnrichmentTypeStatus {
 	if reason != "" {
 		return models.EnrichmentTypeStatus{Enabled: false, DisabledReason: reason}
 	}
 
-	return models.EnrichmentTypeStatus{Enabled: true, Eligible: eligible, Done: done}
+	return models.EnrichmentTypeStatus{
+		Enabled:        true,
+		Eligible:       counts.eligible,
+		Done:           counts.done,
+		Failed:         counts.failed,
+		FailedTerminal: counts.failedTerminal,
+	}
 }

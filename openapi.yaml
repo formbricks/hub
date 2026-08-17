@@ -1598,7 +1598,8 @@ paths:
                 is active for the tenant (deployment-configured and switched on / with a resolvable
                 target language), and `eligible`/`done` are directory-level counts of feedback records
                 that qualify and that have been enriched — the UI derives "in progress" as
-                `eligible - done`. When an enrichment is not enabled its counts are zero and
+                `eligible - done`, of which `failed` is retryable and `failed_terminal` never will be.
+                When an enrichment is not enabled its counts are zero and
                 `disabled_reason` names the gate that closed it, so the UI can explain *why* rather than
                 silently hiding the enrichment. `as_of` is when the counts were computed, which lets a
                 polling client derive throughput and an ETA without the Hub computing either. The response
@@ -3939,6 +3940,20 @@ components:
                     type: integer
                     format: int64
                     description: Eligible records that have been enriched.
+                failed:
+                    type: integer
+                    format: int64
+                    description: |
+                        Eligible records whose last enrichment attempt gave up but which a retry could still
+                        rescue — a provider outage, a timeout. Counted only while the record is still
+                        un-enriched, so a later success removes it without any cleanup.
+                failed_terminal:
+                    type: integer
+                    format: int64
+                    description: |
+                        Eligible records the provider will never accept, because the outcome is a property of
+                        the record's own text — a content-policy block, a refusal, an input past the model's
+                        limit. Retrying these cannot help; they resolve only if the text changes.
                 disabled_reason:
                     type: string
                     enum:
@@ -3957,6 +3972,8 @@ components:
                 - enabled
                 - eligible
                 - done
+                - failed
+                - failed_terminal
         EnrichmentStatusOutputBody:
             type: object
             additionalProperties: false
