@@ -179,7 +179,6 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 
 			svc := NewEnrichmentStatusService(params)
 
-			before := time.Now().UTC()
 			got, err := svc.GetEnrichmentStatus(context.Background(), "  tenant-1 ")
 			require.NoError(t, err)
 
@@ -189,11 +188,15 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			assert.Equal(t, testCase.wantSent, got.Sentiment)
 			assert.Equal(t, testCase.wantEmotion, got.Emotions)
 
-			// AsOf must be a real stamp taken during the call, not a zero value the JSON encoder
-			// would happily render as year 1 — a client differencing two of those gets nonsense.
+			// AsOf must be a real stamp, not the zero value the JSON encoder would happily render as
+			// year 1 — a client differencing two of those gets nonsense.
+			//
+			// Bounded generously rather than pinned between two time.Now() reads taken around the
+			// call: .UTC() strips the monotonic clock reading, so tight bounds are pure wall-clock
+			// and an NTP step backwards mid-test would fail them with no defect in the code. An hour
+			// still catches a zero value or a wrong clock source, and cannot flake.
 			assert.False(t, got.AsOf.IsZero(), "as_of is stamped")
-			assert.False(t, got.AsOf.Before(before), "as_of is taken during the call")
-			assert.False(t, got.AsOf.After(time.Now().UTC()), "as_of is not in the future")
+			assert.WithinDuration(t, time.Now().UTC(), got.AsOf, time.Hour, "as_of is a current stamp")
 			assert.Equal(t, time.UTC, got.AsOf.Location(), "as_of is UTC")
 
 			// enabled and disabled_reason are derived from one decision, so they can never disagree.
