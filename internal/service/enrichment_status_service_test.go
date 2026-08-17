@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,6 +56,7 @@ var fullCounts = repository.EnrichmentStatusCounts{
 
 func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 	emotionsOff := false
+	sentimentOff := false
 
 	cases := []struct {
 		name        string
@@ -79,9 +81,11 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			params: NewEnrichmentStatusServiceParams{
 				DefaultLang: "en-US", TranslationConfigured: true, SentimentConfigured: false, EmotionsConfigured: true,
 			},
-			settings:    &models.TenantSettings{Settings: models.EnrichmentSettings{TargetLanguage: "de-DE"}},
-			wantTrans:   models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
-			wantSent:    models.EnrichmentTypeStatus{Enabled: false},
+			settings:  &models.TenantSettings{Settings: models.EnrichmentSettings{TargetLanguage: "de-DE"}},
+			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
+			wantSent: models.EnrichmentTypeStatus{
+				Enabled: false, DisabledReason: models.DisabledReasonNotConfigured,
+			},
 			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
 		},
 		{
@@ -92,18 +96,66 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			settings: &models.TenantSettings{Settings: models.EnrichmentSettings{
 				TargetLanguage: "de-DE", EmotionsEnabled: &emotionsOff,
 			}},
-			wantTrans:   models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
-			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
-			wantEmotion: models.EnrichmentTypeStatus{Enabled: false},
+			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
+			wantSent:  models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
+			wantEmotion: models.EnrichmentTypeStatus{
+				Enabled: false, DisabledReason: models.DisabledReasonSwitchedOff,
+			},
 		},
 		{
 			name: "translation with no target and no default is zeroed",
 			params: NewEnrichmentStatusServiceParams{
 				DefaultLang: "", TranslationConfigured: true, SentimentConfigured: true, EmotionsConfigured: true,
 			},
-			settings:    &models.TenantSettings{Settings: models.EnrichmentSettings{}},
-			wantTrans:   models.EnrichmentTypeStatus{Enabled: false},
+			settings: &models.TenantSettings{Settings: models.EnrichmentSettings{}},
+			wantTrans: models.EnrichmentTypeStatus{
+				Enabled: false, DisabledReason: models.DisabledReasonNoTargetLanguage,
+			},
 			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+		},
+		{
+			// Translation has a perfectly good target, so only the deployment gate can be the
+			// reason — proves the target check does not shadow it.
+			name: "translation not deployment-configured reports not_configured, not no_target_language",
+			params: NewEnrichmentStatusServiceParams{
+				DefaultLang: "en-US", TranslationConfigured: false, SentimentConfigured: true, EmotionsConfigured: true,
+			},
+			settings: &models.TenantSettings{Settings: models.EnrichmentSettings{TargetLanguage: "de-DE"}},
+			wantTrans: models.EnrichmentTypeStatus{
+				Enabled: false, DisabledReason: models.DisabledReasonNotConfigured,
+			},
+			wantSent:    models.EnrichmentTypeStatus{Enabled: true, Eligible: 8, Done: 3},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+		},
+		{
+			name: "tenant sentiment switch off is reported as switched_off",
+			params: NewEnrichmentStatusServiceParams{
+				DefaultLang: "en-US", TranslationConfigured: true, SentimentConfigured: true, EmotionsConfigured: true,
+			},
+			settings: &models.TenantSettings{Settings: models.EnrichmentSettings{
+				TargetLanguage: "de-DE", SentimentEnabled: &sentimentOff,
+			}},
+			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
+			wantSent: models.EnrichmentTypeStatus{
+				Enabled: false, DisabledReason: models.DisabledReasonSwitchedOff,
+			},
+			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
+		},
+		{
+			// Both gates closed at once. The deployment gate must win: sending a tenant to a switch
+			// that changes nothing (because no provider is configured at all) is the wrong fix.
+			name: "both gates closed reports the deployment gate, not the tenant switch",
+			params: NewEnrichmentStatusServiceParams{
+				DefaultLang: "en-US", TranslationConfigured: true, SentimentConfigured: false, EmotionsConfigured: true,
+			},
+			settings: &models.TenantSettings{Settings: models.EnrichmentSettings{
+				TargetLanguage: "de-DE", SentimentEnabled: &sentimentOff,
+			}},
+			wantTrans: models.EnrichmentTypeStatus{Enabled: true, Eligible: 10, Done: 4},
+			wantSent: models.EnrichmentTypeStatus{
+				Enabled: false, DisabledReason: models.DisabledReasonNotConfigured,
+			},
 			wantEmotion: models.EnrichmentTypeStatus{Enabled: true, Eligible: 6, Done: 2},
 		},
 		{
@@ -127,6 +179,7 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 
 			svc := NewEnrichmentStatusService(params)
 
+			before := time.Now().UTC()
 			got, err := svc.GetEnrichmentStatus(context.Background(), "  tenant-1 ")
 			require.NoError(t, err)
 
@@ -135,6 +188,24 @@ func TestEnrichmentStatusService_GetEnrichmentStatus(t *testing.T) {
 			assert.Equal(t, testCase.wantTrans, got.Translation)
 			assert.Equal(t, testCase.wantSent, got.Sentiment)
 			assert.Equal(t, testCase.wantEmotion, got.Emotions)
+
+			// AsOf must be a real stamp taken during the call, not a zero value the JSON encoder
+			// would happily render as year 1 — a client differencing two of those gets nonsense.
+			assert.False(t, got.AsOf.IsZero(), "as_of is stamped")
+			assert.False(t, got.AsOf.Before(before), "as_of is taken during the call")
+			assert.False(t, got.AsOf.After(time.Now().UTC()), "as_of is not in the future")
+			assert.Equal(t, time.UTC, got.AsOf.Location(), "as_of is UTC")
+
+			// enabled and disabled_reason are derived from one decision, so they can never disagree.
+			for name, status := range map[string]models.EnrichmentTypeStatus{
+				"translation": got.Translation, "sentiment": got.Sentiment, "emotions": got.Emotions,
+			} {
+				if status.Enabled {
+					assert.Empty(t, status.DisabledReason, "%s: enabled must carry no reason", name)
+				} else {
+					assert.NotEmpty(t, status.DisabledReason, "%s: disabled must carry a reason", name)
+				}
+			}
 		})
 	}
 }
