@@ -349,6 +349,16 @@ func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 
 	choice := resp.Choices[0]
 
+	// Checked BEFORE the content, because a length-capped response usually carries partial text
+	// rather than none. Returning that would hand back a half-finished translation to be stored as
+	// complete, or a truncated JSON object that fails to parse and looks like a transient provider
+	// glitch — retried to exhaustion and recorded as transient, when it is permanent for this text
+	// at this model. A truncated result is not a result.
+	if choice.FinishReason == "length" {
+		return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength,
+			fmt.Errorf("%w: finish reason %q", ErrNoCompletionInResponse, choice.FinishReason))
+	}
+
 	out := strings.TrimSpace(choice.Message.Content)
 	if out == "" {
 		if refusal := strings.TrimSpace(choice.Message.Refusal); refusal != "" {

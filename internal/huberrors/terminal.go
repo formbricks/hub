@@ -78,9 +78,14 @@ func (e *TerminalProviderError) Unwrap() error { return e.Err }
 // TerminalReasonOf returns the reason carried by the first TerminalProviderError in err's chain,
 // and whether one was found. It keeps the errors.As dance in one place for callers that record
 // the reason as a label or a column.
+//
+// A terminal error with no reason reports false rather than an empty string with ok=true. The
+// exported sentinel is exactly that shape, and callers write this value into a CHECK-constrained
+// column: handing back "" past their ok guard would fail the insert on the failure path, which is
+// the worst place to discover it.
 func TerminalReasonOf(err error) (TerminalReason, bool) {
 	var terminal *TerminalProviderError
-	if !errors.As(err, &terminal) {
+	if !errors.As(err, &terminal) || terminal.Reason == "" {
 		return "", false
 	}
 

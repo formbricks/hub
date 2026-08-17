@@ -619,6 +619,15 @@ func TestCompletionTextTerminalClassification(t *testing.T) {
 			"length is terminal", completion("", "", "length"),
 			huberrors.TerminalReasonLength, true,
 		},
+		// The case a length cap actually produces: truncated output, not blank output. Returning
+		// the partial text would store a half-finished translation as complete, or hand back a
+		// truncated JSON that fails to parse and reads as a transient glitch rather than as
+		// permanent for this input.
+		{
+			"length with truncated content is still terminal",
+			completion(`{"sentiment":"posi`, "", "length"),
+			huberrors.TerminalReasonLength, true,
+		},
 		// We never request tools, so this should not occur — but if it does, retrying is the
 		// cheaper mistake.
 		{"an unknown finish reason stays retryable", completion("", "", "tool_calls"), "", false},

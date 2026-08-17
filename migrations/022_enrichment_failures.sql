@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS feedback_record_enrichment_failures (
 
 ALTER TABLE feedback_record_enrichment_failures
   DROP CONSTRAINT IF EXISTS feedback_record_enrichment_failures_enrichment_valid;
+-- Scoped to the three record-level enrichments the status endpoint reports. Embeddings is the
+-- fourth pipeline and shares these failure modes, so recording its failures here later is a
+-- plausible extension -- and would need a migration to widen this list, not just worker code.
 ALTER TABLE feedback_record_enrichment_failures
   ADD CONSTRAINT feedback_record_enrichment_failures_enrichment_valid CHECK (
     enrichment IN ('translation', 'sentiment', 'emotions')

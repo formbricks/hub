@@ -58,3 +58,18 @@ func TestTerminalProviderError(t *testing.T) {
 		assert.False(t, ok)
 	})
 }
+
+// TestTerminalReasonOfRejectsEmptyReason guards the sharp edge on the exported sentinel: callers
+// write the returned reason into a CHECK-constrained column, so reporting ok with an empty string
+// would fail that insert on the failure path, where it is least likely to be noticed.
+func TestTerminalReasonOfRejectsEmptyReason(t *testing.T) {
+	_, ok := TerminalReasonOf(ErrTerminalProvider)
+	assert.False(t, ok, "the bare sentinel carries no reason and must not report one")
+
+	_, ok = TerminalReasonOf(NewTerminalProviderError("", errors.New("boom")))
+	assert.False(t, ok, "a reasonless terminal error must not report a reason")
+
+	// Terminality is still detected — only the reason is withheld, so a reasonless error is not
+	// silently downgraded to retryable.
+	require.ErrorIs(t, NewTerminalProviderError("", errors.New("boom")), ErrTerminalProvider)
+}

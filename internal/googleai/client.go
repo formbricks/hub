@@ -227,6 +227,14 @@ func isUnsupportedThinkingBudgetError(err error) bool {
 // user's input — so a persistent block is diagnosable in logs instead of looking
 // like a provider outage.
 func generateContentText(resp *genai.GenerateContentResponse) (string, error) {
+	// Checked BEFORE the text, because MAX_TOKENS usually truncates rather than blanks the output.
+	// Returning a truncated result would store a half-finished translation as complete, or produce
+	// invalid JSON that reads as a transient parse failure when it is permanent for this input.
+	if len(resp.Candidates) > 0 && resp.Candidates[0].FinishReason == genai.FinishReasonMaxTokens {
+		return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength,
+			fmt.Errorf("%w: finish reason: %s", ErrNoCompletionInResponse, genai.FinishReasonMaxTokens))
+	}
+
 	out := strings.TrimSpace(resp.Text())
 	if out != "" {
 		return out, nil

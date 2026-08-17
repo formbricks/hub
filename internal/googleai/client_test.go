@@ -389,3 +389,28 @@ func TestTerminalEmptyReason(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerateContentTextTruncatedIsTerminal covers the case MAX_TOKENS actually produces: partial
+// text rather than none. Returning it would persist a half-finished translation as complete, or
+// yield invalid JSON that reads as a transient parse failure when it is permanent for this input.
+func TestGenerateContentTextTruncatedIsTerminal(t *testing.T) {
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			FinishReason: genai.FinishReasonMaxTokens,
+			Content: &genai.Content{
+				Parts: []*genai.Part{{Text: "this translation was cut off half"}},
+			},
+		}},
+	}
+
+	require.NotEmpty(t, resp.Text(), "fixture must carry partial text, or it proves nothing")
+
+	out, err := generateContentText(resp)
+	require.Error(t, err, "truncated output must not be returned as a result")
+	assert.Empty(t, out)
+	require.ErrorIs(t, err, huberrors.ErrTerminalProvider)
+
+	reason, ok := huberrors.TerminalReasonOf(err)
+	require.True(t, ok)
+	assert.Equal(t, huberrors.TerminalReasonLength, reason)
+}
