@@ -228,11 +228,58 @@ func isUnsupportedThinkingBudgetError(err error) bool {
 // like a provider outage.
 func generateContentText(resp *genai.GenerateContentResponse) (string, error) {
 	out := strings.TrimSpace(resp.Text())
-	if out == "" {
-		return "", fmt.Errorf("%w%s", ErrNoCompletionInResponse, emptyResponseDetail(resp))
+	if out != "" {
+		return out, nil
 	}
 
-	return out, nil
+	err := fmt.Errorf("%w%s", ErrNoCompletionInResponse, emptyResponseDetail(resp))
+
+	if reason, terminal := terminalEmptyReason(resp); terminal {
+		return "", huberrors.NewTerminalProviderError(reason, err)
+	}
+
+	return "", err
+}
+
+// terminalEmptyReason classifies an empty response as permanent for this input, or leaves it
+// retryable.
+//
+// Only outcomes determined by the CONTENT are terminal. Anything else — an empty response with
+// no metadata, OTHER, LANGUAGE, a malformed function call — stays retryable on purpose: a false
+// terminal abandons a record for good, a false transient costs a few wasted calls.
+func terminalEmptyReason(resp *genai.GenerateContentResponse) (huberrors.TerminalReason, bool) {
+	// A prompt-level block is the provider rejecting the input before generating anything, which
+	// is as content-determined as it gets.
+	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
+		return huberrors.TerminalReasonContentFilter, true
+	}
+
+	if len(resp.Candidates) == 0 {
+		return "", false
+	}
+
+	switch resp.Candidates[0].FinishReason {
+	case genai.FinishReasonSafety, genai.FinishReasonProhibitedContent,
+		genai.FinishReasonBlocklist, genai.FinishReasonSPII,
+		genai.FinishReasonImageSafety, genai.FinishReasonImageProhibitedContent:
+		return huberrors.TerminalReasonContentFilter, true
+	case genai.FinishReasonRecitation, genai.FinishReasonImageRecitation:
+		return huberrors.TerminalReasonRecitation, true
+	case genai.FinishReasonMaxTokens:
+		return huberrors.TerminalReasonLength, true
+	case genai.FinishReasonUnspecified, genai.FinishReasonStop,
+		genai.FinishReasonLanguage, genai.FinishReasonOther,
+		genai.FinishReasonMalformedFunctionCall, genai.FinishReasonUnexpectedToolCall,
+		genai.FinishReasonNoImage, genai.FinishReasonImageOther:
+		// Deliberately retryable, listed rather than defaulted so the choice is reviewable.
+		// LANGUAGE is arguably permanent, but it is rare and abandoning a record wrongly is the
+		// worse error; the image and tool reasons cannot occur for the calls this client makes;
+		// STOP with empty text and UNSPECIFIED carry no information at all.
+		return "", false
+	default:
+		// A reason added by a future SDK version. Retry rather than abandon — the same asymmetry.
+		return "", false
+	}
 }
 
 // emptyResponseDetail renders the block/finish metadata explaining an empty response

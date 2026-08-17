@@ -352,17 +352,42 @@ func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 	out := strings.TrimSpace(choice.Message.Content)
 	if out == "" {
 		if refusal := strings.TrimSpace(choice.Message.Refusal); refusal != "" {
-			return "", fmt.Errorf("%w: model refused: %.256s", ErrNoCompletionInResponse, refusal)
+			return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonRefusal,
+				fmt.Errorf("%w: model refused: %.256s", ErrNoCompletionInResponse, refusal))
 		}
 
 		if choice.FinishReason != "" && choice.FinishReason != "stop" {
-			return "", fmt.Errorf("%w: finish reason %q", ErrNoCompletionInResponse, choice.FinishReason)
+			err := fmt.Errorf("%w: finish reason %q", ErrNoCompletionInResponse, choice.FinishReason)
+
+			if reason, terminal := terminalFinishReason(choice.FinishReason); terminal {
+				return "", huberrors.NewTerminalProviderError(reason, err)
+			}
+
+			return "", err
 		}
 
 		return "", ErrNoCompletionInResponse
 	}
 
 	return out, nil
+}
+
+// terminalFinishReason classifies a non-stop finish reason as permanent for this input, or leaves
+// it retryable.
+//
+// Only the two reasons determined by the CONTENT are terminal. Everything else — including an
+// empty response with no reason at all, and tool/function finishes we do not request — stays
+// retryable on purpose: a false terminal abandons a record for good, while a false transient
+// costs a few wasted calls. When in doubt, retry.
+func terminalFinishReason(finish string) (huberrors.TerminalReason, bool) {
+	switch finish {
+	case "content_filter":
+		return huberrors.TerminalReasonContentFilter, true
+	case "length":
+		return huberrors.TerminalReasonLength, true
+	default:
+		return "", false
+	}
 }
 
 // wrapChatCompletionError wraps a chat-completion SDK error, mapping a 429 to a

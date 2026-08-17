@@ -587,3 +587,80 @@ func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
 	require.ErrorAs(t, err, &rateLimited, "an embedding 429 must surface as a rate-limit error")
 	assert.Equal(t, 9*time.Second, rateLimited.RetryAfter)
 }
+
+// TestCompletionTextTerminalClassification pins which empty-completion outcomes are permanent for
+// the input and which stay retryable. The asymmetry is deliberate: a false terminal abandons a
+// record for good, a false transient costs a few wasted calls.
+func TestCompletionTextTerminalClassification(t *testing.T) {
+	completion := func(content, refusal, finish string) *openaisdk.ChatCompletion {
+		return &openaisdk.ChatCompletion{
+			Choices: []openaisdk.ChatCompletionChoice{{
+				Message:      openaisdk.ChatCompletionMessage{Content: content, Refusal: refusal},
+				FinishReason: finish,
+			}},
+		}
+	}
+
+	cases := []struct {
+		name       string
+		resp       *openaisdk.ChatCompletion
+		wantReason huberrors.TerminalReason
+		terminal   bool
+	}{
+		{
+			"refusal is terminal", completion("", "I can't help with that.", "content_filter"),
+			huberrors.TerminalReasonRefusal, true,
+		},
+		{
+			"content_filter is terminal", completion("", "", "content_filter"),
+			huberrors.TerminalReasonContentFilter, true,
+		},
+		{
+			"length is terminal", completion("", "", "length"),
+			huberrors.TerminalReasonLength, true,
+		},
+		// We never request tools, so this should not occur — but if it does, retrying is the
+		// cheaper mistake.
+		{"an unknown finish reason stays retryable", completion("", "", "tool_calls"), "", false},
+		{"empty with no reason stays retryable", completion("", "", "stop"), "", false},
+		{"no choices at all stays retryable", &openaisdk.ChatCompletion{}, "", false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := completionText(testCase.resp)
+			require.Error(t, err)
+
+			reason, ok := huberrors.TerminalReasonOf(err)
+			require.Equal(t, testCase.terminal, ok, "terminality of %v", err)
+
+			if testCase.terminal {
+				assert.Equal(t, testCase.wantReason, reason)
+			} else {
+				assert.NotErrorIs(t, err, huberrors.ErrTerminalProvider)
+			}
+		})
+	}
+}
+
+// TestCompleteJSONRefusalIsTerminalThroughTheSDK drives the real SDK against a stub so the
+// classification is proven on a decoded wire response, not on a hand-built struct — a refusal is
+// an HTTP 200, which is exactly why it is easy to mistake for a usable result.
+func TestCompleteJSONRefusalIsTerminalThroughTheSDK(t *testing.T) {
+	server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":1,"model":"m",
+			"choices":[{"index":0,"finish_reason":"content_filter",
+			"message":{"role":"assistant","content":"","refusal":"I can't help with that."}}]}`))
+	})
+
+	client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"))
+
+	_, err := client.CompleteJSON(context.Background(), "system", "hello", llm.Schema{Name: "s"})
+	require.Error(t, err)
+	require.ErrorIs(t, err, huberrors.ErrTerminalProvider)
+
+	reason, ok := huberrors.TerminalReasonOf(err)
+	require.True(t, ok)
+	assert.Equal(t, huberrors.TerminalReasonRefusal, reason)
+}

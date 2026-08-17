@@ -320,3 +320,72 @@ func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
 	require.ErrorAs(t, err, &rateLimited, "an embedding 429 must surface as a rate-limit error")
 	assert.Equal(t, 17*time.Second, rateLimited.RetryAfter)
 }
+
+// TestTerminalEmptyReason pins which empty Gemini responses are permanent for the input and which
+// stay retryable. Same asymmetry as the OpenAI client: when a reason is ambiguous, retry, because
+// a false terminal abandons a record for good.
+func TestTerminalEmptyReason(t *testing.T) {
+	withFinish := func(reason genai.FinishReason) *genai.GenerateContentResponse {
+		return &genai.GenerateContentResponse{
+			Candidates: []*genai.Candidate{{FinishReason: reason}},
+		}
+	}
+
+	cases := []struct {
+		name       string
+		resp       *genai.GenerateContentResponse
+		wantReason huberrors.TerminalReason
+		terminal   bool
+	}{
+		{
+			// A prompt-level block is the provider rejecting the input before generating at all.
+			name: "prompt block is terminal",
+			resp: &genai.GenerateContentResponse{
+				PromptFeedback: &genai.GenerateContentResponsePromptFeedback{BlockReason: "SAFETY"},
+			},
+			wantReason: huberrors.TerminalReasonContentFilter, terminal: true,
+		},
+		{
+			"safety is terminal", withFinish(genai.FinishReasonSafety),
+			huberrors.TerminalReasonContentFilter, true,
+		},
+		{
+			"prohibited content is terminal", withFinish(genai.FinishReasonProhibitedContent),
+			huberrors.TerminalReasonContentFilter, true,
+		},
+		{
+			"recitation is terminal", withFinish(genai.FinishReasonRecitation),
+			huberrors.TerminalReasonRecitation, true,
+		},
+		{
+			"max tokens is terminal", withFinish(genai.FinishReasonMaxTokens),
+			huberrors.TerminalReasonLength, true,
+		},
+		// OTHER is the provider telling us nothing. Abandoning a record on it would be guessing.
+		{"OTHER stays retryable", withFinish(genai.FinishReasonOther), "", false},
+		{"LANGUAGE stays retryable", withFinish(genai.FinishReasonLanguage), "", false},
+		{"STOP with empty text stays retryable", withFinish(genai.FinishReasonStop), "", false},
+		{"no candidates stays retryable", &genai.GenerateContentResponse{}, "", false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			reason, terminal := terminalEmptyReason(testCase.resp)
+			require.Equal(t, testCase.terminal, terminal)
+
+			if testCase.terminal {
+				assert.Equal(t, testCase.wantReason, reason)
+			}
+
+			// generateContentText must carry the classification through, not just compute it.
+			_, err := generateContentText(testCase.resp)
+			require.Error(t, err)
+
+			if testCase.terminal {
+				assert.ErrorIs(t, err, huberrors.ErrTerminalProvider)
+			} else {
+				assert.NotErrorIs(t, err, huberrors.ErrTerminalProvider)
+			}
+		})
+	}
+}
