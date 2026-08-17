@@ -130,7 +130,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{
 			Labels: []models.EmotionValue{models.EmotionJoy, models.EmotionFear},
 		}}
-		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
+		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil, nil)
 
 		require.NoError(t, worker.Work(ctx, emotionsWorkerJob(rec.ID)))
 
@@ -148,7 +148,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 		require.NoError(t, svc.SetEmotions(ctx, rec.ID, []models.EmotionValue{models.EmotionAnger}, nil))
 
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{Labels: nil}}
-		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
+		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil, nil)
 
 		require.NoError(t, worker.Work(ctx, emotionsWorkerJob(rec.ID)))
 
@@ -164,7 +164,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 		require.NoError(t, svc.SetEmotions(ctx, rec.ID, []models.EmotionValue{models.EmotionSadness}, nil))
 
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{Labels: []models.EmotionValue{models.EmotionJoy}}}
-		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
+		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil, nil)
 
 		require.NoError(t, worker.Work(ctx, emotionsWorkerJob(rec.ID)))
 
@@ -176,7 +176,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 
 	t.Run("worker skips a record gone before classify", func(t *testing.T) {
 		fake := &fakeEmotionsClient{result: service.EmotionsResult{Labels: []models.EmotionValue{models.EmotionJoy}}}
-		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil)
+		worker := workers.NewFeedbackEmotionsWorker(svc, settingsSvc, fake, nil, nil)
 
 		require.NoError(t, worker.Work(ctx, emotionsWorkerJob(uuid.Must(uuid.NewV7()))))
 		assert.Equal(t, 0, fake.calls, "a gone record is not classified")

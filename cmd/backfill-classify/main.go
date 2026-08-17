@@ -114,7 +114,9 @@ func run() int {
 			return exitFailure
 		}
 
-		river.AddWorker(riverWorkers, workers.NewFeedbackSentimentWorker(feedbackRecordsService, settingsService, client, nil))
+		// nil failure recorder: this client is never Start()ed (see backfill-translations), so it
+		// works no jobs and records no failures; hub-worker does both.
+		river.AddWorker(riverWorkers, workers.NewFeedbackSentimentWorker(feedbackRecordsService, settingsService, client, nil, nil))
 
 		queueName = service.SentimentsQueueName
 		maxAttempts = classifyMaxAttempts(cfg.Sentiment.MaxAttempts)
@@ -140,7 +142,7 @@ func run() int {
 			return exitFailure
 		}
 
-		river.AddWorker(riverWorkers, workers.NewFeedbackEmotionsWorker(feedbackRecordsService, settingsService, client, nil))
+		river.AddWorker(riverWorkers, workers.NewFeedbackEmotionsWorker(feedbackRecordsService, settingsService, client, nil, nil))
 
 		queueName = service.EmotionsQueueName
 		maxAttempts = classifyMaxAttempts(cfg.Emotions.MaxAttempts)

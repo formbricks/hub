@@ -34,6 +34,17 @@ var noopEnrichmentWorkerMetrics = enrichmentWorkerMetrics{
 	workerError: func(context.Context, string) {},
 }
 
+// FailureRecorder persists a durable marker for an enrichment that gave up on a record. Satisfied
+// by repository.EnrichmentFailuresRepository; declared here so the worker depends on the behaviour
+// rather than on the repository.
+type FailureRecorder interface {
+	RecordFailure(ctx context.Context, failure models.EnrichmentFailure) error
+}
+
+// enrichmentFailureWriteTimeout bounds the detached marker write. Short on purpose: it runs after
+// a job has already failed, often while the provider is unhealthy, and must not extend the job.
+const enrichmentFailureWriteTimeout = 5 * time.Second
+
 // enrichmentJobTimeout limits one enrichment job run; shared by all four pipelines (LLM and
 // embedding calls dominate, and every provider client keeps its own shorter HTTP timeout).
 const enrichmentJobTimeout = 30 * time.Second
@@ -83,6 +94,11 @@ type enrichmentWorkerConfig[A river.JobArgs, R any] struct {
 	// logResult returns extra slog attributes for the classify-success log (e.g. the sentiment
 	// label and score), or nil to log only the record id.
 	logResult func(result R) []any
+
+	// failures records a durable marker when a classify attempt gives up, so the API can report
+	// what failed and anything re-enqueueing unfinished work knows what to skip. nil disables
+	// recording, which is how the embedding pipeline and the unit tests opt out.
+	failures FailureRecorder
 
 	metrics enrichmentWorkerMetrics
 }
@@ -213,7 +229,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 
 	result, err := cfg.classify(ctx, record, job.Args)
 	if err != nil {
-		return w.handleClassifyError(ctx, err, log, start, job)
+		return w.handleClassifyError(ctx, err, log, start, job, record)
 	}
 
 	if err := cfg.persist(ctx, record, job.Args, &result); err != nil {
@@ -236,7 +252,8 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 // snoozes (re-queues without consuming an attempt, so a burst defers rather than drops work); any
 // other error retries until the attempts are spent, then fails.
 func (w *enrichmentWorker[A, R]) handleClassifyError(
-	ctx context.Context, err error, log *slog.Logger, start time.Time, job *river.Job[A],
+	ctx context.Context, err error, log *slog.Logger, start time.Time,
+	job *river.Job[A], record *models.FeedbackRecord,
 ) error {
 	cfg := w.cfg
 
@@ -252,11 +269,24 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 		}
 	}
 
-	isLastAttempt := job.Attempt >= job.MaxAttempts
-
 	cfg.metrics.workerError(ctx, cfg.apiErrorReason)
 
-	if isLastAttempt {
+	// A terminal failure is a property of the record's text, so further attempts would fail
+	// identically and cost a provider call each. Give up NOW rather than after the remaining
+	// attempts, and cancel rather than error so River does not schedule a retry it already knows
+	// is pointless.
+	if reason, terminal := huberrors.TerminalReasonOf(err); terminal {
+		w.markFailed(ctx, log, record, job.Attempt, true, string(reason))
+		w.recordOutcome(ctx, "failed_final", start)
+		log.Error(cfg.name+": provider failed permanently for this record, not retrying",
+			"reason", string(reason), "attempt", job.Attempt, "error", err)
+
+		//nolint:wrapcheck // river sentinel: JobCancel must be returned for River to stop retrying
+		return river.JobCancel(fmt.Errorf("%s (terminal, %s): %w", cfg.classifyErrVerb, reason, err))
+	}
+
+	if job.Attempt >= job.MaxAttempts {
+		w.markFailed(ctx, log, record, job.Attempt, false, models.EnrichmentFailureReasonProviderError)
 		w.recordOutcome(ctx, "failed_final", start)
 		log.Error(cfg.name+": provider failed (final attempt)", "error", err)
 
@@ -266,6 +296,50 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 	w.recordOutcome(ctx, "retry", start)
 
 	return fmt.Errorf("%s: %w", cfg.classifyErrVerb, err)
+}
+
+// markFailed writes the durable failure marker. It never changes the job's outcome: the marker is
+// bookkeeping, and failing an enrichment over it would trade a reported failure for an unreported
+// one.
+//
+// The context is detached. By the time this runs the job's own context is frequently ALREADY
+// cancelled — a provider timeout is one of the commonest ways to reach a final attempt, and it
+// cancels ctx on the way out — so writing with it would silently drop exactly the markers that
+// matter most.
+//
+// A tenant write conflict is expected rather than exceptional: it means a purge is running or the
+// record has already been deleted, in which case there is nothing left to describe.
+func (w *enrichmentWorker[A, R]) markFailed(
+	ctx context.Context, log *slog.Logger, record *models.FeedbackRecord,
+	attempts int, terminal bool, reason string,
+) {
+	if w.cfg.failures == nil || record == nil {
+		return
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), enrichmentFailureWriteTimeout)
+	defer cancel()
+
+	err := w.cfg.failures.RecordFailure(writeCtx, models.EnrichmentFailure{
+		FeedbackRecordID: record.ID,
+		TenantID:         record.TenantID,
+		Enrichment:       w.cfg.name,
+		Terminal:         terminal,
+		Reason:           reason,
+		Attempts:         attempts,
+	})
+	if err == nil {
+		return
+	}
+
+	if errors.Is(err, huberrors.ErrTenantWriteConflict) {
+		log.Info(w.cfg.name+": failure marker skipped, record or tenant is going away", "error", err)
+
+		return
+	}
+
+	log.Error(w.cfg.name+": could not record enrichment failure; the API will under-report it",
+		"terminal", terminal, "reason", reason, "error", err)
 }
 
 // handlePersistError maps a write failure to an outcome: a missing record or a superseded result

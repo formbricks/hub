@@ -41,10 +41,11 @@ type tenantSettingsReader interface {
 // and stores the emotion labels. metrics may be nil when metrics are disabled.
 func NewFeedbackEmotionsWorker(
 	svc emotionsWorkerService, resolver tenantSettingsReader,
-	client service.EmotionsClient, metrics observability.EmotionsMetrics,
+	client service.EmotionsClient, metrics observability.EmotionsMetrics, failures FailureRecorder,
 ) *FeedbackEmotionsWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackEmotionsArgs, service.EmotionsResult]{
 		name:         "emotions",
+		failures:     failures,
 		timeout:      enrichmentJobTimeout,
 		recordID:     func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.FeedbackRecordID },
 		eventID:      func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.EventID },

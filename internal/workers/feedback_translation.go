@@ -34,9 +34,11 @@ type translationWorkerService interface {
 // metrics may be nil when metrics are disabled.
 func NewFeedbackTranslationWorker(
 	svc translationWorkerService, client service.TranslationClient, metrics observability.TranslationMetrics,
+	failures FailureRecorder,
 ) *FeedbackTranslationWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackTranslationArgs, string]{
 		name:       "translation",
+		failures:   failures,
 		timeout:    enrichmentJobTimeout,
 		recordID:   func(args service.FeedbackTranslationArgs) uuid.UUID { return args.FeedbackRecordID },
 		eventID:    func(args service.FeedbackTranslationArgs) uuid.UUID { return args.EventID },

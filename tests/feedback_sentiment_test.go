@@ -131,7 +131,7 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 	t.Run("classifies and persists", func(t *testing.T) {
 		rec := createText("Great product")
 		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 0.5}}
-		worker := workers.NewFeedbackSentimentWorker(svc, settingsSvc, fake, nil)
+		worker := workers.NewFeedbackSentimentWorker(svc, settingsSvc, fake, nil, nil)
 
 		require.NoError(t, worker.Work(ctx, sentimentWorkerJob(rec.ID)))
 
@@ -153,7 +153,7 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 		require.NoError(t, svc.SetSentiment(ctx, rec.ID, &label, &score, nil))
 
 		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1}}
-		worker := workers.NewFeedbackSentimentWorker(svc, settingsSvc, fake, nil)
+		worker := workers.NewFeedbackSentimentWorker(svc, settingsSvc, fake, nil, nil)
 
 		require.NoError(t, worker.Work(ctx, sentimentWorkerJob(rec.ID)))
 
@@ -166,7 +166,7 @@ func TestFeedbackSentiment_WorkerPipeline(t *testing.T) {
 
 	t.Run("worker skips a record gone before classify", func(t *testing.T) {
 		fake := &fakeSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1}}
-		worker := workers.NewFeedbackSentimentWorker(svc, settingsSvc, fake, nil)
+		worker := workers.NewFeedbackSentimentWorker(svc, settingsSvc, fake, nil, nil)
 
 		// A job for a nonexistent record: GetFeedbackRecord returns NotFound end to end
 		// (service -> repo -> DB), which the worker treats as a benign skip — no error, no

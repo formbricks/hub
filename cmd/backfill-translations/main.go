@@ -102,7 +102,10 @@ func run() int {
 	// Producer-only: we only enqueue jobs; workers run in hub-worker (or the API process).
 	// River requires the job kind registered (worker added) and MaxWorkers > 0 for a declared queue.
 	riverWorkers := river.NewWorkers()
-	river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, nil))
+	// nil metrics and nil failure recorder: this client is never Start()ed, so it works no jobs.
+	// The registration exists only because River validates that every configured queue has a
+	// worker. hub-worker is the process that runs these and owns failure bookkeeping.
+	river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, nil, nil))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues: map[string]river.QueueConfig{

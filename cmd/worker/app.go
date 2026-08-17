@@ -99,6 +99,11 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		WebhookMetrics:     webhookMetrics,
 
 		FeedbackRecordsPurgeService: feedbackRecordsPurgeService,
+
+		// hub-worker is the only process that works enrichment jobs, so it is the only one that
+		// can observe a failure and the only one that records them. The backfill commands register
+		// workers but never Start() a client, so they never reach this path.
+		Failures: repository.NewEnrichmentFailuresRepository(db),
 	}
 
 	providerName, embeddingModel := embeddingProviderAndModel(cfg)

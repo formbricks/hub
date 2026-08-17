@@ -30,10 +30,11 @@ type sentimentWorkerService interface {
 // and stores the result. metrics may be nil when metrics are disabled.
 func NewFeedbackSentimentWorker(
 	svc sentimentWorkerService, resolver tenantSettingsReader,
-	client service.SentimentClient, metrics observability.SentimentMetrics,
+	client service.SentimentClient, metrics observability.SentimentMetrics, failures FailureRecorder,
 ) *FeedbackSentimentWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackSentimentArgs, service.SentimentResult]{
 		name:         "sentiment",
+		failures:     failures,
 		timeout:      enrichmentJobTimeout,
 		recordID:     func(args service.FeedbackSentimentArgs) uuid.UUID { return args.FeedbackRecordID },
 		eventID:      func(args service.FeedbackSentimentArgs) uuid.UUID { return args.EventID },
