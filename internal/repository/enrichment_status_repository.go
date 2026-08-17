@@ -109,10 +109,15 @@ const (
 	enrichmentTranslationNotDone = `(fr.translation_lang_key IS DISTINCT FROM ` + enrichmentEffectiveTarget + `)`
 )
 
-// enrichmentCountSelect is the shared twelve-column SELECT list — {sentiment, emotions,
-// translation} × {eligible, done, failed, failed_terminal} — used by both the per-tenant and
-// aggregate queries so the predicates can't drift between them. Column order must match the
-// EnrichmentStatusCounts scan order below. All fragments are static constants (never user input).
+// enrichmentCountSelect is the shared six-column SELECT list — {sentiment, emotions, translation}
+// × {eligible, done} — used by BOTH the per-tenant and aggregate queries so those predicates can't
+// drift between them. Column order must match the EnrichmentStatusCounts scan order below. All
+// fragments are static constants (never user input).
+//
+// The failure columns are deliberately NOT here. They are appended only to the per-tenant query
+// (see countEnrichmentStatusSQL), because the aggregate's only consumer — the backlog gauge —
+// reads eligible and done and nothing else. Sharing them would make the one query documented as a
+// full sequential scan build and probe three hash tables per poll and discard every result.
 var enrichmentCountSelect = `
 		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentSentimentOn + `),
 		COUNT(*) FILTER (WHERE ` + enrichmentEligibleText + ` AND ` + enrichmentSentimentOn + ` AND fr.sentiment IS NOT NULL),
@@ -122,8 +127,7 @@ var enrichmentCountSelect = `
 		COUNT(*) FILTER (
 			WHERE ` + enrichmentEligibleText + `
 			AND ` + enrichmentEffectiveTarget + ` <> ''
-			AND fr.translation_lang_key = ` + enrichmentEffectiveTarget + `),` +
-	failureCountColumns()
+			AND fr.translation_lang_key = ` + enrichmentEffectiveTarget + `)`
 
 // failureCountColumns renders the six failure columns, in the same {sentiment, emotions,
 // translation} order as the eligible/done columns above. Each pair is gated by the same
@@ -155,7 +159,21 @@ func failureCountColumns() string {
 // the boundary has exactly one source of truth. See migration 022.
 const enrichmentCountFrom = `
 	FROM feedback_records fr
-	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id`
+
+// enrichmentFailureJoins attaches the marker rows, one join per enrichment. Appended ONLY to the
+// per-tenant query: the aggregate does not read the failure columns, and adding three joins to a
+// whole-table sequential scan to discard the results is the kind of cost that only shows up in
+// production.
+//
+// Each join hits the markers' primary key (feedback_record_id, enrichment) and can match at most
+// one row, so this stays a lookup rather than a fan-out — the eligible and done counts would be
+// wrong if it did not.
+//
+// The join is on feedback_record_id ALONE. The markers carry a tenant_id column, but it exists for
+// its own index and is never the tenant boundary: that stays fr.tenant_id in the outer WHERE, so
+// the boundary has exactly one source of truth. See migration 022.
+const enrichmentFailureJoins = `
 	LEFT JOIN feedback_record_enrichment_failures fs
 		ON fs.feedback_record_id = fr.id AND fs.enrichment = 'sentiment'
 	LEFT JOIN feedback_record_enrichment_failures fe
@@ -170,7 +188,8 @@ const enrichmentCountFrom = `
 // countEnrichmentStatusSQL counts eligible/done per enrichment for ONE tenant. $1 = deployment
 // default target language, $2 = tenant_id. The (tenant_id, field_type) pair matches
 // idx_feedback_records_tenant_field_type, so cost scales with the tenant's text-record count.
-var countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
+var countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + `,` + failureCountColumns() +
+	enrichmentCountFrom + enrichmentFailureJoins + `
 	WHERE fr.tenant_id = $2 AND fr.field_type = 'text'`
 
 // countEnrichmentBacklogAggregateSQL is the same SELECT without the tenant filter: it sums
@@ -238,7 +257,7 @@ const (
 func (r *EnrichmentStatusRepository) CountEnrichmentStatus(
 	ctx context.Context, tenantID, defaultLang string,
 ) (EnrichmentStatusCounts, error) {
-	return scanEnrichmentCounts(
+	return scanEnrichmentCountsWithFailures(
 		r.db.QueryRow(ctx, countEnrichmentStatusSQL, defaultLang, tenantID), "count enrichment status")
 }
 
@@ -418,8 +437,27 @@ func (l *EnrichmentBacklogLeader) execDetached(
 	return nil
 }
 
-// scanEnrichmentCounts reads the six-column count row; the scan order matches enrichmentCountSelect.
+// scanEnrichmentCounts reads the six-column eligible/done row; the scan order matches
+// enrichmentCountSelect. Used by the aggregate query, which selects only those columns.
 func scanEnrichmentCounts(row pgx.Row, what string) (EnrichmentStatusCounts, error) {
+	var counts EnrichmentStatusCounts
+
+	if err := row.Scan(
+		&counts.SentimentEligible, &counts.SentimentDone,
+		&counts.EmotionsEligible, &counts.EmotionsDone,
+		&counts.TranslationEligible, &counts.TranslationDone,
+	); err != nil {
+		return EnrichmentStatusCounts{}, fmt.Errorf("%s: %w", what, err)
+	}
+
+	return counts, nil
+}
+
+// scanEnrichmentCountsWithFailures reads the twelve-column row the per-tenant query returns: the
+// six above followed by failureCountColumns, in the same {sentiment, emotions, translation} order.
+// The two scanners exist because only the per-tenant query selects the failure half — see
+// enrichmentCountSelect.
+func scanEnrichmentCountsWithFailures(row pgx.Row, what string) (EnrichmentStatusCounts, error) {
 	var counts EnrichmentStatusCounts
 
 	if err := row.Scan(
