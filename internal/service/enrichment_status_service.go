@@ -79,25 +79,71 @@ func (s *EnrichmentStatusService) GetEnrichmentStatus(
 		return nil, fmt.Errorf("count enrichment status: %w", err)
 	}
 
-	translationEnabled := s.translationConfigured &&
-		resolveTargetLang(settings.Settings.TargetLanguage, s.defaultLang) != ""
+	// Stamped after the count returns, so AsOf describes when the numbers were true rather than
+	// when the response happened to be written. UTC because it crosses a process boundary.
+	asOf := time.Now().UTC()
 
 	return &models.EnrichmentStatusResponse{
 		TenantID: normalizedTenantID,
-		Translation: enrichmentTypeStatus(translationEnabled,
+		AsOf:     asOf,
+		Translation: enrichmentTypeStatus(
+			translationDisabledReason(s.translationConfigured,
+				resolveTargetLang(settings.Settings.TargetLanguage, s.defaultLang)),
 			counts.TranslationEligible, counts.TranslationDone),
-		Sentiment: enrichmentTypeStatus(s.sentimentConfigured && settings.Settings.SentimentEnrichmentEnabled(),
+		Sentiment: enrichmentTypeStatus(
+			switchedEnrichmentDisabledReason(s.sentimentConfigured,
+				settings.Settings.SentimentEnrichmentEnabled()),
 			counts.SentimentEligible, counts.SentimentDone),
-		Emotions: enrichmentTypeStatus(s.emotionsConfigured && settings.Settings.EmotionsEnrichmentEnabled(),
+		Emotions: enrichmentTypeStatus(
+			switchedEnrichmentDisabledReason(s.emotionsConfigured,
+				settings.Settings.EmotionsEnrichmentEnabled()),
 			counts.EmotionsEligible, counts.EmotionsDone),
 	}, nil
 }
 
-// enrichmentTypeStatus assembles one enrichment's status, zeroing the counts when it is not
-// enabled for the tenant so the API never reports a backlog for work that will never run.
-func enrichmentTypeStatus(enabled bool, eligible, done int64) models.EnrichmentTypeStatus {
-	if !enabled {
-		return models.EnrichmentTypeStatus{Enabled: false}
+// switchedEnrichmentDisabledReason resolves the two gates guarding sentiment and emotions:
+// the deployment provider+model gate, then the tenant's tri-state switch. An empty result means
+// the enrichment is enabled.
+//
+// The deployment gate is reported first when both are closed. It is the outer gate and the one an
+// operator can act on; telling a tenant "you switched it off" when no provider is configured at all
+// would send them to a setting that changes nothing.
+func switchedEnrichmentDisabledReason(configured, switchedOn bool) models.DisabledReason {
+	switch {
+	case !configured:
+		return models.DisabledReasonNotConfigured
+	case !switchedOn:
+		return models.DisabledReasonSwitchedOff
+	default:
+		return ""
+	}
+}
+
+// translationDisabledReason resolves translation's gates: the deployment provider+model gate, then
+// a resolvable effective target language (the tenant's own, else the deployment default). An empty
+// result means translation is enabled.
+//
+// Translation has no on/off switch, so it can never report switched_off — an unresolvable target
+// IS its off state, and that is what no_target_language says.
+func translationDisabledReason(configured bool, effectiveTarget string) models.DisabledReason {
+	switch {
+	case !configured:
+		return models.DisabledReasonNotConfigured
+	case effectiveTarget == "":
+		return models.DisabledReasonNoTargetLanguage
+	default:
+		return ""
+	}
+}
+
+// enrichmentTypeStatus assembles one enrichment's status from the gate decision, zeroing the counts
+// when it is not enabled so the API never reports a backlog for work that will never run.
+//
+// Enabled and DisabledReason are derived from the same value here rather than passed separately, so
+// the response cannot carry an enabled enrichment with a reason, or a disabled one without.
+func enrichmentTypeStatus(reason models.DisabledReason, eligible, done int64) models.EnrichmentTypeStatus {
+	if reason != "" {
+		return models.EnrichmentTypeStatus{Enabled: false, DisabledReason: reason}
 	}
 
 	return models.EnrichmentTypeStatus{Enabled: true, Eligible: eligible, Done: done}
