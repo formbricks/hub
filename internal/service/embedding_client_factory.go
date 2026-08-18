@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/formbricks/hub/internal/googleai"
+	"github.com/formbricks/hub/internal/llm"
 	"github.com/formbricks/hub/internal/openai"
 )
 
@@ -37,6 +38,8 @@ type EmbeddingClientConfig struct {
 	Normalize           bool
 	GoogleCloudProject  string
 	GoogleCloudLocation string
+	// UsageRecorder receives each provider call's token counts and duration. nil disables it.
+	UsageRecorder llm.UsageRecorder
 }
 
 func (c EmbeddingClientConfig) clientProvider() string            { return c.Provider }
@@ -71,6 +74,7 @@ func openAIEmbeddingFactory(_ context.Context, cfg EmbeddingClientConfig) (Embed
 	return openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
 		openai.WithBaseURL(cfg.BaseURL),
+		openai.WithUsageRecorder(cfg.UsageRecorder),
 		openai.WithNormalize(cfg.Normalize),
 	), nil
 }

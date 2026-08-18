@@ -44,6 +44,7 @@ func openAIEmotionsFactory(_ context.Context, cfg EmotionsClientConfig) (Emotion
 	raw := openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
 		openai.WithBaseURL(cfg.BaseURL),
+		openai.WithUsageRecorder(cfg.UsageRecorder),
 	)
 
 	return promptEmotionsClient{raw: raw}, nil

@@ -673,3 +673,75 @@ func TestCompleteJSONRefusalIsTerminalThroughTheSDK(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, huberrors.TerminalReasonRefusal, reason)
 }
+
+// recordingUsage captures what the client reports for each provider call.
+type recordingUsage struct{ calls []llm.Usage }
+
+func (r *recordingUsage) RecordUsage(_ context.Context, u llm.Usage) { r.calls = append(r.calls, u) }
+
+// TestUsageIsRecordedForChatCompletions covers the reason this exists: the provider returns token
+// counts on every response and the client used to decode and drop them, so there was no way to
+// answer what enrichment costs. Failures are recorded too — a provider outage that burns input
+// tokens is exactly when the number matters.
+func TestUsageIsRecordedForChatCompletions(t *testing.T) {
+	t.Run("success carries token counts", func(t *testing.T) {
+		server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":1,"model":"m",
+				"choices":[{"index":0,"finish_reason":"stop",
+				"message":{"role":"assistant","content":"hallo"}}],
+				"usage":{"prompt_tokens":31,"completion_tokens":7,"total_tokens":38}}`))
+		})
+
+		usage := &recordingUsage{}
+		client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"),
+			WithUsageRecorder(usage))
+
+		_, err := client.Translate(context.Background(), "system", "hello")
+		require.NoError(t, err)
+
+		require.Len(t, usage.calls, 1)
+		got := usage.calls[0]
+		assert.Equal(t, llm.OperationChat, got.Operation)
+		assert.Equal(t, llm.ProviderOpenAI, got.Provider)
+		assert.Equal(t, "test-model", got.Model)
+		assert.Equal(t, int64(31), got.InputTokens)
+		assert.Equal(t, int64(7), got.OutputTokens)
+		assert.Empty(t, got.ErrorType, "a successful call carries no error.type")
+		assert.Positive(t, got.Duration)
+	})
+
+	t.Run("failure records a bounded error type", func(t *testing.T) {
+		server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+
+		usage := &recordingUsage{}
+		client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"),
+			WithUsageRecorder(usage))
+
+		_, err := client.Translate(context.Background(), "system", "hello")
+		require.Error(t, err)
+
+		require.Len(t, usage.calls, 1, "a failed call must still be recorded")
+		// The status code, never the provider's message — an unbounded error.type would blow up
+		// cardinality the first time a provider echoed user input back in an error body.
+		assert.Equal(t, "500", usage.calls[0].ErrorType)
+		assert.Zero(t, usage.calls[0].InputTokens, "no usage block means no token counts")
+	})
+
+	t.Run("a nil recorder is a no-op", func(t *testing.T) {
+		server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":1,"model":"m",
+				"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"x"}}]}`))
+		})
+
+		client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("m"))
+
+		require.NotPanics(t, func() {
+			_, err := client.Translate(context.Background(), "system", "hello")
+			require.NoError(t, err)
+		})
+	})
+}

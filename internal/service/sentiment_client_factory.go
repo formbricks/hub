@@ -44,6 +44,7 @@ func openAISentimentFactory(_ context.Context, cfg SentimentClientConfig) (Senti
 	raw := openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
 		openai.WithBaseURL(cfg.BaseURL),
+		openai.WithUsageRecorder(cfg.UsageRecorder),
 	)
 
 	return promptSentimentClient{raw: raw}, nil

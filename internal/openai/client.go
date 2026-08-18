@@ -52,36 +52,16 @@ type Client struct {
 	// temperatureUnsupported latches once the configured model rejects the temperature
 	// parameter (reasoning models do), so later calls omit it instead of failing.
 	temperatureUnsupported atomic.Bool
+	// usage receives one record per provider call. nil disables recording entirely, which is how
+	// the backfill commands and the unit tests opt out.
+	usage llm.UsageRecorder
 }
 
-// ClientOption configures the Client.
-type ClientOption func(*Client)
-
-// WithDimensions sets the requested embedding dimension (must match DB column).
-func WithDimensions(dim int) ClientOption {
+// WithUsageRecorder attaches a recorder that receives each call's token counts and duration. The
+// provider returns those numbers on every response; without this they are decoded and dropped.
+func WithUsageRecorder(recorder llm.UsageRecorder) ClientOption {
 	return func(c *Client) {
-		c.dimensions = dim
-	}
-}
-
-// WithModel sets the embedding model name. Empty uses default.
-func WithModel(model string) ClientOption {
-	return func(c *Client) {
-		c.model = model
-	}
-}
-
-// WithBaseURL sets a custom OpenAI-compatible base URL (for example a self-hosted embeddings runtime).
-func WithBaseURL(baseURL string) ClientOption {
-	return func(c *Client) {
-		c.baseURL = baseURL
-	}
-}
-
-// WithNormalize enables L2 normalization of the embedding vector before returning (e.g. before storing or caching).
-func WithNormalize(normalize bool) ClientOption {
-	return func(c *Client) {
-		c.normalize = normalize
+		c.usage = recorder
 	}
 }
 
@@ -128,6 +108,8 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 
 	model := c.model
 
+	started := time.Now()
+
 	resp, err := c.sdk.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
 		Input: openaisdk.EmbeddingNewParamsInputUnion{
 			OfString: param.NewOpt(input),
@@ -135,6 +117,15 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		Model:      model,
 		Dimensions: param.NewOpt(int64(c.dimensions)),
 	})
+
+	var promptTokens int64
+
+	if resp != nil {
+		promptTokens = resp.Usage.PromptTokens
+	}
+
+	c.recordUsage(ctx, llm.OperationEmbeddings, started, promptTokens, 0, err)
+
 	if err != nil {
 		return nil, wrapOpenAIError("openai embedding", err)
 	}
@@ -167,6 +158,8 @@ func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]flo
 		return nil, ErrInvalidDims
 	}
 
+	started := time.Now()
+
 	resp, err := c.sdk.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
 		Input: openaisdk.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: trimmed,
@@ -174,6 +167,15 @@ func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]flo
 		Model:      c.model,
 		Dimensions: param.NewOpt(int64(c.dimensions)),
 	})
+
+	var promptTokens int64
+
+	if resp != nil {
+		promptTokens = resp.Usage.PromptTokens
+	}
+
+	c.recordUsage(ctx, llm.OperationEmbeddings, started, promptTokens, 0, err)
+
 	if err != nil {
 		return nil, wrapOpenAIError("openai embeddings batch", err)
 	}
@@ -301,6 +303,26 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 // temperatureUnsupported, so every later call skips it — self-healing, with no model list to
 // maintain.
 func (c *Client) createChatCompletion(
+	ctx context.Context, params openaisdk.ChatCompletionNewParams,
+) (*openaisdk.ChatCompletion, error) {
+	started := time.Now()
+
+	resp, err := c.chatCompletionCall(ctx, params)
+
+	var inputTokens, outputTokens int64
+
+	if resp != nil {
+		inputTokens, outputTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
+	}
+
+	c.recordUsage(ctx, llm.OperationChat, started, inputTokens, outputTokens, err)
+
+	return resp, err
+}
+
+// chatCompletionCall is the original body, kept intact so the temperature-retry logic below is
+// unchanged; createChatCompletion wraps it purely to time and record the call.
+func (c *Client) chatCompletionCall(
 	ctx context.Context, params openaisdk.ChatCompletionNewParams,
 ) (*openaisdk.ChatCompletion, error) {
 	if !c.temperatureUnsupported.Load() {
@@ -441,4 +463,79 @@ func openaiRetryAfter(apiErr *openaisdk.Error) time.Duration {
 	}
 
 	return 0
+}
+
+// recordUsage reports one call. Split out so every provider entry point records the same shape,
+// and so a nil recorder is checked in exactly one place.
+func (c *Client) recordUsage(
+	ctx context.Context, operation llm.Operation, started time.Time, inputTokens, outputTokens int64, err error,
+) {
+	if c.usage == nil {
+		return
+	}
+
+	c.usage.RecordUsage(ctx, llm.Usage{
+		Operation:    operation,
+		Provider:     llm.ProviderOpenAI,
+		Model:        c.model,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		Duration:     time.Since(started),
+		ErrorType:    errorTypeOf(err),
+	})
+}
+
+// errorTypeOf maps an error to the BOUNDED error.type attribute. An HTTP status becomes its
+// number, everything else a coarse class — never the provider's message, which is unbounded and
+// would blow up metric cardinality the first time a provider echoed user input back in an error.
+func errorTypeOf(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var apiErr *openaisdk.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode != 0 {
+		return strconv.Itoa(apiErr.StatusCode)
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+
+	return "other"
+}
+
+// ClientOption configures the Client.
+type ClientOption func(*Client)
+
+// WithDimensions sets the requested embedding dimension (must match DB column).
+func WithDimensions(dim int) ClientOption {
+	return func(c *Client) {
+		c.dimensions = dim
+	}
+}
+
+// WithModel sets the embedding model name. Empty uses default.
+func WithModel(model string) ClientOption {
+	return func(c *Client) {
+		c.model = model
+	}
+}
+
+// WithBaseURL sets a custom OpenAI-compatible base URL (for example a self-hosted embeddings runtime).
+func WithBaseURL(baseURL string) ClientOption {
+	return func(c *Client) {
+		c.baseURL = baseURL
+	}
+}
+
+// WithNormalize enables L2 normalization of the embedding vector before returning (e.g. before storing or caching).
+func WithNormalize(normalize bool) ClientOption {
+	return func(c *Client) {
+		c.normalize = normalize
+	}
 }

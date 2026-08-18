@@ -96,6 +96,7 @@ func openAITranslationFactory(_ context.Context, cfg TranslationClientConfig) (T
 	raw := openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
 		openai.WithBaseURL(cfg.BaseURL),
+		openai.WithUsageRecorder(cfg.UsageRecorder),
 	)
 
 	return promptTranslationClient{raw: raw}, nil

@@ -25,6 +25,7 @@ import (
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/api/routes"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/llm"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
@@ -105,6 +106,20 @@ func setupEmbeddingSearchHandler(
 	metrics *observability.Metrics,
 	meterProvider *sdkmetric.MeterProvider,
 ) (*handlers.SearchHandler, error) {
+	// The API works no enrichment jobs, but it does embed SEARCH QUERIES, and those are real
+	// provider calls with real cost. Recording them here means the token metric covers everything
+	// the deployment actually spends rather than only the worker's share.
+	var genAIUsage llm.UsageRecorder
+
+	if meterProvider != nil {
+		recorder, err := observability.NewGenAIMetrics(meterProvider.Meter("hub"))
+		if err != nil {
+			return nil, fmt.Errorf("create gen_ai metrics: %w", err)
+		}
+
+		genAIUsage = recorder
+	}
+
 	embeddingCfg := service.EmbeddingClientConfig{
 		Provider:            embeddingProviderName,
 		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
@@ -113,6 +128,7 @@ func setupEmbeddingSearchHandler(
 		Normalize:           cfg.Embedding.Normalize,
 		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
 		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+		UsageRecorder:       genAIUsage,
 	}
 	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 		return nil, fmt.Errorf("embedding config: %w", err)
