@@ -815,7 +815,11 @@ func runEnrichmentBacklogPoller(
 		// Refreshed by the SAME leader on the SAME tick, so the failure gauge cannot drift from the
 		// backlog gauge and no second election is needed. Its query is cheap next to the backlog
 		// scan: it reads the markers, of which there are few, not every feedback record.
-		refreshFailedRecords(ctx, statusRepo, failures)
+		//
+		// queryCtx, not ctx — this shares the tick's timeout budget. Handing it the process-lifetime
+		// context would let a slow count pin a pool connection until shutdown, which is the exact
+		// thing enrichmentBacklogQueryTimeout exists to prevent.
+		refreshFailedRecords(queryCtx, statusRepo, failures)
 	}
 
 	update()
@@ -1082,10 +1086,17 @@ func (a *App) awaitEnrichmentBacklogPoller(ctx context.Context) {
 	}
 }
 
-// refreshFailedRecords republishes the cross-tenant failed-record gauge. Best effort: a failure
-// here logs and leaves the previous reading rather than tearing down the backlog gauge with it,
-// because the two answer different questions and one being unavailable is not a reason to lose
-// both.
+// refreshFailedRecords republishes the cross-tenant failed-record gauge.
+//
+// A failed query WITHDRAWS this gauge rather than leaving its last reading published, following
+// the rule EnrichmentBacklogMetrics states outright: exporting nothing is the honest state,
+// because absence is visible and a stale value is not. The failure mode it avoids is specific —
+// the backlog scan succeeds so this process keeps leadership, this query times out, and a
+// dashboard would otherwise show a plausible, unchanging failure count that no longer reflects
+// the database, with nothing absent to alert on.
+//
+// It withdraws only ITS OWN series. The backlog gauge is refreshed by a query that succeeded and
+// has no reason to be torn down alongside.
 func refreshFailedRecords(
 	ctx context.Context,
 	statusRepo *repository.EnrichmentStatusRepository,
@@ -1097,8 +1108,12 @@ func refreshFailedRecords(
 
 	counts, err := statusRepo.CountFailedRecordsAggregate(ctx)
 	if err != nil {
+		failures.ClearFailedRecords()
+
+		// Shutdown cancels the query mid-flight; that is not a poll failure worth logging, for the
+		// same reason the backlog poller skips it.
 		if ctx.Err() == nil {
-			slog.WarnContext(ctx, "enrichment failed-records poll failed", "error", err)
+			slog.WarnContext(ctx, "enrichment failed-records poll failed; gauge withdrawn", "error", err)
 		}
 
 		return

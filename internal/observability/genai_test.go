@@ -112,3 +112,45 @@ func TestGenAIMetricsCarryNoTenantLabel(t *testing.T) {
 		}
 	}
 }
+
+// TestFailedRecordsGaugeWithdrawsOnClear pins the withdraw-not-stale rule. An async gauge
+// re-observes its stored values on every collection, so a value left behind after a failed refresh
+// or a lost leadership keeps being exported indefinitely — indistinguishable from a live reading,
+// and invisible to any alert that looks for staleness by value.
+func TestFailedRecordsGaugeWithdrawsOnClear(t *testing.T) {
+	reader := metric.NewManualReader()
+	provider := metric.NewMeterProvider(metric.WithReader(reader))
+
+	failures, err := NewEnrichmentFailureMetrics(provider.Meter("test"))
+	require.NoError(t, err)
+	require.NotNil(t, failures)
+
+	failures.SetFailedRecords(EnrichmentTypeSentiment, true, 7)
+
+	var got metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &got))
+	require.Positive(t, countDataPoints(got, MetricNameEnrichmentFailedRecords),
+		"the gauge publishes what was set")
+
+	failures.ClearFailedRecords()
+
+	require.NoError(t, reader.Collect(context.Background(), &got))
+	assert.Zero(t, countDataPoints(got, MetricNameEnrichmentFailedRecords),
+		"after withdrawal the series must be ABSENT, not frozen at its last value")
+}
+
+func countDataPoints(got metricdata.ResourceMetrics, name string) int {
+	for _, scope := range got.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != name {
+				continue
+			}
+
+			if gauge, ok := m.Data.(metricdata.Gauge[int64]); ok {
+				return len(gauge.DataPoints)
+			}
+		}
+	}
+
+	return 0
+}

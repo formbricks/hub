@@ -322,6 +322,10 @@ func (c *Client) createChatCompletion(
 
 // chatCompletionCall is the original body, kept intact so the temperature-retry logic below is
 // unchanged; createChatCompletion wraps it purely to time and record the call.
+//
+// One record covers the whole sequence, including the reasoning-model temperature retry inside:
+// the token counts come from the successful request, but the duration spans both. That inflates a
+// single call's latency at most once per client per process, since the rejection latches.
 func (c *Client) chatCompletionCall(
 	ctx context.Context, params openaisdk.ChatCompletionNewParams,
 ) (*openaisdk.ChatCompletion, error) {
