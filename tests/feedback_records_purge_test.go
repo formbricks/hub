@@ -234,6 +234,11 @@ func TestPurgeFeedbackRecordsEndpoint(t *testing.T) {
 	db := newPurgeTestDB(ctx, t)
 	tenantID := "purge-endpoint-" + uuid.NewString()
 
+	// This test enqueues REAL purge jobs, and newPurgeTestDB uses the shared integration database
+	// rather than an ephemeral one. Without this the jobs outlive the run in `available` state, and
+	// the next worker pointed at that database executes them.
+	deletePurgeJobs(ctx, t, db, tenantID)
+
 	purgeURL := server.URL + "/v1/tenants/" + tenantID + "/feedback-records"
 
 	status, body := postPurge(ctx, t, purgeURL)
@@ -336,4 +341,19 @@ func TestPurgeFeedbackRecordsMultipleBatches(t *testing.T) {
 	assert.Equal(t, int64(seeded), counts.DeletedFeedbackRecords)
 	assert.Zero(t, countRows(ctx, t, db,
 		`SELECT count(*) FROM feedback_records WHERE tenant_id = $1`, tenantID))
+}
+
+// deletePurgeJobs registers cleanup that removes every purge job this test enqueued for a tenant.
+// Registered before the jobs are created so it still runs if an assertion fails partway.
+func deletePurgeJobs(ctx context.Context, t *testing.T, db *pgxpool.Pool, tenantID string) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if _, err := db.Exec(ctx, `
+			DELETE FROM river_job
+			WHERE kind = 'feedback_records_purge' AND args->>'tenant_id' = $1`, tenantID,
+		); err != nil {
+			t.Errorf("cleanup purge jobs for %s: %v", tenantID, err)
+		}
+	})
 }

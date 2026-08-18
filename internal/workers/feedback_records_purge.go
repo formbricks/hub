@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -49,14 +50,59 @@ func (w *FeedbackRecordsPurgeWorker) Timeout(*river.Job[service.FeedbackRecordsP
 
 // Work purges the tenant's feedback records. The service re-scopes the work to the tenant in the
 // job args rather than trusting enqueue-time validation.
+//
+// A failure is logged here rather than left to River. River reports retries and final discards at
+// INFO, and hub-worker does not set river.Config.Logger, so its fallback logger sits at WARN and
+// filters both — a failing purge would otherwise leave no trace outside the river_job.errors column
+// while the dataset sits partly emptied. Matches webhook_dispatch and feedback_embedding in
+// separating a retryable attempt from the last one.
 func (w *FeedbackRecordsPurgeWorker) Work(
 	ctx context.Context, job *river.Job[service.FeedbackRecordsPurgeArgs],
 ) error {
-	if _, err := w.service.Purge(ctx, job.Args.TenantID); err != nil {
-		// The tenant id is not interpolated into the error: purge failures are logged and retried
-		// by River, and the tenant is already carried on the job row.
+	counts, err := w.service.Purge(ctx, job.Args.TenantID)
+	if err != nil {
+		logPurgeFailure(job, counts, err)
+
+		// The tenant id is not interpolated into the error: it is already carried on the job row
+		// and in the log line above.
 		return fmt.Errorf("purge feedback records: %w", err)
 	}
 
 	return nil
+}
+
+// logPurgeFailure reports a failed attempt, including how much the attempt committed before it
+// failed. The partial counts matter: batches commit as they go, so a failed purge has usually
+// already removed records, and the retry resumes from there rather than restarting.
+func logPurgeFailure(
+	job *river.Job[service.FeedbackRecordsPurgeArgs], counts *models.FeedbackRecordsPurgeCounts, err error,
+) {
+	attrs := []any{
+		"tenant_id", job.Args.TenantID,
+		"job_id", job.ID,
+		"attempt", job.Attempt,
+		"max_attempts", job.MaxAttempts,
+		"error", err,
+	}
+
+	// counts is nil only when the purge failed before the repository ran (tenant normalization).
+	if counts != nil {
+		attrs = append(attrs,
+			"deleted_feedback_records", counts.DeletedFeedbackRecords,
+			"deleted_embeddings", counts.DeletedEmbeddings,
+			"deleted_taxonomy_cluster_memberships", counts.ClusterMemberships,
+			"deleted_taxonomy_runs", counts.Runs,
+			"deleted_taxonomy_nodes", counts.Nodes,
+		)
+	}
+
+	if job.Attempt >= job.MaxAttempts {
+		// Terminal: River will not try again, so the dataset stays in whatever partial state the
+		// counts above describe until someone requests another purge.
+		slog.Error("feedback records purge: failed permanently", attrs...)
+
+		return
+	}
+
+	slog.Warn("feedback records purge: attempt failed, will retry", attrs...)
 }

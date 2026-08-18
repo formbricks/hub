@@ -100,9 +100,13 @@ func (s *FeedbackRecordsPurgeService) Purge(
 		return nil, err
 	}
 
+	// The repository returns what it committed even on failure — the batches before the error stay
+	// deleted. Pass those counts back rather than dropping them to nil, so the worker can report how
+	// far a failed purge got; a purge that dies midway leaves the dataset partly empty, and that is
+	// exactly the state an operator needs to see.
 	counts, err := s.repo.PurgeFeedbackRecordsByTenant(ctx, normalizedTenantID)
 	if err != nil {
-		return nil, fmt.Errorf("purge feedback records for tenant: %w", err)
+		return counts, fmt.Errorf("purge feedback records for tenant: %w", err)
 	}
 
 	slog.Info("feedback records purge: complete",
