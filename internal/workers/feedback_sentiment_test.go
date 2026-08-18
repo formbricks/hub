@@ -127,7 +127,7 @@ func TestFeedbackSentimentWorker_Success(t *testing.T) {
 	metrics := newCountingSentimentMetrics()
 	svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
 	client := &stubSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 0.5}}
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, nil)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, nil, nil)
 
 	if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -160,7 +160,7 @@ func TestFeedbackSentimentWorker_EmptyValueTextClears(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			svc := &mockSentimentWorkerService{record: record}
 			client := &stubSentimentClient{}
-			worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, newCountingSentimentMetrics(), nil)
+			worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, newCountingSentimentMetrics(), nil, nil)
 
 			if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
 				t.Fatalf("Work() error = %v", err)
@@ -181,7 +181,7 @@ func TestFeedbackSentimentWorker_NonTextFieldSkips(t *testing.T) {
 	svc := &mockSentimentWorkerService{record: &models.FeedbackRecord{ID: uuid.Must(uuid.NewV7()), FieldType: models.FieldTypeNumber}}
 	client := &stubSentimentClient{}
 	metrics := newCountingSentimentMetrics()
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, nil)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, nil, nil)
 
 	if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -199,7 +199,7 @@ func TestFeedbackSentimentWorker_NonTextFieldSkips(t *testing.T) {
 func TestFeedbackSentimentWorker_RecordGoneSkips(t *testing.T) {
 	svc := &mockSentimentWorkerService{getErr: huberrors.ErrNotFound}
 	metrics := newCountingSentimentMetrics()
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{}, metrics, nil)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{}, metrics, nil, nil)
 
 	if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
 		t.Fatalf("Work() error = %v, want nil (a record gone before classify is a benign skip)", err)
@@ -215,7 +215,7 @@ func TestFeedbackSentimentWorker_GetRecordFailsRetriesThenFailsFinal(t *testing.
 	// counts as failed_final on the last attempt, so failed_final is not overcounted.
 	metrics := newCountingSentimentMetrics()
 	svc := &mockSentimentWorkerService{getErr: errors.New("db unavailable")}
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{}, metrics, nil)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{}, metrics, nil, nil)
 
 	if err := worker.Work(context.Background(), sentimentJob(1)); err == nil {
 		t.Fatal("Work() error = nil, want a get-record failure returned for retry")
@@ -240,7 +240,7 @@ func TestFeedbackSentimentWorker_RateLimitSnoozes(t *testing.T) {
 	metrics := newCountingSentimentMetrics()
 	svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
 	client := &stubSentimentClient{err: huberrors.NewRateLimitError(45*time.Second, errors.New("429"))}
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, nil)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, nil, nil)
 
 	err := worker.Work(context.Background(), sentimentJob(1))
 
@@ -268,7 +268,7 @@ func TestFeedbackSentimentWorker_ClassifyFailsOnFinalAttempt(t *testing.T) {
 	metrics := newCountingSentimentMetrics()
 	svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
 	client := &stubSentimentClient{err: errors.New("provider down")}
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, nil)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, nil, nil)
 
 	err := worker.Work(context.Background(), sentimentJob(3)) // attempt == MaxAttempts
 	if err == nil {
@@ -288,7 +288,7 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 	t.Run("record gone before write is a benign skip", func(t *testing.T) {
 		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: huberrors.ErrNotFound}
 		metrics := newCountingSentimentMetrics()
-		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics, nil)
+		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics, nil, nil)
 
 		if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
 			t.Fatalf("Work() error = %v, want nil", err)
@@ -302,7 +302,7 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 	t.Run("content-superseded write is a benign skip", func(t *testing.T) {
 		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: huberrors.ErrClassificationSuperseded}
 		metrics := newCountingSentimentMetrics()
-		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics, nil)
+		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics, nil, nil)
 
 		if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
 			t.Fatalf("Work() error = %v, want nil (superseded is a skip, not a failure)", err)
@@ -317,7 +317,7 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 	t.Run("tenant write conflict retries", func(t *testing.T) {
 		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: huberrors.ErrTenantWriteConflict}
 		metrics := newCountingSentimentMetrics()
-		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics, nil)
+		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics, nil, nil)
 
 		if err := worker.Work(context.Background(), sentimentJob(1)); err == nil {
 			t.Fatal("Work() error = nil, want a retryable error")
@@ -332,7 +332,7 @@ func TestFeedbackSentimentWorker_SetSentimentErrors(t *testing.T) {
 	t.Run("other write error retries, failing on the final attempt", func(t *testing.T) {
 		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: errors.New("db unavailable")}
 		metrics := newCountingSentimentMetrics()
-		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics, nil)
+		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, &stubSentimentClient{result: result}, metrics, nil, nil)
 
 		if err := worker.Work(context.Background(), sentimentJob(1)); err == nil {
 			t.Fatal("Work() error = nil, want a failure")
@@ -361,7 +361,7 @@ func TestFeedbackSentimentWorker_DisabledForTenantSkips(t *testing.T) {
 	svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
 	client := &stubSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1}}
 	metrics := newCountingSentimentMetrics()
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{enabled: &off}, client, metrics, nil)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{enabled: &off}, client, metrics, nil, nil)
 
 	if err := worker.Work(context.Background(), sentimentJob(1)); err != nil {
 		t.Fatalf("Work() error = %v, want nil (a disabled tenant is a benign skip)", err)
@@ -396,7 +396,7 @@ func TestFeedbackSentimentWorker_SettingsReadErrorRetriesThenFailsFinal(t *testi
 			client := &stubSentimentClient{result: service.SentimentResult{Label: models.SentimentPositive, Score: 1}}
 			metrics := newCountingSentimentMetrics()
 			worker := NewFeedbackSentimentWorker(
-				svc, stubSentimentSettings{err: errors.New("db unavailable")}, client, metrics, nil)
+				svc, stubSentimentSettings{err: errors.New("db unavailable")}, client, metrics, nil, nil)
 
 			if err := worker.Work(context.Background(), sentimentJob(testCase.attempt)); err == nil {
 				t.Fatal("Work() error = nil, want a settings-read failure")
@@ -446,7 +446,7 @@ func TestFeedbackSentimentWorker_TerminalFailureCancelsImmediately(t *testing.T)
 	failures := &recordingFailureRecorder{}
 	client := &stubSentimentClient{err: huberrors.NewTerminalProviderError(
 		huberrors.TerminalReasonContentFilter, errors.New("blocked"))}
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, failures)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, failures, nil)
 
 	// Attempt 1 of 3: there are attempts left, and a transient failure here would merely retry.
 	err := worker.Work(context.Background(), sentimentJob(1))
@@ -473,7 +473,7 @@ func TestFeedbackSentimentWorker_TransientFailureRecordsOnlyOnFinalAttempt(t *te
 	svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
 	client := &stubSentimentClient{err: errors.New("provider down")}
 	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client,
-		newCountingSentimentMetrics(), failures)
+		newCountingSentimentMetrics(), failures, nil)
 
 	err := worker.Work(context.Background(), sentimentJob(1)) // attempts remain
 	require.Error(t, err)
@@ -497,7 +497,7 @@ func TestFeedbackSentimentWorker_FailureMarkerSurvivesCancelledContext(t *testin
 	svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
 	client := &stubSentimentClient{err: errors.New("context deadline exceeded")}
 	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client,
-		newCountingSentimentMetrics(), failures)
+		newCountingSentimentMetrics(), failures, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // the job's context is already dead by the time the failure is handled
@@ -518,7 +518,7 @@ func TestFeedbackSentimentWorker_FailureMarkerErrorDoesNotChangeOutcome(t *testi
 	failures := &recordingFailureRecorder{err: errors.New("database unreachable")}
 	svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
 	client := &stubSentimentClient{err: errors.New("provider down")}
-	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, failures)
+	worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, failures, nil)
 
 	err := worker.Work(context.Background(), sentimentJob(3))
 	require.Error(t, err)
@@ -542,7 +542,7 @@ func TestFeedbackSentimentWorker_MarkerSkipConditionsAreBenign(t *testing.T) {
 			failures := &recordingFailureRecorder{err: recorderErr}
 			svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text)}
 			client := &stubSentimentClient{err: errors.New("provider down")}
-			worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, failures)
+			worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{}, client, metrics, failures, nil)
 
 			err := worker.Work(context.Background(), sentimentJob(3))
 			require.Error(t, err)

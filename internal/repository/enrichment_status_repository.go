@@ -473,3 +473,64 @@ func scanEnrichmentCountsWithFailures(row pgx.Row, what string) (EnrichmentStatu
 
 	return counts, nil
 }
+
+// FailedRecordCount is one (enrichment, terminal) bucket of the cross-tenant failure gauge.
+type FailedRecordCount struct {
+	Enrichment string
+	Terminal   bool
+	Count      int64
+}
+
+// countFailedRecordsAggregateSQL counts failure markers whose record is STILL un-enriched, across
+// all tenants, grouped by enrichment and permanence.
+//
+// The un-enriched condition is what keeps the markers advisory: a record that later succeeded
+// keeps its row, and that row must stop counting.
+//
+// Cheap relative to the eligible/done aggregate above. That one must scan every feedback record;
+// here the driving table is the small one — the markers, of which there are by definition few —
+// so it is a scan of failures with a primary-key lookup back to the record.
+const countFailedRecordsAggregateSQL = `
+	SELECT f.enrichment, f.terminal, COUNT(*)
+	FROM feedback_record_enrichment_failures f
+	JOIN feedback_records fr ON fr.id = f.feedback_record_id
+	WHERE (f.enrichment = 'sentiment'   AND fr.sentiment IS NULL)
+	   OR (f.enrichment = 'emotions'    AND fr.emotions_classified_at IS NULL AND fr.emotions IS NULL)
+	   OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL)
+	GROUP BY f.enrichment, f.terminal`
+
+// CountFailedRecordsAggregate returns the cross-tenant failed-record counts per enrichment.
+//
+// Translation's un-enriched test is deliberately weaker than the per-tenant endpoint's: that one
+// compares against the tenant's EFFECTIVE target, which needs the settings join and the deployment
+// default. A gauge summed across tenants has no single target to compare against, so it asks only
+// whether the record has any translation at all. The consequence is that a record translated into
+// a since-changed target counts as done here while the endpoint counts it as pending — acceptable
+// for a deployment-wide gauge, and written down so the two are not mistaken for a bug when they
+// disagree.
+func (r *EnrichmentStatusRepository) CountFailedRecordsAggregate(
+	ctx context.Context,
+) ([]FailedRecordCount, error) {
+	rows, err := r.db.Query(ctx, countFailedRecordsAggregateSQL)
+	if err != nil {
+		return nil, fmt.Errorf("count failed records: %w", err)
+	}
+	defer rows.Close()
+
+	var counts []FailedRecordCount
+
+	for rows.Next() {
+		var count FailedRecordCount
+		if scanErr := rows.Scan(&count.Enrichment, &count.Terminal, &count.Count); scanErr != nil {
+			return nil, fmt.Errorf("scan failed records: %w", scanErr)
+		}
+
+		counts = append(counts, count)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read failed records: %w", err)
+	}
+
+	return counts, nil
+}

@@ -116,6 +116,9 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		// can observe a failure and the only one that records them. The backfill commands register
 		// workers but never Start() a client, so they never reach this path.
 		Failures: repository.NewEnrichmentFailuresRepository(db),
+		// The worker is where a terminal give-up is observed, so it is where the counter lives.
+		// nil when metrics are disabled, which the worker treats as "do not record".
+		FailureMetrics: failureMetrics(metrics),
 	}
 
 	providerName, embeddingModel := embeddingProviderAndModel(cfg)
@@ -473,4 +476,14 @@ func (a *WorkerApp) Shutdown(ctx context.Context) (err error) {
 	}
 
 	return err
+}
+
+// failureMetrics pulls the enrichment failure metrics off the aggregate, tolerating metrics being
+// disabled entirely (a nil *Metrics), which is the default for a deployment with no OTLP exporter.
+func failureMetrics(metrics *observability.Metrics) observability.EnrichmentFailureMetrics {
+	if metrics == nil {
+		return nil
+	}
+
+	return metrics.EnrichmentFailures
 }

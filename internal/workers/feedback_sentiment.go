@@ -31,17 +31,19 @@ type sentimentWorkerService interface {
 func NewFeedbackSentimentWorker(
 	svc sentimentWorkerService, resolver tenantSettingsReader,
 	client service.SentimentClient, metrics observability.SentimentMetrics, failures FailureRecorder,
+	failureMetrics observability.EnrichmentFailureMetrics,
 ) *FeedbackSentimentWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackSentimentArgs, service.SentimentResult]{
-		name:         "sentiment",
-		failures:     failures,
-		timeout:      enrichmentJobTimeout,
-		recordID:     func(args service.FeedbackSentimentArgs) uuid.UUID { return args.FeedbackRecordID },
-		eventID:      func(args service.FeedbackSentimentArgs) uuid.UUID { return args.EventID },
-		getRecord:    svc.GetFeedbackRecord,
-		eligible:     (*models.FeedbackRecord).IsTextField,
-		hasContent:   (*models.FeedbackRecord).HasOpenText,
-		checkEnabled: settingsGate(resolver, models.EnrichmentSettings.SentimentEnrichmentEnabled),
+		name:           "sentiment",
+		failures:       failures,
+		failureMetrics: failureMetrics,
+		timeout:        enrichmentJobTimeout,
+		recordID:       func(args service.FeedbackSentimentArgs) uuid.UUID { return args.FeedbackRecordID },
+		eventID:        func(args service.FeedbackSentimentArgs) uuid.UUID { return args.EventID },
+		getRecord:      svc.GetFeedbackRecord,
+		eligible:       (*models.FeedbackRecord).IsTextField,
+		hasContent:     (*models.FeedbackRecord).HasOpenText,
+		checkEnabled:   settingsGate(resolver, models.EnrichmentSettings.SentimentEnrichmentEnabled),
 		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackSentimentArgs) (service.SentimentResult, error) {
 			sourceLang := ""
 			if record.Language != nil {

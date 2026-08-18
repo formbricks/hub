@@ -35,16 +35,18 @@ type translationWorkerService interface {
 func NewFeedbackTranslationWorker(
 	svc translationWorkerService, client service.TranslationClient, metrics observability.TranslationMetrics,
 	failures FailureRecorder,
+	failureMetrics observability.EnrichmentFailureMetrics,
 ) *FeedbackTranslationWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackTranslationArgs, string]{
-		name:       "translation",
-		failures:   failures,
-		timeout:    enrichmentJobTimeout,
-		recordID:   func(args service.FeedbackTranslationArgs) uuid.UUID { return args.FeedbackRecordID },
-		eventID:    func(args service.FeedbackTranslationArgs) uuid.UUID { return args.EventID },
-		getRecord:  svc.GetFeedbackRecord,
-		eligible:   (*models.FeedbackRecord).IsTextField,
-		hasContent: (*models.FeedbackRecord).HasOpenText,
+		name:           "translation",
+		failures:       failures,
+		failureMetrics: failureMetrics,
+		timeout:        enrichmentJobTimeout,
+		recordID:       func(args service.FeedbackTranslationArgs) uuid.UUID { return args.FeedbackRecordID },
+		eventID:        func(args service.FeedbackTranslationArgs) uuid.UUID { return args.EventID },
+		getRecord:      svc.GetFeedbackRecord,
+		eligible:       (*models.FeedbackRecord).IsTextField,
+		hasContent:     (*models.FeedbackRecord).HasOpenText,
 		classify: func(ctx context.Context, record *models.FeedbackRecord, args service.FeedbackTranslationArgs) (string, error) {
 			return translate(ctx, client, record, args.TargetLang, args.EventID)
 		},

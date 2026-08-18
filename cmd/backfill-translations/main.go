@@ -105,7 +105,7 @@ func run() int {
 	// nil metrics and nil failure recorder: this client is never Start()ed, so it works no jobs.
 	// The registration exists only because River validates that every configured queue has a
 	// worker. hub-worker is the process that runs these and owns failure bookkeeping.
-	river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, nil, nil))
+	river.AddWorker(riverWorkers, workers.NewFeedbackTranslationWorker(feedbackRecordsService, translationClient, nil, nil, nil))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		Queues: map[string]river.QueueConfig{

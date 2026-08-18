@@ -13,6 +13,7 @@ import (
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // enrichmentWorkerMetrics records the worker-side metrics as function fields rather than an
@@ -105,6 +106,10 @@ type enrichmentWorkerConfig[A river.JobArgs, R any] struct {
 	// what failed and anything re-enqueueing unfinished work knows what to skip. nil disables
 	// recording, which is how the embedding pipeline and the unit tests opt out.
 	failures FailureRecorder
+	// failureMetrics counts permanent give-ups by cause. Separate from the marker: the marker is
+	// per-record state the API reads, this is an aggregate signal for whoever watches the
+	// deployment. nil disables it.
+	failureMetrics observability.EnrichmentFailureMetrics
 
 	metrics enrichmentWorkerMetrics
 }
@@ -283,6 +288,11 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 	// is pointless.
 	if reason, terminal := huberrors.TerminalReasonOf(err); terminal {
 		w.markFailed(ctx, log, record, job.Attempt, true, string(reason))
+
+		if cfg.failureMetrics != nil {
+			cfg.failureMetrics.RecordTerminalFailure(ctx, cfg.name, string(reason))
+		}
+
 		w.recordOutcome(ctx, "failed_final", start)
 		log.Error(cfg.name+": provider failed permanently for this record, not retrying",
 			"reason", string(reason), "attempt", job.Attempt, "error", err)

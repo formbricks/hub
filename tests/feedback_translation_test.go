@@ -409,7 +409,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("translates and persists", func(t *testing.T) {
 		rec := createText("Bonjour le monde", "fr", "en-US")
 		fake := &fakeTranslationClient{out: "Hello world"}
-		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, nil)
+		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, nil, nil)
 
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
 
@@ -427,7 +427,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("copies when source matches target without calling the provider", func(t *testing.T) {
 		rec := createText("Hello world", "en-US", "en-GB")
 		fake := &fakeTranslationClient{out: "should-not-be-used"}
-		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, nil)
+		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, nil, nil)
 
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-GB")))
 
@@ -443,7 +443,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 		stale := "stale translation"
 		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &stale, "en-US", "", nil))
 
-		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"}, nil, nil)
+		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"}, nil, nil, nil)
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
 
 		got, getErr := repo.GetByID(ctx, rec.ID)
@@ -455,7 +455,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("stale-target write is superseded without persisting", func(t *testing.T) {
 		rec := createText("Hallo Welt", "de", "de-DE") // tenant's current target is de-DE
 
-		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "Bonjour le monde"}, nil, nil)
+		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "Bonjour le monde"}, nil, nil, nil)
 
 		// The job's target (fr-FR) no longer matches the tenant's current target (de-DE) — an
 		// older job or a stale-cache enqueue. The write must no-op and the job must complete
