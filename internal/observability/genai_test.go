@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
@@ -89,28 +90,124 @@ func TestGenAIMetricsOmitZeroTokenCounts(t *testing.T) {
 	require.Len(t, duration.DataPoints, 1, "the failed call is still timed")
 }
 
-func TestGenAIMetricsCarryNoTenantLabel(t *testing.T) {
-	// tenant_id is unbounded. The same rule already governs the enrichment backlog gauge: aggregate
-	// cost belongs in metrics, per-tenant cost is answered from the counts the API already returns.
-	got := collect(t, func(r llm.UsageRecorder) {
-		r.RecordUsage(context.Background(), llm.Usage{
-			Operation: llm.OperationEmbeddings, Provider: llm.ProviderOpenAI, Model: "m",
-			InputTokens: 8, Duration: time.Millisecond,
-		})
-	})
+// attributeKeys returns every attribute key the named instrument actually exported.
+//
+// It handles each aggregation shape explicitly and FAILS on an unrecognised one rather than
+// returning an empty set. That is the whole point: an earlier version of this check type-asserted
+// a single shape, so the duration histogram — a Float64Histogram, and the only instrument carrying
+// the model and the error class — was silently skipped by an assertion that appeared to cover
+// everything.
+func attributeKeys(t *testing.T, got metricdata.ResourceMetrics, name string) map[string]struct{} {
+	t.Helper()
+
+	keys := map[string]struct{}{}
+	add := func(set attribute.Set) {
+		for _, attr := range set.ToSlice() {
+			keys[string(attr.Key)] = struct{}{}
+		}
+	}
+
+	found := false
 
 	for _, scope := range got.ScopeMetrics {
 		for _, m := range scope.Metrics {
-			if hist, ok := m.Data.(metricdata.Histogram[int64]); ok {
-				for _, dp := range hist.DataPoints {
-					for _, attr := range dp.Attributes.ToSlice() {
-						assert.NotContains(t, string(attr.Key), "tenant",
-							"no tenant dimension may reach a metric label")
-					}
+			if m.Name != name {
+				continue
+			}
+
+			found = true
+
+			switch data := m.Data.(type) {
+			case metricdata.Histogram[int64]:
+				for _, dp := range data.DataPoints {
+					add(dp.Attributes)
 				}
+			case metricdata.Histogram[float64]:
+				for _, dp := range data.DataPoints {
+					add(dp.Attributes)
+				}
+			case metricdata.Sum[int64]:
+				for _, dp := range data.DataPoints {
+					add(dp.Attributes)
+				}
+			case metricdata.Gauge[int64]:
+				for _, dp := range data.DataPoints {
+					add(dp.Attributes)
+				}
+			default:
+				t.Fatalf("instrument %q exports an unhandled aggregation %T: extend this helper "+
+					"rather than letting its attributes go unchecked", name, m.Data)
 			}
 		}
 	}
+
+	require.True(t, found, "instrument %q was not exported", name)
+
+	return keys
+}
+
+// assertAttributeKeys pins an instrument's attribute keys to an ALLOWLIST.
+//
+// A denylist ("no key contains tenant") only forbids what someone thought of. The two things that
+// must never reach a label here are unbounded tenant dimensions and GenAI content attributes —
+// gen_ai.input.messages / gen_ai.output.messages, which carry the prompt and the completion, i.e.
+// customer feedback text, and which off-the-shelf GenAI instrumentation enables by configuration.
+// Adding either fails this test; adding a legitimate attribute means updating the list here, which
+// is exactly the moment to think about what it costs.
+func assertAttributeKeys(t *testing.T, got metricdata.ResourceMetrics, name string, allowed ...string) {
+	t.Helper()
+
+	permitted := map[string]struct{}{}
+	for _, key := range allowed {
+		permitted[key] = struct{}{}
+	}
+
+	for key := range attributeKeys(t, got, name) {
+		_, ok := permitted[key]
+		assert.True(t, ok, "%s: attribute %q is not on the allowlist for this instrument", name, key)
+	}
+}
+
+func TestGenAIMetricsCarryOnlyAllowedAttributes(t *testing.T) {
+	// One success and one failure, so the model and the error class are both present: recording
+	// only a success would leave the two conditional attributes unexercised and the allowlist
+	// unproven for the shape that actually carries them.
+	got := collect(t, func(r llm.UsageRecorder) {
+		r.RecordUsage(context.Background(), llm.Usage{
+			Operation: llm.OperationChat, Provider: llm.ProviderOpenAI, Model: "gpt-4o-mini",
+			InputTokens: 40, OutputTokens: 12, Duration: 250 * time.Millisecond,
+		})
+		r.RecordUsage(context.Background(), llm.Usage{
+			Operation: llm.OperationEmbeddings, Provider: llm.ProviderGCPVertexAI, Model: "text-embedding-004",
+			Duration: 10 * time.Millisecond, ErrorType: "429",
+		})
+	})
+
+	assertAttributeKeys(t, got, MetricNameGenAITokenUsage,
+		AttrGenAIOperationName, AttrGenAIProviderName, AttrGenAITokenType)
+	assertAttributeKeys(t, got, MetricNameGenAIOperationDuration,
+		AttrGenAIOperationName, AttrGenAIProviderName, AttrGenAIRequestModel, AttrErrorType)
+}
+
+func TestEnrichmentFailureMetricsCarryOnlyAllowedAttributes(t *testing.T) {
+	reader := metric.NewManualReader()
+	provider := metric.NewMeterProvider(metric.WithReader(reader))
+
+	failures, err := NewEnrichmentFailureMetrics(provider.Meter("test"))
+	require.NoError(t, err)
+	require.NotNil(t, failures)
+
+	failures.RecordTerminalFailure(context.Background(), EnrichmentTypeSentiment, "content_filter")
+	failures.SetFailedRecords(EnrichmentTypeTranslation, true, 3)
+
+	var got metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &got))
+
+	// The reason is aggregate-only for a reason: a per-tenant breakdown by cause would characterise
+	// one customer's content ("this tenant trips the content filter 30% of the time"), which is a
+	// statement about their data rather than about the deployment.
+	assertAttributeKeys(t, got, MetricNameEnrichmentTerminalTotal, AttrEnrichment, AttrReason)
+	assertAttributeKeys(t, got, MetricNameEnrichmentFailedRecords, AttrEnrichment, AttrTerminal)
 }
 
 // TestFailedRecordsGaugeWithdrawsOnClear pins the withdraw-not-stale rule. An async gauge
