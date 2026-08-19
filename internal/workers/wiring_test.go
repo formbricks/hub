@@ -7,6 +7,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/service"
 )
 
@@ -23,6 +24,16 @@ func (stubTranslationBackfillService) BackfillTranslationsForTenant(
 	_ context.Context, _ service.RiverJobInserter, _ string, _ int, _, _ string,
 ) (int, error) {
 	return 0, nil
+}
+
+// stubFeedbackRecordsPurgeService satisfies feedbackRecordsPurgeService. The tests only register
+// workers, never run them, so the method is never called.
+type stubFeedbackRecordsPurgeService struct{}
+
+func (stubFeedbackRecordsPurgeService) Purge(
+	_ context.Context, _ string,
+) (*models.FeedbackRecordsPurgeCounts, error) {
+	return &models.FeedbackRecordsPurgeCounts{}, nil
 }
 
 // kindProbe re-registers a job kind to observe whether it is already registered.
@@ -75,6 +86,8 @@ func fullRiverDeps() RiverDeps {
 		EmotionsResolver: stubEmotionsSettings{},
 		EmotionsClient:   &stubEmotionsClient{},
 		EmotionsMetrics:  &countingEmotionsMetrics{},
+
+		FeedbackRecordsPurgeService: stubFeedbackRecordsPurgeService{},
 	}
 }
 
@@ -99,36 +112,44 @@ func TestNewRiverWorkersAndQueuesCoversEveryJobKind(t *testing.T) {
 	assertKindRegistered[service.TenantTranslationBackfillArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackSentimentArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackEmotionsArgs](t, workerBundle, true)
+	assertKindRegistered[service.FeedbackRecordsPurgeArgs](t, workerBundle, true)
 
-	const probedKinds = 6
+	const probedKinds = 7
 	if got := len(service.JobKindSpecs()); got != probedKinds {
 		t.Fatalf("JobKindSpecs has %d kinds but %d are probed above — add a probe for the new kind "+
 			"and register a worker for it in NewRiverWorkersAndQueues", got, probedKinds)
 	}
 }
 
-// TestNewRiverWorkersAndQueuesWithoutOptionalClients pins the disabled-enrichment shape: webhook
-// dispatch always runs, and a nil client must leave both its worker and its queue out rather than
-// registering a worker that would fail on every job.
+// TestNewRiverWorkersAndQueuesWithoutOptionalClients pins the disabled-enrichment shape: the
+// always-on workers (webhook dispatch and the feedback-records purge) still run, and a nil client
+// must leave both its worker and its queue out rather than registering a worker that would fail on
+// every job.
 func TestNewRiverWorkersAndQueuesWithoutOptionalClients(t *testing.T) {
 	cfg := &config.Config{}
 	deps := RiverDeps{
 		WebhooksRepo:   &mockDispatchRepo{},
 		WebhookSender:  &mockSender{},
 		WebhookMetrics: newCountingWebhookMetrics(),
+
+		FeedbackRecordsPurgeService: stubFeedbackRecordsPurgeService{},
 	}
 
 	workerBundle, queues := NewRiverWorkersAndQueues(cfg, deps)
 
-	if len(queues) != 1 {
-		t.Fatalf("queues = %v, want only %q", queues, river.QueueDefault)
+	alwaysOnQueues := []string{river.QueueDefault, service.FeedbackRecordsPurgeQueueName}
+	if len(queues) != len(alwaysOnQueues) {
+		t.Fatalf("queues = %v, want only %v", queues, alwaysOnQueues)
 	}
 
-	if _, ok := queues[river.QueueDefault]; !ok {
-		t.Fatalf("queues = %v, want %q declared", queues, river.QueueDefault)
+	for _, name := range alwaysOnQueues {
+		if _, ok := queues[name]; !ok {
+			t.Fatalf("queues = %v, want %q declared", queues, name)
+		}
 	}
 
 	assertKindRegistered[service.WebhookDispatchArgs](t, workerBundle, true)
+	assertKindRegistered[service.FeedbackRecordsPurgeArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackEmbeddingArgs](t, workerBundle, false)
 	assertKindRegistered[service.FeedbackTranslationArgs](t, workerBundle, false)
 	assertKindRegistered[service.TenantTranslationBackfillArgs](t, workerBundle, false)
@@ -156,6 +177,8 @@ func TestNewRiverWorkersAndQueuesUsesConfiguredConcurrency(t *testing.T) {
 		service.TranslationBackfillsQueueName: 4,
 		service.SentimentsQueueName:           5,
 		service.EmotionsQueueName:             6,
+		// Purges are deliberately serialized rather than configurable — see wiring.go.
+		service.FeedbackRecordsPurgeQueueName: feedbackRecordsPurgeMaxWorkers,
 	}
 
 	for name, wantMax := range want {

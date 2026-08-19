@@ -370,6 +370,11 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
 
+	// The API only ever enqueues the feedback-records purge; hub-worker performs it. The repo is
+	// still wired in because the service owns both halves, but this process never reaches Purge.
+	feedbackRecordsPurgeService := service.NewFeedbackRecordsPurgeService(tenantDataRepo, riverClient)
+	feedbackRecordsPurgeHandler := handlers.NewFeedbackRecordsPurgeHandler(feedbackRecordsPurgeService)
+
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
 
 	// Translation, sentiment, and emotion enqueue providers all resolve a per-tenant setting on
@@ -484,7 +489,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	server := newHTTPServer(
-		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, webhooksHandler, tenantDataHandler,
+		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, feedbackRecordsPurgeHandler,
+		webhooksHandler, tenantDataHandler,
 		tenantSettingsHandler, searchHandler,
 		taxonomyHandler, taxonomyInternalHandler, enrichmentStatusHandler,
 		meterProvider, tracerProvider,
@@ -511,6 +517,7 @@ func newHTTPServer(
 	health *handlers.HealthHandler,
 	openapi *handlers.OpenAPIHandler,
 	feedback *handlers.FeedbackRecordsHandler,
+	feedbackPurge *handlers.FeedbackRecordsPurgeHandler,
 	webhooks *handlers.WebhooksHandler,
 	tenantData *handlers.TenantDataHandler,
 	tenantSettings *handlers.TenantSettingsHandler,
@@ -541,6 +548,9 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/webhooks/{id}", webhooks.Update)
 	protected.HandleFunc("DELETE /v1/webhooks/{id}", webhooks.Delete)
 	protected.HandleFunc("DELETE /v1/tenants/{tenant_id}/data", tenantData.Delete)
+	// Under /v1/tenants (which the gateway does not route publicly) rather than beside the
+	// feedback-records collection — see FeedbackRecordsPurgeHandler.Purge.
+	protected.HandleFunc("DELETE /v1/tenants/{tenant_id}/feedback-records", feedbackPurge.Purge)
 	protected.HandleFunc("GET /v1/tenants/{tenant_id}/settings", tenantSettings.Get)
 	protected.HandleFunc("PUT /v1/tenants/{tenant_id}/settings", tenantSettings.Update)
 	protected.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettings.Patch)

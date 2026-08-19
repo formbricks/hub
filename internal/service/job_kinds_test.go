@@ -17,6 +17,7 @@ func TestJobKindSpecs(t *testing.T) {
 		"tenant_translation_backfill": TranslationBackfillsQueueName,
 		"feedback_sentiment":          SentimentsQueueName,
 		"feedback_emotions":           EmotionsQueueName,
+		"feedback_records_purge":      FeedbackRecordsPurgeQueueName,
 	}
 
 	specs := JobKindSpecs()
@@ -37,6 +38,7 @@ func TestJobQueueNames(t *testing.T) {
 		TranslationBackfillsQueueName,
 		SentimentsQueueName,
 		EmotionsQueueName,
+		FeedbackRecordsPurgeQueueName,
 	}, JobQueueNames())
 }
 

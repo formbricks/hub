@@ -18,6 +18,9 @@ import (
 // fakeTenantWriteTx (see tenant_write_lock_test.go); the purge tests below
 // drive that same fake transaction, which satisfies tenantWriteTxBeginner.
 type fakeTenantDataExecutor struct {
+	// statements is the ordered Exec log; fakeTenantWriteTx merges its QueryRow statements into the
+	// same sequence so ordering across the purge's two phases is assertable.
+	statements []string
 	tags       []pgconn.CommandTag
 	errAtQuery int
 	err        error
@@ -28,6 +31,7 @@ type fakeTenantDataExecutor struct {
 func (f *fakeTenantDataExecutor) Exec(
 	_ context.Context, sql string, arguments ...any,
 ) (pgconn.CommandTag, error) {
+	f.statements = append(f.statements, sql)
 	f.queries = append(f.queries, sql)
 	f.args = append(f.args, arguments)
 

@@ -33,6 +33,7 @@ func JobKindSpecs() []JobKindSpec {
 		{Args: TenantTranslationBackfillArgs{}, Queue: TranslationBackfillsQueueName},
 		{Args: FeedbackSentimentArgs{}, Queue: SentimentsQueueName},
 		{Args: FeedbackEmotionsArgs{}, Queue: EmotionsQueueName},
+		{Args: FeedbackRecordsPurgeArgs{}, Queue: FeedbackRecordsPurgeQueueName},
 	}
 }
 

@@ -16,6 +16,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -112,6 +114,16 @@ func setupTestServerWithEventProviders(
 	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
+
+	// Insert-only River client, matching the API process: the purge endpoint enqueues a job and
+	// hub-worker performs it, so the test server needs somewhere real for that job to land.
+	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{})
+	require.NoError(t, err, "Failed to create River client")
+
+	feedbackRecordsPurgeHandler := handlers.NewFeedbackRecordsPurgeHandler(
+		service.NewFeedbackRecordsPurgeService(tenantDataRepo, riverClient),
+	)
+
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
@@ -132,6 +144,7 @@ func setupTestServerWithEventProviders(
 	protectedMux.HandleFunc("PATCH /v1/feedback-records/{id}", feedbackRecordsHandler.Update)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.DeleteByUser)
+	protectedMux.HandleFunc("DELETE /v1/tenants/{tenant_id}/feedback-records", feedbackRecordsPurgeHandler.Purge)
 	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
 	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
 	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)

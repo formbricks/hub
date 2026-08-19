@@ -1285,6 +1285,99 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/tenants/{tenant_id}/feedback-records:
+        delete:
+            tags:
+                - Tenant Data
+            summary: Purge all feedback records for a tenant
+            description: |
+                Permanently deletes every feedback record for the specified tenant_id, everything derived from
+                those records — embeddings and the enrichment stored on each record (sentiment, emotions,
+                translations) — and the taxonomy built on them: runs, clusters, nodes, cluster memberships,
+                active-run pointers and node events.
+
+                This is intended for emptying a dataset that stays in use, so it removes the tenant's DATA but
+                never its CONFIGURATION: webhooks and tenant settings are left untouched. That is the difference
+                from `DELETE /v1/tenants/{tenant_id}/data`, which additionally deletes both and is meant for
+                offboarding a deprovisioned tenant.
+
+                The taxonomy is removed rather than preserved because it describes records that no longer exist:
+                its per-node counts are derived from memberships and would all read zero, while a run's own stored
+                counters (`record_count`, `cluster_count`, a cluster's `size`) are historical and would keep
+                advertising the old numbers. A new taxonomy can be generated once the dataset has enough feedback
+                again; manual node renames and removals are per-run and do not survive a regeneration in any case.
+
+                The tenant is a required path segment, so it cannot be omitted the way a filter on a collection
+                delete could be — dropping it routes elsewhere rather than widening the operation to every tenant.
+
+                Asynchronous: the request schedules the purge and returns 202 immediately, because the deletion is
+                unbounded and can outlive a request. There is therefore no deleted count in the response. Poll
+                `GET /v1/feedback-records/count?tenant_id=...` to observe progress.
+
+                The purge removes only the records that existed when it started — it takes a high-water mark up
+                front — so feedback ingested while it runs is never deleted. For a dataset that is no longer
+                receiving feedback the count reaching zero means the purge is complete; for one still ingesting,
+                a nonzero count is those newer records. Note this means the count alone cannot distinguish
+                "finished" from "failed" on an active dataset.
+
+                Idempotent and safe to repeat. Requesting a purge while one is already running for the same tenant
+                joins the running purge rather than queueing a second one, and still returns 202. A purge requested
+                after an earlier one finished starts a new run.
+
+                Records are deleted in committed batches, so a purge interrupted by a restart or a timeout keeps
+                the progress it made and resumes on retry; the taxonomy is removed in a final step once the records
+                are gone. While each step runs, the tenant's write lock is held exclusively and Hub-owned writes
+                for that tenant are rejected with HTTP 409 (code `tenant_write_conflict`); the lock is released
+                between steps, and writes for other tenants are never affected. This does not apply to the request below — scheduling a purge takes no lock, so
+                this endpoint does not return 409. A batch that cannot acquire the lock is retried by the job
+                queue without any caller action, up to a bounded number of attempts.
+
+                No webhook events are published for a purge, and no webhooks are deleted. Enrichment jobs already
+                queued for purged records no-op when they run, since the record they reference is gone.
+            operationId: purge-tenant-feedback-records
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  description: Tenant ID whose feedback records should be purged. Empty strings and NULL bytes are not allowed.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+            responses:
+                "202":
+                    description: Purge accepted and scheduled
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/FeedbackRecordsPurgeOutputBody'
+                            examples:
+                                accepted:
+                                    summary: Purge accepted
+                                    value:
+                                        tenant_id: "org-123"
+                                        status: "accepted"
+                                        message: "Feedback records purge accepted for org-123"
+                "400":
+                    description: Bad Request (e.g. missing or invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
     /v1/tenants/{tenant_id}/settings:
         get:
             tags:
@@ -2638,6 +2731,33 @@ components:
                     example: 42
             required:
                 - count
+        FeedbackRecordsPurgeOutputBody:
+            type: object
+            additionalProperties: false
+            required:
+                - tenant_id
+                - status
+            properties:
+                tenant_id:
+                    type: string
+                    description: Tenant ID whose feedback records are being purged
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+                    example: "org-123"
+                status:
+                    type: string
+                    description: |
+                        Always `accepted`. The purge runs in the background, so this reports that the work was
+                        scheduled, not that it finished — poll `GET /v1/feedback-records/count` for the tenant to
+                        observe completion.
+                    enum:
+                        - accepted
+                    example: "accepted"
+                message:
+                    type: string
+                    description: Human-readable confirmation
+                    example: "Feedback records purge accepted for org-123"
         TenantDataDeleteOutputBody:
             type: object
             additionalProperties: false
