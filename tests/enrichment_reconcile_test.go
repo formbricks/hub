@@ -35,6 +35,7 @@ func TestListPendingEnrichment(t *testing.T) {
 	pending := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "needs sentiment")
 	terminal := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "refused forever")
 	transient := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "failed but retryable")
+	writeFailed := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "classified but never written")
 	doneRec := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "already enriched")
 
 	_, err = db.Exec(ctx, `INSERT INTO feedback_record_enrichment_failures
@@ -44,6 +45,15 @@ func TestListPendingEnrichment(t *testing.T) {
 	_, err = db.Exec(ctx, `INSERT INTO feedback_record_enrichment_failures
 		(feedback_record_id, enrichment, tenant_id, terminal, reason) VALUES ($1,'sentiment',$2,false,'provider_error')`,
 		transient.ID, tenant)
+	require.NoError(t, err)
+
+	// The second non-terminal reason. It is not a provider failure at all — the model answered and
+	// the write is what died — but it leaves the record just as un-enriched, so the sweep owes it
+	// the same retry. Pinned separately because the exclusion here keys on `terminal`, and a later
+	// change that keyed on the reason instead would quietly strand every write failure.
+	_, err = db.Exec(ctx, `INSERT INTO feedback_record_enrichment_failures
+		(feedback_record_id, enrichment, tenant_id, terminal, reason) VALUES ($1,'sentiment',$2,false,'write_failed')`,
+		writeFailed.ID, tenant)
 	require.NoError(t, err)
 
 	label, score := models.SentimentPositive, 1.0
@@ -61,10 +71,11 @@ func TestListPendingEnrichment(t *testing.T) {
 	}
 
 	assert.True(t, ids[pending.ID], "never-attempted record must be pending")
-	assert.True(t, ids[transient.ID], "a retryable failure must come back as pending")
+	assert.True(t, ids[transient.ID], "a retryable provider failure must come back as pending")
+	assert.True(t, ids[writeFailed.ID], "a failed write is retryable too, and must come back as pending")
 	assert.False(t, ids[terminal.ID], "a terminal failure must be excluded or the sweep never ends")
 	assert.False(t, ids[doneRec.ID], "an enriched record must not be pending")
-	assert.Len(t, ids, 2, "exactly the two pending records, no more")
+	assert.Len(t, ids, 3, "exactly the three pending records, no more")
 
 	// The reconciler is cross-tenant on purpose — a provider outage is deployment-wide — so it
 	// must return other tenants' work too. Only the per-tenant filter above hides it here.
