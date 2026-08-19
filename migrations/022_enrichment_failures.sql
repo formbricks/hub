@@ -19,10 +19,17 @@
 -- the count. The sweeper garbage-collects dead rows lazily.
 --
 -- THE TENANT BOUNDARY IS feedback_records.tenant_id, NOT THE COLUMN HERE. tenant_id is
--- denormalized onto this table solely so the per-tenant index below is possible. Counting queries
--- join on feedback_record_id and keep `fr.tenant_id = $n` as their only tenant predicate. Do not
--- "simplify" a query to filter on this column instead: that would give the tenant boundary two
--- sources of truth, and the guard would only ever be as good as the write path that populated it.
+-- denormalized onto this table so the per-tenant index below is possible, and the counting queries
+-- do use it -- in the JOIN, alongside `fr.tenant_id = $n` in the outer WHERE, because without a
+-- tenant-side predicate the planner hash-joins this whole table and every tenant pays for every
+-- other tenant's failures.
+--
+-- The distinction that matters is ADDITIONAL versus INSTEAD OF. A join predicate can only narrow
+-- which marker attaches to a record, so it cannot pull in another tenant's row. Removing
+-- `fr.tenant_id = $n` and filtering on this column instead is the forbidden move: it would put the
+-- tenant boundary on a denormalized value that is only ever as good as the write path that filled
+-- it. Integration tests hold both halves -- a marker stamped with a foreign tenant must be
+-- invisible to that tenant, and the record-side predicate must be what makes it so.
 --
 -- ON DELETE CASCADE rather than an explicit delete in the tenant purge, which diverges from the
 -- convention in tenant_data_repository.go ("the purge never relies on cascades"). That rule exists

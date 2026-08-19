@@ -170,16 +170,37 @@ const enrichmentCountFrom = `
 // one row, so this stays a lookup rather than a fan-out — the eligible and done counts would be
 // wrong if it did not.
 //
-// The join is on feedback_record_id ALONE. The markers carry a tenant_id column, but it exists for
-// its own index and is never the tenant boundary: that stays fr.tenant_id in the outer WHERE, so
-// the boundary has exactly one source of truth. See migration 022.
-const enrichmentFailureJoins = `
-	LEFT JOIN feedback_record_enrichment_failures fs
-		ON fs.feedback_record_id = fr.id AND fs.enrichment = 'sentiment'
-	LEFT JOIN feedback_record_enrichment_failures fe
-		ON fe.feedback_record_id = fr.id AND fe.enrichment = 'emotions'
-	LEFT JOIN feedback_record_enrichment_failures ft
-		ON ft.feedback_record_id = fr.id AND ft.enrichment = 'translation'`
+// THE TENANT BOUNDARY IS STILL fr.tenant_id IN THE OUTER WHERE. The markers' own tenant_id appears
+// here too, and the distinction matters: it is an ADDITIONAL predicate, never a replacement. A
+// join predicate can only narrow which marker attaches to a record, so it cannot pull in another
+// tenant's row; drop `fr.tenant_id = $n` and filter on the stamp instead and the boundary moves to
+// a denormalized column that is only as good as the write path that filled it. See migration 022.
+//
+// It is here for the index. Without it the planner has no tenant-side selectivity on the marker
+// table and hash-joins the WHOLE table three times, so a tenant with 2,500 records and no failures
+// of its own pays for every other tenant's: measured at 1M records / 300k markers, 3ms on the
+// pre-failure query became 32ms, scaling with the GLOBAL marker count rather than the tenant's.
+// One tenant's provider outage slowing everyone else's status endpoint is the part that made this
+// worth a predicate. With it, idx_enrichment_failures_tenant_enrichment applies and the same query
+// is 6ms.
+//
+// The trade is that a marker whose stamp disagreed with its record's tenant would stop being
+// counted. Nothing can produce that — one write site, tenant read from the record, and ON CONFLICT
+// does not update it — and under-counting is the safe direction: the record simply reads as still
+// in progress, which is what re-enqueueing it will fix.
+//
+// tenantParam must be the placeholder the outer WHERE uses for the tenant, so the two cannot drift.
+func enrichmentFailureJoins(tenantParam string) string {
+	join := func(alias, enrichment string) string {
+		return `
+	LEFT JOIN feedback_record_enrichment_failures ` + alias + `
+		ON ` + alias + `.feedback_record_id = fr.id
+		AND ` + alias + `.tenant_id = ` + tenantParam + `
+		AND ` + alias + `.enrichment = '` + enrichment + `'`
+	}
+
+	return join("fs", "sentiment") + join("fe", "emotions") + join("ft", "translation")
+}
 
 // The `fr.field_type = 'text'` predicate in the outer WHERE of both queries below is redundant
 // with enrichmentEligibleText inside every FILTER (so it can never change a count); it is hoisted
@@ -189,7 +210,7 @@ const enrichmentFailureJoins = `
 // default target language, $2 = tenant_id. The (tenant_id, field_type) pair matches
 // idx_feedback_records_tenant_field_type, so cost scales with the tenant's text-record count.
 var countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + `,` + failureCountColumns() +
-	enrichmentCountFrom + enrichmentFailureJoins + `
+	enrichmentCountFrom + enrichmentFailureJoins(`$2`) + `
 	WHERE fr.tenant_id = $2 AND fr.field_type = 'text'`
 
 // countEnrichmentBacklogAggregateSQL is the same SELECT without the tenant filter: it sums

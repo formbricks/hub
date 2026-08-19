@@ -181,19 +181,24 @@ func TestCountEnrichmentStatusCountsFailures(t *testing.T) {
 	mark(both, "sentiment", false, "provider_error")
 	mark(both, "emotions", true, "refusal")
 
-	// A record of THIS tenant whose marker is stamped with someone else's tenant_id. Migration 022
-	// says that column is there for its index and must never be a tenant predicate; this fixture
-	// is what enforces it. Gate any failure count on the marker's own tenant_id — the "obvious"
-	// optimization the migration warns about — and this record silently disappears from the tenant
-	// that actually owns it, while every other assertion here still passes.
+	// A record of THIS tenant whose marker is stamped with someone else's tenant_id. Nothing can
+	// produce that — the worker reads the tenant off the record — so it exists purely to pin which
+	// predicate governs.
+	//
+	// The counting query keys the marker JOIN on the stamp as well as on the record, for the index
+	// (see enrichmentFailureJoins), so this marker is NOT counted: the accepted trade, and the safe
+	// direction, since the record just reads as still in progress. What must never change is the
+	// other half — the stamped tenant sees nothing, because the boundary is the RECORD's tenant in
+	// the outer WHERE, not the stamp.
+	misstampedTenant := "wrong-stamp-" + uuid.NewString()
 	misstamped := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "marker stamped with the wrong tenant")
-	insertFailureMarker(t, db, misstamped.ID, "wrong-stamp-"+uuid.NewString(), "sentiment", false, "provider_error")
+	insertFailureMarker(t, db, misstamped.ID, misstampedTenant, "sentiment", false, "provider_error")
 
 	counts, err := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(3), counts.SentimentFailed,
-		"transient + the multi-enrichment record + the one whose marker is stamped elsewhere")
+	assert.Equal(t, int64(2), counts.SentimentFailed,
+		"transient + the multi-enrichment record; the marker stamped elsewhere does not attach")
 	assert.Equal(t, int64(1), counts.SentimentFailedTerminal, "the content-filtered one")
 	assert.Equal(t, int64(0), counts.EmotionsFailed)
 	assert.Equal(t, int64(1), counts.EmotionsFailedTerminal, "the multi-enrichment record's refusal")
@@ -205,10 +210,16 @@ func TestCountEnrichmentStatusCountsFailures(t *testing.T) {
 	// The recovered record is enriched, so its stale marker contributes to nothing.
 	assert.Equal(t, int64(1), counts.SentimentDone)
 
-	// Another tenant's markers must be invisible even though the markers table carries a tenant_id
-	// of its own — the boundary is feedback_records.tenant_id. The misstamped marker above is the
-	// other half of this: one proves a foreign tenant sees nothing, the other proves the owning
-	// tenant sees everything of its own regardless of what the stamp says.
+	// A tenant with no records of its own sees nothing, however many markers name it. This is the
+	// boundary assertion: the stamped tenant owns no feedback record, so the outer
+	// fr.tenant_id predicate is the only thing that can be keeping its count at zero.
+	stamped, err := statusRepo.CountEnrichmentStatus(ctx, misstampedTenant, "")
+	require.NoError(t, err)
+	assert.Zero(t, stamped.SentimentEligible, "a tenant with no records has nothing eligible")
+	assert.Zero(t, stamped.SentimentFailed, "and cannot see a marker merely because it names them")
+	assert.Zero(t, stamped.SentimentFailedTerminal)
+
+	// And a wholly unrelated tenant likewise.
 	otherTenant := "enrichment-failed-counts-other-" + uuid.NewString()
 	otherCounts, err := statusRepo.CountEnrichmentStatus(ctx, otherTenant, "")
 	require.NoError(t, err)
