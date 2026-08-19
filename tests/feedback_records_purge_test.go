@@ -97,6 +97,14 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 	ids := seedTaxonomyGraph(ctx, t, db, scope)
 	seedPurgeEmbedding(ctx, t, db, ids.FeedbackRecordID)
 
+	// Enrichment failure markers (migration 022). Unlike embeddings and cluster memberships these
+	// are NOT deleted explicitly — they rely on ON DELETE CASCADE — so this purge is the one place
+	// that can prove the cascade fires. One of the two is stamped with a tenant that is not its
+	// record's, because what removes a marker is the record it hangs off, never the stamp.
+	insertFailureMarker(t, db, ids.FeedbackRecordID, tenantID, "sentiment", true, "content_filter")
+	insertFailureMarker(t, db, ids.FeedbackRecordID,
+		"not-this-tenant-"+uuid.NewString(), "emotions", false, "provider_error")
+
 	// A second tenant with its own graph, to prove the purge does not reach across the boundary.
 	otherScope := models.TaxonomyScope{
 		TenantID:   otherTenantID,
@@ -106,6 +114,7 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 	}
 	otherIDs := seedTaxonomyGraph(ctx, t, db, otherScope)
 	seedPurgeEmbedding(ctx, t, db, otherIDs.FeedbackRecordID)
+	insertFailureMarker(t, db, otherIDs.FeedbackRecordID, otherTenantID, "sentiment", true, "refusal")
 
 	// Tenant configuration that must outlive the purge.
 	_, err := db.Exec(ctx, `
@@ -139,6 +148,21 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 			`SELECT count(*) FROM embeddings WHERE feedback_record_id = $1`, ids.FeedbackRecordID))
 		assert.Zero(t, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_cluster_memberships WHERE tenant_id = $1`, tenantID))
+	})
+
+	// The failure markers carry a tenant_id, so one surviving its records is tenant-scoped data
+	// left behind — a retention problem rather than untidiness. They are the only derived table
+	// this purge leaves to ON DELETE CASCADE, and a cascade reports nothing, so it is invisible
+	// unless something looks. Counted by record and as orphans: drop the foreign key and the rows
+	// survive with no record to join to, which the by-record count alone would read as success.
+	t.Run("removes the enrichment failure markers by cascade", func(t *testing.T) {
+		assert.Zero(t, countRows(ctx, t, db,
+			`SELECT count(*) FROM feedback_record_enrichment_failures WHERE feedback_record_id = $1`,
+			ids.FeedbackRecordID))
+		assert.Zero(t, countRows(ctx, t, db, `
+			SELECT count(*) FROM feedback_record_enrichment_failures f
+			LEFT JOIN feedback_records fr ON fr.id = f.feedback_record_id
+			WHERE fr.id IS NULL`))
 	})
 
 	// The taxonomy goes with the records it describes. Keeping it would leave a tree the dashboard
@@ -179,6 +203,9 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 			`SELECT count(*) FROM taxonomy_runs WHERE id = $1`, otherIDs.RunID))
 		assert.Equal(t, 3, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_nodes WHERE run_id = $1`, otherIDs.RunID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM feedback_record_enrichment_failures WHERE feedback_record_id = $1`,
+			otherIDs.FeedbackRecordID))
 	})
 
 	t.Run("is idempotent", func(t *testing.T) {

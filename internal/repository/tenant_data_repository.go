@@ -239,7 +239,11 @@ func (r *TenantDataRepository) feedbackRecordsHighWaterMark(
 // the caller's final phase once the records are gone — see PurgeFeedbackRecordsByTenant. What this
 // purge never touches is webhooks and tenant_settings: those are tenant configuration, not tenant
 // data. Enrichment output (sentiment, emotions, translations) needs no statement of its own — it
-// lives in columns on feedback_records and goes with the row.
+// lives in columns on feedback_records and goes with the row. Enrichment FAILURE markers
+// (feedback_record_enrichment_failures, migration 022) do have a table of their own but are left
+// to ON DELETE CASCADE: they are internal derived state, and unlike the tables above no caller has
+// a use for a count of them. That makes them the one derived table here whose removal nothing
+// would notice, so an integration test asserts it — see tests/feedback_records_purge_test.go.
 func purgeFeedbackRecordsBatchInTx(
 	ctx context.Context, transaction tenantWriteTx, tenantID string, highWaterMark uuid.UUID, limit int,
 ) (*models.FeedbackRecordsPurgeCounts, error) {

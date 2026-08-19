@@ -20,9 +20,12 @@ import (
 // with the record's. Nothing in production can produce that — the worker reads the tenant off the
 // record — but the tests below need it to tell the two candidate tenant boundaries apart, and a
 // fixture no code path can produce is exactly what proves the boundary is not the stamp.
+//
+// Takes the record id rather than the record so the purge tests, which seed through the taxonomy
+// helpers and hold only ids, use the same fixture as the counting tests.
 func insertFailureMarker(
 	t *testing.T, db *pgxpool.Pool,
-	record *models.FeedbackRecord, stampedTenant, enrichment string, terminal bool, reason string,
+	recordID uuid.UUID, stampedTenant, enrichment string, terminal bool, reason string,
 ) {
 	t.Helper()
 
@@ -30,7 +33,7 @@ func insertFailureMarker(
 		INSERT INTO feedback_record_enrichment_failures
 			(feedback_record_id, enrichment, tenant_id, terminal, reason)
 		VALUES ($1, $2, $3, $4, $5)`,
-		record.ID, enrichment, stampedTenant, terminal, reason)
+		recordID, enrichment, stampedTenant, terminal, reason)
 	require.NoError(t, err)
 }
 
@@ -65,10 +68,10 @@ func TestEnrichmentFailuresPurgedWithTenant(t *testing.T) {
 	// One of each kind, so a cascade that somehow only caught one shape would still fail. The
 	// third is stamped with a tenant that is not its record's: it must be purged all the same,
 	// because what removes it is the record it hangs off, not the stamp.
-	insertFailureMarker(t, db, doomed, tenant, "sentiment", true, "content_filter")
-	insertFailureMarker(t, db, doomed, tenant, "emotions", false, "provider_error")
-	insertFailureMarker(t, db, doomed, "not-this-tenant-"+uuid.NewString(), "translation", false, "provider_error")
-	insertFailureMarker(t, db, survivor, other, "sentiment", true, "refusal")
+	insertFailureMarker(t, db, doomed.ID, tenant, "sentiment", true, "content_filter")
+	insertFailureMarker(t, db, doomed.ID, tenant, "emotions", false, "provider_error")
+	insertFailureMarker(t, db, doomed.ID, "not-this-tenant-"+uuid.NewString(), "translation", false, "provider_error")
+	insertFailureMarker(t, db, survivor.ID, other, "sentiment", true, "refusal")
 
 	// Counted two ways, because a survivor can hide from either one alone. Joining to the record
 	// misses an ORPHAN — a marker left behind by a dropped foreign key has no record to join to —
@@ -155,7 +158,7 @@ func TestCountEnrichmentStatusCountsFailures(t *testing.T) {
 
 	mark := func(record *models.FeedbackRecord, enrichment string, terminal bool, reason string) {
 		t.Helper()
-		insertFailureMarker(t, db, record, tenant, enrichment, terminal, reason)
+		insertFailureMarker(t, db, record.ID, tenant, enrichment, terminal, reason)
 	}
 
 	transient := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "transient failure")
@@ -183,7 +186,7 @@ func TestCountEnrichmentStatusCountsFailures(t *testing.T) {
 	// optimization the migration warns about — and this record silently disappears from the tenant
 	// that actually owns it, while every other assertion here still passes.
 	misstamped := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "marker stamped with the wrong tenant")
-	insertFailureMarker(t, db, misstamped, "wrong-stamp-"+uuid.NewString(), "sentiment", false, "provider_error")
+	insertFailureMarker(t, db, misstamped.ID, "wrong-stamp-"+uuid.NewString(), "sentiment", false, "provider_error")
 
 	counts, err := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
 	require.NoError(t, err)
