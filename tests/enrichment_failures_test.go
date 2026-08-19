@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -213,4 +214,82 @@ func TestCountEnrichmentStatusCountsFailures(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, otherCounts.SentimentFailed)
 	assert.Zero(t, otherCounts.SentimentFailedTerminal)
+}
+
+// TestEnrichmentFailureMarkerConstraints holds the database to the rule the Go types only assert
+// by convention: terminal and reason are ONE decision, and the enrichment name is closed.
+//
+// The CHECK is what stops a bug writing terminal = true with a retryable reason, which would make
+// anything that re-enqueues unfinished work skip that record permanently — a record silently
+// abandoned because of a typo. A constraint nothing tries to violate is a constraint nobody
+// notices the loss of.
+func TestEnrichmentFailureMarkerConstraints(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	frepo := repository.NewFeedbackRecordsRepository(db)
+	tenant := "enrichment-marker-checks-" + uuid.NewString()
+	record := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "constraint fixture")
+
+	insert := func(enrichment string, terminal bool, reason string) error {
+		_, execErr := db.Exec(ctx, `
+			INSERT INTO feedback_record_enrichment_failures
+				(feedback_record_id, enrichment, tenant_id, terminal, reason)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (feedback_record_id, enrichment) DO UPDATE SET
+				terminal = EXCLUDED.terminal, reason = EXCLUDED.reason`,
+			record.ID, enrichment, tenant, terminal, reason)
+		if execErr != nil {
+			return fmt.Errorf("insert marker: %w", execErr)
+		}
+
+		return nil
+	}
+
+	accepted := map[string]struct {
+		terminal bool
+		reason   string
+	}{
+		"content filter is permanent": {true, "content_filter"},
+		"refusal is permanent":        {true, "refusal"},
+		"length is permanent":         {true, "length"},
+		"recitation is permanent":     {true, "recitation"},
+		"a provider outage is not":    {false, "provider_error"},
+		"nor is a failed write":       {false, "write_failed"},
+	}
+
+	for name, want := range accepted {
+		t.Run("accepts "+name, func(t *testing.T) {
+			require.NoError(t, insert("sentiment", want.terminal, want.reason))
+		})
+	}
+
+	rejected := map[string]struct {
+		enrichment string
+		terminal   bool
+		reason     string
+	}{
+		// The dangerous direction: a permanent-looking marker for a failure a retry would fix,
+		// which has anything that re-enqueues unfinished work skip the record for good.
+		"a retryable reason marked permanent": {"sentiment", true, "provider_error"},
+		"a failed write marked permanent":     {"sentiment", true, "write_failed"},
+		// And the mirror, which has the reconciler retrying something that can never succeed.
+		"a permanent reason marked retryable": {"sentiment", false, "content_filter"},
+		"a reason nothing defines":            {"sentiment", false, "something_new"},
+		// Widening the enrichment set must take a migration, not just worker code.
+		"an enrichment this table does not hold": {"embeddings", false, "provider_error"},
+	}
+
+	for name, bad := range rejected {
+		t.Run("rejects "+name, func(t *testing.T) {
+			require.Error(t, insert(bad.enrichment, bad.terminal, bad.reason))
+		})
+	}
 }

@@ -229,7 +229,10 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 	// than classify empty text.
 	if !cfg.hasContent(record) {
 		if err := cfg.persist(ctx, record, job.Args, nil); err != nil {
-			return w.handlePersistError(ctx, err, log, start, job.Attempt >= job.MaxAttempts)
+			// nil record: this is the CLEAR path, for a record whose content became empty. Such a
+			// record is not eligible for any enrichment, so a failure marker on it could never be
+			// counted — markFailed no-ops on a nil record rather than writing a row nothing reads.
+			return w.handlePersistError(ctx, err, log, start, nil, job.Attempt, job.Attempt >= job.MaxAttempts)
 		}
 
 		w.recordOutcome(ctx, "success", start)
@@ -244,7 +247,7 @@ func (w *enrichmentWorker[A, R]) Work(ctx context.Context, job *river.Job[A]) er
 	}
 
 	if err := cfg.persist(ctx, record, job.Args, &result); err != nil {
-		return w.handlePersistError(ctx, err, log, start, job.Attempt >= job.MaxAttempts)
+		return w.handlePersistError(ctx, err, log, start, record, job.Attempt, job.Attempt >= job.MaxAttempts)
 	}
 
 	w.recordOutcome(ctx, "success", start)
@@ -323,8 +326,8 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 // cancels ctx on the way out — so writing with it would silently drop exactly the markers that
 // matter most.
 //
-// A tenant write conflict is expected rather than exceptional: it means a purge is running or the
-// record has already been deleted, in which case there is nothing left to describe.
+// A refused write is expected rather than exceptional, and the two refusals mean different things:
+// the record is already gone, or a purge holds the tenant. Neither is worth failing a job over.
 func (w *enrichmentWorker[A, R]) markFailed(
 	ctx context.Context, log *slog.Logger, record *models.FeedbackRecord,
 	attempts int, terminal bool, reason string,
@@ -348,10 +351,22 @@ func (w *enrichmentWorker[A, R]) markFailed(
 		return
 	}
 
-	// Both mean the record is going away, so there is nothing left to describe: a purge holds the
-	// tenant, or the record was deleted between the enrichment attempt and this write.
-	if errors.Is(err, huberrors.ErrTenantWriteConflict) || errors.Is(err, huberrors.ErrNotFound) {
-		log.Info(w.cfg.name+": failure marker skipped, record or tenant is going away", "error", err)
+	// The record was deleted between the enrichment attempt and this write. Nothing left to
+	// describe.
+	if errors.Is(err, huberrors.ErrNotFound) {
+		log.Info(w.cfg.name + ": failure marker skipped, the record no longer exists")
+
+		return
+	}
+
+	// A purge holds the tenant lock. Deliberately NOT phrased as "the record is going away": the
+	// records-scoped purge spares everything newer than the high-water mark it took at the start,
+	// and the tenant itself survives it entirely, so the record this marker describes may well
+	// still be here afterwards — un-enriched, and now with nothing recording that it failed. The
+	// count under-reports it until something re-enqueues the record and it fails again.
+	if errors.Is(err, huberrors.ErrTenantWriteConflict) {
+		log.Info(w.cfg.name + ": failure marker skipped, a purge holds this tenant; " +
+			"the failure will be under-reported until the record is retried")
 
 		return
 	}
@@ -363,8 +378,15 @@ func (w *enrichmentWorker[A, R]) markFailed(
 // handlePersistError maps a write failure to an outcome: a missing record or a superseded result
 // completes the job (nothing to write), a tenant write conflict retries (the post-purge attempt
 // finds the record gone), and anything else fails the job.
+//
+// On a final-attempt write failure it also records the durable marker, for the same reason the
+// classify path does. A record whose result cannot be WRITTEN is exactly as un-enriched as one the
+// provider refused, and the counts do not care which half of the job failed: without a marker it
+// is reported as neither done nor failed, which is the spinning-forever state this table exists to
+// end. record may be nil (the clear path), in which case markFailed no-ops.
 func (w *enrichmentWorker[A, R]) handlePersistError(
-	ctx context.Context, err error, log *slog.Logger, start time.Time, isLastAttempt bool,
+	ctx context.Context, err error, log *slog.Logger, start time.Time,
+	record *models.FeedbackRecord, attempt int, isLastAttempt bool,
 ) error {
 	cfg := w.cfg
 
@@ -384,6 +406,11 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 
 		return nil
 	case errors.Is(err, huberrors.ErrTenantWriteConflict):
+		// No marker here, not even on the final attempt: writing one takes the same tenant lock
+		// that just refused this write, so it would be refused too. Either the record is inside
+		// the purge and there is nothing left to describe, or it is outside it (the records purge
+		// spares anything newer than its high-water mark) and survives un-enriched — in which case
+		// it stays eligible-and-not-done, and re-enqueueing it is what closes the gap.
 		outcome := retryOutcome(isLastAttempt)
 
 		cfg.metrics.workerError(ctx, "tenant_write_conflict")
@@ -399,6 +426,14 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 		// attempt here, double-counting a later success and falsely tripping final-failure
 		// alerts on one-off DB blips.)
 		outcome := retryOutcome(isLastAttempt)
+
+		if isLastAttempt {
+			// Best-effort, and most likely to fail exactly when it matters: if the database is
+			// what broke, this write breaks too. It still earns its place — a write failure
+			// specific to one row (a constraint violation, a serialization failure that outlasted
+			// every attempt) leaves the database perfectly healthy and the record stranded.
+			w.markFailed(ctx, log, record, attempt, false, models.EnrichmentFailureReasonWriteFailed)
+		}
 
 		cfg.metrics.workerError(ctx, "update_failed")
 		w.recordOutcome(ctx, outcome, start)

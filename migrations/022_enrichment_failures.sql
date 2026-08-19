@@ -65,13 +65,18 @@ ALTER TABLE feedback_record_enrichment_failures
 -- The reason set and the terminal flag are one decision, so the database enforces that they agree.
 -- Without this a bug could write terminal = true with reason 'provider_error', and the reconciler
 -- would then permanently skip a record whose only problem was a transient 503.
+--
+-- The non-terminal arm carries two values because a record can be left un-enriched by either half
+-- of the job: the provider never answered, or it answered and the result could not be written.
+-- Both are retryable and the counts treat them identically; they are distinguished because an
+-- operator seeing a spike of one should not go looking at the other.
 ALTER TABLE feedback_record_enrichment_failures
   DROP CONSTRAINT IF EXISTS feedback_record_enrichment_failures_reason_valid;
 ALTER TABLE feedback_record_enrichment_failures
   ADD CONSTRAINT feedback_record_enrichment_failures_reason_valid CHECK (
     (terminal AND reason IN ('content_filter', 'refusal', 'length', 'recitation'))
     OR
-    (NOT terminal AND reason = 'provider_error')
+    (NOT terminal AND reason IN ('provider_error', 'write_failed'))
   );
 
 -- Serves the per-tenant `failed` / `failed_terminal` counts. terminal is in the key rather than a

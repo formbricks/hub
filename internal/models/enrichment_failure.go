@@ -2,11 +2,20 @@ package models
 
 import "github.com/google/uuid"
 
-// EnrichmentFailureReasonProviderError is the reason recorded when an enrichment exhausted its
-// retries against a failure that was NOT determined by the record's content — a 5xx, a timeout, a
-// response that could not be parsed. It is the only reason a non-terminal row may carry, enforced
-// by the CHECK in migration 022.
-const EnrichmentFailureReasonProviderError = "provider_error"
+// The two non-terminal reasons. Both mean "did not succeed this time"; they differ in which half
+// of the job failed, which is the difference between an incident with the provider and an incident
+// with our own database. The CHECK in migration 022 restricts non-terminal rows to these.
+const (
+	// EnrichmentFailureReasonProviderError is recorded when an enrichment exhausted its retries
+	// against a provider failure that was NOT determined by the record's content — a 5xx, a
+	// timeout, a response that could not be parsed.
+	EnrichmentFailureReasonProviderError = "provider_error"
+	// EnrichmentFailureReasonWriteFailed is recorded when the provider answered but the result
+	// could not be persisted before the attempts ran out. The record is exactly as un-enriched as
+	// a provider failure leaves it, and telling the two apart is what stops an operator hunting a
+	// provider outage that never happened.
+	EnrichmentFailureReasonWriteFailed = "write_failed"
+)
 
 // EnrichmentFailure is one record's failed enrichment, as written by the worker after the last
 // attempt is spent.

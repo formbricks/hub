@@ -63,8 +63,10 @@ var recordEnrichmentFailureSQL = `
 // Two outcomes are benign skips rather than errors worth failing a job over, and they are reported
 // SEPARATELY because the rest of the worker treats them differently:
 //
-//   - ErrTenantWriteConflict — the tenant write lock was refused, so a purge is running. Elsewhere
-//     in this worker that error means "retry".
+//   - ErrTenantWriteConflict — the tenant write lock was refused, so a purge is running. Which
+//     purge matters: the offboarding one takes the whole tenant, but the records-scoped one spares
+//     records newer than its high-water mark, so this does NOT imply the record is going away.
+//     Elsewhere in this worker that error means "retry".
 //   - ErrNotFound — the foreign key failed, so the record was deleted between the enrichment
 //     attempt and this write. Retrying that could only fail again.
 //
@@ -91,7 +93,8 @@ func (r *EnrichmentFailuresRepository) RecordFailure(ctx context.Context, failur
 	}
 
 	if tag.RowsAffected() == 0 {
-		return huberrors.NewTenantWriteConflictError("tenant data purge in progress for this tenant; failure marker skipped")
+		return huberrors.NewTenantWriteConflictError(
+			"a purge holds this tenant's write lock; failure marker skipped")
 	}
 
 	return nil

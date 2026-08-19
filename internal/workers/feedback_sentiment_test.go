@@ -553,3 +553,82 @@ func TestFeedbackSentimentWorker_MarkerSkipConditionsAreBenign(t *testing.T) {
 		})
 	}
 }
+
+// TestFeedbackSentimentWorker_WriteFailureRecordsMarker covers the half of the job that is not the
+// provider. A record whose result classified fine but could never be WRITTEN is exactly as
+// un-enriched as one the provider refused, and the status counts do not care which half failed:
+// with no marker it is reported as neither done nor failed, which is the spinning-forever state
+// the markers exist to end.
+func TestFeedbackSentimentWorker_WriteFailureRecordsMarker(t *testing.T) {
+	text := "Great"
+	result := service.SentimentResult{Label: models.SentimentPositive, Score: 1}
+
+	newWorker := func(setErr error, failures *recordingFailureRecorder) *FeedbackSentimentWorker {
+		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&text), setErr: setErr}
+
+		return NewFeedbackSentimentWorker(svc, stubSentimentSettings{},
+			&stubSentimentClient{result: result}, newCountingSentimentMetrics(), failures, nil)
+	}
+
+	t.Run("final attempt records a non-terminal write failure", func(t *testing.T) {
+		failures := &recordingFailureRecorder{}
+		worker := newWorker(errors.New("db unavailable"), failures)
+
+		require.Error(t, worker.Work(context.Background(), sentimentJob(3)))
+		require.Len(t, failures.calls, 1, "a spent write failure must be recorded")
+		assert.False(t, failures.calls[0].Terminal, "a write failure is never the record's own fault")
+		assert.Equal(t, models.EnrichmentFailureReasonWriteFailed, failures.calls[0].Reason)
+		assert.Equal(t, "sentiment", failures.calls[0].Enrichment)
+		assert.Equal(t, 3, failures.calls[0].Attempts)
+	})
+
+	t.Run("an attempt that could still succeed records nothing", func(t *testing.T) {
+		failures := &recordingFailureRecorder{}
+		worker := newWorker(errors.New("db unavailable"), failures)
+
+		require.Error(t, worker.Work(context.Background(), sentimentJob(1)))
+		assert.Empty(t, failures.calls, "attempts remain, so the record is not yet given up on")
+	})
+
+	// A tenant write conflict is the one final-attempt failure that records nothing, and it has to
+	// be: the marker write takes the same tenant lock that just refused this write, so it would be
+	// refused too. Asserting it keeps a later "be consistent, mark here as well" from adding a
+	// round trip that can only fail.
+	t.Run("a tenant write conflict records nothing, even when spent", func(t *testing.T) {
+		failures := &recordingFailureRecorder{}
+		worker := newWorker(huberrors.ErrTenantWriteConflict, failures)
+
+		require.Error(t, worker.Work(context.Background(), sentimentJob(3)))
+		assert.Empty(t, failures.calls)
+	})
+
+	// Benign write outcomes complete the job, so there is nothing to describe.
+	t.Run("a benign skip records nothing", func(t *testing.T) {
+		for name, setErr := range map[string]error{
+			"record gone": huberrors.ErrNotFound,
+			"superseded":  huberrors.ErrClassificationSuperseded,
+		} {
+			t.Run(name, func(t *testing.T) {
+				failures := &recordingFailureRecorder{}
+				worker := newWorker(setErr, failures)
+
+				require.NoError(t, worker.Work(context.Background(), sentimentJob(3)))
+				assert.Empty(t, failures.calls)
+			})
+		}
+	})
+
+	// The clear path writes nil to a record whose content became empty. Such a record is not
+	// eligible for any enrichment, so a marker on it could never be counted — writing one would be
+	// a row nothing reads.
+	t.Run("a failed clear records nothing", func(t *testing.T) {
+		blank := "   "
+		failures := &recordingFailureRecorder{}
+		svc := &mockSentimentWorkerService{record: sentimentTextRecord(&blank), setErr: errors.New("db unavailable")}
+		worker := NewFeedbackSentimentWorker(svc, stubSentimentSettings{},
+			&stubSentimentClient{result: result}, newCountingSentimentMetrics(), failures, nil)
+
+		require.Error(t, worker.Work(context.Background(), sentimentJob(3)))
+		assert.Empty(t, failures.calls, "a record with no content is not eligible, so nothing is owed")
+	})
+}
