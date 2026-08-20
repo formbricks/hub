@@ -3,7 +3,7 @@ title: Connecting Hub to Power BI
 description: Connect Formbricks Hub to Microsoft Power BI and build reports on your feedback data - no ETL, just point Power BI at Hub's database.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 Hub stores all data in a single PostgreSQL database. You can report on it with **Microsoft Power BI** by connecting Power BI to Hub's database and building reports from the `feedback_records` table.
 
@@ -30,11 +30,11 @@ Hub stores all data in a single PostgreSQL database. You can report on it with *
 3. In Power BI Desktop: **Get Data -> PostgreSQL database** -> use the same host, database, and credentials as Hub (for example, Server `localhost`, Database `hub`, and your Postgres user/password).
 4. Select the **feedback_records** table -> **Load**, then build a chart (for example, bar chart with **Axis** `source_type`, **Values** Count of `id`).
 
-<Callout variant="note">
+<Aside type="note">
   Power BI Desktop is only available on Windows. For Mac or Linux, we recommend
   using [Apache Superset](/guides/hub-superset) with Hub - it connects to the
   same data.
-</Callout>
+</Aside>
 
 ## Step 1: Get Hub running
 
@@ -66,18 +66,18 @@ Note the **database connection details** you use for Hub (host, port, database n
 5. Under **Authentication**, select **Database** and enter the **Username** and **Password** from the Step 1 table.
 6. Click **OK**. If Power BI prompts to test the connection, confirm it succeeds.
 
-<Callout variant="note">
+<Aside type="note">
   If Postgres is on another machine or in the cloud, use that host and ensure
   the firewall or security groups allow Power BI (or the on-premises data
   gateway) to reach port 5432.
-</Callout>
+</Aside>
 
-<Callout variant="note">
+<Aside type="note">
   For scheduled refresh or sharing in Power BI Service when the database is not
   publicly reachable, configure an [on-premises data
   gateway](https://learn.microsoft.com/en-us/power-bi/connect-data/service-gateway-onprem)
   and use it for the PostgreSQL connection.
-</Callout>
+</Aside>
 
 ## Step 4: Select the `feedback_records` table
 

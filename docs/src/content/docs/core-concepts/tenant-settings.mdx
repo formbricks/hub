@@ -3,14 +3,14 @@ title: Tenant Settings
 description: Per-tenant configuration for Hub. Settings are scoped to a single tenant and never shared across tenants — a target language for translation and per-directory switches for sentiment and emotion enrichment.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 Tenant settings store per-tenant configuration for Hub. Each tenant has a single settings object, addressed by its `tenant_id`. The object is open-ended — new settings are added over time — and today holds a target language for [translation](/core-concepts/translated-feedback) (`target_language`) and per-directory switches that turn sentiment and emotion enrichment on or off (`sentiment_enabled`, `emotions_enabled`).
 
-<Callout variant="note">
+<Aside type="note">
   Settings are tenant-scoped: a tenant can only ever read or write its own
   settings, and they are removed when the tenant's data is purged.
-</Callout>
+</Aside>
 
 ## The settings resource
 
@@ -100,12 +100,12 @@ curl -X PATCH https://your-hub.example.com/v1/tenants/org-123/settings \
   -d '{"target_language": null}'
 ```
 
-<Callout variant="note">
+<Aside type="note">
   Both `PUT` and `PATCH` cap the request body at 8 KB; a larger body is rejected
   with `413` (`content_too_large`). A write attempted while a tenant data purge
   is running for the same tenant returns `409` (`tenant_write_conflict`) and can
   be retried.
-</Callout>
+</Aside>
 
 ## target_language
 
@@ -116,13 +116,13 @@ curl -X PATCH https://your-hub.example.com/v1/tenants/org-123/settings \
 - An invalid locale is rejected with `400` and a `validation` error.
 - An empty value — or no settings at all — means **not configured**.
 
-<Callout variant="note">
+<Aside type="note">
   `target_language` drives translation only when the deployment has a
   translation provider configured (`TRANSLATION_PROVIDER` /
   `TRANSLATION_MODEL`). With no provider, the setting is stored but has no
   effect. A deployment-wide `TRANSLATION_DEFAULT_LANGUAGE` can supply a target
   for tenants that set none of their own.
-</Callout>
+</Aside>
 
 This is distinct from the per-record [`language`](/core-concepts/data-model) field, which records the _source_ language of an individual feedback record. `target_language` is the _target_ locale a tenant's content is translated into.
 

@@ -3,7 +3,7 @@ title: Quick Start Guide
 description: Get Formbricks Hub running locally in minutes.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 ## Prerequisites
 
@@ -149,7 +149,7 @@ LOG_LEVEL=info
 PUBLIC_BASE_URL=
 ```
 
-<Callout variant="note">Generate secure passwords and API keys:</Callout>
+<Aside type="note">Generate secure passwords and API keys:</Aside>
 
 ```bash
 # For POSTGRES_PASSWORD
@@ -265,10 +265,10 @@ curl -X POST http://localhost:8080/v1/feedback-records \
   }'
 ```
 
-<Callout variant="note">
+<Aside type="note">
   All API requests require the `Authorization: Bearer &lt;token&gt;` header with
   your configured `API_KEY`.
-</Callout>
+</Aside>
 
 Expected response:
 
@@ -443,9 +443,9 @@ docker compose down
 
 ### Stop and Remove Data
 
-<Callout variant="note">
+<Aside type="note">
   <strong>Warning:</strong> This will delete all stored feedback records.
-</Callout>
+</Aside>
 
 ```bash
 docker compose down -v

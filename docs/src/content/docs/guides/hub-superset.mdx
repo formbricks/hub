@@ -3,7 +3,7 @@ title: Connecting Hub to Superset
 description: Connect Formbricks Hub to Apache Superset and build dashboards on your feedback data in minutes - no ETL, just point Superset at Hub's database.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 Hub stores all data in a single PostgreSQL database. You can report on it with **Apache Superset** by giving Superset access to Hub's database, and start building charts immediately.
 
@@ -25,12 +25,12 @@ Hub stores all data in a single PostgreSQL database. You can report on it with *
 - **Open source** - [Apache Superset](https://superset.apache.org/) is free and self-hostable.
 - **SQL-first** - Hub's [data model](/core-concepts/data-model) uses one row per response in a single table; easy to query and aggregate.
 
-<Callout variant="note">
+<Aside type="note">
   When running Hub, Postgres, and Superset on the same machine, use different
   ports for the database and the Hub API to avoid port clashes with Superset
   (for example, set `HUB_PORT` and `POSTGRES_PORT` in your `.env` when using the
   Quick Start compose file).
-</Callout>
+</Aside>
 
 ## Step 1: Get Hub running
 
@@ -125,12 +125,12 @@ networks:
     driver: bridge
 ```
 
-<Callout variant="note">
+<Aside type="note">
   If you already run Hub with Docker Compose, you can add the `superset_db` and
   `superset` services to the same project and use **Host** `postgres` (Hub's
   Postgres service name) when Superset and Hub share a network. Otherwise use
   `host.docker.internal` to point Superset at Postgres on the host.
-</Callout>
+</Aside>
 
 ## Step 3: Add Hub's database in Superset
 
@@ -139,12 +139,12 @@ networks:
 3. Enter the same credentials as in the [Step 1 table](#step-1-get-hub-running) (host, port, database `hub`, user, password). If Superset runs in Docker and Postgres is on the host, use **Host** `host.docker.internal`. Optionally set **Display Name** (for example, _Formbricks Hub_). Or use **Connect using SQLAlchemy URI** and paste your Hub `DATABASE_URL` (use `host.docker.internal` instead of `localhost` if Superset is in Docker).
 4. Click **Test Connection**, then **Connect**.
 
-<Callout variant="note">
+<Aside type="note">
   If you see "The port is closed" from Superset in Docker, use **Host**
   `host.docker.internal`. See [Superset: Creating your first
   dashboard](https://superset.apache.org/docs/using-superset/creating-your-first-dashboard)
   for more.
-</Callout>
+</Aside>
 
 ## Step 4: Create the `feedback_records` dataset
 

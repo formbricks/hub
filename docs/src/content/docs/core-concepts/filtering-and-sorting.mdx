@@ -3,7 +3,7 @@ title: Filtering & Sorting
 description: Narrow a feedback record listing, and control the order you page through it.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 ## Core Concept
 
@@ -46,10 +46,10 @@ which is read as one literal value:
 -d "source_type=survey,review"                # ❌ one value, literally "survey,review"
 ```
 
-<Callout variant="note">
+<Aside type="note">
   A single occurrence behaves exactly as it always has. Adding multi-value support did not change
   the meaning of any request that passes one value per parameter.
-</Callout>
+</Aside>
 
 ### Limits
 
@@ -92,11 +92,11 @@ bound is **inclusive** — a record sitting exactly on it is included.
 | `value_date` | `value_date_min` / `value_date_max` |
 | `sentiment_score` | `sentiment_score_min` / `sentiment_score_max` |
 
-<Callout variant="warning">
+<Aside type="caution">
   **A range filter excludes records whose column is empty.** `value_number_min=0` does not mean "all
   records" — it selects only records that carry a number at all, so every text answer drops out.
   Likewise `sentiment_score_min=-1` means "every *enriched* record", not "every record".
-</Callout>
+</Aside>
 
 Supplying a range backwards — a minimum above its maximum — returns `400`, not an empty page:
 
@@ -134,10 +134,10 @@ have the value, `false` for records that do not.
 **`emotions` matches ANY of the labels you list, never all of them.** A record tagged `{joy}` and a
 record tagged `{joy, anger}` both match `?emotions=joy&emotions=anger`.
 
-<Callout variant="note">
+<Aside type="note">
   `has_emotions=false` covers both "not yet classified" and "classified, no emotion detected". The
   two are not distinguishable through this filter.
-</Callout>
+</Aside>
 
 ## Sorting
 

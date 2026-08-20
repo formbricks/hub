@@ -3,18 +3,18 @@ title: Taxonomy
 description: Hub can organize open-text feedback into a hierarchy of topics and subtopics by clustering semantically similar records, so you can browse and quantify what people are talking about without manual tagging.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 A **taxonomy** turns a pile of open-text feedback into a browsable tree of topics and subtopics. Hub embeds each text record, hands the vectors to a clustering service, and stores the result as a tree of **nodes** you can read, edit, and count against — so you can see _what_ people are talking about, and _how much_, without tagging anything by hand.
 
 Taxonomies are generated on demand as **runs**. A run reads a defined slice of feedback, produces a tree, and — once it succeeds — becomes the **active** tree for that slice until a newer run replaces it.
 
-<Callout variant="note">
+<Aside type="note">
   Taxonomy is additive and asynchronous. Generating a taxonomy never changes the
   underlying [feedback records](/core-concepts/data-model), and a run is
   computed in the background — you create it, then poll its status until it
   succeeds.
-</Callout>
+</Aside>
 
 ## How it works
 

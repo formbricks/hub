@@ -3,17 +3,17 @@ title: Sentiment & Emotions
 description: Hub can classify open-text feedback into a sentiment label and score, and into the emotions it expresses, and store them on the feedback record for analytics and filtering.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 Hub can enrich open-text feedback with two related classifications: **sentiment** — the overall polarity of the text — and **emotions** — the specific emotions it expresses. Both run asynchronously and are stored on the same feedback record, so you can filter, segment, and aggregate qualitative feedback without reading every response.
 
 They are independent enrichments: a deployment can run either, both, or neither, and each is separately gated per tenant.
 
-<Callout variant="note">
+<Aside type="note">
   Like translation, sentiment and emotion enrichment are additive and
   asynchronous: the original `value_text` is never changed, ingestion is never
   blocked, and the results appear shortly after a record is created or updated.
-</Callout>
+</Aside>
 
 ## The fields
 
@@ -41,11 +41,11 @@ When a text feedback record is created, or its `value_text` changes, Hub enqueue
 - **Edits re-classify.** Changing `value_text` clears the stored sentiment/emotions and re-runs the classification; emptying `value_text` clears them without re-running. During the brief window between the edit and the worker finishing, the fields read back as `null` (recomputing) rather than a stale value.
 - **A record can express several emotions, or none.** `emotions` is a set (order is not significant); "no clear emotion" is `null`, not an empty array.
 
-<Callout variant="note">
+<Aside type="note">
   Sentiment and emotions are **eventually consistent** — populated shortly after
   ingestion, not synchronously. Read them defensively and treat `null` as "not
   classified yet".
-</Callout>
+</Aside>
 
 ## Backfilling existing records
 

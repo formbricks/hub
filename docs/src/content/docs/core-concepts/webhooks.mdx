@@ -3,7 +3,7 @@ title: Webhooks
 description: React to Hub events with signed HTTP callbacks.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 ## Core Concept
 
@@ -30,11 +30,11 @@ When a supported event happens, Hub:
 Delivery is asynchronous: the API request that triggered the event does not wait for your webhook endpoint to finish.
 Hub also applies a 24-hour uniqueness window per `(event_id, webhook_id)` at enqueue time.
 
-<Callout variant="note">
+<Aside type="note">
   If Hub's in-memory event channel is full, new events are dropped and logged.
   For high traffic workloads, monitor queue depth and tune the webhook/event env
   variables.
-</Callout>
+</Aside>
 
 ## Supported Event Types
 
@@ -126,10 +126,10 @@ func handleHubWebhook(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-<Callout variant="note">
+<Aside type="note">
   <strong>Warning:</strong> Verify against the exact raw request body bytes.
   Re-encoding JSON before verification will break signatures.
-</Callout>
+</Aside>
 
 ### 5. Process Idempotently
 

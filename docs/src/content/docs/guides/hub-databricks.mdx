@@ -3,7 +3,7 @@ title: Connecting Hub to Databricks
 description: Connect Formbricks Hub to Databricks via JDBC or Lakehouse Federation and analyze feedback data alongside the rest of your lakehouse - no ETL layer required.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 Hub stores all data in a single PostgreSQL database. You can analyze it in **Databricks** by connecting Databricks directly to Hub's Postgres - either through **Lakehouse Federation** (zero-ETL, queried live) or with a **JDBC read** from a notebook (load once into a Delta table).
 
@@ -36,14 +36,14 @@ Note the **database connection details** you use for Hub (host, port, database n
 | Username      | `formbricks`                                                                                                                                |
 | Password      | Your Postgres password (in the [Quick Start](/quickstart) compose setup this is `POSTGRES_PASSWORD` in `.env`; default is `formbricks_dev`) |
 
-<Callout variant="note">
+<Aside type="note">
   Databricks workspaces run in a cloud VPC/VNet, so they cannot reach a Hub
   Postgres on `localhost`. For production, prefer
   [AWS PrivateLink](https://docs.databricks.com/aws/en/security/network/classic/privatelink),
   [Azure Private Endpoint](https://learn.microsoft.com/en-us/azure/databricks/security/network/classic/private-link),
   or VPC peering; for a quick test, expose Postgres on a public endpoint with
   `sslmode=require` and allowlist the Databricks workspace NAT IPs.
-</Callout>
+</Aside>
 
 ## Step 2: Choose a connection path
 
@@ -104,12 +104,12 @@ SELECT * FROM hub.public.feedback_records LIMIT 100;
 
 For the full table schema - column names, types, and field semantics (for example, `field_type`, `value_number`, `value_text`) - see the [Data Model](/core-concepts/data-model) doc.
 
-<Callout variant="note">
+<Aside type="note">
   Federation does not copy data. Each query is rewritten to a pushdown-aware
   PostgreSQL query, so make sure Hub's Postgres has enough capacity for your
   analytics workload, or schedule materialized copies with the JDBC pattern
   below.
-</Callout>
+</Aside>
 
 ## Step 3b: JDBC + Delta (notebook)
 
@@ -157,18 +157,18 @@ df_recent = (
 )
 ```
 
-<Callout variant="note">
+<Aside type="note">
   Databricks Runtime 11.3 LTS and above also ship a named PostgreSQL connector
   (`spark.read.format("postgresql")`) that accepts separate `host`, `port`,
   and `database` options instead of a JDBC `url`. Either form works; this
   guide uses `format("jdbc")` so the same code runs on older runtimes too.
-</Callout>
+</Aside>
 
-<Callout variant="note">
+<Aside type="note">
   `dbtable` and `query` are mutually exclusive. Use `dbtable` when you also want
   parallel reads with `partitionColumn`, `lowerBound`, `upperBound`, and
   `numPartitions`. Use `query` to push filters and projections down to Postgres.
-</Callout>
+</Aside>
 
 ### Write to a Delta table
 

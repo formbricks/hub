@@ -3,10 +3,10 @@ title: Formbricks Hub
 description: Standalone, open-source Feedback Record Hub built for analytics and direct API access.
 ---
 
-import { Accordion, Button, Callout } from "@stainless-api/docs/components";
+import { Aside, LinkButton } from "@astrojs/starlight/components";
 
-<div className="hub-home not-content">
-  <section className="hub-hero">
+<div class="hub-home not-content">
+  <section class="hub-hero">
     <p>
       Formbricks Hub collects feedback from surveys, reviews, support tools, and
       product workflows into one self-hostable service. It gives teams a clean
@@ -14,30 +14,30 @@ import { Accordion, Button, Callout } from "@stainless-api/docs/components";
       without forcing feedback data through a closed analytics stack.
     </p>
 
-    <div className="hub-hero__actions">
-      <Button href="/quickstart" variant="accent" size="lg">
-        <Button.Label>Start quickstart</Button.Label>
-      </Button>
-      <Button href="/api" variant="outline" size="lg">
-        <Button.Label>Open API reference</Button.Label>
-      </Button>
+    <div class="hub-hero__actions">
+      <LinkButton href="/quickstart" variant="primary">
+        Start quickstart
+      </LinkButton>
+      <LinkButton href="/api" variant="secondary">
+        Open API reference
+      </LinkButton>
     </div>
 
   </section>
 
-  <div className="hub-signal-grid">
-    <div className="hub-signal">
-      <span className="hub-label">Open source</span>
+  <div class="hub-signal-grid">
+    <div class="hub-signal">
+      <span class="hub-label">Open source</span>
       <strong>Run it yourself</strong>
       <span>Hub ships as a Go service with PostgreSQL and a worker.</span>
     </div>
-    <div className="hub-signal">
-      <span className="hub-label">SQL-first</span>
+    <div class="hub-signal">
+      <span class="hub-label">SQL-first</span>
       <strong>Analyze without ETL</strong>
       <span>One row per feedback field keeps dashboards straightforward.</span>
     </div>
-    <div className="hub-signal">
-      <span className="hub-label">API-first</span>
+    <div class="hub-signal">
+      <span class="hub-label">API-first</span>
       <strong>Build on a stable contract</strong>
       <span>Use the generated reference docs and OpenAPI-backed endpoints.</span>
     </div>
@@ -51,22 +51,22 @@ NPS scores, survey answers, app reviews, support ratings, and other feedback
 events into a single service, then serve that data to BI tools, internal
 workflows, or customer-facing experiences.
 
-<div className="hub-card-grid not-content">
-  <div className="hub-card">
+<div class="hub-card-grid not-content">
+  <div class="hub-card">
     <strong>Centralize feedback records</strong>
     <p>
       Normalize survey responses, app-store reviews, support feedback, and
       custom product signals into one table-shaped model.
     </p>
   </div>
-  <div className="hub-card">
+  <div class="hub-card">
     <strong>Power analytics dashboards</strong>
     <p>
       Connect Apache Superset, Power BI, Tableau, Looker, Snowflake, or direct
       SQL clients without building a separate pipeline first.
     </p>
   </div>
-  <div className="hub-card">
+  <div class="hub-card">
     <strong>Automate feedback workflows</strong>
     <p>
       Use webhooks and the API to route new feedback records into downstream
@@ -77,9 +77,9 @@ workflows, or customer-facing experiences.
 
 ## How It Fits Together
 
-<div className="hub-workflow not-content">
-  <div className="hub-workflow__item">
-    <span className="hub-workflow__index">1</span>
+<div class="hub-workflow not-content">
+  <div class="hub-workflow__item">
+    <span class="hub-workflow__index">1</span>
     <div>
       <strong>Collect</strong>
       <p>
@@ -88,8 +88,8 @@ workflows, or customer-facing experiences.
       </p>
     </div>
   </div>
-  <div className="hub-workflow__item">
-    <span className="hub-workflow__index">2</span>
+  <div class="hub-workflow__item">
+    <span class="hub-workflow__index">2</span>
     <div>
       <strong>Store</strong>
       <p>
@@ -98,8 +98,8 @@ workflows, or customer-facing experiences.
       </p>
     </div>
   </div>
-  <div className="hub-workflow__item">
-    <span className="hub-workflow__index">3</span>
+  <div class="hub-workflow__item">
+    <span class="hub-workflow__index">3</span>
     <div>
       <strong>Use</strong>
       <p>
@@ -112,15 +112,14 @@ workflows, or customer-facing experiences.
 
 ## Built In
 
-<Callout variant="note">
+<Aside type="note">
   Hub already includes API-first capabilities for feedback operations: semantic
   search, webhooks, runtime OpenAPI specs at <code>/openapi.yaml</code> and{" "}
   <code>/openapi.json</code>, and a clean data model for analytics.
-</Callout>
+</Aside>
 
-<Accordion.Group>
-  <Accordion open>
-    <Accordion.Summary>Feedback sources Hub can model</Accordion.Summary>
+<details open>
+  <summary>Feedback sources Hub can model</summary>
     <ul>
       <li>Survey responses from your app or website</li>
       <li>NPS, CSAT, CES, ratings, and open text feedback</li>
@@ -128,17 +127,16 @@ workflows, or customer-facing experiences.
       <li>Support ticket feedback from tools like Intercom or Zendesk</li>
       <li>Custom product events and operational feedback signals</li>
     </ul>
-  </Accordion>
-  <Accordion>
-    <Accordion.Summary>Places Hub data can go</Accordion.Summary>
+</details>
+<details>
+  <summary>Places Hub data can go</summary>
     <ul>
       <li>Apache Superset dashboards</li>
       <li>Power BI, Tableau, Looker, Snowflake, and direct SQL clients</li>
       <li>Internal tools and customer-facing reporting surfaces</li>
       <li>Webhook-driven automation and alerting workflows</li>
     </ul>
-  </Accordion>
-</Accordion.Group>
+</details>
 
 ## Start Here
 

@@ -3,7 +3,7 @@ title: Self-Hosted Embeddings
 description: Run Hub embeddings against a self-hosted, OpenAI-compatible embeddings endpoint with the bundled Helm runtime or your own service.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 Hub's similar-feedback and semantic-search endpoints rely on text embeddings.
 By default these are produced by a managed provider, but Hub can also run
@@ -16,11 +16,11 @@ and how to deploy the bundled
 [Hugging Face Text Embeddings Inference (TEI)](https://github.com/huggingface/text-embeddings-inference)
 runtime that ships with the Hub Helm chart.
 
-<Callout variant="note">
+<Aside type="note">
   Hub stores embeddings as `halfvec(768)` and indexes them with HNSW. The
   vector dimension is fixed at `768`. Self-hosted models must produce
   768-dimensional vectors, either natively or by requesting a 768-dim output.
-</Callout>
+</Aside>
 
 ## Recommended Model
 
@@ -223,12 +223,12 @@ embeddings:
     maxReplicas: 4
 ```
 
-<Callout variant="note">
+<Aside type="note">
   The startup probe uses a long `failureThreshold` so the runtime has time to
   download the model on first boot. When you change to a larger model or run
   on a slower node, increase `embeddings.probes.startupProbe.failureThreshold`
   and `periodSeconds` so the pod is not killed before TEI is ready.
-</Callout>
+</Aside>
 
 ## Option 2: Bring Your Own Endpoint
 

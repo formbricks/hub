@@ -3,17 +3,17 @@ title: Translated Feedback
 description: Hub can automatically translate open-text feedback into a tenant's target language and store it on the feedback record, so multilingual feedback can be read and analyzed in one language.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 Hub can enrich open-text feedback with a translation into the tenant's configured target language. When enabled, each text answer is translated asynchronously and stored on the same feedback record, next to the original — so a multilingual feedback set can be read, searched, and analyzed in a single language.
 
 This is the **translation** half of Hub's language enrichment, driven by the per-tenant [`target_language`](/core-concepts/tenant-settings) setting.
 
-<Callout variant="note">
+<Aside type="note">
   Translation is additive and asynchronous: the original `value_text` is never
   changed, ingestion is never blocked, and translated text appears shortly after
   a record is created or updated.
-</Callout>
+</Aside>
 
 ## The fields
 
@@ -44,12 +44,12 @@ Translation runs only when **both** of these are true:
 1. **The deployment has a translation provider configured.** An operator sets `TRANSLATION_PROVIDER` and `TRANSLATION_MODEL` (plus provider credentials) — see [Environment Variables](/reference/environment-variables#translation). With no provider, translation is off for the whole deployment.
 2. **A target language is resolved.** Either the tenant sets its own [`target_language`](/core-concepts/tenant-settings), or the deployment provides a fallback via `TRANSLATION_DEFAULT_LANGUAGE`. A tenant with neither is never translated.
 
-<Callout variant="note">
+<Aside type="note">
   Both conditions are required. With `TRANSLATION_DEFAULT_LANGUAGE` set, a
   configured provider translates every tenant by default; without it, each
   tenant must set its own `target_language` or its records stay untranslated —
   by design.
-</Callout>
+</Aside>
 
 ## How it works
 
@@ -60,11 +60,11 @@ When a text feedback record is created, or its text changes, Hub checks whether 
 - **Same-language answers are copied, not translated.** If a record's source language already matches the target (same base language and script, for example `en-GB` into `en-US`), Hub copies `value_text` verbatim into `value_text_translated` and still sets `translation_lang_key` — no provider call.
 - **Edits re-translate.** Changing `value_text`, or correcting the source `language`, re-runs the translation. Emptying `value_text` clears the stored translation.
 
-<Callout variant="note">
+<Aside type="note">
   Translation is **eventually consistent**. `value_text_translated` is populated
   shortly after ingestion, not synchronously — read it defensively and treat
   `null` as "not translated yet".
-</Callout>
+</Aside>
 
 ### Changing a tenant's target language
 

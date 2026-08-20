@@ -3,7 +3,7 @@ title: Data Model
 description: Hub uses a simple, powerful data model optimized for analytics. Each record represents a single piece of feedback, making it incredibly easy to query, aggregate, and visualize your feedback data.
 ---
 
-import { Callout } from "@stainless-api/docs/components";
+import { Aside } from "@astrojs/starlight/components";
 
 ## How It Works
 
@@ -85,10 +85,10 @@ The `FeedbackRecord` entity stores individual feedback data points.
 | `field_group_id`    | String | Optional | Groups related fields (for ranking, matrix, grid questions)  |
 | `field_group_label` | String | Optional | Human-readable label for the field group                     |
 
-<Callout variant="note">
+<Aside type="note">
   Use `field_group_id` to link related items from composite questions like
   rankings or matrix ratings.
-</Callout>
+</Aside>
 
 This enables:
 
@@ -106,7 +106,7 @@ This enables:
 | `value_boolean` | Boolean   | Optional | Yes/no responses                                                                            |
 | `value_date`    | Timestamp | Optional | Date/datetime responses                                                                     |
 
-<Callout variant="note">
+<Aside type="note">
   Feedback-record writes (`POST` / `PATCH /v1/feedback-records`) cap the request
   body at **512 KiB** (`413 content_too_large`) and `value_text` at **30,000
   characters** (`400`), bounding the payload before it fans out to the
@@ -115,9 +115,9 @@ This enables:
   the like) at **255** characters, and the display labels (`field_label`,
   `field_group_label`) at **2,048** — over-limit values return `400`. Records
   stored before these limits are unaffected — responses are never truncated.
-</Callout>
+</Aside>
 
-<Callout variant="note">
+<Aside type="note">
   **`value_id` — stable option identity.** For choice questions (`categorical`,
   and ranking/matrix rows), store the source system's stable option id in
   `value_id` alongside the human-readable label in `value_text`. Labels are
@@ -128,7 +128,7 @@ This enables:
   an opaque string (never validated against any registry) and it is null for
   free-text/"other" answers, non-choice fields, and sources without option ids
   (CSV imports, some integrations), where `value_text` remains the identity.
-</Callout>
+</Aside>
 
 #### Context & Metadata
 
@@ -168,10 +168,10 @@ The `field_type` field uses validated enums to categorize responses and determin
 | **`boolean`**     | Binary yes/no responses            | `value_boolean` | True/false counts, percentages                   |
 | **`date`**        | Temporal values                    | `value_date`    | Time-series analysis, date filtering             |
 
-<Callout variant="note">
+<Aside type="note">
   These types cover most feedback management use cases while keeping the model
   simple.
-</Callout>
+</Aside>
 
 Common mapping patterns:
 
@@ -195,11 +195,11 @@ The `source_type` field identifies where the feedback data originated:
 | `interview`      | User interviews         | Qualitative research               |
 | `usability_test` | UX testing              | Task completion feedback           |
 
-<Callout variant="note">
+<Aside type="note">
   Source types are free-form strings. Define your own values like
   `app_store_review`, `zendesk_csat`, or `slack_pulse` to match your data
   sources.
-</Callout>
+</Aside>
 
 ## Example Records
 
@@ -305,9 +305,9 @@ A ranking question where users order features by importance creates multiple row
 }
 ```
 
-<Callout variant="note">
+<Aside type="note">
   This structure enables powerful ranking analytics.
-</Callout>
+</Aside>
 
 ```sql
 -- Average rank per feature
@@ -418,13 +418,13 @@ When a user selects multiple options, each choice becomes a separate row:
 }
 ```
 
-<Callout variant="note">
+<Aside type="note">
   This "one row per selection" approach makes it trivial to count how many users
   selected each feature. Each row also carries a `value_id` (the option's stable
   id), so counts hold up even after a label is renamed or when responses come in
   different languages — group on `value_id` and use `value_text` only for
   display.
-</Callout>
+</Aside>
 
 ```sql
 -- Stable grouping key: value_id (immune to label renames / localization);
@@ -454,11 +454,11 @@ Hub automatically creates indexes for optimal query performance:
 - **`(tenant_id, source_name)`** - Filter by source display name; partial, only non-null `source_name`
 - **`(tenant_id, sentiment)`** / **`emotions`** - Filter by enrichment output; partial, only enriched records
 
-<Callout variant="note">
+<Aside type="note">
   All indexes are created automatically via database migrations. The combination
   of UUIDv7 primary keys and strategic indexes ensures fast queries even with
   millions of records.
-</Callout>
+</Aside>
 
 ## UUIDv7 Primary Keys
 
@@ -555,10 +555,10 @@ FROM feedback_records
 WHERE metadata->>'question_type' = 'ranking';
 ```
 
-<Callout variant="note">
+<Aside type="note">
   Use snake_case naming and consistent key names across your metadata to make
   queries easier.
-</Callout>
+</Aside>
 
 - Good: `"customer_tier"` (consistent)
 - Avoid mixing patterns like `"customerTier"`, `"tier"`, and `"customer-tier"`
