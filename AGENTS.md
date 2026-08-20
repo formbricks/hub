@@ -8,6 +8,7 @@
 - `pkg/` provides shared utilities: `database`, `cursor` (keyset pagination), and `embeddings`.
 - `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.
 - `tests/` contains integration tests (they require a pgvector database — see Testing Guidelines).
+- `docs/` is the documentation site for hub.formbricks.com — Astro + Starlight, Node tooling, its own `package.json`. Prose lives in `docs/src/content/docs/` as `.md`/`.mdx`; the API reference is **generated from `openapi.yaml`** by `starlight-openapi` and is never hand-written. This is the only non-Go part of the repo.
 
 ## Build, Test, and Development Commands
 - `make dev-setup`: start Postgres via Docker, install Go deps/tools, and initialize database schema.
@@ -21,6 +22,7 @@
 - `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations (`-- +goose up` / `-- +goose down`). Name files with a sequential number and short description (e.g. `002_add_webhooks_table.sql`); goose orders by the numeric prefix. For webhook delivery, run `make river-migrate` after `init-db` to apply River job queue migrations.
 - `make fmt`: format code (runs `golangci-lint run --fix`; uses gofumpt/gci from config).
 - `make lint`: run `golangci-lint` (includes format checks; requires `make install-tools`).
+- Docs (run from `docs/`): `pnpm install`, `pnpm dev` (localhost:4321), `pnpm build`, `pnpm check`. The build takes no secrets and makes no network calls — if it ever needs an API key, something has regressed. Changing the API reference means changing `openapi.yaml`, not the docs.
 
 ## Coding Style & Naming Conventions
 - Language: Go; format with `make fmt` (golangci-lint applies gofumpt/gci).
