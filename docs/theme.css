@@ -16,23 +16,12 @@
   --fb-surface-soft: #f8fafc;
   --hub-grid-border: light-dark(#dbe5ef, #1e293b);
 
-  --stl-color-accent: light-dark(var(--fb-teal), #22ddd2);
-  --stl-color-accent-foreground: light-dark(#007a73, #7ff8ef);
-  --stl-color-accent-border: light-dark(var(--fb-teal-border), #126a65);
-  --stl-color-accent-border-strong: light-dark(var(--fb-teal), #00c4b8);
-  --stl-color-accent-muted-background: light-dark(
-    var(--fb-teal-muted),
-    #062f2d
-  );
-  --stl-color-accent-inverse-background: var(--fb-teal);
-  --stl-color-accent-inverse-background-hover: var(--fb-teal-hover);
-  --stl-color-accent-inverse-foreground: #001f1d;
-  --stl-color-link-foreground: var(--stl-color-accent-foreground);
-  --stl-color-blue: light-dark(var(--fb-teal), #22ddd2);
-  --stl-color-blue-foreground: var(--stl-color-accent-foreground);
-  --stl-color-blue-border: var(--stl-color-accent-border);
-  --stl-color-blue-border-strong: var(--stl-color-accent-border-strong);
-  --stl-color-blue-muted-background: var(--stl-color-accent-muted-background);
+  /* Accent tokens the landing page and chrome overrides use. Formerly aliased
+     Stainless's --stl-color-* set; same values, brand-namespaced. */
+  --fb-accent-border: light-dark(var(--fb-teal-border), #126a65);
+  --fb-accent-border-strong: light-dark(var(--fb-teal), #00c4b8);
+  --fb-accent-muted-background: light-dark(var(--fb-teal-muted), #062f2d);
+  --fb-accent-foreground: light-dark(#007a73, #7ff8ef);
 
   --sl-color-accent: #00c4b8;
   --sl-color-accent-low: light-dark(#d9fbf8, #063b38);
@@ -40,12 +29,6 @@
   --sl-color-text-accent: light-dark(#007a73, #7ff8ef);
   --sl-color-bg-accent: var(--fb-teal);
 
-  --stl-ui-button-accent-background-color: var(--fb-teal);
-  --stl-ui-button-accent-background-color-hover: var(--fb-teal-hover);
-  --stl-ui-button-accent-color: #001f1d;
-  --stl-ui-button-accent-border-color: var(--fb-teal);
-  --stl-ui-layout-border-radius: 8px;
-  --stl-ui-layout-border-radius-sml: 6px;
 }
 
 :root[data-theme="dark"] {
@@ -55,19 +38,11 @@
   --fb-surface: var(--fb-dark-page);
   --fb-surface-soft: #0f172a;
 
-  --stl-color-background: var(--fb-dark-page);
-  --stl-color-ui-background: var(--fb-dark-panel);
-  --stl-color-faint-background: var(--fb-dark-code);
-  --stldocs-syntax-color-blue: #38bdf8;
-  --stldocs-syntax-color-green: #5eead4;
-  --stldocs-syntax-color-orange: #fbbf24;
-  --stldocs-syntax-color-purple: #c084fc;
   --sl-color-bg: var(--fb-dark-page);
   --sl-color-bg-nav: var(--fb-dark-page);
   --sl-color-bg-sidebar: var(--fb-dark-page);
   --sl-color-bg-inline-code: #142235;
   --sl-color-black: var(--fb-dark-page);
-  --stl-ui-button-accent-color: #001f1d;
 }
 
 html {
@@ -112,66 +87,6 @@ a:hover {
   max-height: 2.25rem;
   width: auto;
 }
-
-@media (min-width: 50rem) {
-  header.header {
-    border-bottom: 1px solid light-dark(#edf2f7, #1f3348);
-    background: light-dark(
-      color-mix(in srgb, #ffffff 88%, transparent),
-      var(--fb-dark-page)
-    );
-    backdrop-filter: blur(16px);
-  }
-}
-
-:root[data-theme="dark"] header.header,
-:root[data-theme="dark"] .page > header,
-:root[data-theme="dark"] .page > header .header,
-:root[data-theme="dark"] .page > header .stl-secondary-nav-tabs {
-  background-color: var(--fb-dark-page);
-}
-
-.header .stl-ui-button {
-  min-height: 2rem;
-  border-radius: 999px;
-  font-weight: 600;
-}
-
-.header .stl-ui-button--outline {
-  color: light-dark(#334155, #cbd5e1);
-  border-color: light-dark(#dbe5ef, #1f3348);
-  background: light-dark(#ffffff, #07111f);
-}
-
-.header .stl-ui-button--outline:hover {
-  color: light-dark(#0f172a, #f8fafc);
-  border-color: var(--stl-color-accent-border);
-  background: light-dark(#f0fdfa, #082f2c);
-}
-
-.header .stl-ui-button--accent {
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--fb-teal) 26%, transparent);
-}
-
-.stl-secondary-nav-tabs {
-  border-bottom-color: light-dark(#e8eef5, #142238);
-}
-
-.stl-secondary-nav-tabs a,
-.stl-nav-tabs a {
-  border-radius: 999px;
-  color: light-dark(#475569, #94a3b8);
-  font-weight: 600;
-}
-
-.stl-secondary-nav-tabs a[aria-current="page"],
-.stl-nav-tabs a[aria-current="page"],
-.stl-secondary-nav-tabs a:hover,
-.stl-nav-tabs a:hover {
-  color: light-dark(#006e68, #7ff8ef);
-  background: light-dark(#e6fbf9, #062f2d);
-}
-
 .sidebar-pane {
   background: light-dark(#ffffff, var(--fb-dark-page));
 }
@@ -204,7 +119,7 @@ site-search button {
 }
 
 site-search button:hover {
-  border-color: var(--stl-color-accent-border) !important;
+  border-color: var(--fb-accent-border) !important;
   background: light-dark(#f8fafc, #0f172a) !important;
 }
 
@@ -273,66 +188,12 @@ site-search button:hover {
   --code-background: var(--fb-dark-code);
 }
 
-:root[data-theme="dark"] .expressive-code figure,
-:root[data-theme="dark"] .expressive-code pre,
-:root[data-theme="dark"] .astro-code,
-:root[data-theme="dark"] .shiki,
-:root[data-theme="dark"] .sl-markdown-content pre,
-:root[data-theme="dark"] .stldocs-snippet,
-:root[data-theme="dark"] .stldocs-snippet-request,
-:root[data-theme="dark"] .stldocs-snippet-response-pane,
-.stl-theme-dark .expressive-code figure,
-.stl-theme-dark .expressive-code pre,
-.stl-theme-dark .astro-code,
-.stl-theme-dark .shiki,
-.stl-theme-dark .sl-markdown-content pre,
-.stl-theme-dark .stldocs-snippet,
-.stl-theme-dark .stldocs-snippet-request,
-.stl-theme-dark .stldocs-snippet-response-pane {
-  background-color: var(--fb-dark-code) !important;
-  border-color: #3a506b !important;
-}
-
-:root[data-theme="dark"] .expressive-code figcaption,
-:root[data-theme="dark"] .expressive-code .header,
-:root[data-theme="dark"] .stldocs-snippet-request-title,
-.stl-theme-dark .expressive-code figcaption,
-.stl-theme-dark .expressive-code .header,
-.stl-theme-dark .stldocs-snippet-request-title {
-  background-color: var(--fb-dark-panel) !important;
-  border-color: #3a506b !important;
-  color: #dbe7f5;
-}
-
-:root[data-theme="dark"] .expressive-code .shiki span,
-:root[data-theme="dark"] .sl-markdown-content .shiki span,
-:root[data-theme="dark"] .astro-code span,
-:root[data-theme="dark"] .stldocs-snippet .shiki span,
-.stl-theme-dark .expressive-code .shiki span,
-.stl-theme-dark .sl-markdown-content .shiki span,
-.stl-theme-dark .astro-code span,
-.stl-theme-dark .stldocs-snippet .shiki span {
-  filter: brightness(1.35) saturate(1.18);
-  opacity: 1;
-}
-
-.stl-ui-callout,
-.sl-markdown-content blockquote {
-  border-radius: 8px;
-  border-color: light-dark(#b7eee9, #126a65);
-  background: light-dark(#f0fdfa, #052f2d);
-}
-
-.stl-ui-badge {
-  border-radius: 999px;
-}
-
 .pagination-links a {
   border-radius: 8px;
 }
 
 .pagination-links a:hover {
-  border-color: var(--stl-color-accent-border-strong);
+  border-color: var(--fb-accent-border-strong);
 }
 
 .hub-hero {
@@ -381,10 +242,10 @@ site-search button:hover {
   min-height: 1.55rem;
   margin-bottom: 0.65rem;
   padding: 0.18rem 0.58rem;
-  border: 1px solid var(--stl-color-accent-border);
+  border: 1px solid var(--fb-accent-border);
   border-radius: 999px;
-  background: var(--stl-color-accent-muted-background);
-  color: var(--stl-color-accent-foreground);
+  background: var(--fb-accent-muted-background);
+  color: var(--fb-accent-foreground);
   font-size: 0.78rem;
   font-weight: 700;
   line-height: 1;
@@ -442,13 +303,6 @@ site-search button:hover {
   border-color: #263c55;
 }
 
-:root[data-theme="dark"] .stldocs-root,
-:root[data-theme="dark"] .stl-overview,
-:root[data-theme="dark"] .stldocs-method,
-:root[data-theme="dark"] .stldocs-overview {
-  background-color: var(--fb-dark-page);
-}
-
 .hub-workflow__index {
   display: inline-grid;
   width: 2.35rem;
@@ -475,8 +329,4 @@ site-search button:hover {
     font-size: clamp(2.2rem, 14vw, 3.35rem);
   }
 
-  .hub-hero__actions .stl-ui-button {
-    width: 100%;
-    justify-content: center;
-  }
 }

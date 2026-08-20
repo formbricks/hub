@@ -1,10 +1,14 @@
 import { defineConfig, envField } from "astro/config";
-import { generateAPIReferenceItems, stainlessDocs } from "@stainless-api/docs";
-import aiChat from "@stainless-api/docs-ai-chat/plugin";
+import starlight from "@astrojs/starlight";
+import starlightOpenAPI, { openAPISidebarGroups } from "starlight-openapi";
+import starlightSidebarTopics from "starlight-sidebar-topics";
 import { posthog } from "./src/integrations/posthog";
 
 // https://astro.build/config
 export default defineConfig({
+  // Canonical origin. Required by @astrojs/sitemap, which Starlight enables —
+  // without it the sitemap is silently skipped. Revisit with ENG-2370 (hosting).
+  site: "https://hub.formbricks.com",
   env: {
     schema: {
       PUBLIC_POSTHOG_KEY: envField.string({
@@ -21,24 +25,8 @@ export default defineConfig({
   },
   integrations: [
     posthog,
-    stainlessDocs({
-      apiReference: {
-        stainlessProject: "hub",
-        highlighting: {
-          themes: {
-            light: "github-light",
-            dark: "github-dark",
-          },
-        },
-        propertySettings: {
-          collapseDescription: false,
-          expandDepth: 2,
-        },
-      },
+    starlight({
       title: "Formbricks Hub",
-      expressiveCode: {
-        themes: ["github-light", "github-dark"],
-      },
       favicon: "/favicon.svg",
       logo: {
         light: "./src/assets/formbricks-hub-logo-light.svg",
@@ -46,6 +34,17 @@ export default defineConfig({
         alt: "Formbricks Hub",
         replacesTitle: true,
       },
+      expressiveCode: {
+        themes: ["github-light", "github-dark"],
+      },
+      customCss: ["./theme.css"],
+      social: [
+        {
+          icon: "github",
+          label: "Support",
+          href: "https://github.com/formbricks/hub/discussions",
+        },
+      ],
       head: [
         {
           tag: "link",
@@ -96,121 +95,73 @@ export default defineConfig({
           },
         },
       ],
-      customCss: ["./theme.css"],
-      header: {
-        layout: "stacked",
-        links: [
+      plugins: [
+        // Replaces the Stainless `tabs` option: one topic per former tab.
+        starlightSidebarTopics([
           {
-            label: "Support",
-            link: "https://github.com/formbricks/hub/discussions",
-            variant: "outline",
-            attrs: {
-              target: "_blank",
-              rel: "noreferrer",
-            },
+            label: "Guides",
+            link: "/",
+            items: [
+              { label: "Introduction", slug: "" },
+              { label: "Quick Start Guide", slug: "quickstart" },
+              {
+                label: "Core concepts",
+                items: [
+                  { label: "Data Model", slug: "core-concepts/data-model" },
+                  { label: "Authentication", slug: "core-concepts/authentication" },
+                  { label: "Webhooks", slug: "core-concepts/webhooks" },
+                  { label: "Tenant Settings", slug: "core-concepts/tenant-settings" },
+                  { label: "Translated Feedback", slug: "core-concepts/translated-feedback" },
+                  { label: "Sentiment & Emotions", slug: "core-concepts/sentiment-and-emotions" },
+                  { label: "Filtering & Sorting", slug: "core-concepts/filtering-and-sorting" },
+                  { label: "Taxonomy", slug: "core-concepts/taxonomy" },
+                ],
+              },
+              {
+                label: "Guides",
+                items: [
+                  { label: "Connecting Hub to Power BI", slug: "guides/hub-powerbi" },
+                  { label: "Connecting Hub to Superset", slug: "guides/hub-superset" },
+                  { label: "Connecting Hub to Databricks", slug: "guides/hub-databricks" },
+                  { label: "Connecting Hub to Airbyte", slug: "guides/hub-airbyte" },
+                  { label: "Self-Hosted Embeddings", slug: "guides/hub-self-hosted-embeddings" },
+                ],
+              },
+              {
+                label: "Reference",
+                items: [
+                  { label: "Environment Variables", slug: "reference/environment-variables" },
+                  { label: "Metrics", slug: "reference/metrics" },
+                ],
+              },
+            ],
+          },
+          {
+            id: "api",
+            label: "API Reference",
+            link: "/api/",
+            items: openAPISidebarGroups,
           },
         ],
-      },
-      experimental: {
-        aiChat: aiChat(),
-      },
-      tabs: [
         {
-          label: "Guides",
-          link: "/",
-          sidebar: [
-            {
-              label: "Introduction",
-              slug: "",
-            },
-            {
-              label: "Quick Start Guide",
-              slug: "quickstart",
-            },
-            {
-              label: "Core concepts",
-              items: [
-                {
-                  label: "Data Model",
-                  slug: "core-concepts/data-model",
-                },
-                {
-                  label: "Authentication",
-                  slug: "core-concepts/authentication",
-                },
-                {
-                  label: "Webhooks",
-                  slug: "core-concepts/webhooks",
-                },
-                {
-                  label: "Tenant Settings",
-                  slug: "core-concepts/tenant-settings",
-                },
-                {
-                  label: "Translated Feedback",
-                  slug: "core-concepts/translated-feedback",
-                },
-                {
-                  label: "Sentiment & Emotions",
-                  slug: "core-concepts/sentiment-and-emotions",
-                },
-                {
-                  label: "Filtering & Sorting",
-                  slug: "core-concepts/filtering-and-sorting",
-                },
-                {
-                  label: "Taxonomy",
-                  slug: "core-concepts/taxonomy",
-                },
-              ],
-            },
-            {
-              label: "Guides",
-              items: [
-                {
-                  label: "Connecting Hub to Power BI",
-                  slug: "guides/hub-powerbi",
-                },
-                {
-                  label: "Connecting Hub to Superset",
-                  slug: "guides/hub-superset",
-                },
-                {
-                  label: "Connecting Hub to Databricks",
-                  slug: "guides/hub-databricks",
-                },
-                {
-                  label: "Connecting Hub to Airbyte",
-                  slug: "guides/hub-airbyte",
-                },
-                {
-                  label: "Self-Hosted Embeddings",
-                  slug: "guides/hub-self-hosted-embeddings",
-                },
-              ],
-            },
-            {
-              label: "Reference",
-              items: [
-                {
-                  label: "Environment Variables",
-                  slug: "reference/environment-variables",
-                },
-                {
-                  label: "Metrics",
-                  slug: "reference/metrics",
-                },
-              ],
-            },
-          ],
-        },
-        {
-          label: "API Reference",
-          link: "/api",
-          sidebar: generateAPIReferenceItems({
-            excludeResourceOverviewPages: true,
-          }),
-        },
+          // starlight-openapi generates the per-operation and per-tag pages
+          // itself, so starlight-sidebar-topics cannot attribute them to a
+          // topic on its own. Claim everything under /api/ for the API
+          // Reference topic; without this the build fails on the first
+          // operation page it renders.
+          topics: {
+            api: ["/api/**"],
+          },
+        }),
+        // Replaces Stainless's hosted `apiReference`: the reference is now generated
+        // from the spec that lives beside it in this repo, with no vendor call.
+        starlightOpenAPI([
+          {
+            base: "api",
+            label: "API Reference",
+            schema: "../openapi.yaml",
+          },
+        ]),
       ],
     }),
   ],
