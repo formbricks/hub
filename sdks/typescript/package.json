@@ -1,0 +1,76 @@
+{
+  "name": "@formbricks/hub",
+  "version": "0.13.0",
+  "description": "The official TypeScript library for the Formbricks Hub API",
+  "author": "Formbricks Hub <hola@formbricks.com>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/formbricks/hub.git",
+    "directory": "sdks/typescript"
+  },
+  "homepage": "https://hub.formbricks.com",
+  "packageManager": "pnpm@11.5.0",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./schemas": {
+      "import": {
+        "types": "./dist/schemas.d.mts",
+        "default": "./dist/schemas.mjs"
+      },
+      "require": {
+        "types": "./dist/schemas.d.cts",
+        "default": "./dist/schemas.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "generate": "openapi-ts",
+    "build": "pnpm generate && tsdown",
+    "check": "pnpm generate && tsc --noEmit",
+    "test": "pnpm build && node --test 'tests/*.test.mjs'",
+    "format": "prettier --write ."
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "zod": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
+    "prettier": "3.9.6",
+    "tsdown": "0.22.14",
+    "typescript": "5.9.3",
+    "zod": "4.4.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.cts"
+}
