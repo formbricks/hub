@@ -290,13 +290,16 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 	// attempts, and cancel rather than error so River does not schedule a retry it already knows
 	// is pointless.
 	if reason, terminal := huberrors.TerminalReasonOf(err); terminal {
-		w.markFailed(ctx, log, record, job.Attempt, true, string(reason))
-
 		if cfg.failureMetrics != nil {
 			cfg.failureMetrics.RecordTerminalFailure(ctx, cfg.name, string(reason))
 		}
 
+		// Outcome BEFORE the marker write. recordOutcome measures time.Since(start), and markFailed
+		// blocks for up to enrichmentFailureWriteTimeout, so writing the marker first would let a
+		// slow database add a second to the duration histogram — making a database incident read as
+		// a slow provider, which is the one confusion these metrics exist to prevent.
 		w.recordOutcome(ctx, "failed_final", start)
+		w.markFailed(ctx, log, record, job.Attempt, true, string(reason))
 		log.Error(cfg.name+": provider failed permanently for this record, not retrying",
 			"reason", string(reason), "attempt", job.Attempt, "error", err)
 
@@ -305,8 +308,8 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 	}
 
 	if job.Attempt >= job.MaxAttempts {
-		w.markFailed(ctx, log, record, job.Attempt, false, models.EnrichmentFailureReasonProviderError)
 		w.recordOutcome(ctx, "failed_final", start)
+		w.markFailed(ctx, log, record, job.Attempt, false, models.EnrichmentFailureReasonProviderError)
 		log.Error(cfg.name+": provider failed (final attempt)", "error", err)
 
 		return fmt.Errorf("%s (final attempt): %w", cfg.classifyErrVerb, err)
@@ -427,6 +430,11 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 		// alerts on one-off DB blips.)
 		outcome := retryOutcome(isLastAttempt)
 
+		// Outcome before the marker write, for the reason given on the terminal classify path:
+		// markFailed can block for up to a second and would otherwise land in this histogram.
+		cfg.metrics.workerError(ctx, "update_failed")
+		w.recordOutcome(ctx, outcome, start)
+
 		if isLastAttempt {
 			// Best-effort, and most likely to fail exactly when it matters: if the database is
 			// what broke, this write breaks too. It still earns its place — a write failure
@@ -435,8 +443,6 @@ func (w *enrichmentWorker[A, R]) handlePersistError(
 			w.markFailed(ctx, log, record, attempt, false, models.EnrichmentFailureReasonWriteFailed)
 		}
 
-		cfg.metrics.workerError(ctx, "update_failed")
-		w.recordOutcome(ctx, outcome, start)
 		log.Error(cfg.name+": set result failed",
 			"final_attempt", isLastAttempt, "error", err)
 

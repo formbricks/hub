@@ -83,6 +83,7 @@ func googleEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig) (Emb
 	client, err := googleai.NewClient(ctx, cfg.ProviderAPIKey,
 		googleai.WithModel(cfg.Model),
 		googleai.WithNormalize(cfg.Normalize),
+		googleai.WithUsageRecorder(cfg.UsageRecorder),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create google embedding client: %w", err)
@@ -95,6 +96,7 @@ func googleGeminiEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig
 	client, err := googleai.NewGoogleGeminiClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
 		googleai.WithModel(cfg.Model),
 		googleai.WithNormalize(cfg.Normalize),
+		googleai.WithUsageRecorder(cfg.UsageRecorder),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create google-gemini embedding client: %w", err)

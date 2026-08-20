@@ -51,7 +51,8 @@ func openAISentimentFactory(_ context.Context, cfg SentimentClientConfig) (Senti
 }
 
 func googleSentimentFactory(ctx context.Context, cfg SentimentClientConfig) (SentimentClient, error) {
-	raw, err := googleai.NewClient(ctx, cfg.ProviderAPIKey, googleai.WithModel(cfg.Model))
+	raw, err := googleai.NewClient(ctx, cfg.ProviderAPIKey,
+		googleai.WithModel(cfg.Model), googleai.WithUsageRecorder(cfg.UsageRecorder))
 	if err != nil {
 		return nil, fmt.Errorf("create google sentiment client: %w", err)
 	}
@@ -61,7 +62,7 @@ func googleSentimentFactory(ctx context.Context, cfg SentimentClientConfig) (Sen
 
 func googleGeminiSentimentFactory(ctx context.Context, cfg SentimentClientConfig) (SentimentClient, error) {
 	raw, err := googleai.NewGoogleGeminiClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
-		googleai.WithModel(cfg.Model))
+		googleai.WithModel(cfg.Model), googleai.WithUsageRecorder(cfg.UsageRecorder))
 	if err != nil {
 		return nil, fmt.Errorf("create google-gemini sentiment client: %w", err)
 	}

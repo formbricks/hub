@@ -103,7 +103,8 @@ func openAITranslationFactory(_ context.Context, cfg TranslationClientConfig) (T
 }
 
 func googleTranslationFactory(ctx context.Context, cfg TranslationClientConfig) (TranslationClient, error) {
-	raw, err := googleai.NewClient(ctx, cfg.ProviderAPIKey, googleai.WithModel(cfg.Model))
+	raw, err := googleai.NewClient(ctx, cfg.ProviderAPIKey,
+		googleai.WithModel(cfg.Model), googleai.WithUsageRecorder(cfg.UsageRecorder))
 	if err != nil {
 		return nil, fmt.Errorf("create google translation client: %w", err)
 	}
@@ -113,7 +114,7 @@ func googleTranslationFactory(ctx context.Context, cfg TranslationClientConfig) 
 
 func googleGeminiTranslationFactory(ctx context.Context, cfg TranslationClientConfig) (TranslationClient, error) {
 	raw, err := googleai.NewGoogleGeminiClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
-		googleai.WithModel(cfg.Model))
+		googleai.WithModel(cfg.Model), googleai.WithUsageRecorder(cfg.UsageRecorder))
 	if err != nil {
 		return nil, fmt.Errorf("create google-gemini translation client: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -43,6 +44,13 @@ type Client struct {
 	model      string
 	dimensions int
 	normalize  bool
+	// provider is the gen_ai.provider.name this client reports. The two constructors below pick
+	// different backends and they are NOT the same provider to a cost dashboard: the API-key path
+	// is AI Studio (gcp.gemini) and the ADC path is Vertex (gcp.vertex_ai), billed separately.
+	provider llm.Provider
+	// usage receives one record per provider call. nil disables recording entirely, which is how
+	// the backfill commands and the unit tests opt out.
+	usage llm.UsageRecorder
 	// thinkingBudgetUnsupported latches once the configured model rejects a zero thinking
 	// budget (Pro models cannot disable thinking), so later calls fall back to the model's
 	// default thinking behavior instead of failing.
@@ -73,6 +81,15 @@ func WithNormalize(normalize bool) ClientOption {
 	}
 }
 
+// WithUsageRecorder attaches a recorder that receives each call's token counts and duration. The
+// provider returns those numbers on every generate-content response; without this they are decoded
+// and dropped, and a deployment running on Google records no enrichment cost at all.
+func WithUsageRecorder(recorder llm.UsageRecorder) ClientOption {
+	return func(c *Client) {
+		c.usage = recorder
+	}
+}
+
 // NewClient creates a Gemini embeddings client.
 func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Client, error) {
 	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
@@ -86,6 +103,7 @@ func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Clien
 	client := &Client{
 		client:     genaiClient,
 		dimensions: models.EmbeddingVectorDimensions,
+		provider:   llm.ProviderGCPGemini,
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -118,6 +136,7 @@ func NewGoogleGeminiClient(ctx context.Context, project, location string, opts .
 	client := &Client{
 		client:     genaiClient,
 		dimensions: models.EmbeddingVectorDimensions,
+		provider:   llm.ProviderGCPVertexAI,
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -149,11 +168,15 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 	}
 
 	temperature := float32(0)
+	started := time.Now()
 
 	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), &genai.GenerateContentConfig{
 		Temperature:       &temperature,
 		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
 	})
+
+	c.recordGenerate(ctx, started, resp, err)
+
 	if err != nil {
 		return "", wrapGenerateContentError(err)
 	}
@@ -194,6 +217,8 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingBudget: new(int32)}
 	}
 
+	started := time.Now()
+
 	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), config)
 	if err != nil && isUnsupportedThinkingBudgetError(err) {
 		c.thinkingBudgetUnsupported.Store(true)
@@ -202,6 +227,11 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 
 		resp, err = c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), config)
 	}
+
+	// One record for the whole sequence, including the thinking-budget retry above: the token
+	// counts come from whichever request answered, and the duration spans both. That inflates a
+	// single call's latency at most once per client per process, since the rejection latches.
+	c.recordGenerate(ctx, started, resp, err)
 
 	if err != nil {
 		return "", wrapGenerateContentError(err)
@@ -391,11 +421,19 @@ func (c *Client) embedWithTaskType(ctx context.Context, input, taskType string) 
 
 	contents := []*genai.Content{genai.NewContentFromText(input, genai.RoleUser)}
 	dimInt32 := int32(c.dimensions)
+	started := time.Now()
 
 	resp, err := c.client.Models.EmbedContent(ctx, c.model, contents, &genai.EmbedContentConfig{
 		TaskType:             taskType,
 		OutputDimensionality: &dimInt32,
 	})
+
+	// Token counts deliberately zero: an embed response carries no token usage at all — Vertex
+	// reports a billable CHARACTER count and AI Studio reports nothing — so there is no number to
+	// report in {token} units. The duration still lands, which is what makes a slow embedding
+	// provider visible. The recorder skips zero counts rather than emitting them.
+	c.recordUsage(ctx, llm.OperationEmbeddings, started, 0, 0, err)
+
 	if err != nil {
 		return nil, wrapGenaiError("gemini embedding", err)
 	}
@@ -417,4 +455,68 @@ func (c *Client) embedWithTaskType(ctx context.Context, input, taskType string) 
 	}
 
 	return out, nil
+}
+
+// recordGenerate reports one generate-content call, pulling the token counts off the response's
+// usage metadata.
+//
+// Output tokens include ThoughtsTokenCount. Thinking tokens are billed as output, and this client
+// asks for a zero thinking budget but falls back to the model's default when the model rejects
+// that (see CompleteJSON), so leaving them out would under-report the cost of exactly the models
+// where it is largest.
+func (c *Client) recordGenerate(
+	ctx context.Context, started time.Time, resp *genai.GenerateContentResponse, err error,
+) {
+	var input, output int64
+
+	if resp != nil && resp.UsageMetadata != nil {
+		input = int64(resp.UsageMetadata.PromptTokenCount)
+		output = int64(resp.UsageMetadata.CandidatesTokenCount) + int64(resp.UsageMetadata.ThoughtsTokenCount)
+	}
+
+	c.recordUsage(ctx, llm.OperationChat, started, input, output, err)
+}
+
+// recordUsage reports one call. Split out so every provider entry point records the same shape,
+// and so a nil recorder is checked in exactly one place.
+func (c *Client) recordUsage(
+	ctx context.Context, operation llm.Operation, started time.Time, inputTokens, outputTokens int64, err error,
+) {
+	if c.usage == nil {
+		return
+	}
+
+	c.usage.RecordUsage(ctx, llm.Usage{
+		Operation:    operation,
+		Provider:     c.provider,
+		Model:        c.model,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		Duration:     time.Since(started),
+		ErrorType:    errorTypeOf(err),
+	})
+}
+
+// errorTypeOf maps an error to the BOUNDED error.type attribute. An HTTP status becomes its
+// number, everything else a coarse class — never the provider's message, which is unbounded and
+// would blow up metric cardinality the first time a provider echoed user input back in an error.
+func errorTypeOf(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var apiErr genai.APIError
+	if errors.As(err, &apiErr) && apiErr.Code != 0 {
+		return strconv.Itoa(apiErr.Code)
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+
+	return "other"
 }

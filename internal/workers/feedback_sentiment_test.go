@@ -111,8 +111,16 @@ func (s stubSentimentSettings) GetSettings(_ context.Context, tenantID string) (
 	return &models.TenantSettings{TenantID: tenantID, Settings: models.EnrichmentSettings{SentimentEnabled: s.enabled}}, nil
 }
 
+// sentimentTextRecord carries a tenant deliberately. The failure marker copies the record's ID and
+// TenantID, and those two drive the foreign key and the tenant write lock, so a fixture that left
+// them zero would let a regression that stopped copying either one pass unnoticed.
 func sentimentTextRecord(valueText *string) *models.FeedbackRecord {
-	return &models.FeedbackRecord{ID: uuid.Must(uuid.NewV7()), FieldType: models.FieldTypeText, ValueText: valueText}
+	return &models.FeedbackRecord{
+		ID:        uuid.Must(uuid.NewV7()),
+		TenantID:  "tenant-sentiment-test",
+		FieldType: models.FieldTypeText,
+		ValueText: valueText,
+	}
 }
 
 func sentimentJob(attempt int) *river.Job[service.FeedbackSentimentArgs] {
@@ -457,6 +465,11 @@ func TestFeedbackSentimentWorker_TerminalFailureCancelsImmediately(t *testing.T)
 		"a terminal failure must cancel the job, not return a plain error River would retry")
 
 	require.Len(t, failures.calls, 1, "the failure must be recorded")
+	// The identity fields, not just the classification: a marker written against the wrong record
+	// is a foreign-key rejection, and one written against the wrong tenant is a mis-scoped row that
+	// the counting queries would attribute to somebody else.
+	assert.Equal(t, svc.record.ID, failures.calls[0].FeedbackRecordID)
+	assert.Equal(t, svc.record.TenantID, failures.calls[0].TenantID)
 	assert.True(t, failures.calls[0].Terminal)
 	assert.Equal(t, string(huberrors.TerminalReasonContentFilter), failures.calls[0].Reason)
 	assert.Equal(t, "sentiment", failures.calls[0].Enrichment)
