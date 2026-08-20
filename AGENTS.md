@@ -8,7 +8,7 @@
 - `pkg/` provides shared utilities: `database`, `cursor` (keyset pagination), and `embeddings`.
 - `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.
 - `tests/` contains integration tests (they require a pgvector database — see Testing Guidelines).
-- `docs/` is the documentation site for hub.formbricks.com — Astro + Starlight, Node tooling, its own `package.json`. Prose lives in `docs/src/content/docs/` as `.md`/`.mdx`; the API reference is **generated from `openapi.yaml`** by `starlight-openapi` and is never hand-written. This is the only non-Go part of the repo.
+- `docs/` holds the documentation site for hub.formbricks.com (Astro + Starlight) — the only non-Go part of the repo. See Documentation Site below.
 
 ## Build, Test, and Development Commands
 - `make dev-setup`: start Postgres via Docker, install Go deps/tools, and initialize database schema.
@@ -22,7 +22,7 @@
 - `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations (`-- +goose up` / `-- +goose down`). Name files with a sequential number and short description (e.g. `002_add_webhooks_table.sql`); goose orders by the numeric prefix. For webhook delivery, run `make river-migrate` after `init-db` to apply River job queue migrations.
 - `make fmt`: format code (runs `golangci-lint run --fix`; uses gofumpt/gci from config).
 - `make lint`: run `golangci-lint` (includes format checks; requires `make install-tools`).
-- Docs (run from `docs/`): `pnpm install`, `pnpm dev` (localhost:4321), `pnpm build`, `pnpm check`. The build takes no secrets and makes no network calls — if it ever needs an API key, something has regressed. Changing the API reference means changing `openapi.yaml`, not the docs.
+- Docs commands run from `docs/` and use pnpm, not make — see Documentation Site below.
 
 ## Coding Style & Naming Conventions
 - Language: Go; format with `make fmt` (golangci-lint applies gofumpt/gci).
@@ -54,6 +54,45 @@ A new enrichment is then a thin per-type spec: an enum/result type in `models`, 
 - When changing access rules for a tenant-owned model, search for all alternate access paths by resource name and by derived side effects: list, get, update, delete, bulk delete, webhook fan-out, River jobs, workers, embeddings, search, exports, cache invalidation, logs, and metrics.
 - Every tenant-owned mutation must run through the tenant write lock helper (`internal/repository/tenant_write_lock.go`): a transaction that first try-acquires the shared advisory lock on `tenant_write|<len>:<tenant_id>` (resolve the row's tenant inside the transaction for ID-based mutations, then mutate with a tenant-scoped WHERE). The tenant data purge holds the same key exclusively. Lock order is fixed: tenant shared lock → scope-specific advisory locks (e.g. taxonomy run scope) → row locks; never block on an advisory lock while holding row locks. A path that skips the helper silently reopens the purge/write race.
 - For any tenant-scoping change, include verification at the boundary where the leak could happen: database query behavior, service fan-out, worker execution, and API behavior when relevant. Include at least one alternate-path regression test proving that data allowed through the primary path cannot leak through async dispatch, bulk operations, derived indexes, exports, or background workers. Tests are the evidence; the invariant belongs in the architecture.
+
+## Documentation Site (`docs/`)
+
+The docs site for hub.formbricks.com. Astro + Starlight with its own `package.json`
+and `node_modules` — the only Node tooling in the repo, so it uses pnpm, not make.
+
+- `docs/src/content/docs/` — the pages (`.md`/`.mdx`); landing page is `index.mdx`,
+  and the three prose sections are `core-concepts/`, `guides/`, `reference/`.
+- `docs/astro.config.ts` — sidebar topics, the OpenAPI reference wiring, head/theme.
+- `docs/theme.css` — brand tokens (`--fb-*`) layered over Starlight's own (`--sl-*`).
+- `docs/public/` — served as-is (favicons, web manifest). `docs/src/assets/` — images
+  imported from content.
+
+Commands, from `docs/`: `pnpm install`, `pnpm dev` (localhost:4321), `pnpm build`,
+`pnpm preview`, `pnpm check` (`astro check` — types and content-collection schemas),
+`pnpm format`.
+
+**The API reference is generated, never hand-written.** It comes from `openapi.yaml`
+via `starlight-openapi` and is served under `/api/`. To change it, change the spec.
+Because the docs build parses the spec, an invalid spec fails the docs build as well
+as `code-quality.yml`'s Spectral lint.
+
+**The build takes no secrets and makes no network calls.** That is the point of
+ENG-2369: the previous site fetched its API reference from Stainless at build time
+with a `STAINLESS_API_KEY`. If the build ever needs a credential again, something has
+regressed.
+
+Writing conventions:
+- `kebab-case` filenames (e.g. `quickstart.mdx`); keep frontmatter minimal and
+  explicit (`title`, `description`).
+- Use Starlight components from `@astrojs/starlight/components` — `<Aside>`, `<Card>`,
+  `<LinkButton>`, `<Tabs>`. Do not reintroduce a bespoke component library.
+- Adding a page means adding it to the sidebar in `astro.config.ts`. There is no
+  autogenerated section, so an unlisted page is unreachable.
+- 2-space indentation; for the TypeScript config, ES modules, double quotes, semicolons.
+
+Validating a docs change: `pnpm check` and `pnpm build` must both pass, then
+`pnpm preview` and review the changed pages. Anything touching `theme.css` or the
+landing page needs checking in light *and* dark mode.
 
 ## Testing Guidelines
 - Unit tests live beside the code in `internal/**` and need no database: `make test-unit`.
