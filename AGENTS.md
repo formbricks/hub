@@ -6,9 +6,9 @@
 - `cmd/backfill-*/` are one-off enqueue commands that (re)enrich an existing backlog: `backfill-embeddings`, `backfill-translations`, and `backfill-classify -type sentiment|emotions`. hub-worker processes the jobs they enqueue.
 - `internal/` contains the application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, `config`, `workers`, `observability` (OTel metrics/tracing), the LLM seam (`llm`, `openai`, `googleai`), `datatypes`, and `huberrors`.
 - `pkg/` provides shared utilities: `database`, `cursor` (keyset pagination), and `embeddings`.
+- `sdks/typescript/` holds the generator config for the published `@formbricks/hub` npm package. The generated client is **not committed** — see TypeScript SDK below.
 - `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.
 - `tests/` contains integration tests (they require a pgvector database — see Testing Guidelines).
-- `sdks/typescript/` holds the generator config for the published `@formbricks/hub` npm package. The generated client is **not committed** — see TypeScript SDK below.
 
 ## Build, Test, and Development Commands
 - `make dev-setup`: start Postgres via Docker, install Go deps/tools, and initialize database schema.
@@ -20,9 +20,9 @@
 - `make tests-coverage`: generate `coverage.html`.
 - `make check-coverage`: run all tests with coverage and fail if below COVERAGE_THRESHOLD (excludes cmd/api and cmd/worker main packages).
 - `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations (`-- +goose up` / `-- +goose down`). Name files with a sequential number and short description (e.g. `002_add_webhooks_table.sql`); goose orders by the numeric prefix. For webhook delivery, run `make river-migrate` after `init-db` to apply River job queue migrations.
+- SDK commands run from `sdks/typescript/` and use pnpm, not make — see TypeScript SDK below.
 - `make fmt`: format code (runs `golangci-lint run --fix`; uses gofumpt/gci from config).
 - `make lint`: run `golangci-lint` (includes format checks; requires `make install-tools`).
-- SDK commands run from `sdks/typescript/` and use pnpm, not make — see TypeScript SDK below.
 
 ## Coding Style & Naming Conventions
 - Language: Go; format with `make fmt` (golangci-lint applies gofumpt/gci).
