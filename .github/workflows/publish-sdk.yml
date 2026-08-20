@@ -34,6 +34,10 @@ jobs:
   # to the publish job as an artifact.
   build:
     name: Generate, test and pack
+    # Prereleases are skipped, matching hub-release.yml's Docker builds. Gated on
+    # the job so the run is genuinely skipped — a step that exited non-zero would
+    # mark every prerelease as a failed workflow.
+    if: github.event_name != 'release' || github.event.release.prerelease == false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -48,12 +52,6 @@ jobs:
         uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
         with:
           egress-policy: audit
-
-      - name: Skip prereleases
-        if: github.event_name == 'release' && github.event.release.prerelease == true
-        run: |
-          echo "This is a prerelease; the SDK follows the same rule as the Docker builds."
-          exit 1
 
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -141,12 +139,21 @@ jobs:
 
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
 
-      - name: Upload the packed tarball
+      # Hands over the publishable directory rather than the .tgz: `npm publish`
+      # from a package directory is the documented provenance path, and npm's docs
+      # do not commit either way on whether provenance is generated when
+      # publishing a pre-packed tarball. Not the place to find out.
+      - name: Upload the publishable package
         if: steps.compare.outputs.should_publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: npm-tarball
-          path: sdks/typescript/.pack/*.tgz
+          name: npm-package
+          path: |
+            sdks/typescript/dist
+            sdks/typescript/src
+            sdks/typescript/package.json
+            sdks/typescript/README.md
+            sdks/typescript/LICENSE
           retention-days: 7
           if-no-files-found: error
 
@@ -173,11 +180,11 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Download the packed tarball
+      - name: Download the publishable package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: npm-tarball
-          path: .
+          name: npm-package
+          path: package
 
       # Trusted publishing requires npm >= 11.5.1 and Node >= 22.14.0; the
       # runner's bundled npm can be older, so pin one explicitly.
@@ -190,15 +197,19 @@ jobs:
       - name: Pin an OIDC-capable npm
         run: npm install -g npm@11.6.2
 
-      # No NPM_TOKEN anywhere: authentication is OIDC via the trusted publisher,
-      # and provenance is generated automatically for a public package from a
-      # public repo. A missing credential must fail, never fall back to a token.
+      # No NPM_TOKEN anywhere: authentication is OIDC via the trusted publisher.
+      # A missing credential must fail, never fall back to a token.
+      #
+      # --provenance is passed explicitly even though trusted publishing is
+      # documented as generating attestations automatically: the two npm docs
+      # pages disagree on whether the flag is needed, and passing it when it is
+      # already implied is harmless while omitting it when it is not is silent.
       - name: Publish
+        working-directory: package
         run: |
           set -euo pipefail
-          TARBALL="$(ls ./*.tgz)"
-          echo "Publishing $TARBALL as version ${{ needs.build.outputs.version }}"
-          npm publish "$TARBALL" --access public --tag latest
+          echo "Publishing $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
+          npm publish --access public --tag latest --provenance
 
       - name: Confirm provenance landed
         run: |
