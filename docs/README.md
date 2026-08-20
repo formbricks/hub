@@ -11,14 +11,14 @@ no external service in the build: `pnpm build` works offline with no API keys.
 
 Run these from this directory (`docs/`):
 
-| Command | What it does |
-| -- | -- |
-| `pnpm install` | Install dependencies |
-| `pnpm dev` | Dev server at http://localhost:4321 |
-| `pnpm build` | Production build into `dist/` |
-| `pnpm preview` | Serve the built site locally |
-| `pnpm check` | `astro check` — types and content-collection schemas |
-| `pnpm format` | Prettier across this directory |
+| Command        | What it does                                         |
+| -------------- | ---------------------------------------------------- |
+| `pnpm install` | Install dependencies                                 |
+| `pnpm dev`     | Dev server at http://localhost:4321                  |
+| `pnpm build`   | Production build into `dist/`                        |
+| `pnpm preview` | Serve the built site locally                         |
+| `pnpm check`   | `astro check` — types and content-collection schemas |
+| `pnpm format`  | Prettier across this directory                       |
 
 ## Layout
 

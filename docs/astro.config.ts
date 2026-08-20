@@ -97,62 +97,97 @@ export default defineConfig({
       ],
       plugins: [
         // Replaces the Stainless `tabs` option: one topic per former tab.
-        starlightSidebarTopics([
+        starlightSidebarTopics(
+          [
+            {
+              label: "Guides",
+              link: "/",
+              items: [
+                { label: "Introduction", slug: "" },
+                { label: "Quick Start Guide", slug: "quickstart" },
+                {
+                  label: "Core concepts",
+                  items: [
+                    { label: "Data Model", slug: "core-concepts/data-model" },
+                    {
+                      label: "Authentication",
+                      slug: "core-concepts/authentication",
+                    },
+                    { label: "Webhooks", slug: "core-concepts/webhooks" },
+                    {
+                      label: "Tenant Settings",
+                      slug: "core-concepts/tenant-settings",
+                    },
+                    {
+                      label: "Translated Feedback",
+                      slug: "core-concepts/translated-feedback",
+                    },
+                    {
+                      label: "Sentiment & Emotions",
+                      slug: "core-concepts/sentiment-and-emotions",
+                    },
+                    {
+                      label: "Filtering & Sorting",
+                      slug: "core-concepts/filtering-and-sorting",
+                    },
+                    { label: "Taxonomy", slug: "core-concepts/taxonomy" },
+                  ],
+                },
+                {
+                  label: "Guides",
+                  items: [
+                    {
+                      label: "Connecting Hub to Power BI",
+                      slug: "guides/hub-powerbi",
+                    },
+                    {
+                      label: "Connecting Hub to Superset",
+                      slug: "guides/hub-superset",
+                    },
+                    {
+                      label: "Connecting Hub to Databricks",
+                      slug: "guides/hub-databricks",
+                    },
+                    {
+                      label: "Connecting Hub to Airbyte",
+                      slug: "guides/hub-airbyte",
+                    },
+                    {
+                      label: "Self-Hosted Embeddings",
+                      slug: "guides/hub-self-hosted-embeddings",
+                    },
+                  ],
+                },
+                {
+                  label: "Reference",
+                  items: [
+                    {
+                      label: "Environment Variables",
+                      slug: "reference/environment-variables",
+                    },
+                    { label: "Metrics", slug: "reference/metrics" },
+                  ],
+                },
+              ],
+            },
+            {
+              id: "api",
+              label: "API Reference",
+              link: "/api/",
+              items: openAPISidebarGroups,
+            },
+          ],
           {
-            label: "Guides",
-            link: "/",
-            items: [
-              { label: "Introduction", slug: "" },
-              { label: "Quick Start Guide", slug: "quickstart" },
-              {
-                label: "Core concepts",
-                items: [
-                  { label: "Data Model", slug: "core-concepts/data-model" },
-                  { label: "Authentication", slug: "core-concepts/authentication" },
-                  { label: "Webhooks", slug: "core-concepts/webhooks" },
-                  { label: "Tenant Settings", slug: "core-concepts/tenant-settings" },
-                  { label: "Translated Feedback", slug: "core-concepts/translated-feedback" },
-                  { label: "Sentiment & Emotions", slug: "core-concepts/sentiment-and-emotions" },
-                  { label: "Filtering & Sorting", slug: "core-concepts/filtering-and-sorting" },
-                  { label: "Taxonomy", slug: "core-concepts/taxonomy" },
-                ],
-              },
-              {
-                label: "Guides",
-                items: [
-                  { label: "Connecting Hub to Power BI", slug: "guides/hub-powerbi" },
-                  { label: "Connecting Hub to Superset", slug: "guides/hub-superset" },
-                  { label: "Connecting Hub to Databricks", slug: "guides/hub-databricks" },
-                  { label: "Connecting Hub to Airbyte", slug: "guides/hub-airbyte" },
-                  { label: "Self-Hosted Embeddings", slug: "guides/hub-self-hosted-embeddings" },
-                ],
-              },
-              {
-                label: "Reference",
-                items: [
-                  { label: "Environment Variables", slug: "reference/environment-variables" },
-                  { label: "Metrics", slug: "reference/metrics" },
-                ],
-              },
-            ],
+            // starlight-openapi generates the per-operation and per-tag pages
+            // itself, so starlight-sidebar-topics cannot attribute them to a
+            // topic on its own. Claim everything under /api/ for the API
+            // Reference topic; without this the build fails on the first
+            // operation page it renders.
+            topics: {
+              api: ["/api/**"],
+            },
           },
-          {
-            id: "api",
-            label: "API Reference",
-            link: "/api/",
-            items: openAPISidebarGroups,
-          },
-        ],
-        {
-          // starlight-openapi generates the per-operation and per-tag pages
-          // itself, so starlight-sidebar-topics cannot attribute them to a
-          // topic on its own. Claim everything under /api/ for the API
-          // Reference topic; without this the build fails on the first
-          // operation page it renders.
-          topics: {
-            api: ["/api/**"],
-          },
-        }),
+        ),
         // Replaces Stainless's hosted `apiReference`: the reference is now generated
         // from the spec that lives beside it in this repo, with no vendor call.
         starlightOpenAPI([
