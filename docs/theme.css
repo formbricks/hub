@@ -208,6 +208,24 @@ site-search button:hover {
   margin-top: 0.4rem;
 }
 
+/* Starlight paints its `primary` link button with --sl-color-text-accent, which
+   is #007a73 here. The brand CTA has always been --fb-teal on near-black, so
+   restore it locally rather than moving --sl-color-text-accent — that token also
+   drives body-link colour. Unlayered, so it beats @layer starlight.components
+   without !important. */
+.hub-hero__actions .sl-link-button.primary {
+  background: var(--fb-teal);
+  border-color: var(--fb-teal);
+  color: #001f1d;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--fb-teal) 26%, transparent);
+}
+
+.hub-hero__actions .sl-link-button.primary:hover {
+  background: var(--fb-teal-hover);
+  border-color: var(--fb-teal-hover);
+  color: #001f1d;
+}
+
 .hub-signal-grid,
 .hub-card-grid {
   display: grid;
@@ -326,5 +344,11 @@ site-search button:hover {
 @media (max-width: 38rem) {
   .sl-markdown-content h1 {
     font-size: clamp(2.2rem, 14vw, 3.35rem);
+  }
+
+  /* Was `.hub-hero__actions .stl-ui-button` before the Starlight port. */
+  .hub-hero__actions .sl-link-button {
+    width: 100%;
+    justify-content: center;
   }
 }
