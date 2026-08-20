@@ -1,0 +1,159 @@
+---
+title: Formbricks Hub
+description: Standalone, open-source Feedback Record Hub built for analytics and direct API access.
+---
+
+import { Accordion, Button, Callout } from "@stainless-api/docs/components";
+
+<div className="hub-home not-content">
+  <section className="hub-hero">
+    <p>
+      Formbricks Hub collects feedback from surveys, reviews, support tools, and
+      product workflows into one self-hostable service. It gives teams a clean
+      REST API, a BI-friendly PostgreSQL model, and real-time integrations
+      without forcing feedback data through a closed analytics stack.
+    </p>
+
+    <div className="hub-hero__actions">
+      <Button href="/quickstart" variant="accent" size="lg">
+        <Button.Label>Start quickstart</Button.Label>
+      </Button>
+      <Button href="/api" variant="outline" size="lg">
+        <Button.Label>Open API reference</Button.Label>
+      </Button>
+    </div>
+
+  </section>
+
+  <div className="hub-signal-grid">
+    <div className="hub-signal">
+      <span className="hub-label">Open source</span>
+      <strong>Run it yourself</strong>
+      <span>Hub ships as a Go service with PostgreSQL and a worker.</span>
+    </div>
+    <div className="hub-signal">
+      <span className="hub-label">SQL-first</span>
+      <strong>Analyze without ETL</strong>
+      <span>One row per feedback field keeps dashboards straightforward.</span>
+    </div>
+    <div className="hub-signal">
+      <span className="hub-label">API-first</span>
+      <strong>Build on a stable contract</strong>
+      <span>Use the generated reference docs and OpenAPI-backed endpoints.</span>
+    </div>
+  </div>
+</div>
+
+## What Hub Is For
+
+Hub is the place where operational feedback becomes queryable product data. Send
+NPS scores, survey answers, app reviews, support ratings, and other feedback
+events into a single service, then serve that data to BI tools, internal
+workflows, or customer-facing experiences.
+
+<div className="hub-card-grid not-content">
+  <div className="hub-card">
+    <strong>Centralize feedback records</strong>
+    <p>
+      Normalize survey responses, app-store reviews, support feedback, and
+      custom product signals into one table-shaped model.
+    </p>
+  </div>
+  <div className="hub-card">
+    <strong>Power analytics dashboards</strong>
+    <p>
+      Connect Apache Superset, Power BI, Tableau, Looker, Snowflake, or direct
+      SQL clients without building a separate pipeline first.
+    </p>
+  </div>
+  <div className="hub-card">
+    <strong>Automate feedback workflows</strong>
+    <p>
+      Use webhooks and the API to route new feedback records into downstream
+      tools, alerts, and internal systems.
+    </p>
+  </div>
+</div>
+
+## How It Fits Together
+
+<div className="hub-workflow not-content">
+  <div className="hub-workflow__item">
+    <span className="hub-workflow__index">1</span>
+    <div>
+      <strong>Collect</strong>
+      <p>
+        Send feedback records from surveys, apps, support systems, imports, or
+        your own services through the Hub API.
+      </p>
+    </div>
+  </div>
+  <div className="hub-workflow__item">
+    <span className="hub-workflow__index">2</span>
+    <div>
+      <strong>Store</strong>
+      <p>
+        Hub writes each response field as a validated PostgreSQL record with
+        tenant, source, field, value, and metadata columns.
+      </p>
+    </div>
+  </div>
+  <div className="hub-workflow__item">
+    <span className="hub-workflow__index">3</span>
+    <div>
+      <strong>Use</strong>
+      <p>
+        Query feedback directly, build BI dashboards, trigger webhooks, or read
+        records back through the API.
+      </p>
+    </div>
+  </div>
+</div>
+
+## Built In
+
+<Callout variant="note">
+  Hub already includes API-first capabilities for feedback operations: semantic
+  search, webhooks, runtime OpenAPI specs at <code>/openapi.yaml</code> and{" "}
+  <code>/openapi.json</code>, and a clean data model for analytics.
+</Callout>
+
+<Accordion.Group>
+  <Accordion open>
+    <Accordion.Summary>Feedback sources Hub can model</Accordion.Summary>
+    <ul>
+      <li>Survey responses from your app or website</li>
+      <li>NPS, CSAT, CES, ratings, and open text feedback</li>
+      <li>App Store, Google Play, Trustpilot, and other review platforms</li>
+      <li>Support ticket feedback from tools like Intercom or Zendesk</li>
+      <li>Custom product events and operational feedback signals</li>
+    </ul>
+  </Accordion>
+  <Accordion>
+    <Accordion.Summary>Places Hub data can go</Accordion.Summary>
+    <ul>
+      <li>Apache Superset dashboards</li>
+      <li>Power BI, Tableau, Looker, Snowflake, and direct SQL clients</li>
+      <li>Internal tools and customer-facing reporting surfaces</li>
+      <li>Webhook-driven automation and alerting workflows</li>
+    </ul>
+  </Accordion>
+</Accordion.Group>
+
+## Start Here
+
+- [Quickstart](./quickstart): Run Hub locally with Docker Compose.
+- [Data model](./core-concepts/data-model): Learn how records, fields, values,
+  and metadata fit together.
+- [Authentication](./core-concepts/authentication): Secure Hub API requests with
+  bearer tokens.
+- [Superset guide](./guides/hub-superset): Build your first dashboard on Hub
+  data.
+- [Environment variables](./reference/environment-variables): Configure Hub for
+  local or hosted deployments.
+
+## Community & Support
+
+- **GitHub**: [formbricks/hub](https://github.com/formbricks/hub)
+- **Discussions**: [Ask questions and share ideas](https://github.com/formbricks/hub/discussions)
+- **Issues**: [Report bugs or request features](https://github.com/formbricks/hub/issues)

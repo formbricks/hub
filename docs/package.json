@@ -1,0 +1,28 @@
+{
+  "name": "hub-api-docs",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@astrojs/react": "^4.4.2",
+    "@astrojs/starlight": "^0.37.6",
+    "@stainless-api/docs": "0.1.0-beta.91",
+    "@stainless-api/docs-ai-chat": "0.1.0-beta.33",
+    "astro": "^5.17.1",
+    "posthog-js": "^1.376.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.10",
+    "prettier": "^3.8.1"
+  }
+}
