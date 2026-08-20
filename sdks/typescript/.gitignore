@@ -8,3 +8,4 @@ node_modules/
 
 # Scratch from the publish workflow's compare-against-npm step
 .compare/
+.pack/
