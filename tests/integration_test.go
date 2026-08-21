@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"sync"
@@ -94,10 +95,16 @@ func setupTestServerWithEventProviders(
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(
-		webhooksRepo, messageManager, cfg.Webhook.MaxCount,
-		service.NewSSRFPolicy(cfg.Webhook.URLBlacklist, cfg.Webhook.AllowedCIDRs),
+	// Webhook fixtures target 192.0.2.0/24 (TEST-NET-1), which the SSRF classifier rejects as a
+	// reserved range. Allowlisting just that range keeps the fixtures hermetic — literal IPs need
+	// no DNS — and exercises the WEBHOOK_ALLOWED_CIDRS path end to end. Every other reserved range
+	// stays blocked here; the classifier itself is covered in internal/service/webhook_ssrf_test.go.
+	ssrfPolicy := service.NewSSRFPolicy(
+		cfg.Webhook.URLBlacklist,
+		append(cfg.Webhook.AllowedCIDRs, netip.MustParsePrefix("192.0.2.0/24")),
 	)
+
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, ssrfPolicy)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
