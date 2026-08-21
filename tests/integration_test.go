@@ -137,6 +137,23 @@ func setupTestServerWithEventProviders(
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
+
+	// All three enrichments reported as deployment-configured, so the gate under test is the
+	// TENANT switch rather than the deployment one. A test server that left them unconfigured
+	// would answer every retry with "not_configured" and prove nothing.
+	enrichmentRetryHandler := handlers.NewEnrichmentRetryHandler(
+		service.NewEnrichmentRetryService(service.NewEnrichmentRetryServiceParams{
+			Repo:                  repository.NewEnrichmentRetryRepository(db),
+			Settings:              tenantSettingsService,
+			DefaultLang:           "en-US",
+			TranslationConfigured: true,
+			SentimentConfigured:   true,
+			EmotionsConfigured:    true,
+			// Short, so a test can prove the cooldown refuses AND that it expires, without
+			// sleeping for an hour.
+			Cooldown: 2 * time.Second,
+		}),
+	)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Set up public endpoints
@@ -155,6 +172,7 @@ func setupTestServerWithEventProviders(
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.DeleteByUser)
 	protectedMux.HandleFunc("DELETE /v1/tenants/{tenant_id}/feedback-records", feedbackRecordsPurgeHandler.Purge)
+	protectedMux.HandleFunc("POST /v1/tenants/{tenant_id}/enrichments/retry", enrichmentRetryHandler.Retry)
 	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
 	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
 	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
