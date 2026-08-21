@@ -85,7 +85,8 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	}
 
 	webhookSender := service.NewWebhookSenderImpl(
-		webhooksRepo, webhookMetrics, cfg.Webhook.URLBlacklist, cfg.Webhook.HTTPTimeout.Duration(), nil)
+		webhooksRepo, webhookMetrics, service.NewSSRFPolicy(cfg.Webhook.URLBlacklist, cfg.Webhook.AllowedCIDRs),
+		cfg.Webhook.HTTPTimeout.Duration(), nil)
 
 	// hub-worker performs feedback-records purges; it never enqueues them (the API does), so the
 	// service is built without an inserter.

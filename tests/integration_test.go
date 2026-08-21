@@ -94,7 +94,10 @@ func setupTestServerWithEventProviders(
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)
+	webhooksService := service.NewWebhooksService(
+		webhooksRepo, messageManager, cfg.Webhook.MaxCount,
+		service.NewSSRFPolicy(cfg.Webhook.URLBlacklist, cfg.Webhook.AllowedCIDRs),
+	)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers

@@ -37,20 +37,20 @@ type WebhookSenderRepository interface {
 
 // WebhookSenderImpl implements WebhookSender with Standard Webhooks conformance.
 type WebhookSenderImpl struct {
-	repo             WebhookSenderRepository
-	httpClient       *http.Client
-	metrics          observability.WebhookMetrics
-	urlHostBlacklist map[string]struct{}
+	repo       WebhookSenderRepository
+	httpClient *http.Client
+	metrics    observability.WebhookMetrics
+	ssrfPolicy SSRFPolicy
 }
 
 // NewWebhookSenderImpl creates a sender that uses the given repo.
-// urlHostBlacklist is the SSRF blacklist (hosts/IPs); may be nil (address checks still run).
+// ssrfPolicy restricts which hosts may be dialed; its zero value still rejects private/reserved ranges.
 // httpTimeout is the HTTP client timeout; job timeout should be httpTimeout + buffer (e.g. 5s).
 // Client does not follow redirects and validates resolved IPs at dial time (DNS rebinding protection).
 // metrics may be nil when metrics are disabled.
 // If httpClient is non-nil, it is used as-is (e.g. for tests that hit loopback); otherwise a secured client is built.
 func NewWebhookSenderImpl(
-	repo WebhookSenderRepository, metrics observability.WebhookMetrics, urlHostBlacklist map[string]struct{},
+	repo WebhookSenderRepository, metrics observability.WebhookMetrics, ssrfPolicy SSRFPolicy,
 	httpTimeout time.Duration, httpClient *http.Client,
 ) *WebhookSenderImpl {
 	if httpClient == nil {
@@ -62,7 +62,7 @@ func NewWebhookSenderImpl(
 					return nil, fmt.Errorf("invalid address %q: %w", addr, err)
 				}
 
-				allowed, err := resolveWebhookHost(ctx, host, urlHostBlacklist)
+				allowed, err := resolveWebhookHost(ctx, host, ssrfPolicy)
 				if err != nil {
 					return nil, err
 				}
@@ -95,10 +95,10 @@ func NewWebhookSenderImpl(
 	}
 
 	return &WebhookSenderImpl{
-		repo:             repo,
-		httpClient:       httpClient,
-		metrics:          metrics,
-		urlHostBlacklist: urlHostBlacklist,
+		repo:       repo,
+		httpClient: httpClient,
+		metrics:    metrics,
+		ssrfPolicy: ssrfPolicy,
 	}
 }
 

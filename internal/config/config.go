@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -122,6 +123,7 @@ type WebhookConfig struct {
 	EnqueueInitialBackoffMs int          `env:"WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS" env-default:"100"`
 	EnqueueMaxBackoffMs     int          `env:"WEBHOOK_ENQUEUE_MAX_BACKOFF_MS"     env-default:"2000"`
 	URLBlacklist            BlacklistSet `env:"WEBHOOK_BLACKLIST"                  env-default:"localhost,127.0.0.1,::1,169.254.169.254"`
+	AllowedCIDRs            CIDRSet      `env:"WEBHOOK_ALLOWED_CIDRS"`
 }
 
 // MessagePublisherConfig holds event channel and timeout settings.
@@ -266,6 +268,47 @@ func (d *DurationSec) SetValue(s string) error {
 // Duration returns the value as time.Duration.
 func (d *DurationSec) Duration() time.Duration {
 	return time.Duration(*d)
+}
+
+// CIDRSet is a list of CIDR ranges that re-permit otherwise-blocked private/reserved webhook
+// targets (e.g. a tailnet in 100.64.0.0/10). It implements cleanenv.Setter by parsing a
+// comma-separated list of prefixes.
+type CIDRSet []netip.Prefix
+
+// SetValue implements cleanenv.Setter.
+//
+// Unlike parseBlacklist, an unparseable entry is a hard error rather than a skipped one: this list
+// widens what the SSRF classifier permits, so a typo must fail startup instead of silently leaving
+// a range blocked (or, worse, being read as a different range than intended).
+func (c *CIDRSet) SetValue(s string) error {
+	out, err := parseCIDRSet(s)
+	if err != nil {
+		return err
+	}
+
+	*c = out
+
+	return nil
+}
+
+func parseCIDRSet(s string) (CIDRSet, error) {
+	var out CIDRSet
+
+	for part := range strings.SplitSeq(s, ",") {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
+			continue
+		}
+
+		prefix, err := netip.ParsePrefix(entry)
+		if err != nil {
+			return nil, fmt.Errorf("parse webhook allowed CIDR %q: %w", entry, err)
+		}
+
+		out = append(out, prefix.Masked())
+	}
+
+	return out, nil
 }
 
 // BlacklistSet is a set of normalized hostnames (e.g. for SSRF mitigation).

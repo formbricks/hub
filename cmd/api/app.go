@@ -365,7 +365,10 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		}
 	}
 
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)
+	webhooksService := service.NewWebhooksService(
+		webhooksRepo, messageManager, cfg.Webhook.MaxCount,
+		service.NewSSRFPolicy(cfg.Webhook.URLBlacklist, cfg.Webhook.AllowedCIDRs),
+	)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 	tenantDataService := service.NewTenantDataService(tenantDataRepo)
 	tenantDataHandler := handlers.NewTenantDataHandler(tenantDataService)
