@@ -50,9 +50,9 @@ type FeedbackRecordsPurgeArgs struct {
 //
 // `completed` is the one that must stay out: River's default set includes it, and with no ByPeriod
 // the window is unbounded, so the first purge of a tenant would be the only one that ever ran.
-func feedbackRecordsPurgeUniqueStates() []rivertype.JobState { return inFlightUniqueStates() }
+func feedbackRecordsPurgeUniqueStates() []rivertype.JobState { return InFlightUniqueStates() }
 
-// inFlightUniqueStates is the state set every unique enqueue in this package uses: the states a
+// InFlightUniqueStates is the state set every unique enqueue in this package uses: the states a
 // job can be in while it still has work left to do.
 //
 // It exists as one helper because getting it wrong is silent in both directions. Include
@@ -60,7 +60,7 @@ func feedbackRecordsPurgeUniqueStates() []rivertype.JobState { return inFlightUn
 // unbounded, so the first job for a given argument is the only one that ever runs while every
 // later enqueue is skipped as a duplicate. Omit `retryable` and a job waiting out its backoff is
 // enqueued a second time, doubling the work for something already being handled.
-func inFlightUniqueStates() []rivertype.JobState {
+func InFlightUniqueStates() []rivertype.JobState {
 	return []rivertype.JobState{
 		rivertype.JobStateAvailable,
 		rivertype.JobStatePending,

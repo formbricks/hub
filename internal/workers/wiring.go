@@ -52,7 +52,7 @@ type RiverDeps struct {
 
 	// ReconcileSweeper runs the level-triggered enrichment sweep. nil leaves the reconciler out
 	// entirely — the kill switch, and the shape a deployment with no enrichment provider takes.
-	ReconcileSweeper reconcileSweeper
+	ReconcileSweeper ReconcileSweeper
 
 	// Failures records the durable marker a classify worker writes when it gives up on a record.
 	// Shared by the three classify pipelines; nil disables recording, which leaves the API

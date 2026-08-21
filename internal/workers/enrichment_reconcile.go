@@ -16,9 +16,11 @@ import (
 // long is not going to, and holding a worker slot past the next tick only stacks them up.
 const enrichmentReconcileTimeout = 5 * time.Minute
 
-// reconcileSweeper is the service half, declared here so the worker depends on the behaviour
-// rather than the implementation.
-type reconcileSweeper interface {
+// ReconcileSweeper is the service half, declared here so the worker depends on the behaviour
+// rather than the implementation. Exported because hub-worker has to name the type to convert a
+// nil *EnrichmentReconcileService into a nil interface — a typed nil in an interface would
+// register the worker and panic on the first sweep.
+type ReconcileSweeper interface {
 	Sweep(ctx context.Context) (service.ReconcileResult, error)
 }
 
@@ -30,11 +32,11 @@ type reconcileSweeper interface {
 type EnrichmentReconcileWorker struct {
 	river.WorkerDefaults[service.EnrichmentReconcileArgs]
 
-	sweeper reconcileSweeper
+	sweeper ReconcileSweeper
 }
 
 // NewEnrichmentReconcileWorker creates the reconcile worker.
-func NewEnrichmentReconcileWorker(sweeper reconcileSweeper) *EnrichmentReconcileWorker {
+func NewEnrichmentReconcileWorker(sweeper ReconcileSweeper) *EnrichmentReconcileWorker {
 	return &EnrichmentReconcileWorker{sweeper: sweeper}
 }
 

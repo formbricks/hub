@@ -15,6 +15,7 @@ import (
 
 	"github.com/formbricks/hub/internal/config"
 	"github.com/formbricks/hub/internal/llm"
+	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
@@ -105,6 +106,8 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	tenantDataRepo := repository.NewTenantDataRepository(db, cfg.TenantData.PurgeLockTimeout.Duration())
 	feedbackRecordsPurgeService := service.NewFeedbackRecordsPurgeService(tenantDataRepo, nil)
 
+	reconcileService := newEnrichmentReconcileService(cfg, db)
+
 	deps := workers.RiverDeps{
 		WebhooksRepo:       webhooksRepo,
 		WebhookSender:      webhookSender,
@@ -120,6 +123,9 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		// The worker is where a terminal give-up is observed, so it is where the counter lives.
 		// nil when metrics are disabled, which the worker treats as "do not record".
 		FailureMetrics: failureMetrics(metrics),
+		// nil when the sweep is switched off or no enrichment is configured, which leaves the
+		// reconcile worker and its queue unregistered rather than registered-and-idle.
+		ReconcileSweeper: reconcileSweeperOrNil(reconcileService),
 	}
 
 	providerName, embeddingModel := embeddingProviderAndModel(cfg)
@@ -323,6 +329,34 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		Queues:  queues,
 		Workers: riverWorkers,
 	}
+
+	// River runs periodic jobs from the ELECTED LEADER only, which is the whole reason the sweep
+	// is scheduled this way rather than by a ticker in this process: with several hub-workers
+	// deployed, a ticker would have every replica sweeping at once.
+	//
+	// The scheduler keeps its state in memory, so a restart or a leader change starts the cycle
+	// over. That costs nothing here — the sweep is level-triggered, so a missed tick is invisible
+	// and an extra one finds a queue already at depth and does nothing. RunOnStart is on for the
+	// same reason: after a deploy, converging sooner is strictly better than waiting out a full
+	// interval, and the sweep is idempotent.
+	if reconcileService != nil {
+		riverCfg.PeriodicJobs = []*river.PeriodicJob{
+			river.NewPeriodicJob(
+				river.PeriodicInterval(cfg.EnrichmentReconcile.Interval()),
+				func() (river.JobArgs, *river.InsertOpts) {
+					return service.EnrichmentReconcileArgs{Sweep: "all"}, &river.InsertOpts{
+						Queue: service.EnrichmentReconcileQueueName,
+						// Uniqueness across the in-flight states, so a tick arriving while the
+						// previous sweep is still running collapses into it instead of queueing
+						// a second scan behind the first.
+						UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: service.InFlightUniqueStates()},
+					}
+				},
+				&river.PeriodicJobOpts{RunOnStart: true},
+			),
+		}
+	}
+
 	if cfg.River.JobTimeoutSec.Duration() > 0 {
 		riverCfg.JobTimeout = cfg.River.JobTimeoutSec.Duration()
 	}
@@ -350,6 +384,10 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	if translationRecordsService != nil {
 		translationRecordsService.SetEmbeddingInserter(riverClient)
+	}
+
+	if reconcileService != nil {
+		reconcileService.SetInserter(riverClient)
 	}
 
 	return &WorkerApp{
@@ -493,4 +531,66 @@ func failureMetrics(metrics *observability.Metrics) observability.EnrichmentFail
 	}
 
 	return metrics.EnrichmentFailures
+}
+
+// newEnrichmentReconcileService builds the sweep, or returns nil when it should not run: the kill
+// switch is off, or the deployment has no enrichment provider at all and so has nothing to sweep
+// for.
+func newEnrichmentReconcileService(cfg *config.Config, db *pgxpool.Pool) *service.EnrichmentReconcileService {
+	if !cfg.EnrichmentReconcile.Enabled {
+		slog.Info("enrichment reconcile: disabled by configuration; enrichment coverage is " +
+			"event-driven only and will not self-heal")
+
+		return nil
+	}
+
+	// The three record-level enrichments; embeddings has no failure markers and no pending-set
+	// query, so it is not swept.
+	const recordLevelEnrichments = 3
+
+	enabled := make([]string, 0, recordLevelEnrichments)
+	maxAttempts := map[string]int{}
+
+	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+		enabled = append(enabled, models.EnrichmentNameTranslation)
+		maxAttempts[models.EnrichmentNameTranslation] = cfg.Translation.MaxAttempts
+	}
+
+	if cfg.Sentiment.Enabled() {
+		enabled = append(enabled, models.EnrichmentNameSentiment)
+		maxAttempts[models.EnrichmentNameSentiment] = cfg.Sentiment.MaxAttempts
+	}
+
+	if cfg.Emotions.Enabled() {
+		enabled = append(enabled, models.EnrichmentNameEmotions)
+		maxAttempts[models.EnrichmentNameEmotions] = cfg.Emotions.MaxAttempts
+	}
+
+	if len(enabled) == 0 {
+		return nil
+	}
+
+	slog.Info("enrichment reconcile: enabled",
+		"enrichments", enabled,
+		"interval", cfg.EnrichmentReconcile.Interval(),
+		"target_depth", cfg.EnrichmentReconcile.Depth())
+
+	return service.NewEnrichmentReconcileService(service.NewEnrichmentReconcileServiceParams{
+		Repo:        repository.NewEnrichmentReconcileRepository(db),
+		DefaultLang: cfg.Translation.DefaultLanguage,
+		TargetDepth: cfg.EnrichmentReconcile.Depth(),
+		Enabled:     enabled,
+		MaxAttempts: maxAttempts,
+	})
+}
+
+// reconcileSweeperOrNil converts a nil *EnrichmentReconcileService into a nil interface. Returning
+// the typed nil directly would give the worker registry a non-nil interface holding a nil pointer,
+// which registers the worker and panics on the first sweep.
+func reconcileSweeperOrNil(svc *service.EnrichmentReconcileService) workers.ReconcileSweeper {
+	if svc == nil {
+		return nil
+	}
+
+	return svc
 }

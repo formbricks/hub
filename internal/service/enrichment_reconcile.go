@@ -12,6 +12,9 @@ import (
 	"github.com/formbricks/hub/internal/repository"
 )
 
+// ErrReconcileInserterUnset marks a sweep attempted before the River client was attached.
+var ErrReconcileInserterUnset = errors.New("enrichment reconcile: inserter not set")
+
 // EnrichmentReconcileRepository is the pending-set half: which records still owe an enrichment,
 // and how deep each backfill queue currently is.
 type EnrichmentReconcileRepository interface {
@@ -64,6 +67,18 @@ func NewEnrichmentReconcileService(params NewEnrichmentReconcileServiceParams) *
 	}
 }
 
+// SetInserter attaches the River client after construction.
+//
+// The client cannot exist yet when this service is built: River needs the worker registry, the
+// registry needs this service as its sweeper, and this service needs the client to enqueue. The
+// same knot is untied the same way for the embedding inserter (see SetEmbeddingInserter).
+//
+// A sweep with no inserter would silently enqueue nothing, so Sweep refuses rather than reporting
+// a successful zero.
+func (s *EnrichmentReconcileService) SetInserter(inserter RiverBatchInserter) {
+	s.inserter = inserter
+}
+
 // ReconcileResult reports what one sweep did, per enrichment.
 type ReconcileResult struct {
 	// Enqueued counts jobs actually inserted — after River dropped the ones already queued, so
@@ -85,6 +100,13 @@ type ReconcileResult struct {
 // translation-specific query failure should not leave sentiment un-swept.
 func (s *EnrichmentReconcileService) Sweep(ctx context.Context) (ReconcileResult, error) {
 	result := ReconcileResult{Enqueued: map[string]int{}}
+
+	// Refuse rather than report a successful sweep that enqueued nothing: an unset inserter is a
+	// wiring mistake, and the symptom — coverage quietly never converging — is the exact failure
+	// this service exists to prevent.
+	if s.inserter == nil {
+		return result, ErrReconcileInserterUnset
+	}
 
 	queues := make([]string, 0, len(s.enabled))
 	for _, enrichment := range s.enabled {
@@ -169,7 +191,7 @@ func (s *EnrichmentReconcileService) sweepOne(
 				// the window is unbounded — the first sweep of a record would be the only one that
 				// ever ran, so a record that failed after a successful enrichment could never be
 				// picked up again.
-				UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: inFlightUniqueStates()},
+				UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: InFlightUniqueStates()},
 			},
 		})
 	}
