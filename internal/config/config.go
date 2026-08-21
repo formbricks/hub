@@ -57,6 +57,7 @@ type Config struct {
 	Webhook             WebhookConfig
 	MessagePublisher    MessagePublisherConfig
 	Embedding           EmbeddingConfig
+	EnrichmentReconcile EnrichmentReconcileConfig
 	Translation         TranslationConfig
 	Sentiment           SentimentConfig
 	Emotions            EmotionsConfig
@@ -160,25 +161,27 @@ type TranslationConfig struct {
 	// target_language of its own. Empty means no fallback — translation is then per-tenant
 	// opt-in (a tenant is translated only once it sets its own target). Normalized to
 	// canonical form at load.
-	DefaultLanguage     string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
-	MaxConcurrent       int    `env:"TRANSLATION_MAX_CONCURRENT"        env-default:"5"`
-	MaxAttempts         int    `env:"TRANSLATION_MAX_ATTEMPTS"          env-default:"3"`
-	GoogleCloudProject  string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
+	DefaultLanguage       string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
+	MaxConcurrent         int    `env:"TRANSLATION_MAX_CONCURRENT"          env-default:"5"`
+	MaxAttempts           int    `env:"TRANSLATION_MAX_ATTEMPTS"            env-default:"3"`
+	BackfillMaxConcurrent int    `env:"TRANSLATION_BACKFILL_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject    string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation   string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
 }
 
 // SentimentConfig holds the feedback sentiment-enrichment provider settings (ENG-1529).
 // Sentiment enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate embeddings and translation use (there is no separate enable flag).
 type SentimentConfig struct {
-	ProviderAPIKey      string `env:"SENTIMENT_PROVIDER_API_KEY"`
-	Provider            string `env:"SENTIMENT_PROVIDER"`
-	Model               string `env:"SENTIMENT_MODEL"`
-	BaseURL             string `env:"SENTIMENT_BASE_URL"`
-	MaxConcurrent       int    `env:"SENTIMENT_MAX_CONCURRENT"        env-default:"5"`
-	MaxAttempts         int    `env:"SENTIMENT_MAX_ATTEMPTS"          env-default:"3"`
-	GoogleCloudProject  string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey        string `env:"SENTIMENT_PROVIDER_API_KEY"`
+	Provider              string `env:"SENTIMENT_PROVIDER"`
+	Model                 string `env:"SENTIMENT_MODEL"`
+	BaseURL               string `env:"SENTIMENT_BASE_URL"`
+	MaxConcurrent         int    `env:"SENTIMENT_MAX_CONCURRENT"          env-default:"5"`
+	MaxAttempts           int    `env:"SENTIMENT_MAX_ATTEMPTS"            env-default:"3"`
+	BackfillMaxConcurrent int    `env:"SENTIMENT_BACKFILL_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject    string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation   string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
 }
 
 // Enabled reports whether sentiment enrichment is configured (provider and model both set).
@@ -190,14 +193,15 @@ func (c SentimentConfig) Enabled() bool {
 // Emotion enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate the other enrichments use (there is no separate enable flag).
 type EmotionsConfig struct {
-	ProviderAPIKey      string `env:"EMOTIONS_PROVIDER_API_KEY"`
-	Provider            string `env:"EMOTIONS_PROVIDER"`
-	Model               string `env:"EMOTIONS_MODEL"`
-	BaseURL             string `env:"EMOTIONS_BASE_URL"`
-	MaxConcurrent       int    `env:"EMOTIONS_MAX_CONCURRENT"        env-default:"5"`
-	MaxAttempts         int    `env:"EMOTIONS_MAX_ATTEMPTS"          env-default:"3"`
-	GoogleCloudProject  string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey        string `env:"EMOTIONS_PROVIDER_API_KEY"`
+	Provider              string `env:"EMOTIONS_PROVIDER"`
+	Model                 string `env:"EMOTIONS_MODEL"`
+	BaseURL               string `env:"EMOTIONS_BASE_URL"`
+	MaxConcurrent         int    `env:"EMOTIONS_MAX_CONCURRENT"          env-default:"5"`
+	MaxAttempts           int    `env:"EMOTIONS_MAX_ATTEMPTS"            env-default:"3"`
+	BackfillMaxConcurrent int    `env:"EMOTIONS_BACKFILL_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject    string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation   string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
 }
 
 // Enabled reports whether emotion enrichment is configured (provider and model both set).
@@ -639,4 +643,49 @@ func normalizeHTTPBaseURL(raw string, sentinel error) (string, error) {
 	}
 
 	return parsed.String(), nil
+}
+
+// EnrichmentReconcileConfig governs the level-triggered sweep that keeps enrichment coverage
+// complete: every eligible record ends up enriched, or classified as something the provider will
+// never accept. The event path stays the fast route; this is the guarantee.
+type EnrichmentReconcileConfig struct {
+	// Enabled is a kill switch, on by default. Off stops the sweep entirely — the event path is
+	// unaffected, so enrichment keeps working and simply stops being self-healing.
+	Enabled bool `env:"ENRICHMENT_RECONCILE_ENABLED" env-default:"true"`
+	// IntervalSeconds is how often a sweep runs. It does not bound throughput — TargetDepth and
+	// the backfill queues' own MaxWorkers do that — so this only decides how quickly stranded work
+	// is noticed.
+	IntervalSeconds int `env:"ENRICHMENT_RECONCILE_INTERVAL_SECONDS" env-default:"300"`
+	// TargetDepth is how many jobs each backfill queue is topped up TO, not how many are added.
+	//
+	// Topping up to a depth rather than enqueueing at a rate is what makes this self-regulating: a
+	// sweep can only add what the workers have already drained, so river_job stays bounded whether
+	// the backlog is a thousand records or fifty million, and no rate has to be guessed to match
+	// drain speed. Guessing that rate too low is indistinguishable from the reconciler not running.
+	TargetDepth int `env:"ENRICHMENT_RECONCILE_TARGET_DEPTH" env-default:"1000"`
+}
+
+// Interval returns the sweep interval, falling back to the default when misconfigured. A
+// non-positive interval would make River's periodic scheduler reject the job outright, taking the
+// reconciler silently offline — the failure this feature exists to prevent, caused by a typo.
+func (c EnrichmentReconcileConfig) Interval() time.Duration {
+	const defaultInterval = 300 * time.Second
+
+	if c.IntervalSeconds <= 0 {
+		return defaultInterval
+	}
+
+	return time.Duration(c.IntervalSeconds) * time.Second
+}
+
+// Depth returns the per-queue target depth, falling back to the default when misconfigured. Zero
+// would mean a sweep that enqueues nothing, which looks identical to a broken reconciler.
+func (c EnrichmentReconcileConfig) Depth() int {
+	const defaultDepth = 1000
+
+	if c.TargetDepth <= 0 {
+		return defaultDepth
+	}
+
+	return c.TargetDepth
 }

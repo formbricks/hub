@@ -6,8 +6,15 @@ import "github.com/riverqueue/river"
 type JobKindSpec struct {
 	// Args is a zero value of the job's argument type; Args.Kind() is the River job kind.
 	Args river.JobArgs
-	// Queue is the River queue the kind is inserted on.
+	// Queue is the River queue the kind is inserted on by the event path.
 	Queue string
+	// BackfillQueue is the second queue the same kind is inserted on when the work is reconciled
+	// rather than event-driven, or "" for kinds that have no backfill lane.
+	//
+	// A kind, not a worker, is what River registers, so the same worker serves both lanes and the
+	// queue is purely a concurrency budget. That is the entire mechanism keeping a large sweep from
+	// starving a record submitted right now: the two lanes draw from different MaxWorkers.
+	BackfillQueue string
 }
 
 // Kind returns the River job kind this spec describes.
@@ -29,11 +36,21 @@ func JobKindSpecs() []JobKindSpec {
 	return []JobKindSpec{
 		{Args: WebhookDispatchArgs{}, Queue: river.QueueDefault},
 		{Args: FeedbackEmbeddingArgs{}, Queue: EmbeddingsQueueName},
-		{Args: FeedbackTranslationArgs{}, Queue: TranslationsQueueName},
+		{
+			Args: FeedbackTranslationArgs{}, Queue: TranslationsQueueName,
+			BackfillQueue: TranslationsBackfillQueueName,
+		},
 		{Args: TenantTranslationBackfillArgs{}, Queue: TranslationBackfillsQueueName},
-		{Args: FeedbackSentimentArgs{}, Queue: SentimentsQueueName},
-		{Args: FeedbackEmotionsArgs{}, Queue: EmotionsQueueName},
+		{
+			Args: FeedbackSentimentArgs{}, Queue: SentimentsQueueName,
+			BackfillQueue: SentimentsBackfillQueueName,
+		},
+		{
+			Args: FeedbackEmotionsArgs{}, Queue: EmotionsQueueName,
+			BackfillQueue: EmotionsBackfillQueueName,
+		},
 		{Args: FeedbackRecordsPurgeArgs{}, Queue: FeedbackRecordsPurgeQueueName},
+		{Args: EnrichmentReconcileArgs{}, Queue: EnrichmentReconcileQueueName},
 	}
 }
 
@@ -46,17 +63,29 @@ func JobQueueNames() []string {
 // distinctQueues collapses specs to their queue names, preserving declaration order and dropping
 // repeats. Taking the specs as a parameter keeps the dedup reachable from a test: every kind
 // declared today owns its own queue, so the duplicate path would otherwise never run.
+// distinctQueues lists every queue any kind is inserted on, live and backfill lanes alike, in
+// declaration order and without repeats. The backfill lanes belong on the depth gauge for the same
+// reason the live ones do — a sweep that is not draining is exactly what an operator needs to see.
 func distinctQueues(specs []JobKindSpec) []string {
 	seen := make(map[string]struct{}, len(specs))
 	queues := make([]string, 0, len(specs))
 
-	for _, spec := range specs {
-		if _, ok := seen[spec.Queue]; ok {
-			continue
+	add := func(queue string) {
+		if queue == "" {
+			return
 		}
 
-		seen[spec.Queue] = struct{}{}
-		queues = append(queues, spec.Queue)
+		if _, ok := seen[queue]; ok {
+			return
+		}
+
+		seen[queue] = struct{}{}
+		queues = append(queues, queue)
+	}
+
+	for _, spec := range specs {
+		add(spec.Queue)
+		add(spec.BackfillQueue)
 	}
 
 	return queues

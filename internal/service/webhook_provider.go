@@ -8,16 +8,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 )
 
 // WebhookDispatchInserter inserts webhook_dispatch jobs in batch (e.g. River client).
-type WebhookDispatchInserter interface {
-	InsertMany(ctx context.Context, params []river.InsertManyParams) ([]*rivertype.JobInsertResult, error)
-}
+type WebhookDispatchInserter = RiverBatchInserter
 
 // WebhookProviderRepository lists tenant-scoped webhooks eligible for event fan-out.
 type WebhookProviderRepository interface {

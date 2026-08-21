@@ -88,7 +88,16 @@ func fullRiverDeps() RiverDeps {
 		EmotionsMetrics:  &countingEmotionsMetrics{},
 
 		FeedbackRecordsPurgeService: stubFeedbackRecordsPurgeService{},
+		ReconcileSweeper:            stubReconcileSweeper{},
 	}
+}
+
+// stubReconcileSweeper stands in for the reconcile service in wiring tests, which are about
+// registration rather than about what a sweep does.
+type stubReconcileSweeper struct{}
+
+func (stubReconcileSweeper) Sweep(context.Context) (service.ReconcileResult, error) {
+	return service.ReconcileResult{}, nil
 }
 
 // TestNewRiverWorkersAndQueuesCoversEveryJobKind locks hub-worker's registration against
@@ -102,6 +111,18 @@ func TestNewRiverWorkersAndQueuesCoversEveryJobKind(t *testing.T) {
 		if _, ok := queues[spec.Queue]; !ok {
 			t.Fatalf("queue %q for kind %q missing from queue config, want declared", spec.Queue, spec.Kind())
 		}
+
+		// The backfill lane too. A kind whose live queue is declared but whose backfill queue is
+		// not would have the reconciler insert onto a queue no worker is assigned to, and those
+		// jobs sit there forever looking enqueued.
+		if spec.BackfillQueue == "" {
+			continue
+		}
+
+		if _, ok := queues[spec.BackfillQueue]; !ok {
+			t.Fatalf("backfill queue %q for kind %q missing from queue config, want declared",
+				spec.BackfillQueue, spec.Kind())
+		}
 	}
 
 	// One probe per kind: AddWorkerSafely is generic over the concrete args type, so these cannot be
@@ -113,8 +134,9 @@ func TestNewRiverWorkersAndQueuesCoversEveryJobKind(t *testing.T) {
 	assertKindRegistered[service.FeedbackSentimentArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackEmotionsArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackRecordsPurgeArgs](t, workerBundle, true)
+	assertKindRegistered[service.EnrichmentReconcileArgs](t, workerBundle, true)
 
-	const probedKinds = 7
+	const probedKinds = 8
 	if got := len(service.JobKindSpecs()); got != probedKinds {
 		t.Fatalf("JobKindSpecs has %d kinds but %d are probed above — add a probe for the new kind "+
 			"and register a worker for it in NewRiverWorkersAndQueues", got, probedKinds)

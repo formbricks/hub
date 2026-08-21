@@ -7,15 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-)
 
-// The enrichment names, shared by the failure markers, the pending-set queries and the job kinds.
-// They are values in a CHECK constraint (migration 022) and a metric label, so they are declared
-// once here rather than spelled out at each use.
-const (
-	EnrichmentSentiment   = "sentiment"
-	EnrichmentEmotions    = "emotions"
-	EnrichmentTranslation = "translation"
+	"github.com/formbricks/hub/internal/models"
 )
 
 // ErrUnknownEnrichment is returned for an enrichment name with no pending-set query. It marks a
@@ -85,11 +78,11 @@ func pendingEnrichmentSelect(enrichment, gate, notDone, targetColumn, limitParam
 // builds the matching argument list.
 var (
 	pendingSentimentSQL = pendingEnrichmentSelect(
-		EnrichmentSentiment, enrichmentSentimentOn, enrichmentSentimentNotDone, `''`, `$1`)
+		models.EnrichmentNameSentiment, enrichmentSentimentOn, enrichmentSentimentNotDone, `''`, `$1`)
 	pendingEmotionsSQL = pendingEnrichmentSelect(
-		EnrichmentEmotions, enrichmentEmotionsOn, enrichmentEmotionsNotDone, `''`, `$1`)
+		models.EnrichmentNameEmotions, enrichmentEmotionsOn, enrichmentEmotionsNotDone, `''`, `$1`)
 	pendingTranslationSQL = pendingEnrichmentSelect(
-		EnrichmentTranslation, enrichmentEffectiveTarget+` <> ''`, enrichmentTranslationNotDone,
+		models.EnrichmentNameTranslation, enrichmentEffectiveTarget+` <> ''`, enrichmentTranslationNotDone,
 		enrichmentEffectiveTarget, `$2`)
 )
 
@@ -98,11 +91,11 @@ var (
 // nothing.
 func pendingQueryFor(enrichment, defaultLang string, limit int) (string, []any, error) {
 	switch enrichment {
-	case EnrichmentSentiment:
+	case models.EnrichmentNameSentiment:
 		return pendingSentimentSQL, []any{limit}, nil
-	case EnrichmentEmotions:
+	case models.EnrichmentNameEmotions:
 		return pendingEmotionsSQL, []any{limit}, nil
-	case EnrichmentTranslation:
+	case models.EnrichmentNameTranslation:
 		return pendingTranslationSQL, []any{defaultLang, limit}, nil
 	default:
 		return "", nil, fmt.Errorf("%w: %q", ErrUnknownEnrichment, enrichment)
@@ -149,4 +142,51 @@ func (r *EnrichmentReconcileRepository) ListPendingEnrichment(
 	}
 
 	return targets, nil
+}
+
+// countRunnableByQueueSQL counts jobs that are queued or about to be, per queue.
+//
+// "Runnable" is the set that has not finished and is not being retried into the future:
+// available, pending, running and scheduled. Retryable is deliberately EXCLUDED — a job waiting
+// out its backoff will run again on its own, so counting it would have the reconciler treat a
+// queue as full while nothing is draining, and a stuck backoff would stall the sweep indefinitely.
+const countRunnableByQueueSQL = `
+	SELECT queue, count(*)
+	FROM river_job
+	WHERE queue = ANY($1)
+	  AND state IN ('available', 'pending', 'running', 'scheduled')
+	GROUP BY queue`
+
+// CountRunnableByQueue returns the current depth of each named queue. Queues with nothing runnable
+// are absent from the map rather than zero, so callers must treat a missing key as empty.
+func (r *EnrichmentReconcileRepository) CountRunnableByQueue(
+	ctx context.Context, queues []string,
+) (map[string]int64, error) {
+	rows, err := r.db.Query(ctx, countRunnableByQueueSQL, queues)
+	if err != nil {
+		return nil, fmt.Errorf("count runnable jobs by queue: %w", err)
+	}
+
+	defer rows.Close()
+
+	depths := make(map[string]int64, len(queues))
+
+	for rows.Next() {
+		var (
+			queue string
+			count int64
+		)
+
+		if scanErr := rows.Scan(&queue, &count); scanErr != nil {
+			return nil, fmt.Errorf("scan queue depth: %w", scanErr)
+		}
+
+		depths[queue] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read queue depths: %w", err)
+	}
+
+	return depths, nil
 }

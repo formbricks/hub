@@ -59,7 +59,7 @@ func TestListPendingEnrichment(t *testing.T) {
 	label, score := models.SentimentPositive, 1.0
 	require.NoError(t, frepo.SetSentiment(ctx, doneRec.ID, &label, &score, nil))
 
-	got, err := rrepo.ListPendingEnrichment(ctx, repository.EnrichmentSentiment, "", 500)
+	got, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", 500)
 	require.NoError(t, err)
 
 	ids := map[uuid.UUID]bool{}
