@@ -374,6 +374,11 @@ func (w *enrichmentWorker[A, R]) markFailed(
 		return
 	}
 
+	// Counted, not just logged. This is the one path that silently degrades the feature: the
+	// enrichment outcome is unaffected, the job finishes normally, and the only symptom is a
+	// status endpoint quietly under-reporting failures. Without a counter nothing is alertable
+	// and the gap is invisible until somebody notices the arithmetic does not close.
+	w.cfg.metrics.workerError(ctx, "failure_marker_write_failed")
 	log.Error(w.cfg.name+": could not record enrichment failure; the API will under-report it",
 		"terminal", terminal, "reason", reason, "error", err)
 }

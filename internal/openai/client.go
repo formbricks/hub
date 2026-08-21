@@ -474,43 +474,22 @@ func openaiRetryAfter(apiErr *openaisdk.Error) time.Duration {
 func (c *Client) recordUsage(
 	ctx context.Context, operation llm.Operation, started time.Time, inputTokens, outputTokens int64, err error,
 ) {
-	if c.usage == nil {
-		return
-	}
-
-	c.usage.RecordUsage(ctx, llm.Usage{
-		Operation:    operation,
-		Provider:     llm.ProviderOpenAI,
-		Model:        c.model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		Duration:     time.Since(started),
-		ErrorType:    errorTypeOf(err),
-	})
+	llm.Record(ctx, c.usage, operation, llm.ProviderOpenAI, c.model,
+		started, inputTokens, outputTokens, errorTypeOf(err))
 }
 
-// errorTypeOf maps an error to the BOUNDED error.type attribute. An HTTP status becomes its
-// number, everything else a coarse class — never the provider's message, which is unbounded and
-// would blow up metric cardinality the first time a provider echoed user input back in an error.
+// errorTypeOf maps an error to the BOUNDED error.type attribute. Only the status extraction is
+// OpenAI-specific; the rest of the classification is shared so the two clients cannot disagree on
+// what "timeout" means.
 func errorTypeOf(err error) string {
-	if err == nil {
-		return ""
-	}
+	return llm.ClassifyError(err, func(err error) (int, bool) {
+		var apiErr *openaisdk.Error
+		if errors.As(err, &apiErr) {
+			return apiErr.StatusCode, true
+		}
 
-	var apiErr *openaisdk.Error
-	if errors.As(err, &apiErr) && apiErr.StatusCode != 0 {
-		return strconv.Itoa(apiErr.StatusCode)
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "timeout"
-	}
-
-	if errors.Is(err, context.Canceled) {
-		return "cancelled"
-	}
-
-	return "other"
+		return 0, false
+	})
 }
 
 // ClientOption configures the Client.

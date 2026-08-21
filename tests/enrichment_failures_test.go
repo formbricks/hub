@@ -304,3 +304,158 @@ func TestEnrichmentFailureMarkerConstraints(t *testing.T) {
 		})
 	}
 }
+
+// TestStaleMarkerStopsCountingWhenTheRecordMovesOn is the fail → succeed → INVALIDATE case.
+//
+// The advisory-marker design rested on "a stale row stops counting the moment the record is done",
+// which quietly assumes done is permanent. It is not: editing value_text nulls the translation
+// columns, and changing a tenant's target_language shifts the effective target so an
+// already-translated record stops matching it. Either would revive a marker from a failure that
+// was resolved long ago, and the endpoint would then report `failed` for work that is merely
+// re-queued — the wrong-progress symptom this feature exists to remove, reintroduced by its own
+// bookkeeping. The successful write now deletes the marker, which is what closes it.
+func TestStaleMarkerStopsCountingWhenTheRecordMovesOn(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	frepo := repository.NewFeedbackRecordsRepository(db)
+	statusRepo := repository.NewEnrichmentStatusRepository(db)
+	tenant := "stale-marker-" + uuid.NewString()
+
+	_, err = db.Exec(ctx, `INSERT INTO tenant_settings (tenant_id, settings)
+		VALUES ($1, '{"target_language":"de-DE"}'::jsonb)`, tenant)
+	require.NoError(t, err)
+
+	record := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "failed once, then translated")
+
+	// 1. It failed.
+	insertFailureMarker(t, db, record.ID, tenant, "translation", false, "provider_error")
+
+	counts, err := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), counts.TranslationFailed, "a fresh failure counts")
+
+	// 2. It later succeeded. No cleanup write — that is the design — so the marker is still there.
+	translated := "übersetzt"
+	require.NoError(t, frepo.SetTranslation(ctx, record.ID, &translated, "de-DE", "",
+		func(*string) bool { return true }))
+
+	counts, err = statusRepo.CountEnrichmentStatus(ctx, tenant, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), counts.TranslationDone)
+	require.Zero(t, counts.TranslationFailed, "a resolved failure stops counting")
+
+	// The successful write REMOVED the marker. This is the load-bearing half: leaving it in place
+	// is what let a resolved failure come back when the record was later un-enriched.
+	markers := countRowsIn(ctx, t, db,
+		`SELECT count(*) FROM feedback_record_enrichment_failures WHERE feedback_record_id = $1`, record.ID)
+	require.Zero(t, markers, "success clears the marker it resolved")
+
+	// 3. The tenant changes its target language. The record is untouched, but it is no longer
+	//    translated INTO THE CURRENT TARGET, so it is pending again — and the marker must not come
+	//    back with it.
+	_, err = db.Exec(ctx, `UPDATE tenant_settings SET settings = '{"target_language":"fr-FR"}'::jsonb
+		WHERE tenant_id = $1`, tenant)
+	require.NoError(t, err)
+
+	counts, err = statusRepo.CountEnrichmentStatus(ctx, tenant, "")
+	require.NoError(t, err)
+	assert.Zero(t, counts.TranslationDone, "a new target means the old translation no longer counts")
+	assert.Zero(t, counts.TranslationFailed,
+		"and the resolved failure must NOT resurrect: this work is queued, not failed")
+	assert.Zero(t, counts.TranslationFailedTerminal)
+
+	// 4. A failure recorded against the record as it now stands does count — the mechanism removes
+	//    resolved failures, not current ones.
+	insertFailureMarker(t, db, record.ID, tenant, "translation", true, "content_filter")
+
+	counts, err = statusRepo.CountEnrichmentStatus(ctx, tenant, "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), counts.TranslationFailedTerminal,
+		"a failure that has not been resolved describes the record as it stands")
+}
+
+// TestCountFailedRecordsAggregateIsGated covers the cross-tenant gauge, which had no test at all
+// and is the one query here with no tenant predicate.
+//
+// It must agree with what the endpoint reports for the same tenants, or an operator sees failures
+// on a dashboard that the API says are zero and cannot reconcile the two.
+func TestCountFailedRecordsAggregateIsGated(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	frepo := repository.NewFeedbackRecordsRepository(db)
+	statusRepo := repository.NewEnrichmentStatusRepository(db)
+
+	countFor := func(enrichment string, terminal bool, counts []repository.FailedRecordCount) int64 {
+		for _, c := range counts {
+			if c.Enrichment == enrichment && c.Terminal == terminal {
+				return c.Count
+			}
+		}
+
+		return 0
+	}
+
+	before, err := statusRepo.CountFailedRecordsAggregate(ctx)
+	require.NoError(t, err)
+
+	// A tenant that switched sentiment off. Its failures are history, not work.
+	off := "agg-off-" + uuid.NewString()
+	_, err = db.Exec(ctx, `INSERT INTO tenant_settings (tenant_id, settings)
+		VALUES ($1, '{"sentiment_enabled":false}'::jsonb)`, off)
+	require.NoError(t, err)
+
+	offRecord := seedEnrichmentRecord(t, frepo, off, models.FieldTypeText, "sentiment is switched off here")
+	insertFailureMarker(t, db, offRecord.ID, off, "sentiment", false, "provider_error")
+
+	// A record whose text was blanked: eligible for nothing, so owed nothing.
+	blanked := "agg-blank-" + uuid.NewString()
+	blankRecord := seedEnrichmentRecord(t, frepo, blanked, models.FieldTypeText, "text that will be removed")
+	insertFailureMarker(t, db, blankRecord.ID, blanked, "sentiment", false, "provider_error")
+	_, err = db.Exec(ctx, `UPDATE feedback_records SET value_text = '   ' WHERE id = $1`, blankRecord.ID)
+	require.NoError(t, err)
+
+	// And a real, current failure that must be counted.
+	live := "agg-live-" + uuid.NewString()
+	liveRecord := seedEnrichmentRecord(t, frepo, live, models.FieldTypeText, "genuinely failed sentiment")
+	insertFailureMarker(t, db, liveRecord.ID, live, "sentiment", false, "provider_error")
+
+	after, err := statusRepo.CountFailedRecordsAggregate(ctx)
+	require.NoError(t, err)
+
+	delta := countFor("sentiment", false, after) - countFor("sentiment", false, before)
+	assert.Equal(t, int64(1), delta,
+		"only the live failure counts: not the switched-off tenant's, not the blanked record's")
+
+	// The gauge and the endpoint must not disagree for the same tenant.
+	for _, tenant := range []string{off, blanked} {
+		counts, statusErr := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
+		require.NoError(t, statusErr)
+		assert.Zero(t, counts.SentimentFailed, "%s: the endpoint reports nothing failed", tenant)
+	}
+}
+
+func countRowsIn(ctx context.Context, t *testing.T, db *pgxpool.Pool, query string, args ...any) int64 {
+	t.Helper()
+
+	var count int64
+
+	require.NoError(t, db.QueryRow(ctx, query, args...).Scan(&count))
+
+	return count
+}

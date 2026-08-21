@@ -92,10 +92,19 @@ const enrichmentEmotionsDone = `(fr.emotions_classified_at IS NOT NULL OR fr.emo
 // enrichmentFailedFor builds the two failure predicates for one enrichment from its already-joined
 // marker row and its own done-predicate.
 //
-// A failure counts only while the record is still UN-ENRICHED. That is what makes the marker rows
-// advisory rather than authoritative: a later success needs no cleanup write, because a stale row
-// stops counting the moment the record is done. It also means the count can never contradict the
-// record itself.
+// A failure counts only while the record is still UN-ENRICHED, and the marker itself is DELETED by
+// the successful write (see clearEnrichmentFailure). Both, because they fail differently: the
+// delete is what stops a resolved failure resurrecting when a record is later un-enriched — a text
+// edit nulls the translation columns, a target_language change shifts the effective target — and
+// the un-enriched test is what keeps a marker from contradicting a record that is plainly done.
+//
+// An earlier attempt used a timestamp instead: count a marker only while failed_at is newer than
+// the record's updated_at. It is wrong, and wrong in the direction that hides work. updated_at is
+// RECORD-level while markers are per (record, enrichment), so a successful sentiment write bumps
+// the timestamp for the emotions and translation markers too and silently drops them from the
+// counts. Measured on a real run: 7% of records fell out of the accounted set entirely, which is
+// the exact failure this feature exists to prevent. Any future currency rule has to be
+// per-enrichment or it will do the same.
 func enrichmentFailedFor(alias, notDone string) (failed, terminal string) {
 	present := alias + ".feedback_record_id IS NOT NULL AND " + notDone
 
@@ -502,22 +511,39 @@ type FailedRecordCount struct {
 	Count      int64
 }
 
-// countFailedRecordsAggregateSQL counts failure markers whose record is STILL un-enriched, across
-// all tenants, grouped by enrichment and permanence.
+// countFailedRecordsAggregateSQL counts failure markers whose record is STILL un-enriched and still
+// owed the enrichment, across all tenants, grouped by enrichment and permanence.
 //
-// The un-enriched condition is what keeps the markers advisory: a record that later succeeded
-// keeps its row, and that row must stop counting.
+// Gated the same three ways the endpoint and the neighbouring backlog gauge are, because a gauge
+// that counts work nobody will ever do is worse than no gauge: an operator sees failures that the
+// status endpoint reports as zero for the same tenant and has no way to reconcile the two.
 //
-// Cheap relative to the eligible/done aggregate above. That one must scan every feedback record;
-// here the driving table is the small one — the markers, of which there are by definition few —
-// so it is a scan of failures with a primary-key lookup back to the record.
-const countFailedRecordsAggregateSQL = `
+//   - eligibility (enrichmentEligibleText) — a record whose text was blanked is owed nothing
+//   - the tenant switch — sentiment/emotions turned off for a directory means those failures are
+//     not work, they are history
+//
+// Translation's un-enriched test stays deliberately weaker than the endpoint's: that one compares
+// against the tenant's EFFECTIVE target, which needs the deployment default, and a gauge summed
+// across tenants has no single target to compare against. It asks only whether the record has any
+// translation at all. A record translated into a since-changed target therefore counts as done here
+// while the endpoint counts it as pending — acceptable deployment-wide, and written down so the two
+// disagreeing is not mistaken for a bug. The switch and eligibility gates carry no such excuse,
+// which is why they are here.
+//
+// Still cheap relative to the eligible/done aggregate above. That one must scan every feedback
+// record; here the driving table is the small one — the markers, of which there are by definition
+// few — so it stays a scan of failures with primary-key lookups back to the record and its
+// settings.
+var countFailedRecordsAggregateSQL = `
 	SELECT f.enrichment, f.terminal, COUNT(*)
 	FROM feedback_record_enrichment_failures f
 	JOIN feedback_records fr ON fr.id = f.feedback_record_id
-	WHERE (f.enrichment = 'sentiment'   AND fr.sentiment IS NULL)
-	   OR (f.enrichment = 'emotions'    AND fr.emotions_classified_at IS NULL AND fr.emotions IS NULL)
-	   OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL)
+	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+	WHERE ` + enrichmentEligibleText + `
+	  AND ((f.enrichment = 'sentiment'   AND fr.sentiment IS NULL AND ` + enrichmentSentimentOn + `)
+	    OR (f.enrichment = 'emotions'    AND fr.emotions_classified_at IS NULL AND fr.emotions IS NULL
+	                                     AND ` + enrichmentEmotionsOn + `)
+	    OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL))
 	GROUP BY f.enrichment, f.terminal`
 
 // CountFailedRecordsAggregate returns the cross-tenant failed-record counts per enrichment.

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -350,11 +349,17 @@ func terminalEmptyReason(resp *genai.GenerateContentResponse) (huberrors.Termina
 
 // emptyResponseDetail renders the block/finish metadata explaining an empty response
 // (": blocked: SAFETY", ": finish reason: MAX_TOKENS"), or "" when none is present.
+//
+// BlockReasonMessage is TRUNCATED, matching the 256-char cap the OpenAI client puts on a refusal
+// string. Both are free-form provider prose that ends up in an error and therefore in logs, and
+// while a block message is usually a fixed phrase, nothing in the API promises that — it is the
+// provider describing why it rejected this particular text, which is the category of string that
+// can quote the text back. Everything else here is a bounded enum.
 func emptyResponseDetail(resp *genai.GenerateContentResponse) string {
 	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
 		detail := fmt.Sprintf(": blocked: %s", resp.PromptFeedback.BlockReason)
 		if resp.PromptFeedback.BlockReasonMessage != "" {
-			detail += " (" + resp.PromptFeedback.BlockReasonMessage + ")"
+			detail += fmt.Sprintf(" (%.256s)", resp.PromptFeedback.BlockReasonMessage)
 		}
 
 		return detail
@@ -482,41 +487,20 @@ func (c *Client) recordGenerate(
 func (c *Client) recordUsage(
 	ctx context.Context, operation llm.Operation, started time.Time, inputTokens, outputTokens int64, err error,
 ) {
-	if c.usage == nil {
-		return
-	}
-
-	c.usage.RecordUsage(ctx, llm.Usage{
-		Operation:    operation,
-		Provider:     c.provider,
-		Model:        c.model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		Duration:     time.Since(started),
-		ErrorType:    errorTypeOf(err),
-	})
+	llm.Record(ctx, c.usage, operation, c.provider, c.model,
+		started, inputTokens, outputTokens, errorTypeOf(err))
 }
 
-// errorTypeOf maps an error to the BOUNDED error.type attribute. An HTTP status becomes its
-// number, everything else a coarse class — never the provider's message, which is unbounded and
-// would blow up metric cardinality the first time a provider echoed user input back in an error.
+// errorTypeOf maps an error to the BOUNDED error.type attribute. Only the status extraction is
+// Google-specific; the rest of the classification is shared so the two clients cannot disagree on
+// what "timeout" means.
 func errorTypeOf(err error) string {
-	if err == nil {
-		return ""
-	}
+	return llm.ClassifyError(err, func(err error) (int, bool) {
+		var apiErr genai.APIError
+		if errors.As(err, &apiErr) {
+			return apiErr.Code, true
+		}
 
-	var apiErr genai.APIError
-	if errors.As(err, &apiErr) && apiErr.Code != 0 {
-		return strconv.Itoa(apiErr.Code)
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "timeout"
-	}
-
-	if errors.Is(err, context.Canceled) {
-		return "cancelled"
-	}
-
-	return "other"
+		return 0, false
+	})
 }

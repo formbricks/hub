@@ -816,10 +816,16 @@ func runEnrichmentBacklogPoller(
 		// backlog gauge and no second election is needed. Its query is cheap next to the backlog
 		// scan: it reads the markers, of which there are few, not every feedback record.
 		//
-		// queryCtx, not ctx — this shares the tick's timeout budget. Handing it the process-lifetime
-		// context would let a slow count pin a pool connection until shutdown, which is the exact
-		// thing enrichmentBacklogQueryTimeout exists to prevent.
-		refreshFailedRecords(queryCtx, statusRepo, failures)
+		// Its OWN deadline, not the leftover of queryCtx. Both need a bound — an unbounded count
+		// can pin a pool connection until shutdown, which is what enrichmentBacklogQueryTimeout
+		// exists to prevent — but sharing one budget couples them the wrong way round: the backlog
+		// scan above is the documented whole-table sequential scan, so on a large deployment it
+		// eats most of the window, and this count then times out on every tick and withdraws the
+		// gauge for as long as the scan stays slow. A separate timeout off the same parent keeps
+		// the bound and drops the coupling.
+		failedCtx, cancelFailed := context.WithTimeout(ctx, enrichmentBacklogQueryTimeout)
+		refreshFailedRecords(failedCtx, statusRepo, failures)
+		cancelFailed()
 	}
 
 	update()

@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS feedback_record_enrichment_failures (
   terminal           BOOLEAN     NOT NULL,
   -- Bounded set, never the provider's error string. Refusal text is model-generated but routinely
   -- paraphrases the input, so storing it would put customer feedback at rest here and from here
-  -- into the API. Raw provider text stays in logs, already truncated at the client.
+  -- into the API. Raw provider text stays in logs, truncated at the client -- 256 chars for an
+  -- OpenAI refusal and for a Gemini block message, the two free-form strings either provider
+  -- returns. Everything else the clients surface is a bounded enum.
   reason             VARCHAR(32) NOT NULL,
   PRIMARY KEY (feedback_record_id, enrichment)
 );

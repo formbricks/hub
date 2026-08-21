@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
@@ -114,8 +116,16 @@ func (s stubEmotionsSettings) GetSettings(_ context.Context, tenantID string) (*
 	return &models.TenantSettings{TenantID: tenantID, Settings: models.EnrichmentSettings{EmotionsEnabled: s.enabled}}, nil
 }
 
+// Carries a tenant for the same reason the sentiment fixture does: the failure marker copies the
+// record's ID and TenantID, and those drive the foreign key and the tenant write lock, so a zero
+// value would let a regression that stopped copying either one pass unnoticed.
 func emotionsTextRecord(valueText *string) *models.FeedbackRecord {
-	return &models.FeedbackRecord{ID: uuid.Must(uuid.NewV7()), FieldType: models.FieldTypeText, ValueText: valueText}
+	return &models.FeedbackRecord{
+		ID:        uuid.Must(uuid.NewV7()),
+		TenantID:  "tenant-emotions-test",
+		FieldType: models.FieldTypeText,
+		ValueText: valueText,
+	}
 }
 
 func emotionsJob(attempt int) *river.Job[service.FeedbackEmotionsArgs] {
@@ -425,4 +435,24 @@ func TestFeedbackEmotionsWorker_SettingsReadErrorRetriesThenFailsFinal(t *testin
 			}
 		})
 	}
+}
+
+// TestFeedbackEmotionsWorker_TerminalFailureIsRecorded is the emotions half of the same wiring
+// check — see the translation worker's version for why each pipeline needs its own.
+func TestFeedbackEmotionsWorker_TerminalFailureIsRecorded(t *testing.T) {
+	text := "something the model refuses"
+	record := emotionsTextRecord(&text)
+	svc := &mockEmotionsWorkerService{record: record}
+	failures := &recordingFailureRecorder{}
+	client := &stubEmotionsClient{err: huberrors.NewTerminalProviderError(
+		huberrors.TerminalReasonContentFilter, errors.New("blocked"))}
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, nil, failures, nil)
+
+	require.Error(t, worker.Work(context.Background(), emotionsJob(1)))
+
+	require.Len(t, failures.calls, 1, "the emotions pipeline must record its failures too")
+	assert.Equal(t, "emotions", failures.calls[0].Enrichment)
+	assert.Equal(t, record.ID, failures.calls[0].FeedbackRecordID)
+	assert.Equal(t, record.TenantID, failures.calls[0].TenantID)
+	assert.True(t, failures.calls[0].Terminal)
 }

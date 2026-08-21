@@ -2,6 +2,15 @@ package models
 
 import "github.com/google/uuid"
 
+// The enrichment names. These are the values in migration 022's CHECK, the `enrichment` metric
+// label, and the discriminator on every failure marker, so they are declared once rather than
+// spelled out at each use.
+const (
+	EnrichmentNameTranslation = "translation"
+	EnrichmentNameSentiment   = "sentiment"
+	EnrichmentNameEmotions    = "emotions"
+)
+
 // The two non-terminal reasons. Both mean "did not succeed this time"; they differ in which half
 // of the job failed, which is the difference between an incident with the provider and an incident
 // with our own database. The CHECK in migration 022 restricts non-terminal rows to these.

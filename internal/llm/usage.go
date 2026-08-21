@@ -2,6 +2,8 @@ package llm
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"time"
 )
 
@@ -58,4 +60,65 @@ type Usage struct {
 // recorder means usage is not recorded and the client behaves exactly as before.
 type UsageRecorder interface {
 	RecordUsage(ctx context.Context, usage Usage)
+}
+
+// Record sends one call's usage to recorder, or does nothing when recorder is nil.
+//
+// Both provider clients build the same struct from the same six inputs and both had to remember
+// the nil check; this keeps that shape in one place so the two cannot drift on what a Usage means.
+// What stays with each client is the part that genuinely differs: pulling token counts out of a
+// provider-shaped response, and mapping a provider-shaped error to a bounded class.
+func Record(
+	ctx context.Context, recorder UsageRecorder,
+	operation Operation, provider Provider, model string,
+	started time.Time, inputTokens, outputTokens int64, errorType string,
+) {
+	if recorder == nil {
+		return
+	}
+
+	recorder.RecordUsage(ctx, Usage{
+		Operation:    operation,
+		Provider:     provider,
+		Model:        model,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		Duration:     time.Since(started),
+		ErrorType:    errorType,
+	})
+}
+
+// Bounded error.type values shared by both clients. An HTTP status becomes its own number; these
+// cover what has no status.
+const (
+	// ErrorTypeTimeout is a deadline the caller set, not one the provider reported.
+	ErrorTypeTimeout = "timeout"
+	// ErrorTypeCancelled is the surrounding context going away — a shutdown, usually.
+	ErrorTypeCancelled = "cancelled"
+	// ErrorTypeOther is everything else, deliberately vague. The alternative is the provider's own
+	// message, which is unbounded and would blow up metric cardinality the first time a provider
+	// echoed user input back in an error.
+	ErrorTypeOther = "other"
+)
+
+// ClassifyError maps an error to a bounded error.type. status extracts a provider-specific HTTP
+// status when the error carries one; it is the only part that differs between providers.
+func ClassifyError(err error, status func(error) (int, bool)) string {
+	if err == nil {
+		return ""
+	}
+
+	if code, ok := status(err); ok && code != 0 {
+		return strconv.Itoa(code)
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ErrorTypeTimeout
+	}
+
+	if errors.Is(err, context.Canceled) {
+		return ErrorTypeCancelled
+	}
+
+	return ErrorTypeOther
 }

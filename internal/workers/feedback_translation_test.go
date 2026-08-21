@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
@@ -93,9 +95,12 @@ func (s *stubTranslationClient) Translate(_ context.Context, req service.Transla
 	return s.out, s.err
 }
 
+// Carries a tenant for the same reason the sentiment and emotions fixtures do: the failure marker
+// copies the record's ID and TenantID, and those drive the foreign key and the tenant write lock.
 func translationRecord(valueText, sourceLang string) *models.FeedbackRecord {
 	record := &models.FeedbackRecord{
 		ID:        uuid.Must(uuid.NewV7()),
+		TenantID:  "tenant-translation-test",
 		FieldType: models.FieldTypeText,
 		ValueText: &valueText,
 	}
@@ -600,4 +605,25 @@ func TestSameLanguageAndScript(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFeedbackTranslationWorker_TerminalFailureIsRecorded pins the wiring, not the logic. All three
+// classify pipelines share enrichmentWorker.markFailed, so the behaviour is structurally identical
+// and covered in depth on the sentiment worker — but each constructor threads `failures` through
+// separately, and dropping it for one pipeline is a silent, per-pipeline hole in the counts.
+func TestFeedbackTranslationWorker_TerminalFailureIsRecorded(t *testing.T) {
+	record := translationRecord("Bonjour le monde", "fr")
+	svc := &mockTranslationWorkerService{record: record}
+	failures := &recordingFailureRecorder{}
+	client := &stubTranslationClient{err: huberrors.NewTerminalProviderError(
+		huberrors.TerminalReasonRefusal, errors.New("declined"))}
+	worker := NewFeedbackTranslationWorker(svc, client, nil, failures, nil)
+
+	require.Error(t, worker.Work(context.Background(), translationJob("en-US", 1)))
+
+	require.Len(t, failures.calls, 1, "the translation pipeline must record its failures too")
+	assert.Equal(t, "translation", failures.calls[0].Enrichment)
+	assert.Equal(t, record.ID, failures.calls[0].FeedbackRecordID)
+	assert.Equal(t, record.TenantID, failures.calls[0].TenantID)
+	assert.True(t, failures.calls[0].Terminal)
 }
