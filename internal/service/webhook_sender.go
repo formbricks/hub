@@ -40,11 +40,12 @@ type WebhookSenderImpl struct {
 	repo       WebhookSenderRepository
 	httpClient *http.Client
 	metrics    observability.WebhookMetrics
-	ssrfPolicy SSRFPolicy
 }
 
 // NewWebhookSenderImpl creates a sender that uses the given repo.
-// ssrfPolicy restricts which hosts may be dialed; its zero value still rejects private/reserved ranges.
+// ssrfPolicy restricts which hosts may be dialed; its zero value still rejects private/reserved
+// ranges. It is enforced in the transport's DialContext, so it is not retained on the struct — an
+// injected httpClient (below) is expected to carry its own dialer.
 // httpTimeout is the HTTP client timeout; job timeout should be httpTimeout + buffer (e.g. 5s).
 // Client does not follow redirects and validates resolved IPs at dial time (DNS rebinding protection).
 // metrics may be nil when metrics are disabled.
@@ -98,7 +99,6 @@ func NewWebhookSenderImpl(
 		repo:       repo,
 		httpClient: httpClient,
 		metrics:    metrics,
-		ssrfPolicy: ssrfPolicy,
 	}
 }
 

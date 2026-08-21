@@ -132,8 +132,8 @@ func resolveWebhookHost(ctx context.Context, host string, policy SSRFPolicy) ([]
 	}
 
 	if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
-		if !policy.permits(addr) {
-			return nil, huberrors.NewValidationError("url", "webhook URL host is not allowed (private/internal)")
+		if err := policy.classify(addr).validationError(); err != nil {
+			return nil, err
 		}
 
 		return []netip.Addr{addr.Unmap()}, nil
@@ -156,8 +156,8 @@ func resolveWebhookHost(ctx context.Context, host string, policy SSRFPolicy) ([]
 			continue
 		}
 
-		if !policy.permits(addr) {
-			return nil, huberrors.NewValidationError("url", "webhook URL host is not allowed (private/internal)")
+		if err := policy.classify(addr).validationError(); err != nil {
+			return nil, err
 		}
 
 		allowed = append(allowed, addr.Unmap())
