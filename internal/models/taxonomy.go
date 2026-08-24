@@ -94,26 +94,31 @@ type TaxonomyFieldsResponse struct {
 
 // TaxonomyRun is a persisted taxonomy generation run.
 type TaxonomyRun struct {
-	ID             uuid.UUID               `json:"id"`
-	ScopeType      TaxonomyScopeType       `json:"scope_type"`
-	TenantID       string                  `json:"tenant_id"`
-	SourceType     string                  `json:"source_type"`
-	SourceID       string                  `json:"source_id"`
-	FieldID        string                  `json:"field_id"`
-	FieldLabel     *string                 `json:"field_label,omitempty"`
-	Status         TaxonomyRunStatus       `json:"status"`
-	Params         json.RawMessage         `json:"params,omitempty"`
-	Metrics        json.RawMessage         `json:"metrics,omitempty"`
-	RecordCount    int                     `json:"record_count"`
-	EmbeddingCount int                     `json:"embedding_count"`
-	ClusterCount   int                     `json:"cluster_count"`
-	NodeCount      int                     `json:"node_count"`
-	Error          *string                 `json:"error,omitempty"`
-	ErrorCode      *TaxonomyRunFailureCode `json:"error_code,omitempty"`
-	StartedAt      *time.Time              `json:"started_at,omitempty"`
-	FinishedAt     *time.Time              `json:"finished_at,omitempty"`
-	CreatedAt      time.Time               `json:"created_at"`
-	UpdatedAt      time.Time               `json:"updated_at"`
+	ID                 uuid.UUID               `json:"id"`
+	ScopeType          TaxonomyScopeType       `json:"scope_type"`
+	TenantID           string                  `json:"tenant_id"`
+	SourceType         string                  `json:"source_type"`
+	SourceID           string                  `json:"source_id"`
+	FieldID            string                  `json:"field_id"`
+	FieldLabel         *string                 `json:"field_label,omitempty"`
+	Status             TaxonomyRunStatus       `json:"status"`
+	Params             json.RawMessage         `json:"params,omitempty"`
+	Metrics            json.RawMessage         `json:"metrics,omitempty"`
+	RecordCount        int                     `json:"record_count"`
+	EmbeddingCount     int                     `json:"embedding_count"`
+	EligibleCount      int                     `json:"eligible_count,omitempty"`
+	SelectedCount      int                     `json:"selected_count,omitempty"`
+	SelectionCap       int                     `json:"selection_cap,omitempty"`
+	SelectionTruncated bool                    `json:"selection_truncated,omitempty"`
+	SelectionStrategy  string                  `json:"selection_strategy,omitempty"`
+	ClusterCount       int                     `json:"cluster_count"`
+	NodeCount          int                     `json:"node_count"`
+	Error              *string                 `json:"error,omitempty"`
+	ErrorCode          *TaxonomyRunFailureCode `json:"error_code,omitempty"`
+	StartedAt          *time.Time              `json:"started_at,omitempty"`
+	FinishedAt         *time.Time              `json:"finished_at,omitempty"`
+	CreatedAt          time.Time               `json:"created_at"`
+	UpdatedAt          time.Time               `json:"updated_at"`
 }
 
 // CreateTaxonomyRunRequest starts a manual taxonomy generation run.
@@ -259,18 +264,39 @@ type TaxonomyRunFailedRequest struct {
 // TaxonomyRunFailureDiagnostics contains bounded, non-sensitive compute diagnostics. It is stored
 // inside the existing metrics JSON column, keeping the database and public API schema unchanged.
 type TaxonomyRunFailureDiagnostics struct {
-	Phase              string             `json:"phase,omitempty"                   validate:"omitempty,oneof=input_fetch input_validation clustering evidence_selection cluster_labeling taxonomy_generation payload_validation persistence unknown"`                                                        //nolint:lll
-	FailureReason      string             `json:"failure_reason,omitempty"          validate:"omitempty,oneof=provider_authentication provider_rate_limit provider_timeout provider_unavailable provider_response invalid_output validation_failed insufficient_data hub_unavailable internal_error unknown"` //nolint:lll
-	Provider           string             `json:"provider,omitempty"                validate:"omitempty,oneof=openai bedrock vertex unknown"`
-	Model              string             `json:"model,omitempty"                   validate:"omitempty,no_null_bytes,max=255"`
-	ProviderAdapter    string             `json:"provider_adapter,omitempty"        validate:"omitempty,no_null_bytes,max=100"`
-	AdapterVersion     string             `json:"adapter_version,omitempty"         validate:"omitempty,no_null_bytes,max=100"`
-	ProviderSDKVersion string             `json:"provider_sdk_version,omitempty"    validate:"omitempty,no_null_bytes,max=100"`
-	LLMAttempts        *int               `json:"llm_attempts,omitempty"            validate:"omitempty,min=0,max=1000"`
-	InputTokens        *int64             `json:"input_tokens,omitempty"            validate:"omitempty,min=0"`
-	OutputTokens       *int64             `json:"output_tokens,omitempty"           validate:"omitempty,min=0"`
-	TotalTokens        *int64             `json:"total_tokens,omitempty"            validate:"omitempty,min=0"`
-	PhaseDurations     map[string]float64 `json:"phase_durations_seconds,omitempty" validate:"omitempty,max=8,dive,keys,oneof=input_fetch input_validation clustering evidence_selection cluster_labeling taxonomy_generation payload_validation persistence,endkeys,gte=0"` //nolint:lll
+	Phase              string                     `json:"phase,omitempty"                   validate:"omitempty,oneof=input_fetch input_validation clustering evidence_selection cluster_labeling taxonomy_generation payload_validation persistence unknown"`                                                                                                                                                                                                                                       //nolint:lll
+	FailureReason      string                     `json:"failure_reason,omitempty"          validate:"omitempty,oneof=provider_authentication provider_permission provider_rate_limit provider_timeout provider_unavailable provider_invalid_request provider_response unsupported_schema context_exhaustion truncation refusal safety_block malformed_response invalid_output validation_failed run_deadline_exceeded internal_invariant insufficient_data hub_unavailable internal_error unknown"` //nolint:lll
+	GenerationStep     string                     `json:"generation_step,omitempty"         validate:"omitempty,oneof=labeling branch_plan cluster_assignment hierarchy_plan assembly payload persistence none"`                                                                                                                                                                                                                                                                                     //nolint:lll
+	ValidationReason   string                     `json:"validation_reason,omitempty"       validate:"omitempty,oneof=invalid_json_or_shape missing_key duplicate_key unknown_key invalid_depth coverage_mismatch duplicate_label non_english_label truncation context_exhaustion refusal internal_invariant invalid_semantics none"`                                                                                                                                                                //nolint:lll
+	RecoveryAction     string                     `json:"recovery_action,omitempty"         validate:"omitempty,oneof=none provider_retry semantic_retry clustering_fallback label_fallback post_processing_rollback"`                                                                                                                                                                                                                                                                               //nolint:lll
+	Provider           string                     `json:"provider,omitempty"                validate:"omitempty,oneof=openai bedrock vertex unknown"`                                                                                                                                                                                                                                                                                                                                                //nolint:lll
+	Model              string                     `json:"model,omitempty"                   validate:"omitempty,no_null_bytes,max=255"`
+	ProviderAdapter    string                     `json:"provider_adapter,omitempty"        validate:"omitempty,no_null_bytes,max=100"`
+	AdapterVersion     string                     `json:"adapter_version,omitempty"         validate:"omitempty,no_null_bytes,max=100"`
+	ProviderSDKVersion string                     `json:"provider_sdk_version,omitempty"    validate:"omitempty,no_null_bytes,max=100"`
+	LLMAttempts        *int                       `json:"llm_attempts,omitempty"            validate:"omitempty,min=0,max=1000"`
+	InputTokens        *int64                     `json:"input_tokens,omitempty"            validate:"omitempty,min=0"`
+	OutputTokens       *int64                     `json:"output_tokens,omitempty"           validate:"omitempty,min=0"`
+	TotalTokens        *int64                     `json:"total_tokens,omitempty"            validate:"omitempty,min=0"`
+	PhaseDurations     map[string]float64         `json:"phase_durations_seconds,omitempty" validate:"omitempty,max=8,dive,keys,oneof=input_fetch input_validation clustering evidence_selection cluster_labeling taxonomy_generation payload_validation persistence,endkeys,gte=0"` //nolint:lll
+	PartialMetrics     *TaxonomyRunPartialMetrics `json:"partial_metrics,omitempty"         validate:"omitempty"`
+}
+
+// TaxonomyRunPartialMetrics preserves bounded progress when generation fails before a complete
+// result can be persisted. It contains counts and booleans only; no labels, feedback, or identifiers.
+type TaxonomyRunPartialMetrics struct {
+	SelectedRecordCount    int   `json:"selected_record_count,omitempty"    validate:"omitempty,min=0,max=10000"`
+	ClusterCount           int   `json:"cluster_count,omitempty"            validate:"omitempty,min=0,max=1000"`
+	MembershipCount        int   `json:"membership_count,omitempty"         validate:"omitempty,min=0,max=10000"`
+	ClusteringFallbackUsed *bool `json:"clustering_fallback_used,omitempty" validate:"omitempty"`
+	ClusterCapActivated    *bool `json:"cluster_cap_activated,omitempty"    validate:"omitempty"`
+	ClusterCapMergeCount   int   `json:"cluster_cap_merge_count,omitempty"  validate:"omitempty,min=0,max=1000"`
+	PostProcessingFailed   *bool `json:"post_processing_failed,omitempty"   validate:"omitempty"`
+	LabelFallbackCount     int   `json:"label_fallback_count,omitempty"     validate:"omitempty,min=0,max=1000"`
+	NodeCount              int   `json:"node_count,omitempty"               validate:"omitempty,min=0,max=100000"`
+	BranchCount            int   `json:"branch_count,omitempty"             validate:"omitempty,min=0,max=100000"`
+	LeafCount              int   `json:"leaf_count,omitempty"               validate:"omitempty,min=0,max=1000"`
+	DepthValid             *bool `json:"depth_valid,omitempty"              validate:"omitempty"`
 }
 
 // RenameTaxonomyNodeRequest renames a generated taxonomy node.

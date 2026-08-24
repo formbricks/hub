@@ -839,6 +839,16 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 			ErrorCode: models.TaxonomyRunFailureCodeGenerationFailed,
 			Diagnostics: &models.TaxonomyRunFailureDiagnostics{
 				Phase: "clustering",
+				PartialMetrics: &models.TaxonomyRunPartialMetrics{
+					SelectedRecordCount:    9995,
+					ClusterCount:           80,
+					MembershipCount:        9995,
+					ClusterCapActivated:    new(true),
+					ClusterCapMergeCount:   2,
+					LabelFallbackCount:     1,
+					PostProcessingFailed:   new(false),
+					ClusteringFallbackUsed: new(false),
+				},
 				PhaseDurations: map[string]float64{
 					"input_fetch": 0.5, "input_validation": 0.1, "clustering": 2.5,
 					"evidence_selection": 0.2, "cluster_labeling": 1.2, "taxonomy_generation": 3.4,
@@ -858,7 +868,11 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		require.NotNil(t, run.Error)
 		assert.Equal(t, "clustering did not converge", *run.Error)
 		assert.JSONEq(t,
-			`{"failure_diagnostics":{"phase":"clustering","phase_durations_seconds":{`+
+			`{"failure_diagnostics":{"phase":"clustering","partial_metrics":{`+
+				`"selected_record_count":9995,"cluster_count":80,"membership_count":9995,`+
+				`"clustering_fallback_used":false,"cluster_cap_activated":true,`+
+				`"cluster_cap_merge_count":2,"post_processing_failed":false,"label_fallback_count":1},`+
+				`"phase_durations_seconds":{`+
 				`"input_fetch":0.5,"input_validation":0.1,"clustering":2.5,"evidence_selection":0.2,`+
 				`"cluster_labeling":1.2,"taxonomy_generation":3.4,"payload_validation":0.3,"persistence":0.7}}}`,
 			string(run.Metrics),
@@ -889,8 +903,8 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 	})
 }
 
-// TestTaxonomyAPI_InternalErrors covers missing runs, malformed identifiers, and invalid
-// terminal-state transitions across the internal taxonomy service contract.
+// TestTaxonomyAPI_InternalErrors covers missing runs, malformed identifiers, and the
+// idempotent-versus-conflicting terminal-state contract of the internal taxonomy service.
 func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 	ctx := context.Background()
 	harness := setupTaxonomyAPIServer(t)
@@ -914,6 +928,32 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 			response.ProblemTypeValidation,
 		)
 		assertTaxonomyInvalidParam(t, problem, "memberships", "required")
+	})
+
+	t.Run("invalid generated topology and membership coverage are rejected before persistence", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-invalid-output")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+		feedbackRecordID := insertScopeFeedbackRecord(ctx, t, harness.db, scope)
+		runID := createRunningRun(ctx, t, harness, scope)
+		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
+
+		duplicateMembership := validTaxonomyResult(feedbackRecordID)
+		duplicateMembership.Clusters[0].Size = 2
+		duplicateMembership.Memberships = append(
+			duplicateMembership.Memberships,
+			duplicateMembership.Memberships[0],
+		)
+		requestTaxonomyProblem(
+			ctx, t, http.MethodPut, resultURL, harness.internalToken, duplicateMembership,
+			http.StatusBadRequest, response.CodeValidation, response.ProblemTypeValidation,
+		)
+
+		invalidDepth := validTaxonomyResult(feedbackRecordID)
+		invalidDepth.Nodes[len(invalidDepth.Nodes)-1].Level = 3
+		requestTaxonomyProblem(
+			ctx, t, http.MethodPut, resultURL, harness.internalToken, invalidDepth,
+			http.StatusBadRequest, response.CodeValidation, response.ProblemTypeValidation,
+		)
 	})
 
 	t.Run("failed payload validation is machine readable", func(t *testing.T) {
@@ -1014,7 +1054,7 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 		})
 	}
 
-	t.Run("completing a terminal run returns conflict", func(t *testing.T) {
+	t.Run("repeating an identical result is idempotent but a different result conflicts", func(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-internal-complete-conflict")
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
 		feedbackRecordID := insertScopeFeedbackRecord(ctx, t, harness.db, scope)
@@ -1035,11 +1075,28 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 		)
 		require.Equal(t, models.TaxonomyRunStatusSucceeded, completed.Status)
 
-		requestTaxonomyProblem(ctx, t, http.MethodPut, resultURL, harness.internalToken, result,
+		var repeated models.TaxonomyRun
+		requestTaxonomyJSON(
+			ctx,
+			t,
+			http.MethodPut,
+			resultURL,
+			harness.internalToken,
+			result,
+			http.StatusOK,
+			&repeated,
+		)
+		require.Equal(t, completed.ID, repeated.ID)
+		require.Equal(t, models.TaxonomyRunStatusSucceeded, repeated.Status)
+
+		differentResult := result
+		differentResult.Nodes = append([]models.TaxonomyResultNode(nil), result.Nodes...)
+		differentResult.Nodes[1].Label = "Different login theme"
+		requestTaxonomyProblem(ctx, t, http.MethodPut, resultURL, harness.internalToken, differentResult,
 			http.StatusConflict, response.CodeConflict, response.ProblemTypeConflict)
 	})
 
-	t.Run("failing a terminal run returns conflict", func(t *testing.T) {
+	t.Run("repeating an identical failure is idempotent but a different failure conflicts", func(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-internal-fail-conflict")
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
 		runID := createRunningRun(ctx, t, harness, scope)
@@ -1058,7 +1115,23 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 		)
 		require.Equal(t, models.TaxonomyRunStatusFailed, failed.Status)
 
-		requestTaxonomyProblem(ctx, t, http.MethodPost, failedURL, harness.internalToken, failedBody,
+		var repeated models.TaxonomyRun
+		requestTaxonomyJSON(
+			ctx,
+			t,
+			http.MethodPost,
+			failedURL,
+			harness.internalToken,
+			failedBody,
+			http.StatusOK,
+			&repeated,
+		)
+		require.Equal(t, failed.ID, repeated.ID)
+		require.Equal(t, models.TaxonomyRunStatusFailed, repeated.Status)
+
+		differentFailure := failedBody
+		differentFailure.Error = "a different terminal failure"
+		requestTaxonomyProblem(ctx, t, http.MethodPost, failedURL, harness.internalToken, differentFailure,
 			http.StatusConflict, response.CodeConflict, response.ProblemTypeConflict)
 	})
 }
@@ -1086,15 +1159,35 @@ func TestTaxonomyAPI_GenerationLifecycle(t *testing.T) {
 		harness.internalToken, nil, http.StatusOK, &input)
 	require.NotEmpty(t, input.Records)
 
-	// 3. Internal service posts the generated result referencing a real input record.
+	// 3. Internal service posts a structurally complete generated result covering every input record.
+	memberships := make([]models.TaxonomyResultMembership, 0, len(input.Records))
+	for _, record := range input.Records {
+		memberships = append(memberships, models.TaxonomyResultMembership{
+			ClusterKey: 1, FeedbackRecordID: record.FeedbackRecordID, Confidence: new(0.8),
+		})
+	}
+
 	result := models.TaxonomyRunResultRequest{
-		Clusters: []models.TaxonomyResultCluster{{ClusterKey: 1, Label: new("login"), Size: len(input.Records)}},
-		Memberships: []models.TaxonomyResultMembership{
-			{ClusterKey: 1, FeedbackRecordID: input.Records[0].FeedbackRecordID, Confidence: new(0.8)},
-		},
+		Clusters:    []models.TaxonomyResultCluster{{ClusterKey: 1, Label: new("login"), Size: len(input.Records)}},
+		Memberships: memberships,
 		Nodes: []models.TaxonomyResultNode{
 			{NodeKey: "root", NodeType: models.TaxonomyNodeTypeRoot, Label: "Feedback", Level: 0},
-			{NodeKey: "leaf", ParentKey: new("root"), ClusterKey: new(1), NodeType: models.TaxonomyNodeTypeLeaf, Label: "Login", Level: 1},
+			{
+				NodeKey: "level-2", ParentKey: new("root"), NodeType: models.TaxonomyNodeTypeBranch,
+				Label: "Experience", Level: 1,
+			},
+			{
+				NodeKey: "level-3", ParentKey: new("level-2"), NodeType: models.TaxonomyNodeTypeBranch,
+				Label: "Account Access", Level: 2,
+			},
+			{
+				NodeKey: "level-4", ParentKey: new("level-3"), NodeType: models.TaxonomyNodeTypeBranch,
+				Label: "Authentication", Level: 3,
+			},
+			{
+				NodeKey: "leaf", ParentKey: new("level-4"), ClusterKey: new(1),
+				NodeType: models.TaxonomyNodeTypeLeaf, Label: "Login", Level: 4,
+			},
 		},
 	}
 
@@ -1179,12 +1272,33 @@ func validTaxonomyResult(feedbackRecordID uuid.UUID) models.TaxonomyRunResultReq
 				Level:    0,
 			},
 			{
+				NodeKey:   "level-2",
+				ParentKey: new("root"),
+				NodeType:  models.TaxonomyNodeTypeBranch,
+				Label:     "Customer Experience",
+				Level:     1,
+			},
+			{
+				NodeKey:   "level-3",
+				ParentKey: new("level-2"),
+				NodeType:  models.TaxonomyNodeTypeBranch,
+				Label:     "Account Experience",
+				Level:     2,
+			},
+			{
+				NodeKey:   "level-4",
+				ParentKey: new("level-3"),
+				NodeType:  models.TaxonomyNodeTypeBranch,
+				Label:     "Authentication",
+				Level:     3,
+			},
+			{
 				NodeKey:    "leaf",
-				ParentKey:  new("root"),
+				ParentKey:  new("level-4"),
 				ClusterKey: new(1),
 				NodeType:   models.TaxonomyNodeTypeLeaf,
 				Label:      "Login",
-				Level:      1,
+				Level:      4,
 			},
 		},
 	}

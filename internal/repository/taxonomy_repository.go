@@ -302,21 +302,43 @@ func (r *TaxonomyRepository) MarkRunFailed(
 	var run *models.TaxonomyRun
 
 	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		normalizedMetrics := rawOrDefault(metrics, defaultJSONObj)
+
+		existing, err := queryTaxonomyRun(ctx, dbTx, taxonomyRunSelect+`
+			FROM taxonomy_runs
+			WHERE id = $1 AND tenant_id = $2
+			FOR UPDATE`, runID, tenantID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
+			}
+
+			return fmt.Errorf("lock taxonomy run for failure: %w", err)
+		}
+
+		if existing.Status == models.TaxonomyRunStatusFailed && taxonomyFailureCallbackMatches(
+			existing, message, errorCode, normalizedMetrics,
+		) {
+			run = existing
+
+			return nil
+		}
+
+		if existing.Status != models.TaxonomyRunStatusPending && existing.Status != models.TaxonomyRunStatusRunning {
+			return taxonomyTransitionConflict(existing, models.TaxonomyRunStatusFailed)
+		}
+
 		updated, err := queryTaxonomyRun(ctx, dbTx, `
 			WITH taxonomy_runs AS (
 				UPDATE taxonomy_runs
 				SET status = 'failed', error = $2, error_code = $3, metrics = $4,
 					finished_at = NOW(), updated_at = NOW()
-				WHERE id = $1 AND tenant_id = $5 AND status IN ('pending', 'running')
+				WHERE id = $1 AND tenant_id = $5
 				RETURNING *
 			)`+taxonomyRunSelect+` FROM taxonomy_runs`,
-			runID, message, nullableFailureCode(errorCode), rawOrDefault(metrics, defaultJSONObj), tenantID,
+			runID, message, nullableFailureCode(errorCode), normalizedMetrics, tenantID,
 		)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return r.transitionError(ctx, dbTx, runID, tenantID, models.TaxonomyRunStatusFailed)
-			}
-
 			return fmt.Errorf("mark taxonomy run failed: %w", err)
 		}
 
@@ -633,8 +655,8 @@ func (r *TaxonomyRepository) ListRuns(
 }
 
 // maxTaxonomyRunInputRows caps how many (record, embedding) rows one run-input fetch may
-// materialize. run.EmbeddingCount is simply "all embedded records in scope" with no upper
-// bound, and each row carries a 768-dim vector (~3 KB binary, ~8-10 KB as JSON) — a 200k-record
+// materialize. run.RecordCount is simply "all eligible records in scope" with no upper
+// bound, and each selected embedded row carries a 768-dim vector (~3 KB binary, ~8-10 KB as JSON) — a 200k-record
 // tenant would otherwise allocate multiple GB in the API process for a single internal request.
 // 10k rows ≈ 100 MB JSON keeps the endpoint safe while staying far above typical run sizes;
 // larger scopes are truncated to the most recent rows (the ORDER BY) and logged.
@@ -653,10 +675,11 @@ func (r *TaxonomyRepository) GetRunInput(
 		return nil, err
 	}
 
-	limit := run.EmbeddingCount
+	limit := run.RecordCount
 	if limit > maxTaxonomyRunInputRows {
 		slog.Warn("taxonomy run input truncated to the row cap",
-			"run_id", runID, "embedding_count", run.EmbeddingCount, "cap", maxTaxonomyRunInputRows)
+			"run_id", runID, "eligible_count", run.RecordCount,
+			"embedding_count", run.EmbeddingCount, "cap", maxTaxonomyRunInputRows)
 
 		limit = maxTaxonomyRunInputRows
 	}
@@ -693,6 +716,12 @@ func (r *TaxonomyRepository) GetRunInput(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate taxonomy run input records: %w", err)
 	}
+
+	run.EligibleCount = run.RecordCount
+	run.SelectedCount = limit
+	run.SelectionCap = maxTaxonomyRunInputRows
+	run.SelectionTruncated = run.RecordCount > limit
+	run.SelectionStrategy = "most_recent"
 
 	return &models.TaxonomyRunInputResponse{Run: *run, Records: records}, nil
 }
@@ -741,134 +770,25 @@ func storeResultAndActivateInTx(
 		return nil, fmt.Errorf("lock taxonomy run: %w", err)
 	}
 
+	if run.Status == models.TaxonomyRunStatusSucceeded && taxonomyResultDigestsMatch(run.Metrics, req.Metrics) {
+		return run, nil
+	}
+
 	if run.Status != models.TaxonomyRunStatusRunning {
 		return nil, taxonomyTransitionConflict(run, models.TaxonomyRunStatusSucceeded)
 	}
 
-	clusterIDs := make(map[int]uuid.UUID, len(req.Clusters))
-	for _, cluster := range req.Clusters {
-		var clusterID uuid.UUID
-		if err := transaction.QueryRow(ctx, `
-			INSERT INTO taxonomy_clusters (
-				run_id, cluster_key, label, llm_label, keywords, size, is_outlier, metrics
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			RETURNING id`,
-			run.ID,
-			cluster.ClusterKey,
-			cluster.Label,
-			cluster.LLMLabel,
-			rawOrDefault(cluster.Keywords, defaultJSONArr),
-			cluster.Size,
-			cluster.IsOutlier,
-			rawOrDefault(cluster.Metrics, defaultJSONObj),
-		).Scan(&clusterID); err != nil {
-			return nil, fmt.Errorf("insert taxonomy cluster: %w", err)
-		}
-
-		clusterIDs[cluster.ClusterKey] = clusterID
+	clusterIDs, err := insertTaxonomyClustersBulk(ctx, transaction, run.ID, req.Clusters)
+	if err != nil {
+		return nil, err
 	}
 
-	for _, membership := range req.Memberships {
-		clusterID, ok := clusterIDs[membership.ClusterKey]
-		if !ok {
-			return nil, huberrors.NewValidationError("memberships.cluster_key", "references an unknown cluster")
-		}
-
-		if _, err := transaction.Exec(ctx, `
-			INSERT INTO taxonomy_cluster_memberships (
-				run_id, tenant_id, cluster_id, feedback_record_id, confidence, distance, metadata
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			run.ID,
-			run.TenantID,
-			clusterID,
-			membership.FeedbackRecordID,
-			membership.Confidence,
-			membership.Distance,
-			rawOrDefault(membership.Metadata, defaultJSONObj),
-		); err != nil {
-			return nil, fmt.Errorf("insert taxonomy cluster membership: %w", err)
-		}
+	if err := insertTaxonomyMembershipsBulk(ctx, transaction, run, req.Memberships, clusterIDs); err != nil {
+		return nil, err
 	}
 
-	nodes := append([]models.TaxonomyResultNode(nil), req.Nodes...)
-	sort.SliceStable(nodes, func(i, j int) bool {
-		if nodes[i].Level == nodes[j].Level {
-			return nodes[i].SortOrder < nodes[j].SortOrder
-		}
-
-		return nodes[i].Level < nodes[j].Level
-	})
-
-	nodeIDs := make(map[string]uuid.UUID, len(nodes))
-	for _, node := range nodes {
-		var parentID *uuid.UUID
-
-		if node.ParentKey != nil {
-			resolved, ok := nodeIDs[*node.ParentKey]
-			if !ok {
-				return nil, huberrors.NewValidationError("nodes.parent_key", "references an unknown parent")
-			}
-
-			parentID = &resolved
-		}
-
-		var clusterID *uuid.UUID
-
-		if node.ClusterKey != nil {
-			resolved, ok := clusterIDs[*node.ClusterKey]
-			if !ok {
-				return nil, huberrors.NewValidationError("nodes.cluster_key", "references an unknown cluster")
-			}
-
-			clusterID = &resolved
-		}
-
-		var nodeID uuid.UUID
-		if err := transaction.QueryRow(ctx, `
-			INSERT INTO taxonomy_nodes (
-				run_id, parent_id, cluster_id, node_type, label, original_label,
-				description, level, sort_order, metadata
-			)
-			VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9)
-			RETURNING id`,
-			run.ID,
-			parentID,
-			clusterID,
-			node.NodeType,
-			node.Label,
-			node.Description,
-			node.Level,
-			node.SortOrder,
-			rawOrDefault(node.Metadata, defaultJSONObj),
-		).Scan(&nodeID); err != nil {
-			return nil, fmt.Errorf("insert taxonomy node: %w", err)
-		}
-
-		nodeIDs[node.NodeKey] = nodeID
-	}
-
-	activatedBy := taxonomyRunRequestedBy(run.Params)
-	if _, err := transaction.Exec(ctx, `
-			INSERT INTO taxonomy_active_runs (
-				tenant_id, scope_type, source_type, source_id, field_id, run_id, activated_by
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (tenant_id, scope_type, source_type, source_id, field_id)
-			DO UPDATE SET
-				run_id = EXCLUDED.run_id,
-				activated_by = EXCLUDED.activated_by,
-				activated_at = NOW()`,
-		run.TenantID,
-		run.ScopeType,
-		run.SourceType,
-		run.SourceID,
-		run.FieldID,
-		run.ID,
-		activatedBy,
-	); err != nil {
-		return nil, fmt.Errorf("activate taxonomy run: %w", err)
+	if err := insertTaxonomyNodesBulk(ctx, transaction, run.ID, req.Nodes, clusterIDs); err != nil {
+		return nil, err
 	}
 
 	updated, err := queryTaxonomyRun(ctx, transaction, `
@@ -894,7 +814,278 @@ func storeResultAndActivateInTx(
 		return nil, fmt.Errorf("mark taxonomy run succeeded: %w", err)
 	}
 
+	activatedBy := taxonomyRunRequestedBy(run.Params)
+	if _, err := transaction.Exec(ctx, `
+			INSERT INTO taxonomy_active_runs (
+				tenant_id, scope_type, source_type, source_id, field_id, run_id, activated_by
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (tenant_id, scope_type, source_type, source_id, field_id)
+			DO UPDATE SET
+				run_id = EXCLUDED.run_id,
+				activated_by = EXCLUDED.activated_by,
+				activated_at = NOW()`,
+		run.TenantID,
+		run.ScopeType,
+		run.SourceType,
+		run.SourceID,
+		run.FieldID,
+		run.ID,
+		activatedBy,
+	); err != nil {
+		return nil, fmt.Errorf("activate taxonomy run: %w", err)
+	}
+
 	return updated, nil
+}
+
+type taxonomyClusterInsert struct {
+	ID         uuid.UUID       `json:"id"`
+	RunID      uuid.UUID       `json:"run_id"`
+	ClusterKey int             `json:"cluster_key"`
+	Label      *string         `json:"label"`
+	LLMLabel   *string         `json:"llm_label"`
+	Keywords   json.RawMessage `json:"keywords"`
+	Size       int             `json:"size"`
+	IsOutlier  bool            `json:"is_outlier"`
+	Metrics    json.RawMessage `json:"metrics"`
+}
+
+func insertTaxonomyClustersBulk(
+	ctx context.Context,
+	transaction tenantWriteTx,
+	runID uuid.UUID,
+	clusters []models.TaxonomyResultCluster,
+) (map[int]uuid.UUID, error) {
+	clusterIDs := make(map[int]uuid.UUID, len(clusters))
+
+	rows := make([]taxonomyClusterInsert, 0, len(clusters))
+	for _, cluster := range clusters {
+		if _, exists := clusterIDs[cluster.ClusterKey]; exists {
+			return nil, huberrors.NewValidationError("clusters.cluster_key", "contains a duplicate cluster")
+		}
+
+		clusterID := uuid.New()
+		clusterIDs[cluster.ClusterKey] = clusterID
+		rows = append(rows, taxonomyClusterInsert{
+			ID: clusterID, RunID: runID, ClusterKey: cluster.ClusterKey,
+			Label: cluster.Label, LLMLabel: cluster.LLMLabel,
+			Keywords: rawOrDefault(cluster.Keywords, defaultJSONArr),
+			Size:     cluster.Size, IsOutlier: cluster.IsOutlier,
+			Metrics: rawOrDefault(cluster.Metrics, defaultJSONObj),
+		})
+	}
+
+	payload, err := json.Marshal(rows)
+	if err != nil {
+		return nil, fmt.Errorf("marshal taxonomy clusters: %w", err)
+	}
+
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO taxonomy_clusters (
+			id, run_id, cluster_key, label, llm_label, keywords, size, is_outlier, metrics
+		)
+		SELECT id, run_id, cluster_key, label, llm_label, keywords, size, is_outlier, metrics
+		FROM jsonb_to_recordset($1::jsonb) AS input(
+			id uuid, run_id uuid, cluster_key integer, label text, llm_label text,
+			keywords jsonb, size integer, is_outlier boolean, metrics jsonb
+		)`, string(payload)); err != nil {
+		return nil, fmt.Errorf("bulk insert taxonomy clusters: %w", err)
+	}
+
+	return clusterIDs, nil
+}
+
+type taxonomyMembershipInsert struct {
+	RunID            uuid.UUID       `json:"run_id"`
+	TenantID         string          `json:"tenant_id"`
+	ClusterID        uuid.UUID       `json:"cluster_id"`
+	FeedbackRecordID uuid.UUID       `json:"feedback_record_id"`
+	Confidence       *float64        `json:"confidence"`
+	Distance         *float64        `json:"distance"`
+	Metadata         json.RawMessage `json:"metadata"`
+}
+
+func insertTaxonomyMembershipsBulk(
+	ctx context.Context,
+	transaction tenantWriteTx,
+	run *models.TaxonomyRun,
+	memberships []models.TaxonomyResultMembership,
+	clusterIDs map[int]uuid.UUID,
+) error {
+	rows := make([]taxonomyMembershipInsert, 0, len(memberships))
+	for _, membership := range memberships {
+		clusterID, ok := clusterIDs[membership.ClusterKey]
+		if !ok {
+			return huberrors.NewValidationError("memberships.cluster_key", "references an unknown cluster")
+		}
+
+		rows = append(rows, taxonomyMembershipInsert{
+			RunID: run.ID, TenantID: run.TenantID, ClusterID: clusterID,
+			FeedbackRecordID: membership.FeedbackRecordID,
+			Confidence:       membership.Confidence, Distance: membership.Distance,
+			Metadata: rawOrDefault(membership.Metadata, defaultJSONObj),
+		})
+	}
+
+	payload, err := json.Marshal(rows)
+	if err != nil {
+		return fmt.Errorf("marshal taxonomy memberships: %w", err)
+	}
+
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO taxonomy_cluster_memberships (
+			run_id, tenant_id, cluster_id, feedback_record_id, confidence, distance, metadata
+		)
+		SELECT run_id, tenant_id, cluster_id, feedback_record_id, confidence, distance, metadata
+		FROM jsonb_to_recordset($1::jsonb) AS input(
+			run_id uuid, tenant_id text, cluster_id uuid, feedback_record_id uuid,
+			confidence double precision, distance double precision, metadata jsonb
+		)`, string(payload)); err != nil {
+		return fmt.Errorf("bulk insert taxonomy cluster memberships: %w", err)
+	}
+
+	return nil
+}
+
+type taxonomyNodeInsert struct {
+	ID            uuid.UUID       `json:"id"`
+	RunID         uuid.UUID       `json:"run_id"`
+	ParentID      *uuid.UUID      `json:"parent_id"`
+	ClusterID     *uuid.UUID      `json:"cluster_id"`
+	NodeType      string          `json:"node_type"`
+	Label         string          `json:"label"`
+	OriginalLabel string          `json:"original_label"`
+	Description   *string         `json:"description"`
+	Level         int             `json:"level"`
+	SortOrder     int             `json:"sort_order"`
+	Metadata      json.RawMessage `json:"metadata"`
+}
+
+func insertTaxonomyNodesBulk(
+	ctx context.Context,
+	transaction tenantWriteTx,
+	runID uuid.UUID,
+	nodes []models.TaxonomyResultNode,
+	clusterIDs map[int]uuid.UUID,
+) error {
+	ordered := append([]models.TaxonomyResultNode(nil), nodes...)
+	sort.SliceStable(ordered, func(leftIndex, rightIndex int) bool {
+		if ordered[leftIndex].Level == ordered[rightIndex].Level {
+			if ordered[leftIndex].SortOrder == ordered[rightIndex].SortOrder {
+				return ordered[leftIndex].NodeKey < ordered[rightIndex].NodeKey
+			}
+
+			return ordered[leftIndex].SortOrder < ordered[rightIndex].SortOrder
+		}
+
+		return ordered[leftIndex].Level < ordered[rightIndex].Level
+	})
+
+	nodeIDs := make(map[string]uuid.UUID, len(ordered))
+
+	rows := make([]taxonomyNodeInsert, 0, len(ordered))
+	for _, node := range ordered {
+		if _, exists := nodeIDs[node.NodeKey]; exists {
+			return huberrors.NewValidationError("nodes.node_key", "contains a duplicate node")
+		}
+
+		var parentID *uuid.UUID
+
+		if node.ParentKey != nil {
+			resolved, ok := nodeIDs[*node.ParentKey]
+			if !ok {
+				return huberrors.NewValidationError("nodes.parent_key", "references an unknown parent")
+			}
+
+			parentID = &resolved
+		}
+
+		var clusterID *uuid.UUID
+
+		if node.ClusterKey != nil {
+			resolved, ok := clusterIDs[*node.ClusterKey]
+			if !ok {
+				return huberrors.NewValidationError("nodes.cluster_key", "references an unknown cluster")
+			}
+
+			clusterID = &resolved
+		}
+
+		nodeID := uuid.New()
+		nodeIDs[node.NodeKey] = nodeID
+		rows = append(rows, taxonomyNodeInsert{
+			ID: nodeID, RunID: runID, ParentID: parentID, ClusterID: clusterID,
+			NodeType: string(node.NodeType), Label: node.Label, OriginalLabel: node.Label,
+			Description: node.Description, Level: node.Level, SortOrder: node.SortOrder,
+			Metadata: rawOrDefault(node.Metadata, defaultJSONObj),
+		})
+	}
+
+	payload, err := json.Marshal(rows)
+	if err != nil {
+		return fmt.Errorf("marshal taxonomy nodes: %w", err)
+	}
+
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO taxonomy_nodes (
+			id, run_id, parent_id, cluster_id, node_type, label, original_label,
+			description, level, sort_order, metadata
+		)
+		SELECT id, run_id, parent_id, cluster_id, node_type, label, original_label,
+			description, level, sort_order, metadata
+		FROM jsonb_to_recordset($1::jsonb) AS input(
+			id uuid, run_id uuid, parent_id uuid, cluster_id uuid, node_type taxonomy_node_type_enum,
+			label text, original_label text, description text, level integer,
+			sort_order integer, metadata jsonb
+		)`, string(payload)); err != nil {
+		return fmt.Errorf("bulk insert taxonomy nodes: %w", err)
+	}
+
+	return nil
+}
+
+func taxonomyResultDigestsMatch(existing, incoming json.RawMessage) bool {
+	existingDigest := taxonomyMetricString(existing, "result_digest")
+
+	return existingDigest != "" && existingDigest == taxonomyMetricString(incoming, "result_digest")
+}
+
+func taxonomyMetricString(metrics json.RawMessage, key string) string {
+	values := make(map[string]any)
+	if err := json.Unmarshal(metrics, &values); err != nil {
+		return ""
+	}
+
+	value, _ := values[key].(string)
+
+	return value
+}
+
+func taxonomyFailureCallbackMatches(
+	run *models.TaxonomyRun,
+	message string,
+	errorCode models.TaxonomyRunFailureCode,
+	metrics json.RawMessage,
+) bool {
+	if run.Error == nil || *run.Error != message || run.ErrorCode == nil || *run.ErrorCode != errorCode {
+		return false
+	}
+
+	return taxonomyCanonicalJSONEqual(run.Metrics, metrics)
+}
+
+func taxonomyCanonicalJSONEqual(left, right json.RawMessage) bool {
+	var leftValue, rightValue any
+	if json.Unmarshal(rawOrDefault(left, defaultJSONObj), &leftValue) != nil ||
+		json.Unmarshal(rawOrDefault(right, defaultJSONObj), &rightValue) != nil {
+		return false
+	}
+
+	leftCanonical, leftErr := json.Marshal(leftValue)
+	rightCanonical, rightErr := json.Marshal(rightValue)
+
+	return leftErr == nil && rightErr == nil && string(leftCanonical) == string(rightCanonical)
 }
 
 // GetTree returns the visible taxonomy tree for a run.

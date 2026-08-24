@@ -24,7 +24,12 @@ type mockTaxonomyRepo struct {
 	markRunFailedCode    models.TaxonomyRunFailureCode
 	markRunFailedTenant  string
 	markRunFailedMetrics json.RawMessage
+	markRunFailedCalls   int
 	heartbeatTenant      string
+	storeResultTenant    string
+	storeResultRequest   models.TaxonomyRunResultRequest
+	storeResultRun       *models.TaxonomyRun
+	storeResultCalls     int
 
 	countNodeRecords       []models.TaxonomyNodeRecordCount
 	countNodeRecordsErr    error
@@ -75,6 +80,7 @@ func (m *mockTaxonomyRepo) MarkRunFailed(
 	errorCode models.TaxonomyRunFailureCode,
 	metrics json.RawMessage,
 ) (*models.TaxonomyRun, error) {
+	m.markRunFailedCalls++
 	m.markRunFailedTenant = tenantID
 	m.markRunFailedMessage = message
 	m.markRunFailedCode = errorCode
@@ -135,11 +141,19 @@ func (m *mockTaxonomyRepo) GetRunInput(
 
 func (m *mockTaxonomyRepo) StoreResultAndActivate(
 	_ context.Context,
-	_ uuid.UUID,
-	_ string,
-	_ models.TaxonomyRunResultRequest,
+	runID uuid.UUID,
+	tenantID string,
+	req models.TaxonomyRunResultRequest,
 ) (*models.TaxonomyRun, error) {
-	return nil, nil
+	m.storeResultCalls++
+	m.storeResultTenant = tenantID
+	m.storeResultRequest = req
+
+	if m.storeResultRun != nil {
+		return m.storeResultRun, nil
+	}
+
+	return &models.TaxonomyRun{ID: runID, TenantID: tenantID, Status: models.TaxonomyRunStatusSucceeded}, nil
 }
 
 func (m *mockTaxonomyRepo) GetTree(
@@ -283,6 +297,107 @@ func TestTaxonomyService_StartManualRunMarksServiceUnavailableFailure(t *testing
 	}
 }
 
+func TestTaxonomyService_StartManualRunRequiresNinetyPercentEmbeddingCoverage(t *testing.T) {
+	repo := &mockTaxonomyRepo{countRecordCount: 100, countEmbeddingCount: 89}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{
+		Repo:           repo,
+		Starter:        successfulTaxonomyStarter{},
+		EmbeddingModel: "text-embedding-004",
+	})
+
+	result, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
+		TaxonomyScope: models.TaxonomyScope{
+			TenantID:   "tenant-1",
+			SourceType: "survey",
+			FieldID:    "question-1",
+		},
+	})
+	if err == nil {
+		t.Fatal("StartManualRun() error = nil, want embedding coverage validation error")
+	}
+
+	if result != nil {
+		t.Fatalf("StartManualRun() result = %+v, want nil", result)
+	}
+
+	if repo.createRun != nil || len(repo.createRunParams.Params) != 0 {
+		t.Fatal("CreateRunIfAvailable() was called for insufficient embedding coverage")
+	}
+}
+
+func TestTaxonomyService_StartManualRunMeasuresCoverageAgainstTheSelectedCap(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-111111111113")
+	repo := &mockTaxonomyRepo{
+		countRecordCount:    20_000,
+		countEmbeddingCount: 10_000,
+		createRun:           &models.TaxonomyRun{ID: runID, Status: models.TaxonomyRunStatusPending},
+		createRunCreated:    true,
+	}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{
+		Repo:           repo,
+		Starter:        successfulTaxonomyStarter{},
+		EmbeddingModel: "text-embedding-004",
+	})
+
+	_, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
+		TaxonomyScope: models.TaxonomyScope{
+			TenantID:   "tenant-1",
+			SourceType: "survey",
+			FieldID:    "question-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartManualRun() error = %v", err)
+	}
+}
+
+func TestTaxonomyService_StartManualRunStoresBoundedSelectionContract(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-111111111112")
+	repo := &mockTaxonomyRepo{
+		countRecordCount:    12_000,
+		countEmbeddingCount: 11_000,
+		createRun:           &models.TaxonomyRun{ID: runID, Status: models.TaxonomyRunStatusPending},
+		createRunCreated:    true,
+	}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{
+		Repo:           repo,
+		Starter:        successfulTaxonomyStarter{},
+		EmbeddingModel: "text-embedding-004",
+	})
+
+	_, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
+		TaxonomyScope: models.TaxonomyScope{
+			TenantID:   "tenant-1",
+			SourceType: "survey",
+			FieldID:    "question-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartManualRun() error = %v", err)
+	}
+
+	var params struct {
+		InputSelection struct {
+			EligibleCount          int    `json:"eligible_count"`
+			EmbeddingEligibleCount int    `json:"embedding_eligible_count"`
+			SelectedCount          int    `json:"selected_count"`
+			SelectionCap           int    `json:"selection_cap"`
+			TruncationFlag         bool   `json:"truncation_flag"`
+			SelectionStrategy      string `json:"selection_strategy"`
+		} `json:"input_selection"`
+	}
+	if err := json.Unmarshal(repo.createRunParams.Params, &params); err != nil {
+		t.Fatalf("unmarshal run params: %v", err)
+	}
+
+	selection := params.InputSelection
+	if selection.EligibleCount != 12_000 || selection.EmbeddingEligibleCount != 11_000 ||
+		selection.SelectedCount != 10_000 || selection.SelectionCap != 10_000 ||
+		!selection.TruncationFlag || selection.SelectionStrategy != "most_recent" {
+		t.Fatalf("input selection = %+v", selection)
+	}
+}
+
 func TestTaxonomyService_HeartbeatResolvesTenant(t *testing.T) {
 	runID := uuid.MustParse("018e1234-5678-9abc-def0-333333333333")
 	repo := &mockTaxonomyRepo{internalRun: &models.TaxonomyRun{ID: runID, TenantID: "tenant-7"}}
@@ -361,6 +476,129 @@ func TestTaxonomyService_FailRunPersistsSafeDiagnosticsInMetrics(t *testing.T) {
 
 	if diagnostics.TotalTokens == nil || *diagnostics.TotalTokens != 42 {
 		t.Fatalf("persisted total tokens = %v", diagnostics.TotalTokens)
+	}
+}
+
+func TestTaxonomyService_FailRunIsIdempotentForIdenticalTerminalCallback(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-222222222224")
+	message := "provider request failed"
+	code := models.TaxonomyRunFailureCodeServiceUnavailable
+	diagnostics := &models.TaxonomyRunFailureDiagnostics{
+		Phase:            "taxonomy_generation",
+		FailureReason:    "provider_timeout",
+		GenerationStep:   "hierarchy_plan",
+		ValidationReason: "none",
+		RecoveryAction:   "provider_retry",
+	}
+
+	metrics, err := marshalFailureDiagnostics(diagnostics)
+	if err != nil {
+		t.Fatalf("marshal diagnostics: %v", err)
+	}
+
+	repo := &mockTaxonomyRepo{internalRun: &models.TaxonomyRun{
+		ID: runID, TenantID: "tenant-1", Status: models.TaxonomyRunStatusFailed,
+		Error: &message, ErrorCode: &code, Metrics: metrics,
+	}}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+	run, err := svc.FailRun(context.Background(), runID, models.TaxonomyRunFailedRequest{
+		Error: message, ErrorCode: code, Diagnostics: diagnostics,
+	})
+	if err != nil {
+		t.Fatalf("FailRun() error = %v", err)
+	}
+
+	if run != repo.internalRun {
+		t.Fatal("FailRun() did not return the existing terminal run")
+	}
+
+	if repo.markRunFailedCalls != 0 {
+		t.Fatalf("MarkRunFailed() calls = %d, want 0", repo.markRunFailedCalls)
+	}
+}
+
+func TestTaxonomyService_CompleteRunAddsCanonicalDigestAndIsOrderIndependent(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-222222222225")
+	firstID := uuid.MustParse("018e1234-5678-9abc-def0-100000000001")
+	secondID := uuid.MustParse("018e1234-5678-9abc-def0-100000000002")
+	firstLabel, secondLabel := "First", "Second"
+	req := models.TaxonomyRunResultRequest{
+		Metrics: json.RawMessage(`{"duration_seconds":12}`),
+		Clusters: []models.TaxonomyResultCluster{
+			{ClusterKey: 2, Label: &secondLabel, Size: 1},
+			{ClusterKey: 1, Label: &firstLabel, Size: 1},
+		},
+		Memberships: []models.TaxonomyResultMembership{
+			{ClusterKey: 2, FeedbackRecordID: secondID},
+			{ClusterKey: 1, FeedbackRecordID: firstID},
+		},
+		Nodes: []models.TaxonomyResultNode{
+			{NodeKey: "root", NodeType: models.TaxonomyNodeTypeRoot, Label: "Feedback", Level: 0},
+			{NodeKey: "level-2", ParentKey: new("root"), NodeType: models.TaxonomyNodeTypeBranch, Label: "Experience", Level: 1},
+			{NodeKey: "level-3", ParentKey: new("level-2"), NodeType: models.TaxonomyNodeTypeBranch, Label: "Product", Level: 2},
+			{NodeKey: "level-4", ParentKey: new("level-3"), NodeType: models.TaxonomyNodeTypeBranch, Label: "Specific Topics", Level: 3},
+			{NodeKey: "leaf-2", ParentKey: new("level-4"), ClusterKey: new(2), NodeType: models.TaxonomyNodeTypeLeaf, Label: secondLabel, Level: 4},
+			{
+				NodeKey: "leaf-1", ParentKey: new("level-4"), ClusterKey: new(1),
+				NodeType: models.TaxonomyNodeTypeLeaf, Label: firstLabel, Level: 4, SortOrder: 1,
+			},
+		},
+	}
+
+	reordered := req
+	reordered.Clusters = []models.TaxonomyResultCluster{req.Clusters[1], req.Clusters[0]}
+	reordered.Memberships = []models.TaxonomyResultMembership{req.Memberships[1], req.Memberships[0]}
+	reordered.Nodes = []models.TaxonomyResultNode{
+		req.Nodes[5], req.Nodes[4], req.Nodes[3], req.Nodes[2], req.Nodes[1], req.Nodes[0],
+	}
+
+	firstDigest, err := canonicalTaxonomyResultDigest(req)
+	if err != nil {
+		t.Fatalf("canonicalTaxonomyResultDigest() error = %v", err)
+	}
+
+	secondDigest, err := canonicalTaxonomyResultDigest(reordered)
+	if err != nil {
+		t.Fatalf("canonicalTaxonomyResultDigest(reordered) error = %v", err)
+	}
+
+	if firstDigest != secondDigest {
+		t.Fatalf("digest changed with ordering: %q != %q", firstDigest, secondDigest)
+	}
+
+	repo := &mockTaxonomyRepo{internalRun: &models.TaxonomyRun{
+		ID: runID, TenantID: "tenant-1", Status: models.TaxonomyRunStatusRunning,
+	}}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+	run, err := svc.CompleteRun(context.Background(), runID, req)
+	if err != nil {
+		t.Fatalf("CompleteRun() error = %v", err)
+	}
+
+	if run.Status != models.TaxonomyRunStatusSucceeded {
+		t.Fatalf("CompleteRun() status = %q", run.Status)
+	}
+
+	if repo.storeResultCalls != 1 || repo.storeResultTenant != "tenant-1" {
+		t.Fatalf("StoreResultAndActivate() calls=%d tenant=%q", repo.storeResultCalls, repo.storeResultTenant)
+	}
+
+	if got := taxonomyMetricString(repo.storeResultRequest.Metrics, "result_digest"); got != firstDigest {
+		t.Fatalf("persisted result digest = %q, want %q", got, firstDigest)
+	}
+
+	repo.internalRun = &models.TaxonomyRun{
+		ID: runID, TenantID: "tenant-1", Status: models.TaxonomyRunStatusSucceeded,
+		Metrics: repo.storeResultRequest.Metrics,
+	}
+	if _, err := svc.CompleteRun(context.Background(), runID, reordered); err != nil {
+		t.Fatalf("idempotent CompleteRun() error = %v", err)
+	}
+
+	if repo.storeResultCalls != 1 {
+		t.Fatalf("StoreResultAndActivate() calls after retry = %d, want 1", repo.storeResultCalls)
 	}
 }
 

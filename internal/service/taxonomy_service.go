@@ -1,11 +1,15 @@
 package service
 
 import (
+	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +31,12 @@ var (
 )
 
 const defaultMinimumTaxonomyEmbeddingCount = 20
+
+const (
+	taxonomySelectionCap             = 10_000
+	minimumTaxonomyEmbeddingCoverage = 0.90
+	percentageScale                  = 100.0
+)
 
 const directoryTaxonomyFieldLabel = "All feedback"
 
@@ -163,6 +173,21 @@ func (s *TaxonomyService) StartManualRun(
 		)
 	}
 
+	selectedCount := min(recordCount, taxonomySelectionCap)
+
+	selectedEmbeddingCount := min(embeddingCount, selectedCount)
+	if selectedCount > 0 && float64(selectedEmbeddingCount)/float64(selectedCount) < minimumTaxonomyEmbeddingCoverage {
+		return nil, huberrors.NewValidationError(
+			scopeValidationField(scope),
+			fmt.Sprintf(
+				"at least %.0f%% embedding coverage is required; found %d of %d selected records",
+				minimumTaxonomyEmbeddingCoverage*percentageScale,
+				selectedEmbeddingCount,
+				selectedCount,
+			),
+		)
+	}
+
 	fieldLabel := req.FieldLabel
 	if fieldLabel != nil {
 		trimmed := strings.TrimSpace(*fieldLabel)
@@ -178,7 +203,7 @@ func (s *TaxonomyService) StartManualRun(
 		fieldLabel = discoveredFieldLabel
 	}
 
-	params := taxonomyRunParams(req.ActorID, s.embeddingModel)
+	params := taxonomyRunParams(req.ActorID, s.embeddingModel, recordCount, embeddingCount)
 
 	run, created, err := s.repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{
 		TaxonomyScope:  scope,
@@ -360,9 +385,31 @@ func (s *TaxonomyService) CompleteRun(
 	runID uuid.UUID,
 	req models.TaxonomyRunResultRequest,
 ) (*models.TaxonomyRun, error) {
+	if err := validateTaxonomyResultRequest(req); err != nil {
+		return nil, err
+	}
+
 	existingRun, err := s.repo.GetRunForInternalService(ctx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run: %w", err)
+	}
+
+	resultDigest, err := canonicalTaxonomyResultDigest(req)
+	if err != nil {
+		return nil, huberrors.NewValidationError("result", "taxonomy result cannot be canonicalized")
+	}
+
+	req.Metrics, err = mergeTaxonomyMetric(req.Metrics, "result_digest", resultDigest)
+	if err != nil {
+		return nil, huberrors.NewValidationError("metrics", "taxonomy metrics must be a JSON object")
+	}
+
+	if existingRun.Status == models.TaxonomyRunStatusSucceeded {
+		if taxonomyMetricString(existingRun.Metrics, "result_digest") == resultDigest {
+			return existingRun, nil
+		}
+
+		return nil, huberrors.NewConflictError("taxonomy run already succeeded with a different result")
 	}
 
 	run, err := s.repo.StoreResultAndActivate(ctx, runID, existingRun.TenantID, req)
@@ -373,6 +420,164 @@ func (s *TaxonomyService) CompleteRun(
 	s.recordTerminal(ctx, run, "")
 
 	return run, nil
+}
+
+func validateTaxonomyResultRequest(req models.TaxonomyRunResultRequest) error {
+	clusterSizes, err := validateTaxonomyResultClusters(req.Clusters)
+	if err != nil {
+		return err
+	}
+
+	if err := validateTaxonomyResultMemberships(req.Memberships, clusterSizes); err != nil {
+		return err
+	}
+
+	return validateTaxonomyResultNodes(req.Nodes, clusterSizes)
+}
+
+//nolint:wsl_v5 // Adjacent guards document independent result invariants.
+func validateTaxonomyResultClusters(clusters []models.TaxonomyResultCluster) (map[int]int, error) {
+	clusterSizes := make(map[int]int, len(clusters))
+	for _, cluster := range clusters {
+		if _, exists := clusterSizes[cluster.ClusterKey]; exists {
+			return nil, huberrors.NewValidationError("result.clusters", "cluster_key values must be unique")
+		}
+		if cluster.Size <= 0 {
+			return nil, huberrors.NewValidationError("result.clusters", "cluster sizes must be positive")
+		}
+		if cluster.IsOutlier != (cluster.ClusterKey == -1) {
+			return nil, huberrors.NewValidationError("result.clusters", "outlier cluster invariant failed")
+		}
+		if cluster.ClusterKey == -1 {
+			label := cluster.Label
+			if cluster.LLMLabel != nil {
+				label = cluster.LLMLabel
+			}
+			if label == nil || strings.TrimSpace(*label) != "Uncategorized Feedback" {
+				return nil, huberrors.NewValidationError("result.clusters", "outlier cluster label must be canonical")
+			}
+		}
+
+		clusterSizes[cluster.ClusterKey] = cluster.Size
+	}
+	if len(clusterSizes) == 0 {
+		return nil, huberrors.NewValidationError("result.clusters", "at least one cluster is required")
+	}
+
+	return clusterSizes, nil
+}
+
+//nolint:wsl_v5 // Adjacent guards document independent result invariants.
+func validateTaxonomyResultMemberships(
+	memberships []models.TaxonomyResultMembership,
+	clusterSizes map[int]int,
+) error {
+	membershipCounts := make(map[int]int, len(clusterSizes))
+	seenRecords := make(map[uuid.UUID]struct{}, len(memberships))
+	for _, membership := range memberships {
+		if _, exists := clusterSizes[membership.ClusterKey]; !exists {
+			return huberrors.NewValidationError("result.memberships", "membership references an unknown cluster")
+		}
+		if membership.FeedbackRecordID == uuid.Nil {
+			return huberrors.NewValidationError("result.memberships", "feedback_record_id is required")
+		}
+		if _, exists := seenRecords[membership.FeedbackRecordID]; exists {
+			return huberrors.NewValidationError("result.memberships", "feedback records must appear exactly once")
+		}
+		if membership.Confidence != nil && (math.IsNaN(*membership.Confidence) || math.IsInf(*membership.Confidence, 0)) {
+			return huberrors.NewValidationError("result.memberships", "confidence must be finite")
+		}
+		if membership.Distance != nil && (math.IsNaN(*membership.Distance) || math.IsInf(*membership.Distance, 0)) {
+			return huberrors.NewValidationError("result.memberships", "distance must be finite")
+		}
+
+		seenRecords[membership.FeedbackRecordID] = struct{}{}
+		membershipCounts[membership.ClusterKey]++
+	}
+	for clusterKey, size := range clusterSizes {
+		if membershipCounts[clusterKey] != size {
+			return huberrors.NewValidationError("result.memberships", "cluster size must match membership count")
+		}
+	}
+
+	return nil
+}
+
+//nolint:cyclop,wsl_v5 // Adjacent guards keep the five-level tree contract explicit and auditable.
+func validateTaxonomyResultNodes(nodes []models.TaxonomyResultNode, clusterSizes map[int]int) error {
+	nodesByKey := make(map[string]models.TaxonomyResultNode, len(nodes))
+	childrenByParent := make(map[string]int, len(nodes))
+	siblingLabels := make(map[string]map[string]struct{}, len(nodes))
+	rootCount := 0
+	leafClusters := make(map[int]struct{}, len(clusterSizes))
+	for _, node := range nodes {
+		if _, exists := nodesByKey[node.NodeKey]; exists {
+			return huberrors.NewValidationError("result.nodes", "node_key values must be unique")
+		}
+		if node.SortOrder < 0 {
+			return huberrors.NewValidationError("result.nodes", "sort_order must be non-negative")
+		}
+
+		nodesByKey[node.NodeKey] = node
+		if node.ParentKey != nil {
+			childrenByParent[*node.ParentKey]++
+			normalizedLabel := strings.ToLower(strings.Join(strings.Fields(node.Label), " "))
+			if siblingLabels[*node.ParentKey] == nil {
+				siblingLabels[*node.ParentKey] = make(map[string]struct{})
+			}
+			if _, exists := siblingLabels[*node.ParentKey][normalizedLabel]; exists {
+				return huberrors.NewValidationError("result.nodes", "sibling labels must be unique")
+			}
+			siblingLabels[*node.ParentKey][normalizedLabel] = struct{}{}
+		}
+
+		switch node.NodeType {
+		case models.TaxonomyNodeTypeRoot:
+			rootCount++
+			if node.Level != 0 || node.ParentKey != nil || node.ClusterKey != nil {
+				return huberrors.NewValidationError("result.nodes", "root node must be level 0 without parent or cluster")
+			}
+		case models.TaxonomyNodeTypeBranch:
+			if node.Level < 1 || node.Level > 3 || node.ParentKey == nil || node.ClusterKey != nil {
+				return huberrors.NewValidationError("result.nodes", "branch nodes must occupy levels 1 through 3")
+			}
+		case models.TaxonomyNodeTypeLeaf:
+			if node.Level != 4 || node.ParentKey == nil || node.ClusterKey == nil {
+				return huberrors.NewValidationError("result.nodes", "leaf nodes must occupy level 4 and reference a cluster")
+			}
+			if _, exists := clusterSizes[*node.ClusterKey]; !exists {
+				return huberrors.NewValidationError("result.nodes", "leaf references an unknown cluster")
+			}
+			if _, exists := leafClusters[*node.ClusterKey]; exists {
+				return huberrors.NewValidationError("result.nodes", "clusters must appear in exactly one leaf")
+			}
+			if *node.ClusterKey == -1 && strings.TrimSpace(node.Label) != "Uncategorized Feedback" {
+				return huberrors.NewValidationError("result.nodes", "outlier leaf label must be canonical")
+			}
+			leafClusters[*node.ClusterKey] = struct{}{}
+		default:
+			return huberrors.NewValidationError("result.nodes", "node_type is invalid")
+		}
+	}
+	if rootCount != 1 {
+		return huberrors.NewValidationError("result.nodes", "exactly one root node is required")
+	}
+	if len(leafClusters) != len(clusterSizes) {
+		return huberrors.NewValidationError("result.nodes", "leaves must cover every cluster exactly once")
+	}
+	for nodeKey, node := range nodesByKey {
+		if node.ParentKey != nil {
+			parent, exists := nodesByKey[*node.ParentKey]
+			if !exists || parent.Level != node.Level-1 || parent.NodeType == models.TaxonomyNodeTypeLeaf {
+				return huberrors.NewValidationError("result.nodes", "parent references must form an exact five-level tree")
+			}
+		}
+		if node.NodeType != models.TaxonomyNodeTypeLeaf && childrenByParent[nodeKey] == 0 {
+			return huberrors.NewValidationError("result.nodes", "root and branch nodes must have children")
+		}
+	}
+
+	return nil
 }
 
 // FailRun records a taxonomy run failure.
@@ -391,6 +596,14 @@ func (s *TaxonomyService) FailRun(
 	metrics, err := marshalFailureDiagnostics(req.Diagnostics)
 	if err != nil {
 		return nil, fmt.Errorf("marshal taxonomy failure diagnostics: %w", err)
+	}
+
+	if existingRun.Status == models.TaxonomyRunStatusFailed {
+		if taxonomyFailureMatches(existingRun, sanitized, normalizedCode, metrics) {
+			return existingRun, nil
+		}
+
+		return nil, huberrors.NewConflictError("taxonomy run already failed with a different result")
 	}
 
 	run, err := s.repo.MarkRunFailed(ctx, runID, existingRun.TenantID, sanitized, normalizedCode, metrics)
@@ -653,10 +866,19 @@ func scopeValidationField(scope models.TaxonomyScope) string {
 	return "field_id"
 }
 
-func taxonomyRunParams(actorID *string, embeddingModel string) json.RawMessage {
-	params := map[string]string{
+func taxonomyRunParams(actorID *string, embeddingModel string, eligibleCount, embeddingCount int) json.RawMessage {
+	selectedCount := min(eligibleCount, taxonomySelectionCap)
+	params := map[string]any{
 		"trigger":         "manual",
 		"embedding_model": embeddingModel,
+		"input_selection": map[string]any{
+			"eligible_count":           eligibleCount,
+			"embedding_eligible_count": embeddingCount,
+			"selected_count":           selectedCount,
+			"selection_cap":            taxonomySelectionCap,
+			"truncation_flag":          eligibleCount > selectedCount,
+			"selection_strategy":       "most_recent",
+		},
 	}
 
 	if actorID != nil && strings.TrimSpace(*actorID) != "" {
@@ -666,6 +888,111 @@ func taxonomyRunParams(actorID *string, embeddingModel string) json.RawMessage {
 	raw, err := json.Marshal(params)
 	if err != nil {
 		return json.RawMessage(`{"trigger":"manual"}`)
+	}
+
+	return raw
+}
+
+func canonicalTaxonomyResultDigest(req models.TaxonomyRunResultRequest) (string, error) {
+	clusters := slices.Clone(req.Clusters)
+	memberships := slices.Clone(req.Memberships)
+	nodes := slices.Clone(req.Nodes)
+
+	slices.SortFunc(clusters, func(left, right models.TaxonomyResultCluster) int {
+		return cmp.Compare(left.ClusterKey, right.ClusterKey)
+	})
+	slices.SortFunc(memberships, func(left, right models.TaxonomyResultMembership) int {
+		if byRecord := strings.Compare(left.FeedbackRecordID.String(), right.FeedbackRecordID.String()); byRecord != 0 {
+			return byRecord
+		}
+
+		return cmp.Compare(left.ClusterKey, right.ClusterKey)
+	})
+	slices.SortFunc(nodes, func(left, right models.TaxonomyResultNode) int {
+		return strings.Compare(left.NodeKey, right.NodeKey)
+	})
+
+	raw, err := json.Marshal(struct {
+		Clusters    []models.TaxonomyResultCluster    `json:"clusters"`
+		Memberships []models.TaxonomyResultMembership `json:"memberships"`
+		Nodes       []models.TaxonomyResultNode       `json:"nodes"`
+	}{Clusters: clusters, Memberships: memberships, Nodes: nodes})
+	if err != nil {
+		return "", fmt.Errorf("marshal taxonomy result: %w", err)
+	}
+
+	var canonical any
+	if err := json.Unmarshal(raw, &canonical); err != nil {
+		return "", fmt.Errorf("parse taxonomy result: %w", err)
+	}
+
+	raw, err = json.Marshal(canonical)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize taxonomy result: %w", err)
+	}
+
+	digest := sha256.Sum256(raw)
+
+	return fmt.Sprintf("sha256:%x", digest), nil
+}
+
+func mergeTaxonomyMetric(metrics json.RawMessage, key, value string) (json.RawMessage, error) {
+	values := make(map[string]any)
+	if len(metrics) > 0 && string(metrics) != "null" {
+		if err := json.Unmarshal(metrics, &values); err != nil {
+			return nil, fmt.Errorf("unmarshal taxonomy metrics: %w", err)
+		}
+	}
+
+	values[key] = value
+
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("marshal taxonomy metrics: %w", err)
+	}
+
+	return raw, nil
+}
+
+func taxonomyMetricString(metrics json.RawMessage, key string) string {
+	values := make(map[string]any)
+	if err := json.Unmarshal(metrics, &values); err != nil {
+		return ""
+	}
+
+	value, _ := values[key].(string)
+
+	return value
+}
+
+func taxonomyFailureMatches(
+	run *models.TaxonomyRun,
+	message string,
+	code models.TaxonomyRunFailureCode,
+	metrics json.RawMessage,
+) bool {
+	if run.Error == nil || *run.Error != message || run.ErrorCode == nil || *run.ErrorCode != code {
+		return false
+	}
+
+	return canonicalJSONEqual(run.Metrics, rawOrEmptyObject(metrics))
+}
+
+func canonicalJSONEqual(left, right json.RawMessage) bool {
+	var leftValue, rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+
+	leftRaw, leftErr := json.Marshal(leftValue)
+	rightRaw, rightErr := json.Marshal(rightValue)
+
+	return leftErr == nil && rightErr == nil && slices.Equal(leftRaw, rightRaw)
+}
+
+func rawOrEmptyObject(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`)
 	}
 
 	return raw
