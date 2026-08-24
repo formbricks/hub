@@ -659,6 +659,25 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		assert.NotEmpty(t, input.Records[0].ValueText)
 	})
 
+	t.Run("run input selection metadata reflects records actually returned", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-input-selection")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+		seedEmbeddedFeedback(ctx, t, harness, scope, 1)
+		insertScopeFeedbackRecord(ctx, t, harness.db, scope)
+
+		runID := startRunForScope(ctx, t, harness, scope)
+		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"
+
+		var input models.TaxonomyRunInputResponse
+		requestTaxonomyJSON(ctx, t, http.MethodGet, inputURL, harness.internalToken, nil, http.StatusOK, &input)
+		require.Len(t, input.Records, 1)
+		assert.Equal(t, 2, input.Run.EligibleCount)
+		assert.Equal(t, 1, input.Run.SelectedCount)
+		assert.Equal(t, repository.MaxTaxonomyRunInputRows, input.Run.SelectionCap)
+		assert.True(t, input.Run.SelectionTruncated)
+		assert.Equal(t, "most_recent", input.Run.SelectionStrategy)
+	})
+
 	t.Run("get run input never includes another tenant's matching records", func(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-internal-input-tenant")
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
@@ -807,8 +826,8 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-internal-complete")
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
 
-		feedbackRecordID := insertScopeFeedbackRecord(ctx, t, harness.db, scope)
-		runID := createRunningRun(ctx, t, harness, scope)
+		feedbackRecordID := seedEmbeddedFeedback(ctx, t, harness, scope, 1)[0]
+		runID := startRunForScope(ctx, t, harness, scope)
 
 		result := validTaxonomyResult(feedbackRecordID)
 
@@ -954,6 +973,30 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 			ctx, t, http.MethodPut, resultURL, harness.internalToken, invalidDepth,
 			http.StatusBadRequest, response.CodeValidation, response.ProblemTypeValidation,
 		)
+
+		assertTaxonomyRunUnchanged(ctx, t, harness, runID, scope.TenantID)
+	})
+
+	t.Run("incomplete selected input coverage is rejected before persistence", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-incomplete-coverage")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+		feedbackRecordIDs := seedEmbeddedFeedback(ctx, t, harness, scope, 2)
+		runID := startRunForScope(ctx, t, harness, scope)
+		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
+
+		problem := requestTaxonomyProblem(
+			ctx,
+			t,
+			http.MethodPut,
+			resultURL,
+			harness.internalToken,
+			validTaxonomyResult(feedbackRecordIDs[0]),
+			http.StatusBadRequest,
+			response.CodeValidation,
+			response.ProblemTypeValidation,
+		)
+		assertTaxonomyInvalidParam(t, problem, "memberships", "selected run input")
+		assertTaxonomyRunUnchanged(ctx, t, harness, runID, scope.TenantID)
 	})
 
 	t.Run("failed payload validation is machine readable", func(t *testing.T) {
@@ -1011,6 +1054,27 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("failed diagnostics nested counts are bounded", func(t *testing.T) {
+		problem := requestTaxonomyProblem(
+			ctx,
+			t,
+			http.MethodPost,
+			harness.server.URL+"/internal/v1/taxonomy/runs/"+unknownRunID.String()+"/failed",
+			harness.internalToken,
+			models.TaxonomyRunFailedRequest{
+				Error:     "generation failed",
+				ErrorCode: models.TaxonomyRunFailureCodeGenerationFailed,
+				Diagnostics: &models.TaxonomyRunFailureDiagnostics{
+					PartialMetrics: &models.TaxonomyRunPartialMetrics{ClusterCount: 5000},
+				},
+			},
+			http.StatusBadRequest,
+			response.CodeValidation,
+			response.ProblemTypeValidation,
+		)
+		assertTaxonomyInvalidParam(t, problem, "cluster_count", "1000")
+	})
+
 	tests := []struct {
 		name   string
 		method string
@@ -1057,8 +1121,8 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 	t.Run("repeating an identical result is idempotent but a different result conflicts", func(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-internal-complete-conflict")
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
-		feedbackRecordID := insertScopeFeedbackRecord(ctx, t, harness.db, scope)
-		runID := createRunningRun(ctx, t, harness, scope)
+		feedbackRecordID := seedEmbeddedFeedback(ctx, t, harness, scope, 1)[0]
+		runID := startRunForScope(ctx, t, harness, scope)
 		result := validTaxonomyResult(feedbackRecordID)
 		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
 
@@ -1254,6 +1318,34 @@ func createRunningRun(ctx context.Context, t *testing.T, harness *taxonomyTestSe
 	require.NoError(t, err)
 
 	return run.ID
+}
+
+func assertTaxonomyRunUnchanged(
+	ctx context.Context,
+	t *testing.T,
+	harness *taxonomyTestServer,
+	runID uuid.UUID,
+	tenantID string,
+) {
+	t.Helper()
+
+	run, err := harness.repo.GetRunForTenant(ctx, runID, tenantID)
+	require.NoError(t, err)
+	assert.Equal(t, models.TaxonomyRunStatusRunning, run.Status)
+	assert.Zero(t, run.ClusterCount)
+	assert.Zero(t, run.NodeCount)
+	assert.Equal(t, int64(0), countTenantDataRows(
+		ctx, t, harness.db, `SELECT COUNT(*) FROM taxonomy_clusters WHERE run_id = $1`, runID,
+	))
+	assert.Equal(t, int64(0), countTenantDataRows(
+		ctx, t, harness.db, `SELECT COUNT(*) FROM taxonomy_cluster_memberships WHERE run_id = $1`, runID,
+	))
+	assert.Equal(t, int64(0), countTenantDataRows(
+		ctx, t, harness.db, `SELECT COUNT(*) FROM taxonomy_nodes WHERE run_id = $1`, runID,
+	))
+	assert.Equal(t, int64(0), countTenantDataRows(
+		ctx, t, harness.db, `SELECT COUNT(*) FROM taxonomy_active_runs WHERE run_id = $1`, runID,
+	))
 }
 
 func validTaxonomyResult(feedbackRecordID uuid.UUID) models.TaxonomyRunResultRequest {

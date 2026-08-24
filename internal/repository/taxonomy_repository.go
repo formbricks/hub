@@ -16,6 +16,7 @@ import (
 	"github.com/pgvector/pgvector-go"
 
 	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/jsonutil"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -654,16 +655,16 @@ func (r *TaxonomyRepository) ListRuns(
 	return scanTaxonomyRuns(rows)
 }
 
-// maxTaxonomyRunInputRows caps how many (record, embedding) rows one run-input fetch may
+// MaxTaxonomyRunInputRows caps how many (record, embedding) rows one run-input fetch may
 // materialize. run.RecordCount is simply "all eligible records in scope" with no upper
 // bound, and each selected embedded row carries a 768-dim vector (~3 KB binary, ~8-10 KB as JSON) — a 200k-record
 // tenant would otherwise allocate multiple GB in the API process for a single internal request.
 // 10k rows ≈ 100 MB JSON keeps the endpoint safe while staying far above typical run sizes;
 // larger scopes are truncated to the most recent rows (the ORDER BY) and logged.
-const maxTaxonomyRunInputRows = 10_000
+const MaxTaxonomyRunInputRows = 10_000
 
 // GetRunInput returns feedback records and embeddings for a taxonomy run, capped at
-// maxTaxonomyRunInputRows (most recent first).
+// MaxTaxonomyRunInputRows (most recent first).
 func (r *TaxonomyRepository) GetRunInput(
 	ctx context.Context,
 	runID uuid.UUID,
@@ -676,12 +677,12 @@ func (r *TaxonomyRepository) GetRunInput(
 	}
 
 	limit := run.RecordCount
-	if limit > maxTaxonomyRunInputRows {
+	if limit > MaxTaxonomyRunInputRows {
 		slog.Warn("taxonomy run input truncated to the row cap",
 			"run_id", runID, "eligible_count", run.RecordCount,
-			"embedding_count", run.EmbeddingCount, "cap", maxTaxonomyRunInputRows)
+			"embedding_count", run.EmbeddingCount, "cap", MaxTaxonomyRunInputRows)
 
-		limit = maxTaxonomyRunInputRows
+		limit = MaxTaxonomyRunInputRows
 	}
 
 	rows, err := r.queryRunInputRows(ctx, run, limit, embeddingModel)
@@ -718,12 +719,52 @@ func (r *TaxonomyRepository) GetRunInput(
 	}
 
 	run.EligibleCount = run.RecordCount
-	run.SelectedCount = limit
-	run.SelectionCap = maxTaxonomyRunInputRows
-	run.SelectionTruncated = run.RecordCount > limit
+	run.SelectedCount = len(records)
+	run.SelectionCap = MaxTaxonomyRunInputRows
+	run.SelectionTruncated = run.RecordCount > len(records)
 	run.SelectionStrategy = "most_recent"
 
 	return &models.TaxonomyRunInputResponse{Run: *run, Records: records}, nil
+}
+
+// GetRunInputRecordIDs returns the exact bounded record selection a taxonomy result
+// must cover. It intentionally omits feedback text and embeddings so completion does
+// not materialize the full run input a second time.
+func (r *TaxonomyRepository) GetRunInputRecordIDs(
+	ctx context.Context,
+	runID uuid.UUID,
+	tenantID string,
+	embeddingModel string,
+) ([]uuid.UUID, error) {
+	run, err := r.GetRunForTenant(ctx, runID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	limit := min(run.RecordCount, MaxTaxonomyRunInputRows)
+
+	rows, err := r.queryRunInputRecordIDs(ctx, run, limit, embeddingModel)
+	if err != nil {
+		return nil, fmt.Errorf("get taxonomy run input record IDs: %w", err)
+	}
+	defer rows.Close()
+
+	recordIDs := make([]uuid.UUID, 0, limit)
+
+	for rows.Next() {
+		var recordID uuid.UUID
+		if err := rows.Scan(&recordID); err != nil {
+			return nil, fmt.Errorf("scan taxonomy run input record ID: %w", err)
+		}
+
+		recordIDs = append(recordIDs, recordID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate taxonomy run input record IDs: %w", err)
+	}
+
+	return recordIDs, nil
 }
 
 // StoreResultAndActivate stores generated taxonomy artifacts and activates the run.
@@ -1046,20 +1087,9 @@ func insertTaxonomyNodesBulk(
 }
 
 func taxonomyResultDigestsMatch(existing, incoming json.RawMessage) bool {
-	existingDigest := taxonomyMetricString(existing, "result_digest")
+	existingDigest := jsonutil.ObjectString(existing, "result_digest")
 
-	return existingDigest != "" && existingDigest == taxonomyMetricString(incoming, "result_digest")
-}
-
-func taxonomyMetricString(metrics json.RawMessage, key string) string {
-	values := make(map[string]any)
-	if err := json.Unmarshal(metrics, &values); err != nil {
-		return ""
-	}
-
-	value, _ := values[key].(string)
-
-	return value
+	return existingDigest != "" && existingDigest == jsonutil.ObjectString(incoming, "result_digest")
 }
 
 func taxonomyFailureCallbackMatches(
@@ -1072,20 +1102,7 @@ func taxonomyFailureCallbackMatches(
 		return false
 	}
 
-	return taxonomyCanonicalJSONEqual(run.Metrics, metrics)
-}
-
-func taxonomyCanonicalJSONEqual(left, right json.RawMessage) bool {
-	var leftValue, rightValue any
-	if json.Unmarshal(rawOrDefault(left, defaultJSONObj), &leftValue) != nil ||
-		json.Unmarshal(rawOrDefault(right, defaultJSONObj), &rightValue) != nil {
-		return false
-	}
-
-	leftCanonical, leftErr := json.Marshal(leftValue)
-	rightCanonical, rightErr := json.Marshal(rightValue)
-
-	return leftErr == nil && rightErr == nil && string(leftCanonical) == string(rightCanonical)
+	return jsonutil.CanonicalEqual(run.Metrics, metrics)
 }
 
 // GetTree returns the visible taxonomy tree for a run.
@@ -1393,6 +1410,50 @@ func (r *TaxonomyRepository) queryRunInputRows(
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query field taxonomy run input rows: %w", err)
+	}
+
+	return rows, nil
+}
+
+func (r *TaxonomyRepository) queryRunInputRecordIDs(
+	ctx context.Context,
+	run *models.TaxonomyRun,
+	limit int,
+	embeddingModel string,
+) (pgx.Rows, error) {
+	if run.ScopeType == models.TaxonomyScopeTypeDirectory {
+		rows, err := r.db.Query(ctx, `
+			SELECT fr.id
+			FROM feedback_records fr
+			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $3
+			WHERE fr.tenant_id = $1
+			  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+			ORDER BY fr.collected_at DESC, fr.id ASC
+			LIMIT $2`,
+			run.TenantID, limit, embeddingModel,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query directory taxonomy run input record IDs: %w", err)
+		}
+
+		return rows, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT fr.id
+		FROM feedback_records fr
+		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
+		WHERE fr.tenant_id = $1
+		  AND fr.source_type = $2
+		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
+		  AND fr.field_id = $4
+		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+		ORDER BY fr.collected_at DESC, fr.id ASC
+		LIMIT $5`,
+		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query field taxonomy run input record IDs: %w", err)
 	}
 
 	return rows, nil

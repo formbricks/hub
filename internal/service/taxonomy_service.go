@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/huberrors"
+	"github.com/formbricks/hub/internal/jsonutil"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
@@ -33,7 +34,6 @@ var (
 const defaultMinimumTaxonomyEmbeddingCount = 20
 
 const (
-	taxonomySelectionCap             = 10_000
 	minimumTaxonomyEmbeddingCoverage = 0.90
 	percentageScale                  = 100.0
 )
@@ -65,6 +65,12 @@ type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service 
 		tenantID string,
 		embeddingModel string,
 	) (*models.TaxonomyRunInputResponse, error)
+	GetRunInputRecordIDs(
+		ctx context.Context,
+		runID uuid.UUID,
+		tenantID string,
+		embeddingModel string,
+	) ([]uuid.UUID, error)
 	StoreResultAndActivate(
 		ctx context.Context,
 		runID uuid.UUID,
@@ -173,7 +179,7 @@ func (s *TaxonomyService) StartManualRun(
 		)
 	}
 
-	selectedCount := min(recordCount, taxonomySelectionCap)
+	selectedCount := min(recordCount, repository.MaxTaxonomyRunInputRows)
 
 	selectedEmbeddingCount := min(embeddingCount, selectedCount)
 	if selectedCount > 0 && float64(selectedEmbeddingCount)/float64(selectedCount) < minimumTaxonomyEmbeddingCoverage {
@@ -405,11 +411,20 @@ func (s *TaxonomyService) CompleteRun(
 	}
 
 	if existingRun.Status == models.TaxonomyRunStatusSucceeded {
-		if taxonomyMetricString(existingRun.Metrics, "result_digest") == resultDigest {
+		if jsonutil.ObjectString(existingRun.Metrics, "result_digest") == resultDigest {
 			return existingRun, nil
 		}
 
 		return nil, huberrors.NewConflictError("taxonomy run already succeeded with a different result")
+	}
+
+	selectedRecordIDs, err := s.repo.GetRunInputRecordIDs(ctx, runID, existingRun.TenantID, s.embeddingModel)
+	if err != nil {
+		return nil, fmt.Errorf("get selected taxonomy input records: %w", err)
+	}
+
+	if err := validateTaxonomyMembershipCoverage(req.Memberships, selectedRecordIDs); err != nil {
+		return nil, err
 	}
 
 	run, err := s.repo.StoreResultAndActivate(ctx, runID, existingRun.TenantID, req)
@@ -497,6 +512,34 @@ func validateTaxonomyResultMemberships(
 	for clusterKey, size := range clusterSizes {
 		if membershipCounts[clusterKey] != size {
 			return huberrors.NewValidationError("result.memberships", "cluster size must match membership count")
+		}
+	}
+
+	return nil
+}
+
+func validateTaxonomyMembershipCoverage(
+	memberships []models.TaxonomyResultMembership,
+	selectedRecordIDs []uuid.UUID,
+) error {
+	if len(memberships) != len(selectedRecordIDs) {
+		return huberrors.NewValidationError(
+			"result.memberships",
+			"memberships must exactly cover the selected run input",
+		)
+	}
+
+	selectedRecords := make(map[uuid.UUID]struct{}, len(selectedRecordIDs))
+	for _, recordID := range selectedRecordIDs {
+		selectedRecords[recordID] = struct{}{}
+	}
+
+	for _, membership := range memberships {
+		if _, exists := selectedRecords[membership.FeedbackRecordID]; !exists {
+			return huberrors.NewValidationError(
+				"result.memberships",
+				"memberships must exactly cover the selected run input",
+			)
 		}
 	}
 
@@ -867,7 +910,7 @@ func scopeValidationField(scope models.TaxonomyScope) string {
 }
 
 func taxonomyRunParams(actorID *string, embeddingModel string, eligibleCount, embeddingCount int) json.RawMessage {
-	selectedCount := min(eligibleCount, taxonomySelectionCap)
+	selectedCount := min(embeddingCount, repository.MaxTaxonomyRunInputRows)
 	params := map[string]any{
 		"trigger":         "manual",
 		"embedding_model": embeddingModel,
@@ -875,7 +918,7 @@ func taxonomyRunParams(actorID *string, embeddingModel string, eligibleCount, em
 			"eligible_count":           eligibleCount,
 			"embedding_eligible_count": embeddingCount,
 			"selected_count":           selectedCount,
-			"selection_cap":            taxonomySelectionCap,
+			"selection_cap":            repository.MaxTaxonomyRunInputRows,
 			"truncation_flag":          eligibleCount > selectedCount,
 			"selection_strategy":       "most_recent",
 		},
@@ -954,17 +997,6 @@ func mergeTaxonomyMetric(metrics json.RawMessage, key, value string) (json.RawMe
 	return raw, nil
 }
 
-func taxonomyMetricString(metrics json.RawMessage, key string) string {
-	values := make(map[string]any)
-	if err := json.Unmarshal(metrics, &values); err != nil {
-		return ""
-	}
-
-	value, _ := values[key].(string)
-
-	return value
-}
-
 func taxonomyFailureMatches(
 	run *models.TaxonomyRun,
 	message string,
@@ -975,25 +1007,5 @@ func taxonomyFailureMatches(
 		return false
 	}
 
-	return canonicalJSONEqual(run.Metrics, rawOrEmptyObject(metrics))
-}
-
-func canonicalJSONEqual(left, right json.RawMessage) bool {
-	var leftValue, rightValue any
-	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
-		return false
-	}
-
-	leftRaw, leftErr := json.Marshal(leftValue)
-	rightRaw, rightErr := json.Marshal(rightValue)
-
-	return leftErr == nil && rightErr == nil && slices.Equal(leftRaw, rightRaw)
-}
-
-func rawOrEmptyObject(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage(`{}`)
-	}
-
-	return raw
+	return jsonutil.CanonicalEqual(run.Metrics, metrics)
 }

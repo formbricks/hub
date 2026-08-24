@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/formbricks/hub/internal/jsonutil"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
 )
@@ -30,6 +31,8 @@ type mockTaxonomyRepo struct {
 	storeResultRequest   models.TaxonomyRunResultRequest
 	storeResultRun       *models.TaxonomyRun
 	storeResultCalls     int
+	selectedRecordIDs    []uuid.UUID
+	selectedRecordIDsErr error
 
 	countNodeRecords       []models.TaxonomyNodeRecordCount
 	countNodeRecordsErr    error
@@ -137,6 +140,15 @@ func (m *mockTaxonomyRepo) GetRunInput(
 	_ string,
 ) (*models.TaxonomyRunInputResponse, error) {
 	return nil, nil
+}
+
+func (m *mockTaxonomyRepo) GetRunInputRecordIDs(
+	_ context.Context,
+	_ uuid.UUID,
+	_ string,
+	_ string,
+) ([]uuid.UUID, error) {
+	return m.selectedRecordIDs, m.selectedRecordIDsErr
 }
 
 func (m *mockTaxonomyRepo) StoreResultAndActivate(
@@ -518,6 +530,32 @@ func TestTaxonomyService_FailRunIsIdempotentForIdenticalTerminalCallback(t *test
 	}
 }
 
+func TestTaxonomyService_FailRunNormalizesEmptyTerminalMetrics(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-222222222226")
+	message := "provider request failed"
+	code := models.TaxonomyRunFailureCodeServiceUnavailable
+	repo := &mockTaxonomyRepo{internalRun: &models.TaxonomyRun{
+		ID: runID, TenantID: "tenant-1", Status: models.TaxonomyRunStatusFailed,
+		Error: &message, ErrorCode: &code, Metrics: json.RawMessage(`{}`),
+	}}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+	run, err := svc.FailRun(context.Background(), runID, models.TaxonomyRunFailedRequest{
+		Error: message, ErrorCode: code,
+	})
+	if err != nil {
+		t.Fatalf("FailRun() error = %v", err)
+	}
+
+	if run != repo.internalRun {
+		t.Fatal("FailRun() did not return the existing terminal run")
+	}
+
+	if repo.markRunFailedCalls != 0 {
+		t.Fatalf("MarkRunFailed() calls = %d, want 0", repo.markRunFailedCalls)
+	}
+}
+
 func TestTaxonomyService_CompleteRunAddsCanonicalDigestAndIsOrderIndependent(t *testing.T) {
 	runID := uuid.MustParse("018e1234-5678-9abc-def0-222222222225")
 	firstID := uuid.MustParse("018e1234-5678-9abc-def0-100000000001")
@@ -567,9 +605,12 @@ func TestTaxonomyService_CompleteRunAddsCanonicalDigestAndIsOrderIndependent(t *
 		t.Fatalf("digest changed with ordering: %q != %q", firstDigest, secondDigest)
 	}
 
-	repo := &mockTaxonomyRepo{internalRun: &models.TaxonomyRun{
-		ID: runID, TenantID: "tenant-1", Status: models.TaxonomyRunStatusRunning,
-	}}
+	repo := &mockTaxonomyRepo{
+		internalRun: &models.TaxonomyRun{
+			ID: runID, TenantID: "tenant-1", Status: models.TaxonomyRunStatusRunning,
+		},
+		selectedRecordIDs: []uuid.UUID{firstID, secondID},
+	}
 	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
 
 	run, err := svc.CompleteRun(context.Background(), runID, req)
@@ -585,7 +626,7 @@ func TestTaxonomyService_CompleteRunAddsCanonicalDigestAndIsOrderIndependent(t *
 		t.Fatalf("StoreResultAndActivate() calls=%d tenant=%q", repo.storeResultCalls, repo.storeResultTenant)
 	}
 
-	if got := taxonomyMetricString(repo.storeResultRequest.Metrics, "result_digest"); got != firstDigest {
+	if got := jsonutil.ObjectString(repo.storeResultRequest.Metrics, "result_digest"); got != firstDigest {
 		t.Fatalf("persisted result digest = %q, want %q", got, firstDigest)
 	}
 
@@ -599,6 +640,28 @@ func TestTaxonomyService_CompleteRunAddsCanonicalDigestAndIsOrderIndependent(t *
 
 	if repo.storeResultCalls != 1 {
 		t.Fatalf("StoreResultAndActivate() calls after retry = %d, want 1", repo.storeResultCalls)
+	}
+}
+
+func TestTaxonomyService_CompleteRunRejectsIncompleteSelectedInputCoverage(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-222222222227")
+	selectedID := uuid.MustParse("018e1234-5678-9abc-def0-100000000003")
+	missingID := uuid.MustParse("018e1234-5678-9abc-def0-100000000004")
+	repo := &mockTaxonomyRepo{
+		internalRun: &models.TaxonomyRun{
+			ID: runID, TenantID: "tenant-1", Status: models.TaxonomyRunStatusRunning,
+		},
+		selectedRecordIDs: []uuid.UUID{selectedID, missingID},
+	}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+	_, err := svc.CompleteRun(context.Background(), runID, validTaxonomyServiceResult(selectedID))
+	if err == nil {
+		t.Fatal("CompleteRun() error = nil, want selected-input coverage validation error")
+	}
+
+	if repo.storeResultCalls != 0 {
+		t.Fatalf("StoreResultAndActivate() calls = %d, want 0", repo.storeResultCalls)
 	}
 }
 
@@ -651,4 +714,34 @@ func TestTaxonomyService_GetNodeRecordCounts(t *testing.T) {
 			t.Fatal("GetNodeRecordCounts() = nil error, want propagated repo error")
 		}
 	})
+}
+
+func validTaxonomyServiceResult(feedbackRecordID uuid.UUID) models.TaxonomyRunResultRequest {
+	label := "Login"
+
+	return models.TaxonomyRunResultRequest{
+		Clusters: []models.TaxonomyResultCluster{{ClusterKey: 1, Label: &label, Size: 1}},
+		Memberships: []models.TaxonomyResultMembership{
+			{ClusterKey: 1, FeedbackRecordID: feedbackRecordID},
+		},
+		Nodes: []models.TaxonomyResultNode{
+			{NodeKey: "root", NodeType: models.TaxonomyNodeTypeRoot, Label: "Feedback", Level: 0},
+			{
+				NodeKey: "level-2", ParentKey: new("root"), NodeType: models.TaxonomyNodeTypeBranch,
+				Label: "Experience", Level: 1,
+			},
+			{
+				NodeKey: "level-3", ParentKey: new("level-2"), NodeType: models.TaxonomyNodeTypeBranch,
+				Label: "Account Access", Level: 2,
+			},
+			{
+				NodeKey: "level-4", ParentKey: new("level-3"), NodeType: models.TaxonomyNodeTypeBranch,
+				Label: "Authentication", Level: 3,
+			},
+			{
+				NodeKey: "leaf", ParentKey: new("level-4"), ClusterKey: new(1),
+				NodeType: models.TaxonomyNodeTypeLeaf, Label: label, Level: 4,
+			},
+		},
+	}
 }
