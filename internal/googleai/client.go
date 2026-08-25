@@ -43,6 +43,13 @@ type Client struct {
 	model      string
 	dimensions int
 	normalize  bool
+	// provider is the gen_ai.provider.name this client reports. The two constructors below pick
+	// different backends and they are NOT the same provider to a cost dashboard: the API-key path
+	// is AI Studio (gcp.gemini) and the ADC path is Vertex (gcp.vertex_ai), billed separately.
+	provider llm.Provider
+	// usage receives one record per provider call. nil disables recording entirely, which is how
+	// the backfill commands and the unit tests opt out.
+	usage llm.UsageRecorder
 	// thinkingBudgetUnsupported latches once the configured model rejects a zero thinking
 	// budget (Pro models cannot disable thinking), so later calls fall back to the model's
 	// default thinking behavior instead of failing.
@@ -73,6 +80,15 @@ func WithNormalize(normalize bool) ClientOption {
 	}
 }
 
+// WithUsageRecorder attaches a recorder that receives each call's token counts and duration. The
+// provider returns those numbers on every generate-content response; without this they are decoded
+// and dropped, and a deployment running on Google records no enrichment cost at all.
+func WithUsageRecorder(recorder llm.UsageRecorder) ClientOption {
+	return func(c *Client) {
+		c.usage = recorder
+	}
+}
+
 // NewClient creates a Gemini embeddings client.
 func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Client, error) {
 	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
@@ -86,6 +102,7 @@ func NewClient(ctx context.Context, apiKey string, opts ...ClientOption) (*Clien
 	client := &Client{
 		client:     genaiClient,
 		dimensions: models.EmbeddingVectorDimensions,
+		provider:   llm.ProviderGCPGemini,
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -118,6 +135,7 @@ func NewGoogleGeminiClient(ctx context.Context, project, location string, opts .
 	client := &Client{
 		client:     genaiClient,
 		dimensions: models.EmbeddingVectorDimensions,
+		provider:   llm.ProviderGCPVertexAI,
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -149,11 +167,15 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 	}
 
 	temperature := float32(0)
+	started := time.Now()
 
 	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), &genai.GenerateContentConfig{
 		Temperature:       &temperature,
 		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
 	})
+
+	c.recordGenerate(ctx, started, resp, err)
+
 	if err != nil {
 		return "", wrapGenerateContentError(err)
 	}
@@ -194,6 +216,8 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingBudget: new(int32)}
 	}
 
+	started := time.Now()
+
 	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), config)
 	if err != nil && isUnsupportedThinkingBudgetError(err) {
 		c.thinkingBudgetUnsupported.Store(true)
@@ -202,6 +226,11 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 
 		resp, err = c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), config)
 	}
+
+	// One record for the whole sequence, including the thinking-budget retry above: the token
+	// counts come from whichever request answered, and the duration spans both. That inflates a
+	// single call's latency at most once per client per process, since the rejection latches.
+	c.recordGenerate(ctx, started, resp, err)
 
 	if err != nil {
 		return "", wrapGenerateContentError(err)
@@ -227,31 +256,117 @@ func isUnsupportedThinkingBudgetError(err error) bool {
 // user's input — so a persistent block is diagnosable in logs instead of looking
 // like a provider outage.
 func generateContentText(resp *genai.GenerateContentResponse) (string, error) {
-	out := strings.TrimSpace(resp.Text())
-	if out == "" {
-		return "", fmt.Errorf("%w%s", ErrNoCompletionInResponse, emptyResponseDetail(resp))
+	// Checked BEFORE the text, because MAX_TOKENS usually truncates rather than blanks the output.
+	// Returning a truncated result would store a half-finished translation as complete, or produce
+	// invalid JSON that reads as a transient parse failure when it is permanent for this input.
+	if firstFinishReason(resp) == genai.FinishReasonMaxTokens {
+		return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength,
+			fmt.Errorf("%w: finish reason: %s", ErrNoCompletionInResponse, genai.FinishReasonMaxTokens))
 	}
 
-	return out, nil
+	// resp.Text() guards an empty Candidates slice and a nil Content, but NOT a nil candidate
+	// pointer (genai types.go), so it panics on `"candidates": [null]`. Guard before calling it.
+	out := ""
+	if firstCandidate(resp) != nil {
+		out = strings.TrimSpace(resp.Text())
+	}
+
+	if out != "" {
+		return out, nil
+	}
+
+	err := fmt.Errorf("%w%s", ErrNoCompletionInResponse, emptyResponseDetail(resp))
+
+	if reason, terminal := terminalEmptyReason(resp); terminal {
+		return "", huberrors.NewTerminalProviderError(reason, err)
+	}
+
+	return "", err
+}
+
+// firstCandidate returns the first usable candidate, or nil when the response carries none.
+//
+// Candidates is a slice of POINTERS, so `"candidates": [null]` on the wire unmarshals to a slice
+// holding nil, and every bare resp.Candidates[0].X in this file would panic on it. The SDK's own
+// Text() has the same gap — it checks the slice length and a nil Content but not a nil candidate —
+// so callers must guard before reaching it. Reading candidates through one accessor keeps that in
+// a single place.
+func firstCandidate(resp *genai.GenerateContentResponse) *genai.Candidate {
+	if resp == nil || len(resp.Candidates) == 0 {
+		return nil
+	}
+
+	return resp.Candidates[0]
+}
+
+// firstFinishReason reads the first candidate's finish reason, or "" when there is no usable
+// candidate.
+func firstFinishReason(resp *genai.GenerateContentResponse) genai.FinishReason {
+	candidate := firstCandidate(resp)
+	if candidate == nil {
+		return ""
+	}
+
+	return candidate.FinishReason
+}
+
+// terminalEmptyReason classifies an empty response as permanent for this input, or leaves it
+// retryable.
+//
+// Only outcomes determined by the CONTENT are terminal. Anything else — an empty response with
+// no metadata, OTHER, LANGUAGE, a malformed function call — stays retryable on purpose: a false
+// terminal abandons a record for good, a false transient costs a few wasted calls.
+func terminalEmptyReason(resp *genai.GenerateContentResponse) (huberrors.TerminalReason, bool) {
+	// A prompt-level block is the provider rejecting the input before generating anything, which
+	// is as content-determined as it gets.
+	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
+		return huberrors.TerminalReasonContentFilter, true
+	}
+
+	switch firstFinishReason(resp) {
+	case genai.FinishReasonSafety, genai.FinishReasonProhibitedContent,
+		genai.FinishReasonBlocklist, genai.FinishReasonSPII,
+		genai.FinishReasonImageSafety, genai.FinishReasonImageProhibitedContent:
+		return huberrors.TerminalReasonContentFilter, true
+	case genai.FinishReasonRecitation, genai.FinishReasonImageRecitation:
+		return huberrors.TerminalReasonRecitation, true
+	case genai.FinishReasonMaxTokens:
+		return huberrors.TerminalReasonLength, true
+	case genai.FinishReasonUnspecified, genai.FinishReasonStop,
+		genai.FinishReasonLanguage, genai.FinishReasonOther,
+		genai.FinishReasonMalformedFunctionCall, genai.FinishReasonUnexpectedToolCall,
+		genai.FinishReasonNoImage, genai.FinishReasonImageOther:
+		// Deliberately retryable, listed rather than defaulted so the choice is reviewable.
+		// LANGUAGE is arguably permanent, but it is rare and abandoning a record wrongly is the
+		// worse error; the image and tool reasons cannot occur for the calls this client makes;
+		// STOP with empty text and UNSPECIFIED carry no information at all.
+		return "", false
+	default:
+		// A reason added by a future SDK version. Retry rather than abandon — the same asymmetry.
+		return "", false
+	}
 }
 
 // emptyResponseDetail renders the block/finish metadata explaining an empty response
 // (": blocked: SAFETY", ": finish reason: MAX_TOKENS"), or "" when none is present.
+//
+// BlockReasonMessage is TRUNCATED, matching the 256-char cap the OpenAI client puts on a refusal
+// string. Both are free-form provider prose that ends up in an error and therefore in logs, and
+// while a block message is usually a fixed phrase, nothing in the API promises that — it is the
+// provider describing why it rejected this particular text, which is the category of string that
+// can quote the text back. Everything else here is a bounded enum.
 func emptyResponseDetail(resp *genai.GenerateContentResponse) string {
 	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
 		detail := fmt.Sprintf(": blocked: %s", resp.PromptFeedback.BlockReason)
 		if resp.PromptFeedback.BlockReasonMessage != "" {
-			detail += " (" + resp.PromptFeedback.BlockReasonMessage + ")"
+			detail += fmt.Sprintf(" (%.256s)", resp.PromptFeedback.BlockReasonMessage)
 		}
 
 		return detail
 	}
 
-	if len(resp.Candidates) > 0 {
-		candidate := resp.Candidates[0]
-		if candidate.FinishReason != "" && candidate.FinishReason != genai.FinishReasonStop {
-			return fmt.Sprintf(": finish reason: %s", candidate.FinishReason)
-		}
+	if finish := firstFinishReason(resp); finish != "" && finish != genai.FinishReasonStop {
+		return fmt.Sprintf(": finish reason: %s", finish)
 	}
 
 	return ""
@@ -311,11 +426,19 @@ func (c *Client) embedWithTaskType(ctx context.Context, input, taskType string) 
 
 	contents := []*genai.Content{genai.NewContentFromText(input, genai.RoleUser)}
 	dimInt32 := int32(c.dimensions)
+	started := time.Now()
 
 	resp, err := c.client.Models.EmbedContent(ctx, c.model, contents, &genai.EmbedContentConfig{
 		TaskType:             taskType,
 		OutputDimensionality: &dimInt32,
 	})
+
+	// Token counts deliberately zero: an embed response carries no token usage at all — Vertex
+	// reports a billable CHARACTER count and AI Studio reports nothing — so there is no number to
+	// report in {token} units. The duration still lands, which is what makes a slow embedding
+	// provider visible. The recorder skips zero counts rather than emitting them.
+	c.recordUsage(ctx, llm.OperationEmbeddings, started, 0, 0, err)
+
 	if err != nil {
 		return nil, wrapGenaiError("gemini embedding", err)
 	}
@@ -337,4 +460,47 @@ func (c *Client) embedWithTaskType(ctx context.Context, input, taskType string) 
 	}
 
 	return out, nil
+}
+
+// recordGenerate reports one generate-content call, pulling the token counts off the response's
+// usage metadata.
+//
+// Output tokens include ThoughtsTokenCount. Thinking tokens are billed as output, and this client
+// asks for a zero thinking budget but falls back to the model's default when the model rejects
+// that (see CompleteJSON), so leaving them out would under-report the cost of exactly the models
+// where it is largest.
+func (c *Client) recordGenerate(
+	ctx context.Context, started time.Time, resp *genai.GenerateContentResponse, err error,
+) {
+	var input, output int64
+
+	if resp != nil && resp.UsageMetadata != nil {
+		input = int64(resp.UsageMetadata.PromptTokenCount)
+		output = int64(resp.UsageMetadata.CandidatesTokenCount) + int64(resp.UsageMetadata.ThoughtsTokenCount)
+	}
+
+	c.recordUsage(ctx, llm.OperationChat, started, input, output, err)
+}
+
+// recordUsage reports one call. Split out so every provider entry point records the same shape,
+// and so a nil recorder is checked in exactly one place.
+func (c *Client) recordUsage(
+	ctx context.Context, operation llm.Operation, started time.Time, inputTokens, outputTokens int64, err error,
+) {
+	llm.Record(ctx, c.usage, operation, c.provider, c.model,
+		started, inputTokens, outputTokens, errorTypeOf(err))
+}
+
+// errorTypeOf maps an error to the BOUNDED error.type attribute. Only the status extraction is
+// Google-specific; the rest of the classification is shared so the two clients cannot disagree on
+// what "timeout" means.
+func errorTypeOf(err error) string {
+	return llm.ClassifyError(err, func(err error) (int, bool) {
+		var apiErr genai.APIError
+		if errors.As(err, &apiErr) {
+			return apiErr.Code, true
+		}
+
+		return 0, false
+	})
 }

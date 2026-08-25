@@ -14,6 +14,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/llm"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
@@ -35,6 +36,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	var (
 		metrics        *observability.Metrics
 		meterProvider  *sdkmetric.MeterProvider
+		genAIUsage     llm.UsageRecorder
 		tracerProvider *sdktrace.TracerProvider
 		err            error
 	)
@@ -51,6 +53,16 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 				_ = observability.ShutdownMeterProvider(context.Background(), meterProvider)
 
 				return nil, fmt.Errorf("create metrics: %w", err)
+			}
+
+			// hub-worker is where the provider calls happen, so it is where their cost is
+			// observable. A nil recorder (metrics disabled) leaves the clients behaving exactly
+			// as before.
+			genAIUsage, err = observability.NewGenAIMetrics(meterProvider.Meter("hub"))
+			if err != nil {
+				_ = observability.ShutdownMeterProvider(context.Background(), meterProvider)
+
+				return nil, fmt.Errorf("create gen_ai metrics: %w", err)
 			}
 		}
 	}
@@ -99,6 +111,14 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		WebhookMetrics:     webhookMetrics,
 
 		FeedbackRecordsPurgeService: feedbackRecordsPurgeService,
+
+		// hub-worker is the only process that works enrichment jobs, so it is the only one that
+		// can observe a failure and the only one that records them. The backfill commands register
+		// workers but never Start() a client, so they never reach this path.
+		Failures: repository.NewEnrichmentFailuresRepository(db),
+		// The worker is where a terminal give-up is observed, so it is where the counter lives.
+		// nil when metrics are disabled, which the worker treats as "do not record".
+		FailureMetrics: failureMetrics(metrics),
 	}
 
 	providerName, embeddingModel := embeddingProviderAndModel(cfg)
@@ -117,6 +137,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	if providerName != "" {
 		embeddingCfg := service.EmbeddingClientConfig{
+			UsageRecorder:       genAIUsage,
 			Provider:            providerName,
 			ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
 			Model:               embeddingModel,
@@ -182,6 +203,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
 		translationCfg := service.TranslationClientConfig{
+			UsageRecorder:       genAIUsage,
 			Provider:            cfg.Translation.Provider,
 			ProviderAPIKey:      cfg.Translation.ProviderAPIKey,
 			Model:               cfg.Translation.Model,
@@ -222,6 +244,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	if cfg.Sentiment.Enabled() {
 		sentimentClient, err := service.NewSentimentClient(context.Background(), service.SentimentClientConfig{
+			UsageRecorder:       genAIUsage,
 			Provider:            cfg.Sentiment.Provider,
 			ProviderAPIKey:      cfg.Sentiment.ProviderAPIKey,
 			Model:               cfg.Sentiment.Model,
@@ -255,6 +278,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	if cfg.Emotions.Enabled() {
 		emotionsClient, err := service.NewEmotionsClient(context.Background(), service.EmotionsClientConfig{
+			UsageRecorder:       genAIUsage,
 			Provider:            cfg.Emotions.Provider,
 			ProviderAPIKey:      cfg.Emotions.ProviderAPIKey,
 			Model:               cfg.Emotions.Model,
@@ -452,4 +476,14 @@ func (a *WorkerApp) Shutdown(ctx context.Context) (err error) {
 	}
 
 	return err
+}
+
+// failureMetrics pulls the enrichment failure metrics off the aggregate, tolerating metrics being
+// disabled entirely (a nil *Metrics), which is the default for a deployment with no OTLP exporter.
+func failureMetrics(metrics *observability.Metrics) observability.EnrichmentFailureMetrics {
+	if metrics == nil {
+		return nil
+	}
+
+	return metrics.EnrichmentFailures
 }

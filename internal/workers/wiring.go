@@ -49,6 +49,14 @@ type RiverDeps struct {
 	// Feedback-records purge worker (always registered; the purge is a core tenant operation, not
 	// an enrichment, so it has no client to gate on).
 	FeedbackRecordsPurgeService feedbackRecordsPurgeService
+
+	// Failures records the durable marker a classify worker writes when it gives up on a record.
+	// Shared by the three classify pipelines; nil disables recording, which leaves the API
+	// under-reporting failures but changes no enrichment behaviour.
+	Failures FailureRecorder
+	// FailureMetrics counts permanent give-ups by cause, for whoever watches the deployment
+	// rather than a single tenant. nil disables it.
+	FailureMetrics observability.EnrichmentFailureMetrics
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps. Each optional
@@ -93,7 +101,8 @@ func NewRiverWorkersAndQueues(
 	}
 
 	if deps.TranslationClient != nil {
-		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient, deps.TranslationMetrics)
+		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient, deps.TranslationMetrics,
+			deps.Failures, deps.FailureMetrics)
 		river.AddWorker(workers, translationWorker)
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
@@ -106,7 +115,8 @@ func NewRiverWorkersAndQueues(
 
 	if deps.SentimentClient != nil {
 		sentimentWorker := NewFeedbackSentimentWorker(
-			deps.SentimentService, deps.SentimentResolver, deps.SentimentClient, deps.SentimentMetrics)
+			deps.SentimentService, deps.SentimentResolver, deps.SentimentClient, deps.SentimentMetrics,
+			deps.Failures, deps.FailureMetrics)
 		river.AddWorker(workers, sentimentWorker)
 
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: maxSentiment}
@@ -114,7 +124,8 @@ func NewRiverWorkersAndQueues(
 
 	if deps.EmotionsClient != nil {
 		emotionsWorker := NewFeedbackEmotionsWorker(
-			deps.EmotionsService, deps.EmotionsResolver, deps.EmotionsClient, deps.EmotionsMetrics)
+			deps.EmotionsService, deps.EmotionsResolver, deps.EmotionsClient, deps.EmotionsMetrics,
+			deps.Failures, deps.FailureMetrics)
 		river.AddWorker(workers, emotionsWorker)
 
 		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: maxEmotions}

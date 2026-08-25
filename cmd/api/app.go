@@ -25,6 +25,7 @@ import (
 	"github.com/formbricks/hub/internal/api/middleware"
 	"github.com/formbricks/hub/internal/api/routes"
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/llm"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/repository"
@@ -105,6 +106,20 @@ func setupEmbeddingSearchHandler(
 	metrics *observability.Metrics,
 	meterProvider *sdkmetric.MeterProvider,
 ) (*handlers.SearchHandler, error) {
+	// The API works no enrichment jobs, but it does embed SEARCH QUERIES, and those are real
+	// provider calls with real cost. Recording them here means the token metric covers everything
+	// the deployment actually spends rather than only the worker's share.
+	var genAIUsage llm.UsageRecorder
+
+	if meterProvider != nil {
+		recorder, err := observability.NewGenAIMetrics(meterProvider.Meter("hub"))
+		if err != nil {
+			return nil, fmt.Errorf("create gen_ai metrics: %w", err)
+		}
+
+		genAIUsage = recorder
+	}
+
 	embeddingCfg := service.EmbeddingClientConfig{
 		Provider:            embeddingProviderName,
 		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
@@ -113,6 +128,7 @@ func setupEmbeddingSearchHandler(
 		Normalize:           cfg.Embedding.Normalize,
 		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
 		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+		UsageRecorder:       genAIUsage,
 	}
 	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 		return nil, fmt.Errorf("embedding config: %w", err)
@@ -634,15 +650,16 @@ func (a *App) Run(ctx context.Context) error {
 		go func() {
 			defer close(done)
 
-			runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, enrichmentBacklogPollConfig{
-				// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
-				// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
-				defaultLang:            strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
-				translationConfigured:  translationConfigured,
-				sentimentConfigured:    a.cfg.Sentiment.Enabled(),
-				emotionsConfigured:     a.cfg.Emotions.Enabled(),
-				taxonomyEmbeddingModel: taxonomyEmbeddingModel,
-			})
+			runEnrichmentBacklogPoller(ctx, a.db, a.metrics.EnrichmentBacklog, a.metrics.EnrichmentFailures,
+				enrichmentBacklogPollConfig{
+					// Trim to stay consistent with NewEnrichmentStatusService (config already canonicalizes
+					// this, so it's defensive symmetry) — the endpoint and the gauge resolve the same target.
+					defaultLang:            strings.TrimSpace(a.cfg.Translation.DefaultLanguage),
+					translationConfigured:  translationConfigured,
+					sentimentConfigured:    a.cfg.Sentiment.Enabled(),
+					emotionsConfigured:     a.cfg.Emotions.Enabled(),
+					taxonomyEmbeddingModel: taxonomyEmbeddingModel,
+				})
 		}()
 	}
 
@@ -709,8 +726,11 @@ func runEnrichmentBacklogPoller(
 	ctx context.Context,
 	db *pgxpool.Pool,
 	backlog observability.EnrichmentBacklogMetrics,
+	failures observability.EnrichmentFailureMetrics,
 	cfg enrichmentBacklogPollConfig,
 ) {
+	statusRepo := repository.NewEnrichmentStatusRepository(db)
+
 	leader := repository.NewEnrichmentBacklogLeader(db)
 	defer leader.Close(ctx)
 
@@ -719,6 +739,7 @@ func runEnrichmentBacklogPoller(
 	// final collect-and-export on shutdown would publish one last reading for a backlog this
 	// process no longer owns.
 	defer backlog.ClearEnrichmentPending()
+	defer clearFailedRecords(failures)
 
 	ticker := time.NewTicker(enrichmentBacklogInterval)
 	defer ticker.Stop()
@@ -744,6 +765,7 @@ func runEnrichmentBacklogPoller(
 			// A failed scan also costs this process its leadership, so withdraw the series rather
 			// than leave it frozen at the last good reading while the new leader publishes its own.
 			backlog.ClearEnrichmentPending()
+			clearFailedRecords(failures)
 
 			// Count the failure so the gap is alertable, then escalate the log from warn to error
 			// once failures persist: a single blip is noise, but a run of them means nobody is
@@ -768,6 +790,7 @@ func runEnrichmentBacklogPoller(
 			// anything this process exported while it was previously the leader, so a handover
 			// leaves exactly one series rather than a live one plus a frozen one.
 			backlog.ClearEnrichmentPending()
+			clearFailedRecords(failures)
 
 			return
 		}
@@ -788,6 +811,21 @@ func runEnrichmentBacklogPoller(
 			backlog.SetEnrichmentPending(
 				observability.EnrichmentTypeTaxonomyEmbedding, counts.TaxonomyEmbeddingPending)
 		}
+
+		// Refreshed by the SAME leader on the SAME tick, so the failure gauge cannot drift from the
+		// backlog gauge and no second election is needed. Its query is cheap next to the backlog
+		// scan: it reads the markers, of which there are few, not every feedback record.
+		//
+		// Its OWN deadline, not the leftover of queryCtx. Both need a bound — an unbounded count
+		// can pin a pool connection until shutdown, which is what enrichmentBacklogQueryTimeout
+		// exists to prevent — but sharing one budget couples them the wrong way round: the backlog
+		// scan above is the documented whole-table sequential scan, so on a large deployment it
+		// eats most of the window, and this count then times out on every tick and withdraws the
+		// gauge for as long as the scan stays slow. A separate timeout off the same parent keeps
+		// the bound and drops the coupling.
+		failedCtx, cancelFailed := context.WithTimeout(ctx, enrichmentBacklogQueryTimeout)
+		refreshFailedRecords(failedCtx, statusRepo, failures)
+		cancelFailed()
 	}
 
 	update()
@@ -1051,5 +1089,63 @@ func (a *App) awaitEnrichmentBacklogPoller(ctx context.Context) {
 	case <-ctx.Done():
 		slog.Warn("enrichment backlog poller did not finish before the shutdown deadline; " +
 			"its final gauge reading may still be exported")
+	}
+}
+
+// refreshFailedRecords republishes the cross-tenant failed-record gauge.
+//
+// A failed query WITHDRAWS this gauge rather than leaving its last reading published, following
+// the rule EnrichmentBacklogMetrics states outright: exporting nothing is the honest state,
+// because absence is visible and a stale value is not. The failure mode it avoids is specific —
+// the backlog scan succeeds so this process keeps leadership, this query times out, and a
+// dashboard would otherwise show a plausible, unchanging failure count that no longer reflects
+// the database, with nothing absent to alert on.
+//
+// It withdraws only ITS OWN series. The backlog gauge is refreshed by a query that succeeded and
+// has no reason to be torn down alongside.
+func refreshFailedRecords(
+	ctx context.Context,
+	statusRepo *repository.EnrichmentStatusRepository,
+	failures observability.EnrichmentFailureMetrics,
+) {
+	if failures == nil {
+		return
+	}
+
+	counts, err := statusRepo.CountFailedRecordsAggregate(ctx)
+	if err != nil {
+		failures.ClearFailedRecords()
+
+		// Shutdown cancels the query mid-flight; that is not a poll failure worth logging, for the
+		// same reason the backlog poller skips it.
+		if ctx.Err() == nil {
+			slog.WarnContext(ctx, "enrichment failed-records poll failed; gauge withdrawn", "error", err)
+		}
+
+		return
+	}
+
+	// Zero the known buckets before applying, so an enrichment whose last failure was resolved
+	// reports 0 rather than keeping its final non-zero reading forever. The query returns no row
+	// for an empty bucket, which would otherwise be indistinguishable from "not refreshed".
+	for _, enrichment := range []string{
+		observability.EnrichmentTypeSentiment,
+		observability.EnrichmentTypeEmotions,
+		observability.EnrichmentTypeTranslation,
+	} {
+		failures.SetFailedRecords(enrichment, true, 0)
+		failures.SetFailedRecords(enrichment, false, 0)
+	}
+
+	for _, count := range counts {
+		failures.SetFailedRecords(count.Enrichment, count.Terminal, count.Count)
+	}
+}
+
+// clearFailedRecords withdraws the gauge, for the same reason the backlog gauge is withdrawn: a
+// process that is no longer the leader must export nothing rather than a frozen last reading.
+func clearFailedRecords(failures observability.EnrichmentFailureMetrics) {
+	if failures != nil {
+		failures.ClearFailedRecords()
 	}
 }
