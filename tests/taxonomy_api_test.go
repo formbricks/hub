@@ -1141,6 +1141,7 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 		feedbackRecordID := seedEmbeddedFeedback(ctx, t, harness, scope, 1)[0]
 		runID := startRunForScope(ctx, t, harness, scope)
 		materializeTaxonomyRunInput(ctx, t, harness, runID)
+
 		result := validTaxonomyResult(feedbackRecordID)
 		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
 
