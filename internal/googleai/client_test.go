@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -319,4 +320,282 @@ func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
 	var rateLimited *huberrors.RateLimitError
 	require.ErrorAs(t, err, &rateLimited, "an embedding 429 must surface as a rate-limit error")
 	assert.Equal(t, 17*time.Second, rateLimited.RetryAfter)
+}
+
+// TestTerminalEmptyReason pins which empty Gemini responses are permanent for the input and which
+// stay retryable. Same asymmetry as the OpenAI client: when a reason is ambiguous, retry, because
+// a false terminal abandons a record for good.
+func TestTerminalEmptyReason(t *testing.T) {
+	withFinish := func(reason genai.FinishReason) *genai.GenerateContentResponse {
+		return &genai.GenerateContentResponse{
+			Candidates: []*genai.Candidate{{FinishReason: reason}},
+		}
+	}
+
+	cases := []struct {
+		name       string
+		resp       *genai.GenerateContentResponse
+		wantReason huberrors.TerminalReason
+		terminal   bool
+	}{
+		{
+			// A prompt-level block is the provider rejecting the input before generating at all.
+			name: "prompt block is terminal",
+			resp: &genai.GenerateContentResponse{
+				PromptFeedback: &genai.GenerateContentResponsePromptFeedback{BlockReason: "SAFETY"},
+			},
+			wantReason: huberrors.TerminalReasonContentFilter, terminal: true,
+		},
+		{
+			"safety is terminal", withFinish(genai.FinishReasonSafety),
+			huberrors.TerminalReasonContentFilter, true,
+		},
+		{
+			"prohibited content is terminal", withFinish(genai.FinishReasonProhibitedContent),
+			huberrors.TerminalReasonContentFilter, true,
+		},
+		{
+			"recitation is terminal", withFinish(genai.FinishReasonRecitation),
+			huberrors.TerminalReasonRecitation, true,
+		},
+		{
+			"max tokens is terminal", withFinish(genai.FinishReasonMaxTokens),
+			huberrors.TerminalReasonLength, true,
+		},
+		// OTHER is the provider telling us nothing. Abandoning a record on it would be guessing.
+		{"OTHER stays retryable", withFinish(genai.FinishReasonOther), "", false},
+		{"LANGUAGE stays retryable", withFinish(genai.FinishReasonLanguage), "", false},
+		{"STOP with empty text stays retryable", withFinish(genai.FinishReasonStop), "", false},
+		{"no candidates stays retryable", &genai.GenerateContentResponse{}, "", false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			reason, terminal := terminalEmptyReason(testCase.resp)
+			require.Equal(t, testCase.terminal, terminal)
+
+			if testCase.terminal {
+				assert.Equal(t, testCase.wantReason, reason)
+			}
+
+			// generateContentText must carry the classification through, not just compute it.
+			_, err := generateContentText(testCase.resp)
+			require.Error(t, err)
+
+			if testCase.terminal {
+				assert.ErrorIs(t, err, huberrors.ErrTerminalProvider)
+			} else {
+				assert.NotErrorIs(t, err, huberrors.ErrTerminalProvider)
+			}
+		})
+	}
+}
+
+// TestGenerateContentTextTruncatedIsTerminal covers the case MAX_TOKENS actually produces: partial
+// text rather than none. Returning it would persist a half-finished translation as complete, or
+// yield invalid JSON that reads as a transient parse failure when it is permanent for this input.
+func TestGenerateContentTextTruncatedIsTerminal(t *testing.T) {
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			FinishReason: genai.FinishReasonMaxTokens,
+			Content: &genai.Content{
+				Parts: []*genai.Part{{Text: "this translation was cut off half"}},
+			},
+		}},
+	}
+
+	require.NotEmpty(t, resp.Text(), "fixture must carry partial text, or it proves nothing")
+
+	out, err := generateContentText(resp)
+	require.Error(t, err, "truncated output must not be returned as a result")
+	assert.Empty(t, out)
+	require.ErrorIs(t, err, huberrors.ErrTerminalProvider)
+
+	reason, ok := huberrors.TerminalReasonOf(err)
+	require.True(t, ok)
+	assert.Equal(t, huberrors.TerminalReasonLength, reason)
+}
+
+// TestNilCandidateDoesNotPanic covers a response carrying a nil candidate pointer. Candidates is a
+// slice of POINTERS, so `"candidates": [null]` on the wire produces exactly this, and a bare
+// resp.Candidates[0].FinishReason panics. It matters more than it looks: the MAX_TOKENS check runs
+// before the text is read, so this path is taken by every response, not only empty ones.
+func TestNilCandidateDoesNotPanic(t *testing.T) {
+	resp := &genai.GenerateContentResponse{Candidates: []*genai.Candidate{nil}}
+
+	require.NotPanics(t, func() {
+		_, err := generateContentText(resp)
+		require.Error(t, err, "a response with no usable candidate has no text")
+		// Nothing about a nil candidate says the input is at fault, so it must stay retryable.
+		require.NotErrorIs(t, err, huberrors.ErrTerminalProvider)
+	})
+
+	require.NotPanics(t, func() {
+		_, terminal := terminalEmptyReason(resp)
+		require.False(t, terminal)
+	})
+
+	require.NotPanics(t, func() {
+		_ = emptyResponseDetail(resp)
+	})
+}
+
+// recordingUsage captures what the client reports, so the assertions are about emitted values
+// rather than about a call into an interface.
+type recordingUsage struct {
+	calls []llm.Usage
+}
+
+func (r *recordingUsage) RecordUsage(_ context.Context, usage llm.Usage) {
+	r.calls = append(r.calls, usage)
+}
+
+// newStubbedClient drives the real genai SDK against a stub endpoint, so the SDK's own response
+// and error decoding is exercised rather than mocked away.
+func newStubbedClient(t *testing.T, usage llm.UsageRecorder, handler http.HandlerFunc) *Client {
+	t.Helper()
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	genaiClient, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:      "test-key",
+		Backend:     genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
+	})
+	require.NoError(t, err)
+
+	return &Client{
+		client:     genaiClient,
+		model:      "gemini-2.5-flash",
+		dimensions: 768,
+		provider:   llm.ProviderGCPGemini,
+		usage:      usage,
+	}
+}
+
+// TestUsageIsRecordedForGenerateContent is the Google half of the cost metrics. The parity test in
+// internal/service proves a recorder is PASSED to every client; this proves one actually records,
+// which is the part that decides whether a Google deployment reports its spend or reports nothing.
+func TestUsageIsRecordedForGenerateContent(t *testing.T) {
+	t.Run("success carries token counts", func(t *testing.T) {
+		usage := &recordingUsage{}
+		client := newStubbedClient(t, usage, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"candidates":[{"finishReason":"STOP",
+				"content":{"role":"model","parts":[{"text":"hallo"}]}}],
+				"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":7,"totalTokenCount":38}}`))
+		})
+
+		_, err := client.Translate(context.Background(), "system", "hello")
+		require.NoError(t, err)
+
+		require.Len(t, usage.calls, 1)
+		got := usage.calls[0]
+		assert.Equal(t, llm.OperationChat, got.Operation)
+		assert.Equal(t, llm.ProviderGCPGemini, got.Provider)
+		assert.Equal(t, "gemini-2.5-flash", got.Model)
+		assert.Equal(t, int64(31), got.InputTokens)
+		assert.Equal(t, int64(7), got.OutputTokens)
+		assert.Empty(t, got.ErrorType, "a successful call carries no error.type")
+		assert.Positive(t, got.Duration)
+	})
+
+	// Thinking tokens bill as output. This client asks for a zero thinking budget but falls back to
+	// the model's default when the model rejects that, so a Pro model quietly spends them — leaving
+	// them out would under-report exactly the models where the cost is largest.
+	t.Run("thinking tokens count as output", func(t *testing.T) {
+		usage := &recordingUsage{}
+		client := newStubbedClient(t, usage, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"candidates":[{"finishReason":"STOP",
+				"content":{"role":"model","parts":[{"text":"hallo"}]}}],
+				"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4,"thoughtsTokenCount":96}}`))
+		})
+
+		_, err := client.Translate(context.Background(), "system", "hello")
+		require.NoError(t, err)
+
+		require.Len(t, usage.calls, 1)
+		assert.Equal(t, int64(100), usage.calls[0].OutputTokens,
+			"4 completion + 96 thinking: dropping the thinking tokens would hide most of the bill")
+	})
+
+	t.Run("failure records a bounded error type", func(t *testing.T) {
+		usage := &recordingUsage{}
+		client := newStubbedClient(t, usage, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"code":500,"status":"INTERNAL","message":"boom"}}`))
+		})
+
+		_, err := client.Translate(context.Background(), "system", "hello")
+		require.Error(t, err)
+
+		require.Len(t, usage.calls, 1, "a failed call must still be recorded")
+		// The status code, never the provider's message — an unbounded error.type would blow up
+		// cardinality the first time a provider echoed user input back in an error body.
+		assert.Equal(t, "500", usage.calls[0].ErrorType)
+		assert.Zero(t, usage.calls[0].InputTokens, "no usage metadata means no token counts")
+		assert.Positive(t, usage.calls[0].Duration, "a failed call still took time")
+	})
+
+	// Embeddings carry no token usage on either backend — Vertex reports a billable CHARACTER count
+	// and AI Studio reports nothing — so duration is the whole signal. Pinned so the empty token
+	// series reads as the provider's doing rather than as a wiring bug.
+	t.Run("embeddings record duration but no tokens", func(t *testing.T) {
+		usage := &recordingUsage{}
+		client := newStubbedClient(t, usage, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"embeddings":[{"values":` + zeroVector(768) + `}]}`))
+		})
+
+		_, err := client.CreateEmbedding(context.Background(), "hello")
+		require.NoError(t, err)
+
+		require.Len(t, usage.calls, 1)
+		assert.Equal(t, llm.OperationEmbeddings, usage.calls[0].Operation)
+		assert.Zero(t, usage.calls[0].InputTokens)
+		assert.Zero(t, usage.calls[0].OutputTokens)
+		assert.Positive(t, usage.calls[0].Duration)
+	})
+
+	t.Run("a nil recorder records nothing and changes nothing", func(t *testing.T) {
+		client := newStubbedClient(t, nil, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"candidates":[{"finishReason":"STOP",
+				"content":{"role":"model","parts":[{"text":"hallo"}]}}]}`))
+		})
+
+		out, err := client.Translate(context.Background(), "system", "hello")
+		require.NoError(t, err)
+		assert.Equal(t, "hallo", out)
+	})
+}
+
+// TestConstructorsStampTheirProvider pins the two backends apart. They are billed separately, so a
+// cost dashboard that cannot tell AI Studio from Vertex is reporting one number for two bills.
+func TestConstructorsStampTheirProvider(t *testing.T) {
+	client, err := NewClient(context.Background(), "test-key-placeholder", WithModel("gemini-2.5-flash"))
+	require.NoError(t, err)
+	assert.Equal(t, llm.ProviderGCPGemini, client.provider,
+		"the API-key path is AI Studio")
+
+	vertex, err := NewGoogleGeminiClient(context.Background(), "test-project", "europe-west3",
+		WithModel("gemini-2.5-flash"))
+	if err != nil {
+		t.Skipf("vertex client needs Application Default Credentials: %v", err)
+	}
+
+	assert.Equal(t, llm.ProviderGCPVertexAI, vertex.provider, "the ADC path is Vertex")
+}
+
+// zeroVector renders a JSON array of n zeros, for stubbing an embedding response of the right size.
+func zeroVector(n int) string {
+	values := make([]string, n)
+	for i := range values {
+		values[i] = "0.1"
+	}
+
+	return "[" + strings.Join(values, ",") + "]"
 }

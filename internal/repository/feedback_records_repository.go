@@ -300,7 +300,9 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 				return fmt.Errorf("clear feedback record translation: %w", err)
 			}
 
-			return nil
+			// The record now has no translation and, with empty text, is owed none — so a marker
+			// describing a failed attempt on the old text has nothing left to describe.
+			return clearEnrichmentFailure(ctx, dbTx, feedbackRecordID, models.EnrichmentNameTranslation)
 		}
 
 		// Setting a translation persists only while langKey still equals the tenant's current
@@ -335,7 +337,7 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 			return huberrors.ErrTranslationSuperseded
 		}
 
-		return nil
+		return clearEnrichmentFailure(ctx, dbTx, feedbackRecordID, models.EnrichmentNameTranslation)
 	})
 }
 
@@ -396,7 +398,7 @@ func (r *FeedbackRecordsRepository) SetSentiment(
 			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 
-		return nil
+		return clearEnrichmentFailure(ctx, dbTx, feedbackRecordID, models.EnrichmentNameSentiment)
 	})
 }
 
@@ -1204,6 +1206,41 @@ func (r *FeedbackRecordsRepository) writeEmotions(
 			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 
-		return nil
+		return clearEnrichmentFailure(ctx, dbTx, feedbackRecordID, models.EnrichmentNameEmotions)
 	})
+}
+
+// clearEnrichmentFailure removes the failure marker for one (record, enrichment) as part of the
+// successful write that resolved it.
+//
+// The markers were designed as advisory — write-free on success, on the reasoning that "a stale
+// row stops counting the moment the record is done". That has a hole: done is not permanent.
+// Editing value_text nulls the translation columns, and changing a tenant's target_language shifts
+// the effective target so an already-translated record stops matching it. Either revives a marker
+// from a failure resolved long ago, and the endpoint then reports `failed` for work that is merely
+// re-queued — the wrong-progress symptom the whole feature exists to remove.
+//
+// So success cleans up after itself. One indexed delete against the primary key, inside a
+// transaction the write already opens, and a no-op probe when there is no marker — the
+// overwhelmingly common case, since most records never fail.
+//
+// A timestamp comparison was tried first and is the wrong shape: updated_at is RECORD-level while
+// markers are per (record, enrichment), so a successful sentiment write would invalidate the
+// emotions and translation markers too. On a real run that silently dropped 7% of records out of
+// the accounted set.
+//
+// This does NOT run on the failure paths, which upsert: the newest outcome for a (record,
+// enrichment) is the one worth keeping.
+func clearEnrichmentFailure(
+	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID, enrichment string,
+) error {
+	if _, err := dbTx.Exec(ctx, `
+		DELETE FROM feedback_record_enrichment_failures
+		WHERE feedback_record_id = $1 AND enrichment = $2`,
+		feedbackRecordID, enrichment,
+	); err != nil {
+		return fmt.Errorf("clear enrichment failure marker: %w", err)
+	}
+
+	return nil
 }

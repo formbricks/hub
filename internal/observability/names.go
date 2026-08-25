@@ -17,12 +17,17 @@ const (
 	MetricNameEnrichmentOutputsCleared  = "hub_enrichment_outputs_cleared_total"
 	MetricNameEnrichmentPendingRecords  = "hub_enrichment_pending_records"
 	MetricNameEnrichmentBacklogPollErrs = "hub_enrichment_backlog_poll_errors_total"
-	MetricNameWebhookJobsEnqueued       = "hub_webhook_jobs_enqueued_total"
-	MetricNameWebhookProviderErrors     = "hub_webhook_provider_errors_total"
-	MetricNameWebhookDeliveries         = "hub_webhook_deliveries_total"
-	MetricNameWebhookDisabled           = "hub_webhook_disabled_total"
-	MetricNameWebhookDispatchErrors     = "hub_webhook_dispatch_errors_total"
-	MetricNameWebhookDeliveryDuration   = "hub_webhook_delivery_duration_seconds"
+	// MetricNameEnrichmentTerminalTotal and MetricNameEnrichmentFailedRecords carry the enrichment
+	// as a LABEL rather than in the name, unlike the four per-type families below — already the
+	// shape a consolidation would move those to.
+	MetricNameEnrichmentTerminalTotal = "hub_enrichment_terminal_total"
+	MetricNameEnrichmentFailedRecords = "hub_enrichment_failed_records"
+	MetricNameWebhookJobsEnqueued     = "hub_webhook_jobs_enqueued_total"
+	MetricNameWebhookProviderErrors   = "hub_webhook_provider_errors_total"
+	MetricNameWebhookDeliveries       = "hub_webhook_deliveries_total"
+	MetricNameWebhookDisabled         = "hub_webhook_disabled_total"
+	MetricNameWebhookDispatchErrors   = "hub_webhook_dispatch_errors_total"
+	MetricNameWebhookDeliveryDuration = "hub_webhook_delivery_duration_seconds"
 
 	// MetricNameEmbeddingJobsEnqueued and related embedding pipeline metrics.
 	MetricNameEmbeddingJobsEnqueued   = "hub_embedding_jobs_enqueued_total"

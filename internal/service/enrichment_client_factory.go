@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/formbricks/hub/internal/llm"
 )
 
 // Provider identifiers shared by every enrichment client — sentiment, translation, and
@@ -29,6 +31,9 @@ type EnrichmentClientConfig struct {
 	BaseURL             string
 	GoogleCloudProject  string
 	GoogleCloudLocation string
+	// UsageRecorder receives each provider call's token counts and duration. nil disables
+	// recording; the backfill commands and tests leave it unset.
+	UsageRecorder llm.UsageRecorder
 }
 
 func (c EnrichmentClientConfig) clientProvider() string            { return c.Provider }

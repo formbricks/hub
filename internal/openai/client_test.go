@@ -587,3 +587,161 @@ func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
 	require.ErrorAs(t, err, &rateLimited, "an embedding 429 must surface as a rate-limit error")
 	assert.Equal(t, 9*time.Second, rateLimited.RetryAfter)
 }
+
+// TestCompletionTextTerminalClassification pins which empty-completion outcomes are permanent for
+// the input and which stay retryable. The asymmetry is deliberate: a false terminal abandons a
+// record for good, a false transient costs a few wasted calls.
+func TestCompletionTextTerminalClassification(t *testing.T) {
+	completion := func(content, refusal, finish string) *openaisdk.ChatCompletion {
+		return &openaisdk.ChatCompletion{
+			Choices: []openaisdk.ChatCompletionChoice{{
+				Message:      openaisdk.ChatCompletionMessage{Content: content, Refusal: refusal},
+				FinishReason: finish,
+			}},
+		}
+	}
+
+	cases := []struct {
+		name       string
+		resp       *openaisdk.ChatCompletion
+		wantReason huberrors.TerminalReason
+		terminal   bool
+	}{
+		{
+			"refusal is terminal", completion("", "I can't help with that.", "content_filter"),
+			huberrors.TerminalReasonRefusal, true,
+		},
+		{
+			"content_filter is terminal", completion("", "", "content_filter"),
+			huberrors.TerminalReasonContentFilter, true,
+		},
+		{
+			"length is terminal", completion("", "", "length"),
+			huberrors.TerminalReasonLength, true,
+		},
+		// The case a length cap actually produces: truncated output, not blank output. Returning
+		// the partial text would store a half-finished translation as complete, or hand back a
+		// truncated JSON that fails to parse and reads as a transient glitch rather than as
+		// permanent for this input.
+		{
+			"length with truncated content is still terminal",
+			completion(`{"sentiment":"posi`, "", "length"),
+			huberrors.TerminalReasonLength, true,
+		},
+		// We never request tools, so this should not occur — but if it does, retrying is the
+		// cheaper mistake.
+		{"an unknown finish reason stays retryable", completion("", "", "tool_calls"), "", false},
+		{"empty with no reason stays retryable", completion("", "", "stop"), "", false},
+		{"no choices at all stays retryable", &openaisdk.ChatCompletion{}, "", false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := completionText(testCase.resp)
+			require.Error(t, err)
+
+			reason, ok := huberrors.TerminalReasonOf(err)
+			require.Equal(t, testCase.terminal, ok, "terminality of %v", err)
+
+			if testCase.terminal {
+				assert.Equal(t, testCase.wantReason, reason)
+			} else {
+				assert.NotErrorIs(t, err, huberrors.ErrTerminalProvider)
+			}
+		})
+	}
+}
+
+// TestCompleteJSONRefusalIsTerminalThroughTheSDK drives the real SDK against a stub so the
+// classification is proven on a decoded wire response, not on a hand-built struct — a refusal is
+// an HTTP 200, which is exactly why it is easy to mistake for a usable result.
+func TestCompleteJSONRefusalIsTerminalThroughTheSDK(t *testing.T) {
+	server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":1,"model":"m",
+			"choices":[{"index":0,"finish_reason":"content_filter",
+			"message":{"role":"assistant","content":"","refusal":"I can't help with that."}}]}`))
+	})
+
+	client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"))
+
+	_, err := client.CompleteJSON(context.Background(), "system", "hello", llm.Schema{Name: "s"})
+	require.Error(t, err)
+	require.ErrorIs(t, err, huberrors.ErrTerminalProvider)
+
+	reason, ok := huberrors.TerminalReasonOf(err)
+	require.True(t, ok)
+	assert.Equal(t, huberrors.TerminalReasonRefusal, reason)
+}
+
+// recordingUsage captures what the client reports for each provider call.
+type recordingUsage struct{ calls []llm.Usage }
+
+func (r *recordingUsage) RecordUsage(_ context.Context, u llm.Usage) { r.calls = append(r.calls, u) }
+
+// TestUsageIsRecordedForChatCompletions covers the reason this exists: the provider returns token
+// counts on every response and the client used to decode and drop them, so there was no way to
+// answer what enrichment costs. Failures are recorded too — a provider outage that burns input
+// tokens is exactly when the number matters.
+func TestUsageIsRecordedForChatCompletions(t *testing.T) {
+	t.Run("success carries token counts", func(t *testing.T) {
+		server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":1,"model":"m",
+				"choices":[{"index":0,"finish_reason":"stop",
+				"message":{"role":"assistant","content":"hallo"}}],
+				"usage":{"prompt_tokens":31,"completion_tokens":7,"total_tokens":38}}`))
+		})
+
+		usage := &recordingUsage{}
+		client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"),
+			WithUsageRecorder(usage))
+
+		_, err := client.Translate(context.Background(), "system", "hello")
+		require.NoError(t, err)
+
+		require.Len(t, usage.calls, 1)
+		got := usage.calls[0]
+		assert.Equal(t, llm.OperationChat, got.Operation)
+		assert.Equal(t, llm.ProviderOpenAI, got.Provider)
+		assert.Equal(t, "test-model", got.Model)
+		assert.Equal(t, int64(31), got.InputTokens)
+		assert.Equal(t, int64(7), got.OutputTokens)
+		assert.Empty(t, got.ErrorType, "a successful call carries no error.type")
+		assert.Positive(t, got.Duration)
+	})
+
+	t.Run("failure records a bounded error type", func(t *testing.T) {
+		server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+
+		usage := &recordingUsage{}
+		client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("test-model"),
+			WithUsageRecorder(usage))
+
+		_, err := client.Translate(context.Background(), "system", "hello")
+		require.Error(t, err)
+
+		require.Len(t, usage.calls, 1, "a failed call must still be recorded")
+		// The status code, never the provider's message — an unbounded error.type would blow up
+		// cardinality the first time a provider echoed user input back in an error body.
+		assert.Equal(t, "500", usage.calls[0].ErrorType)
+		assert.Zero(t, usage.calls[0].InputTokens, "no usage block means no token counts")
+	})
+
+	t.Run("a nil recorder is a no-op", func(t *testing.T) {
+		server := newChatCompletionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":1,"model":"m",
+				"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"x"}}]}`))
+		})
+
+		client := NewClient("sk-test", WithBaseURL(server.URL+"/v1"), WithModel("m"))
+
+		require.NotPanics(t, func() {
+			_, err := client.Translate(context.Background(), "system", "hello")
+			require.NoError(t, err)
+		})
+	})
+}

@@ -22,7 +22,10 @@ type Metrics struct {
 	EnrichmentClear EnrichmentClearMetrics
 	// EnrichmentBacklog gauges the aggregate eligible-but-unenriched record count per enrichment.
 	EnrichmentBacklog EnrichmentBacklogMetrics
-	Taxonomy          TaxonomyMetrics
+	// EnrichmentFailures counts permanent give-ups by cause and gauges how many records are
+	// currently failed. Carries the enrichment as a label rather than in the metric name.
+	EnrichmentFailures EnrichmentFailureMetrics
+	Taxonomy           TaxonomyMetrics
 }
 
 // NewMetrics creates EventMetrics, WebhookMetrics, EmbeddingMetrics, TranslationMetrics, and CacheMetrics from the given meter.
@@ -78,21 +81,27 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("enrichment backlog metrics: %w", err)
 	}
 
+	enrichmentFailures, err := NewEnrichmentFailureMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("create enrichment failure metrics: %w", err)
+	}
+
 	taxonomy, err := NewTaxonomyMetrics(meter)
 	if err != nil {
 		return nil, fmt.Errorf("taxonomy metrics: %w", err)
 	}
 
 	return &Metrics{
-		Events:            events,
-		Webhooks:          webhooks,
-		Embeddings:        embeddings,
-		Translation:       translation,
-		Sentiment:         sentiment,
-		Emotions:          emotions,
-		Cache:             cache,
-		EnrichmentClear:   enrichmentClear,
-		EnrichmentBacklog: enrichmentBacklog,
-		Taxonomy:          taxonomy,
+		Events:             events,
+		Webhooks:           webhooks,
+		Embeddings:         embeddings,
+		Translation:        translation,
+		Sentiment:          sentiment,
+		Emotions:           emotions,
+		Cache:              cache,
+		EnrichmentClear:    enrichmentClear,
+		EnrichmentBacklog:  enrichmentBacklog,
+		EnrichmentFailures: enrichmentFailures,
+		Taxonomy:           taxonomy,
 	}, nil
 }
