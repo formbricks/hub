@@ -905,8 +905,8 @@ func runRiverQueueDepthPoller(ctx context.Context, db *pgxpool.Pool, eventMetric
 	}
 }
 
-// stuckTaxonomyRunMessage is stored on runs the reaper force-fails. The Web maps the internal_error
-// code to a localized, user-facing message; this raw string is for operators (logs / API consumers).
+// stuckTaxonomyRunMessage is stored on runs the reaper force-fails. A stale run is retryable service
+// unavailability, not an internal persistence invariant failure; this raw string is for operators.
 const stuckTaxonomyRunMessage = "taxonomy run timed out without completing"
 
 // runTaxonomyRunReaper periodically fails taxonomy runs orphaned in a non-terminal state — the
@@ -931,13 +931,13 @@ func runTaxonomyRunReaper(
 
 	reap := func() {
 		reaped, err := repo.FailStuckRuns(ctx, timeout, stuckTaxonomyRunMessage,
-			models.TaxonomyRunFailureCodeInternalError)
+			models.TaxonomyRunFailureCodeServiceUnavailable)
 		for _, run := range reaped {
 			slog.ErrorContext(ctx, "taxonomy stuck-run reaper failed stalled run",
 				"event", "hub.taxonomy.run.reaped", "run_id", run.ID, "tenant_id", run.TenantID,
 				"scope_type", run.ScopeType, "source_type", run.SourceType,
 				"source_id", run.SourceID, "field_id", run.FieldID,
-				"failure_code", models.TaxonomyRunFailureCodeInternalError)
+				"failure_code", models.TaxonomyRunFailureCodeServiceUnavailable)
 		}
 
 		if len(reaped) > 0 && metrics != nil {
@@ -945,7 +945,7 @@ func runTaxonomyRunReaper(
 
 			for _, run := range reaped {
 				metrics.RecordRunOutcome(ctx, string(models.TaxonomyRunStatusFailed),
-					string(models.TaxonomyRunFailureCodeInternalError), string(run.ScopeType))
+					string(models.TaxonomyRunFailureCodeServiceUnavailable), string(run.ScopeType))
 
 				started := run.CreatedAt
 				if run.StartedAt != nil {

@@ -1100,6 +1100,7 @@ func TestDeleteTenantData(t *testing.T) {
 	// createTenantDataTaxonomyGraph builds one run with one cluster, one
 	// membership, three nodes (root/branch/leaf), one active run, and one event.
 	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyRuns)
+	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyRunInputRecords)
 	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyClusters)
 	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyClusterMemberships)
 	assert.Equal(t, int64(3), deleteResp.DeletedTaxonomyNodes)
@@ -1133,6 +1134,7 @@ func TestDeleteTenantData(t *testing.T) {
 	assert.Equal(t, int64(0), repeatedResp.DeletedEmbeddings)
 	assert.Equal(t, int64(0), repeatedResp.DeletedWebhooks)
 	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyRuns)
+	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyRunInputRecords)
 	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyClusters)
 	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyClusterMemberships)
 	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyNodes)
@@ -1277,6 +1279,11 @@ func createTenantDataTaxonomyGraph(
 		RETURNING id`,
 		tenantID, sourceID, fieldID,
 	).Scan(&runID)
+	require.NoError(t, err)
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO taxonomy_run_input_records (run_id, tenant_id, feedback_record_id, sort_order)
+		VALUES ($1, $2, $3, 0)`, runID, tenantID, feedbackRecordID)
 	require.NoError(t, err)
 
 	var clusterID uuid.UUID

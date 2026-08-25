@@ -114,6 +114,7 @@ func (s *FeedbackRecordsPurgeService) Purge(
 		"deleted_feedback_records", counts.DeletedFeedbackRecords,
 		"deleted_embeddings", counts.DeletedEmbeddings,
 		"deleted_taxonomy_cluster_memberships", counts.ClusterMemberships,
+		"deleted_taxonomy_run_input_records", counts.InputRecords,
 		"deleted_taxonomy_runs", counts.Runs,
 		"deleted_taxonomy_nodes", counts.Nodes,
 	)

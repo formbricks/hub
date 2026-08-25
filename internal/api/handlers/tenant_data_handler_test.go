@@ -43,6 +43,7 @@ func TestTenantDataHandler_Delete(t *testing.T) {
 						DeletedEmbeddings:                 2,
 						DeletedWebhooks:                   1,
 						DeletedTaxonomyRuns:               4,
+						DeletedTaxonomyRunInputRecords:    10,
 						DeletedTaxonomyClusters:           5,
 						DeletedTaxonomyClusterMemberships: 6,
 						DeletedTaxonomyNodes:              7,
@@ -71,6 +72,7 @@ func TestTenantDataHandler_Delete(t *testing.T) {
 		assert.Equal(t, int64(2), resp.DeletedEmbeddings)
 		assert.Equal(t, int64(1), resp.DeletedWebhooks)
 		assert.Equal(t, int64(4), resp.DeletedTaxonomyRuns)
+		assert.Equal(t, int64(10), resp.DeletedTaxonomyRunInputRecords)
 		assert.Equal(t, int64(5), resp.DeletedTaxonomyClusters)
 		assert.Equal(t, int64(6), resp.DeletedTaxonomyClusterMemberships)
 		assert.Equal(t, int64(7), resp.DeletedTaxonomyNodes)
