@@ -136,6 +136,7 @@ func (r *TenantDataRepository) PurgeFeedbackRecordsByTenant(
 	}
 
 	total.Runs = taxonomy.Runs
+	total.InputRecords = taxonomy.InputRecords
 	total.Clusters = taxonomy.Clusters
 	total.Nodes = taxonomy.Nodes
 	total.ActiveRuns = taxonomy.ActiveRuns
@@ -393,6 +394,7 @@ func deleteTenantDataInTx(
 		DeletedEmbeddings:                 embeddingTag.RowsAffected(),
 		DeletedWebhooks:                   webhooksTag.RowsAffected(),
 		DeletedTaxonomyRuns:               taxonomy.Runs,
+		DeletedTaxonomyRunInputRecords:    taxonomy.InputRecords,
 		DeletedTaxonomyClusters:           taxonomy.Clusters,
 		DeletedTaxonomyClusterMemberships: taxonomy.ClusterMemberships,
 		DeletedTaxonomyNodes:              taxonomy.Nodes,
@@ -409,7 +411,7 @@ func deleteTenantDataInTx(
 // cluster memberships (via the membership -> feedback_records FK), leaving runs, clusters, nodes,
 // active-run rows and node events orphaned. Every table is removed explicitly, children before
 // parents, so each count is exact and the purge never relies on cascades. Ordering rules:
-//   - node_events and cluster_memberships reference runs/nodes/clusters, so they go first.
+//   - node_events, cluster_memberships, and input records reference runs, so they go first.
 //   - taxonomy_clusters and taxonomy_nodes have no tenant_id column; they are scoped through their
 //     run via a taxonomy_runs subquery, which means taxonomy_runs MUST be deleted last (after nodes
 //     and clusters) or the subquery would match nothing and orphan them.
@@ -428,6 +430,13 @@ func deleteTenantTaxonomyInTx(
 		WHERE tenant_id = $1`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("delete tenant taxonomy cluster memberships: %w", err)
+	}
+
+	inputRecordsTag, err := exec.Exec(ctx, `
+		DELETE FROM taxonomy_run_input_records
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("delete tenant taxonomy run input records: %w", err)
 	}
 
 	nodesTag, err := exec.Exec(ctx, `
@@ -460,6 +469,7 @@ func deleteTenantTaxonomyInTx(
 
 	return &models.TenantTaxonomyDeleteCounts{
 		Runs:               runsTag.RowsAffected(),
+		InputRecords:       inputRecordsTag.RowsAffected(),
 		Clusters:           clustersTag.RowsAffected(),
 		ClusterMemberships: clusterMembershipsTag.RowsAffected(),
 		Nodes:              nodesTag.RowsAffected(),

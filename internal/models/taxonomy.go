@@ -94,31 +94,35 @@ type TaxonomyFieldsResponse struct {
 
 // TaxonomyRun is a persisted taxonomy generation run.
 type TaxonomyRun struct {
-	ID                 uuid.UUID               `json:"id"`
-	ScopeType          TaxonomyScopeType       `json:"scope_type"`
-	TenantID           string                  `json:"tenant_id"`
-	SourceType         string                  `json:"source_type"`
-	SourceID           string                  `json:"source_id"`
-	FieldID            string                  `json:"field_id"`
-	FieldLabel         *string                 `json:"field_label,omitempty"`
-	Status             TaxonomyRunStatus       `json:"status"`
-	Params             json.RawMessage         `json:"params,omitempty"`
-	Metrics            json.RawMessage         `json:"metrics,omitempty"`
-	RecordCount        int                     `json:"record_count"`
-	EmbeddingCount     int                     `json:"embedding_count"`
-	EligibleCount      int                     `json:"eligible_count,omitempty"`
-	SelectedCount      int                     `json:"selected_count,omitempty"`
-	SelectionCap       int                     `json:"selection_cap,omitempty"`
-	SelectionTruncated bool                    `json:"selection_truncated,omitempty"`
-	SelectionStrategy  string                  `json:"selection_strategy,omitempty"`
-	ClusterCount       int                     `json:"cluster_count"`
-	NodeCount          int                     `json:"node_count"`
-	Error              *string                 `json:"error,omitempty"`
-	ErrorCode          *TaxonomyRunFailureCode `json:"error_code,omitempty"`
-	StartedAt          *time.Time              `json:"started_at,omitempty"`
-	FinishedAt         *time.Time              `json:"finished_at,omitempty"`
-	CreatedAt          time.Time               `json:"created_at"`
-	UpdatedAt          time.Time               `json:"updated_at"`
+	ID             uuid.UUID         `json:"id"`
+	ScopeType      TaxonomyScopeType `json:"scope_type"`
+	TenantID       string            `json:"tenant_id"`
+	SourceType     string            `json:"source_type"`
+	SourceID       string            `json:"source_id"`
+	FieldID        string            `json:"field_id"`
+	FieldLabel     *string           `json:"field_label,omitempty"`
+	Status         TaxonomyRunStatus `json:"status"`
+	Params         json.RawMessage   `json:"params,omitempty"`
+	Metrics        json.RawMessage   `json:"metrics,omitempty"`
+	RecordCount    int               `json:"record_count"`
+	EmbeddingCount int               `json:"embedding_count"`
+	// InputSnapshotMaterialized distinguishes runs whose exact input was frozen by a
+	// snapshot-aware Hub replica from legacy or mixed-rollout runs served by older code.
+	// It is persistence metadata, not part of the public taxonomy run contract.
+	InputSnapshotMaterialized bool                    `json:"-"`
+	EligibleCount             int                     `json:"eligible_count,omitempty"`
+	SelectedCount             int                     `json:"selected_count,omitempty"`
+	SelectionCap              int                     `json:"selection_cap,omitempty"`
+	SelectionTruncated        bool                    `json:"selection_truncated,omitempty"`
+	SelectionStrategy         string                  `json:"selection_strategy,omitempty"`
+	ClusterCount              int                     `json:"cluster_count"`
+	NodeCount                 int                     `json:"node_count"`
+	Error                     *string                 `json:"error,omitempty"`
+	ErrorCode                 *TaxonomyRunFailureCode `json:"error_code,omitempty"`
+	StartedAt                 *time.Time              `json:"started_at,omitempty"`
+	FinishedAt                *time.Time              `json:"finished_at,omitempty"`
+	CreatedAt                 time.Time               `json:"created_at"`
+	UpdatedAt                 time.Time               `json:"updated_at"`
 }
 
 // CreateTaxonomyRunRequest starts a manual taxonomy generation run.

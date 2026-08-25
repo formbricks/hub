@@ -622,7 +622,7 @@ func TestTaxonomyRepository_TenantDeletionCleansTaxonomy(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, table := range []string{
-		"taxonomy_runs", "taxonomy_clusters", "taxonomy_cluster_memberships",
+		"taxonomy_runs", "taxonomy_run_input_records", "taxonomy_clusters", "taxonomy_cluster_memberships",
 		"taxonomy_nodes", "taxonomy_active_runs", "taxonomy_node_events",
 	} {
 		var (

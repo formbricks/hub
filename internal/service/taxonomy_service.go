@@ -425,8 +425,13 @@ func (s *TaxonomyService) CompleteRun(
 		return nil, fmt.Errorf("get selected taxonomy input records: %w", err)
 	}
 
-	if err := validateTaxonomyMembershipCoverage(req.Memberships, selectedRecordIDs); err != nil {
-		return nil, err
+	// Inputs served by pre-snapshot Hub replicas are explicitly grandfathered by migration 023.
+	// They have no immutable selection to compare with, so they retain the old completion contract.
+	// Once a new replica materializes a snapshot, coverage is mandatory even if it is unexpectedly empty.
+	if existingRun.InputSnapshotMaterialized || len(selectedRecordIDs) > 0 {
+		if err := validateTaxonomyMembershipCoverage(req.Memberships, selectedRecordIDs); err != nil {
+			return nil, err
+		}
 	}
 
 	run, err := s.repo.StoreResultAndActivate(ctx, runID, existingRun.TenantID, req)

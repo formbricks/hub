@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 
@@ -26,10 +27,11 @@ const (
 )
 
 var (
-	defaultJSONObj                        = json.RawMessage(`{}`)
-	defaultJSONArr                        = json.RawMessage(`[]`)
-	errTaxonomyRunInputSnapshotUnreadable = errors.New("materialized taxonomy run input is no longer readable")
+	defaultJSONObj = json.RawMessage(`{}`)
+	defaultJSONArr = json.RawMessage(`[]`)
 )
+
+const taxonomyRunInputChangedMessage = "a selected feedback record was deleted after taxonomy dispatch"
 
 // TaxonomyRepository stores taxonomy runs, artifacts, and edit events.
 type TaxonomyRepository struct {
@@ -740,10 +742,7 @@ func (r *TaxonomyRepository) GetRunInput(
 		}
 
 		if len(records) != selectedCount {
-			return fmt.Errorf(
-				"%w: selected %d records, loaded %d",
-				errTaxonomyRunInputSnapshotUnreadable, selectedCount, len(records),
-			)
+			return huberrors.NewConflictError(taxonomyRunInputChangedMessage)
 		}
 
 		run.EligibleCount = run.RecordCount
@@ -771,10 +770,12 @@ func (r *TaxonomyRepository) GetRunInputRecordIDs(
 	tenantID string,
 ) ([]uuid.UUID, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT feedback_record_id
-		FROM taxonomy_run_input_records
-		WHERE run_id = $1 AND tenant_id = $2
-		ORDER BY sort_order`, runID, tenantID)
+		SELECT input.feedback_record_id, fr.id IS NOT NULL
+		FROM taxonomy_run_input_records input
+		LEFT JOIN feedback_records fr
+			ON fr.id = input.feedback_record_id AND fr.tenant_id = input.tenant_id
+		WHERE input.run_id = $1 AND input.tenant_id = $2
+		ORDER BY input.sort_order`, runID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run input record IDs: %w", err)
 	}
@@ -783,9 +784,17 @@ func (r *TaxonomyRepository) GetRunInputRecordIDs(
 	recordIDs := make([]uuid.UUID, 0)
 
 	for rows.Next() {
-		var recordID uuid.UUID
-		if err := rows.Scan(&recordID); err != nil {
+		var (
+			recordID uuid.UUID
+			readable bool
+		)
+
+		if err := rows.Scan(&recordID, &readable); err != nil {
 			return nil, fmt.Errorf("scan taxonomy run input record ID: %w", err)
+		}
+
+		if !readable {
+			return nil, huberrors.NewConflictError(taxonomyRunInputChangedMessage)
 		}
 
 		recordIDs = append(recordIDs, recordID)
@@ -848,6 +857,16 @@ func storeResultAndActivateInTx(
 
 	if run.Status != models.TaxonomyRunStatusRunning {
 		return nil, taxonomyTransitionConflict(run, models.TaxonomyRunStatusSucceeded)
+	}
+
+	// Lock every still-live selected record before inserting memberships. The service's earlier
+	// readability check is intentionally duplicated inside this write transaction: without these
+	// key-share locks a record could be deleted between validation and the membership FK insert,
+	// turning a permanent input change into a retryable 500.
+	if run.InputSnapshotMaterialized {
+		if err := lockReadableTaxonomyRunInput(ctx, transaction, run.ID, run.TenantID); err != nil {
+			return nil, err
+		}
 	}
 
 	clusterIDs, err := insertTaxonomyClustersBulk(ctx, transaction, run.ID, req.Clusters)
@@ -1014,6 +1033,12 @@ func insertTaxonomyMembershipsBulk(
 			run_id uuid, tenant_id text, cluster_id uuid, feedback_record_id uuid,
 			confidence double precision, distance double precision, metadata jsonb
 		)`, string(payload)); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolationSQLState &&
+			strings.Contains(pgErr.ConstraintName, "feedback_record_id") {
+			return huberrors.NewConflictError(taxonomyRunInputChangedMessage)
+		}
+
 		return fmt.Errorf("bulk insert taxonomy cluster memberships: %w", err)
 	}
 
@@ -1404,7 +1429,7 @@ func materializeRunInputSnapshot(
 	}
 
 	if alreadyMaterialized {
-		return nil
+		return markRunInputSnapshotMaterialized(ctx, dbTx, run)
 	}
 
 	if run.ScopeType == models.TaxonomyScopeTypeDirectory {
@@ -1432,7 +1457,7 @@ func materializeRunInputSnapshot(
 			return fmt.Errorf("materialize directory taxonomy run input: %w", err)
 		}
 
-		return nil
+		return markRunInputSnapshotMaterialized(ctx, dbTx, run)
 	}
 
 	_, err := dbTx.Exec(ctx, `
@@ -1460,6 +1485,64 @@ func materializeRunInputSnapshot(
 		run.ID, run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel)
 	if err != nil {
 		return fmt.Errorf("materialize field taxonomy run input: %w", err)
+	}
+
+	return markRunInputSnapshotMaterialized(ctx, dbTx, run)
+}
+
+func markRunInputSnapshotMaterialized(ctx context.Context, dbTx tenantWriteTx, run *models.TaxonomyRun) error {
+	if _, err := dbTx.Exec(ctx, `
+		UPDATE taxonomy_runs
+		SET input_snapshot_materialized = true
+		WHERE id = $1 AND tenant_id = $2`, run.ID, run.TenantID); err != nil {
+		return fmt.Errorf("mark taxonomy run input snapshot materialized: %w", err)
+	}
+
+	run.InputSnapshotMaterialized = true
+
+	return nil
+}
+
+func lockReadableTaxonomyRunInput(
+	ctx context.Context,
+	transaction tenantWriteTx,
+	runID uuid.UUID,
+	tenantID string,
+) error {
+	rows, err := transaction.Query(ctx, `
+		SELECT fr.id
+		FROM taxonomy_run_input_records input
+		INNER JOIN feedback_records fr
+			ON fr.id = input.feedback_record_id AND fr.tenant_id = input.tenant_id
+		WHERE input.run_id = $1 AND input.tenant_id = $2
+		FOR KEY SHARE OF fr`, runID, tenantID)
+	if err != nil {
+		return fmt.Errorf("lock taxonomy run input records: %w", err)
+	}
+
+	liveCount := 0
+	for rows.Next() {
+		liveCount++
+	}
+
+	if err := rows.Err(); err != nil {
+		rows.Close()
+
+		return fmt.Errorf("iterate locked taxonomy run input records: %w", err)
+	}
+
+	rows.Close()
+
+	var selectedCount int
+	if err := transaction.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM taxonomy_run_input_records
+		WHERE run_id = $1 AND tenant_id = $2`, runID, tenantID).Scan(&selectedCount); err != nil {
+		return fmt.Errorf("count locked taxonomy run input records: %w", err)
+	}
+
+	if liveCount != selectedCount {
+		return huberrors.NewConflictError(taxonomyRunInputChangedMessage)
 	}
 
 	return nil
@@ -1581,6 +1664,7 @@ const taxonomyRunSelect = `
 				taxonomy_runs.source_id, taxonomy_runs.field_id, taxonomy_runs.field_label,
 				taxonomy_runs.status, taxonomy_runs.params, taxonomy_runs.metrics,
 				taxonomy_runs.record_count, taxonomy_runs.embedding_count,
+				taxonomy_runs.input_snapshot_materialized,
 			taxonomy_runs.cluster_count, taxonomy_runs.node_count, taxonomy_runs.error, taxonomy_runs.error_code,
 			taxonomy_runs.started_at, taxonomy_runs.finished_at,
 			taxonomy_runs.created_at, taxonomy_runs.updated_at`
@@ -1608,6 +1692,7 @@ func scanTaxonomyRun(row scanner) (*models.TaxonomyRun, error) {
 		&run.Metrics,
 		&run.RecordCount,
 		&run.EmbeddingCount,
+		&run.InputSnapshotMaterialized,
 		&run.ClusterCount,
 		&run.NodeCount,
 		&run.Error,

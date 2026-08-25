@@ -135,6 +135,7 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 		assert.Equal(t, int64(1), counts.DeletedEmbeddings)
 		assert.Equal(t, int64(1), counts.ClusterMemberships)
 		assert.Equal(t, int64(1), counts.Runs)
+		assert.Equal(t, int64(1), counts.InputRecords)
 		assert.Equal(t, int64(1), counts.Clusters)
 		assert.Equal(t, int64(3), counts.Nodes)
 		assert.Equal(t, int64(1), counts.ActiveRuns)
@@ -148,6 +149,8 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 			`SELECT count(*) FROM embeddings WHERE feedback_record_id = $1`, ids.FeedbackRecordID))
 		assert.Zero(t, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_cluster_memberships WHERE tenant_id = $1`, tenantID))
+		assert.Zero(t, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_run_input_records WHERE tenant_id = $1`, tenantID))
 	})
 
 	// The failure markers carry a tenant_id, so one surviving its records is tenant-scoped data
@@ -200,6 +203,8 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 		assert.Equal(t, 1, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_cluster_memberships WHERE tenant_id = $1`, otherTenantID))
 		assert.Equal(t, 1, countRows(ctx, t, db,
+			`SELECT count(*) FROM taxonomy_run_input_records WHERE tenant_id = $1`, otherTenantID))
+		assert.Equal(t, 1, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_runs WHERE id = $1`, otherIDs.RunID))
 		assert.Equal(t, 3, countRows(ctx, t, db,
 			`SELECT count(*) FROM taxonomy_nodes WHERE run_id = $1`, otherIDs.RunID))
@@ -215,6 +220,7 @@ func TestPurgeFeedbackRecordsByTenant(t *testing.T) {
 		assert.Zero(t, repeat.DeletedFeedbackRecords)
 		assert.Zero(t, repeat.DeletedEmbeddings)
 		assert.Zero(t, repeat.ClusterMemberships)
+		assert.Zero(t, repeat.InputRecords)
 		assert.Zero(t, repeat.Runs)
 		assert.Zero(t, repeat.Nodes)
 	})

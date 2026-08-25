@@ -1259,6 +1259,7 @@ paths:
                                         deleted_embeddings: 17
                                         deleted_webhooks: 3
                                         deleted_taxonomy_runs: 4
+                                        deleted_taxonomy_run_input_records: 1200
                                         deleted_taxonomy_clusters: 28
                                         deleted_taxonomy_cluster_memberships: 1200
                                         deleted_taxonomy_nodes: 36
@@ -2789,6 +2790,10 @@ components:
                     type: integer
                     description: Number of taxonomy runs deleted
                     format: int64
+                deleted_taxonomy_run_input_records:
+                    type: integer
+                    description: Number of immutable taxonomy run-input snapshot rows deleted
+                    format: int64
                 deleted_taxonomy_clusters:
                     type: integer
                     description: Number of taxonomy clusters deleted
@@ -2818,6 +2823,7 @@ components:
                 - deleted_embeddings
                 - deleted_webhooks
                 - deleted_taxonomy_runs
+                - deleted_taxonomy_run_input_records
                 - deleted_taxonomy_clusters
                 - deleted_taxonomy_cluster_memberships
                 - deleted_taxonomy_nodes

@@ -1016,6 +1016,95 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 		assertTaxonomyRunUnchanged(ctx, t, harness, runID, scope.TenantID)
 	})
 
+	t.Run("deleted snapshotted input fails fast as a conflict", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-deleted-snapshot-input")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+		feedbackRecordID := seedEmbeddedFeedback(ctx, t, harness, scope, 1)[0]
+		runID := startRunForScope(ctx, t, harness, scope)
+		materializeTaxonomyRunInput(ctx, t, harness, runID)
+
+		_, err := harness.db.Exec(ctx, `DELETE FROM feedback_records WHERE id = $1`, feedbackRecordID)
+		require.NoError(t, err)
+
+		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"
+		requestTaxonomyProblem(
+			ctx, t, http.MethodGet, inputURL, harness.internalToken, nil,
+			http.StatusConflict, response.CodeConflict, response.ProblemTypeConflict,
+		)
+
+		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
+		requestTaxonomyProblem(
+			ctx, t, http.MethodPut, resultURL, harness.internalToken, validTaxonomyResult(feedbackRecordID),
+			http.StatusConflict, response.CodeConflict, response.ProblemTypeConflict,
+		)
+		assertTaxonomyRunUnchanged(ctx, t, harness, runID, scope.TenantID)
+	})
+
+	t.Run("legacy in-flight run without a snapshot keeps its original completion contract", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-legacy-no-snapshot")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+		feedbackRecordID := insertScopeFeedbackRecord(ctx, t, harness.db, scope)
+
+		var runID uuid.UUID
+
+		err := harness.db.QueryRow(ctx, `
+			INSERT INTO taxonomy_runs (
+				tenant_id, scope_type, source_type, source_id, field_id, status,
+				record_count, embedding_count, started_at
+			)
+			VALUES ($1, 'field', $2, $3, $4, 'running', 1, 1, NOW())
+			RETURNING id`, scope.TenantID, scope.SourceType, scope.SourceID, scope.FieldID,
+		).Scan(&runID)
+		require.NoError(t, err)
+
+		var completed models.TaxonomyRun
+		requestTaxonomyJSON(
+			ctx,
+			t,
+			http.MethodPut,
+			harness.server.URL+"/internal/v1/taxonomy/runs/"+runID.String()+"/result",
+			harness.internalToken,
+			validTaxonomyResult(feedbackRecordID),
+			http.StatusOK,
+			&completed,
+		)
+		assert.Equal(t, models.TaxonomyRunStatusSucceeded, completed.Status)
+	})
+
+	t.Run("legacy result referencing a deleted record fails fast as a conflict", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-legacy-deleted-input")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+		feedbackRecordID := insertScopeFeedbackRecord(ctx, t, harness.db, scope)
+
+		var runID uuid.UUID
+
+		err := harness.db.QueryRow(ctx, `
+			INSERT INTO taxonomy_runs (
+				tenant_id, scope_type, source_type, source_id, field_id, status,
+				record_count, embedding_count, started_at
+			)
+			VALUES ($1, 'field', $2, $3, $4, 'running', 1, 1, NOW())
+			RETURNING id`, scope.TenantID, scope.SourceType, scope.SourceID, scope.FieldID,
+		).Scan(&runID)
+		require.NoError(t, err)
+
+		_, err = harness.db.Exec(ctx, `DELETE FROM feedback_records WHERE id = $1`, feedbackRecordID)
+		require.NoError(t, err)
+
+		requestTaxonomyProblem(
+			ctx,
+			t,
+			http.MethodPut,
+			harness.server.URL+"/internal/v1/taxonomy/runs/"+runID.String()+"/result",
+			harness.internalToken,
+			validTaxonomyResult(feedbackRecordID),
+			http.StatusConflict,
+			response.CodeConflict,
+			response.ProblemTypeConflict,
+		)
+		assertTaxonomyRunUnchanged(ctx, t, harness, runID, scope.TenantID)
+	})
+
 	t.Run("failed payload validation is machine readable", func(t *testing.T) {
 		problem := requestTaxonomyProblem(
 			ctx,
