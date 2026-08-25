@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -9,6 +10,12 @@ import (
 	"github.com/formbricks/hub/internal/api/response"
 	"github.com/formbricks/hub/internal/models"
 )
+
+// maxTaxonomyResultBodyBytes bounds the only internal taxonomy request whose size scales with
+// the selected input. A maximum run has 10,000 memberships plus at most 80 clusters and a bounded
+// hierarchy; 16 MiB leaves ample JSON overhead while preventing an authenticated caller from
+// making Hub decode an unbounded body into memory.
+const maxTaxonomyResultBodyBytes = 16 << 20
 
 // TaxonomyInternalService is the application service used by internal taxonomy endpoints.
 type TaxonomyInternalService interface {
@@ -81,8 +88,17 @@ func (h *TaxonomyInternalHandler) CompleteRun(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxTaxonomyResultBodyBytes)
+
 	var req models.TaxonomyRunResultRequest
 	if err := decodeAndValidateJSON(r, &req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
+
+			return
+		}
+
 		response.RespondError(w, r, err)
 
 		return

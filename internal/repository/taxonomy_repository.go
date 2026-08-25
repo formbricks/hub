@@ -26,8 +26,9 @@ const (
 )
 
 var (
-	defaultJSONObj = json.RawMessage(`{}`)
-	defaultJSONArr = json.RawMessage(`[]`)
+	defaultJSONObj                        = json.RawMessage(`{}`)
+	defaultJSONArr                        = json.RawMessage(`[]`)
+	errTaxonomyRunInputSnapshotUnreadable = errors.New("materialized taxonomy run input is no longer readable")
 )
 
 // TaxonomyRepository stores taxonomy runs, artifacts, and edit events.
@@ -671,60 +672,94 @@ func (r *TaxonomyRepository) GetRunInput(
 	tenantID string,
 	embeddingModel string,
 ) (*models.TaxonomyRunInputResponse, error) {
-	run, err := r.GetRunForTenant(ctx, runID, tenantID)
-	if err != nil {
-		return nil, err
-	}
+	var response *models.TaxonomyRunInputResponse
 
-	limit := run.RecordCount
-	if limit > MaxTaxonomyRunInputRows {
-		slog.Warn("taxonomy run input truncated to the row cap",
-			"run_id", runID, "eligible_count", run.RecordCount,
-			"embedding_count", run.EmbeddingCount, "cap", MaxTaxonomyRunInputRows)
+	err := withTenantWritePoolTx(ctx, r.db, []string{tenantID}, func(dbTx tenantWriteTx) error {
+		run, err := queryTaxonomyRun(ctx, dbTx, taxonomyRunSelect+`
+			FROM taxonomy_runs
+			WHERE id = $1 AND tenant_id = $2
+			FOR UPDATE`, runID, tenantID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return huberrors.NewNotFoundError("taxonomy_run", "taxonomy run not found")
+		}
 
-		limit = MaxTaxonomyRunInputRows
-	}
+		if err != nil {
+			return fmt.Errorf("lock taxonomy run for input materialization: %w", err)
+		}
 
-	rows, err := r.queryRunInputRows(ctx, run, limit, embeddingModel)
+		limit := min(run.RecordCount, MaxTaxonomyRunInputRows)
+		if run.RecordCount > MaxTaxonomyRunInputRows {
+			slog.Warn("taxonomy run input truncated to the row cap",
+				"run_id", runID, "eligible_count", run.RecordCount,
+				"embedding_count", run.EmbeddingCount, "cap", MaxTaxonomyRunInputRows)
+		}
+
+		if err := materializeRunInputSnapshot(ctx, dbTx, run, limit, embeddingModel); err != nil {
+			return err
+		}
+
+		var selectedCount int
+		if err := dbTx.QueryRow(ctx, `
+			SELECT COUNT(*)::int
+			FROM taxonomy_run_input_records
+			WHERE run_id = $1 AND tenant_id = $2`, runID, tenantID).Scan(&selectedCount); err != nil {
+			return fmt.Errorf("count materialized taxonomy run input: %w", err)
+		}
+
+		rows, err := queryMaterializedRunInputRows(ctx, dbTx, runID, tenantID, embeddingModel)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		records := make([]models.TaxonomyRunInputRecord, 0, selectedCount)
+
+		for rows.Next() {
+			var (
+				record models.TaxonomyRunInputRecord
+				vec    pgvector.HalfVector
+			)
+			if err := rows.Scan(
+				&record.FeedbackRecordID,
+				&record.SourceType,
+				&record.SourceID,
+				&record.FieldID,
+				&record.FieldLabel,
+				&record.ValueText,
+				&vec,
+			); err != nil {
+				return fmt.Errorf("scan materialized taxonomy run input record: %w", err)
+			}
+
+			record.Embedding = vec.Slice()
+			records = append(records, record)
+		}
+
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate materialized taxonomy run input records: %w", err)
+		}
+
+		if len(records) != selectedCount {
+			return fmt.Errorf(
+				"%w: selected %d records, loaded %d",
+				errTaxonomyRunInputSnapshotUnreadable, selectedCount, len(records),
+			)
+		}
+
+		run.EligibleCount = run.RecordCount
+		run.SelectedCount = selectedCount
+		run.SelectionCap = MaxTaxonomyRunInputRows
+		run.SelectionTruncated = run.RecordCount > selectedCount
+		run.SelectionStrategy = "most_recent"
+		response = &models.TaxonomyRunInputResponse{Run: *run, Records: records}
+
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run input: %w", err)
 	}
-	defer rows.Close()
 
-	records := make([]models.TaxonomyRunInputRecord, 0, limit)
-
-	for rows.Next() {
-		var (
-			record models.TaxonomyRunInputRecord
-			vec    pgvector.HalfVector
-		)
-		if err := rows.Scan(
-			&record.FeedbackRecordID,
-			&record.SourceType,
-			&record.SourceID,
-			&record.FieldID,
-			&record.FieldLabel,
-			&record.ValueText,
-			&vec,
-		); err != nil {
-			return nil, fmt.Errorf("scan taxonomy run input record: %w", err)
-		}
-
-		record.Embedding = vec.Slice()
-		records = append(records, record)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate taxonomy run input records: %w", err)
-	}
-
-	run.EligibleCount = run.RecordCount
-	run.SelectedCount = len(records)
-	run.SelectionCap = MaxTaxonomyRunInputRows
-	run.SelectionTruncated = run.RecordCount > len(records)
-	run.SelectionStrategy = "most_recent"
-
-	return &models.TaxonomyRunInputResponse{Run: *run, Records: records}, nil
+	return response, nil
 }
 
 // GetRunInputRecordIDs returns the exact bounded record selection a taxonomy result
@@ -734,22 +769,18 @@ func (r *TaxonomyRepository) GetRunInputRecordIDs(
 	ctx context.Context,
 	runID uuid.UUID,
 	tenantID string,
-	embeddingModel string,
 ) ([]uuid.UUID, error) {
-	run, err := r.GetRunForTenant(ctx, runID, tenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	limit := min(run.RecordCount, MaxTaxonomyRunInputRows)
-
-	rows, err := r.queryRunInputRecordIDs(ctx, run, limit, embeddingModel)
+	rows, err := r.db.Query(ctx, `
+		SELECT feedback_record_id
+		FROM taxonomy_run_input_records
+		WHERE run_id = $1 AND tenant_id = $2
+		ORDER BY sort_order`, runID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("get taxonomy run input record IDs: %w", err)
 	}
 	defer rows.Close()
 
-	recordIDs := make([]uuid.UUID, 0, limit)
+	recordIDs := make([]uuid.UUID, 0)
 
 	for rows.Next() {
 		var recordID uuid.UUID
@@ -1357,38 +1388,91 @@ func (r *TaxonomyRepository) ListNodeRecords(
 	return records, limit, nil
 }
 
-func (r *TaxonomyRepository) queryRunInputRows(
+func materializeRunInputSnapshot(
 	ctx context.Context,
+	dbTx tenantWriteTx,
 	run *models.TaxonomyRun,
 	limit int,
 	embeddingModel string,
-) (pgx.Rows, error) {
-	if run.ScopeType == models.TaxonomyScopeTypeDirectory {
-		rows, err := r.db.Query(ctx, `
-			SELECT
-				fr.id,
-				fr.source_type,
-				COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
-				fr.field_id,
-				COALESCE(fr.field_label, ''),
-				COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')),
-				e.embedding
-			FROM feedback_records fr
-			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $3
-			WHERE fr.tenant_id = $1
-			  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
-			ORDER BY fr.collected_at DESC, fr.id ASC
-			LIMIT $2`,
-			run.TenantID, limit, embeddingModel,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("query directory taxonomy run input rows: %w", err)
-		}
-
-		return rows, nil
+) error {
+	var alreadyMaterialized bool
+	if err := dbTx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM taxonomy_run_input_records WHERE run_id = $1
+		)`, run.ID).Scan(&alreadyMaterialized); err != nil {
+		return fmt.Errorf("check taxonomy run input snapshot: %w", err)
 	}
 
-	rows, err := r.db.Query(ctx, `
+	if alreadyMaterialized {
+		return nil
+	}
+
+	if run.ScopeType == models.TaxonomyScopeTypeDirectory {
+		_, err := dbTx.Exec(ctx, `
+			INSERT INTO taxonomy_run_input_records (
+				run_id, tenant_id, feedback_record_id, sort_order
+			)
+			SELECT $1, $2, selected.id, selected.sort_order
+			FROM (
+				SELECT
+					fr.id,
+					(ROW_NUMBER() OVER (ORDER BY fr.collected_at DESC, fr.id ASC) - 1)::int AS sort_order
+				FROM feedback_records fr
+				INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $4
+				WHERE fr.tenant_id = $2
+				  AND COALESCE(
+					NULLIF(btrim(fr.value_text_translated), ''),
+					NULLIF(btrim(fr.value_text), '')
+				  ) IS NOT NULL
+				ORDER BY fr.collected_at DESC, fr.id ASC
+				LIMIT $3
+			) selected`,
+			run.ID, run.TenantID, limit, embeddingModel)
+		if err != nil {
+			return fmt.Errorf("materialize directory taxonomy run input: %w", err)
+		}
+
+		return nil
+	}
+
+	_, err := dbTx.Exec(ctx, `
+		INSERT INTO taxonomy_run_input_records (
+			run_id, tenant_id, feedback_record_id, sort_order
+		)
+		SELECT $1, $2, selected.id, selected.sort_order
+		FROM (
+			SELECT
+				fr.id,
+				(ROW_NUMBER() OVER (ORDER BY fr.collected_at DESC, fr.id ASC) - 1)::int AS sort_order
+			FROM feedback_records fr
+			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $7
+			WHERE fr.tenant_id = $2
+			  AND fr.source_type = $3
+			  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($4), '')
+			  AND fr.field_id = $5
+			  AND COALESCE(
+				NULLIF(btrim(fr.value_text_translated), ''),
+				NULLIF(btrim(fr.value_text), '')
+			  ) IS NOT NULL
+			ORDER BY fr.collected_at DESC, fr.id ASC
+			LIMIT $6
+		) selected`,
+		run.ID, run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel)
+	if err != nil {
+		return fmt.Errorf("materialize field taxonomy run input: %w", err)
+	}
+
+	return nil
+}
+
+func queryMaterializedRunInputRows(
+	ctx context.Context,
+	dbTx tenantWriteTx,
+	runID uuid.UUID,
+	tenantID string,
+	embeddingModel string,
+) (pgx.Rows, error) {
+	rows, err := dbTx.Query(ctx, `
 		SELECT
 			fr.id,
 			fr.source_type,
@@ -1397,63 +1481,15 @@ func (r *TaxonomyRepository) queryRunInputRows(
 			COALESCE(fr.field_label, ''),
 			COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')),
 			e.embedding
-		FROM feedback_records fr
-		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
-		WHERE fr.tenant_id = $1
-		  AND fr.source_type = $2
-		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
-		  AND fr.field_id = $4
-		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
-		ORDER BY fr.collected_at DESC, fr.id ASC
-		LIMIT $5`,
-		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
-	)
+		FROM taxonomy_run_input_records input
+		INNER JOIN feedback_records fr
+			ON fr.id = input.feedback_record_id AND fr.tenant_id = input.tenant_id
+		INNER JOIN embeddings e
+			ON e.feedback_record_id = input.feedback_record_id AND e.model = $3
+		WHERE input.run_id = $1 AND input.tenant_id = $2
+		ORDER BY input.sort_order`, runID, tenantID, embeddingModel)
 	if err != nil {
-		return nil, fmt.Errorf("query field taxonomy run input rows: %w", err)
-	}
-
-	return rows, nil
-}
-
-func (r *TaxonomyRepository) queryRunInputRecordIDs(
-	ctx context.Context,
-	run *models.TaxonomyRun,
-	limit int,
-	embeddingModel string,
-) (pgx.Rows, error) {
-	if run.ScopeType == models.TaxonomyScopeTypeDirectory {
-		rows, err := r.db.Query(ctx, `
-			SELECT fr.id
-			FROM feedback_records fr
-			INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $3
-			WHERE fr.tenant_id = $1
-			  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
-			ORDER BY fr.collected_at DESC, fr.id ASC
-			LIMIT $2`,
-			run.TenantID, limit, embeddingModel,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("query directory taxonomy run input record IDs: %w", err)
-		}
-
-		return rows, nil
-	}
-
-	rows, err := r.db.Query(ctx, `
-		SELECT fr.id
-		FROM feedback_records fr
-		INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $6
-		WHERE fr.tenant_id = $1
-		  AND fr.source_type = $2
-		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
-		  AND fr.field_id = $4
-		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
-		ORDER BY fr.collected_at DESC, fr.id ASC
-		LIMIT $5`,
-		run.TenantID, run.SourceType, run.SourceID, run.FieldID, limit, embeddingModel,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query field taxonomy run input record IDs: %w", err)
+		return nil, fmt.Errorf("query materialized taxonomy run input rows: %w", err)
 	}
 
 	return rows, nil

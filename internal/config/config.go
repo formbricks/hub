@@ -220,11 +220,11 @@ type TaxonomyConfig struct {
 	EmbeddingModel         string `env:"TAXONOMY_EMBEDDING_MODEL"`
 	MinimumEmbeddedRecords int    `env:"TAXONOMY_MIN_EMBEDDED_RECORDS" env-default:"20"`
 	// StuckRunTimeout is the maximum time a pending/running run may go without its updated_at being
-	// bumped (via the internal heartbeat endpoint) before the reaper force-fails it. Once the taxonomy
-	// service heartbeats during generation, this should stay at a small multiple of the heartbeat
-	// interval. The taxonomy service defaults to a 30-second heartbeat, so five minutes tolerates
-	// transient callback/network failures without leaving orphaned runs indefinitely.
-	StuckRunTimeout DurationSec `env:"TAXONOMY_STUCK_RUN_TIMEOUT_SECONDS" env-default:"300"`
+	// bumped (via the internal heartbeat endpoint) before the reaper force-fails it. Keep the default
+	// compatible with taxonomy images that do not heartbeat through terminal callbacks; operators may
+	// lower it after deploying a heartbeat-capable image and retaining several heartbeat intervals of
+	// headroom.
+	StuckRunTimeout DurationSec `env:"TAXONOMY_STUCK_RUN_TIMEOUT_SECONDS" env-default:"1800"`
 	// ReaperInterval is how often the reaper sweeps for stuck runs.
 	ReaperInterval DurationSec `env:"TAXONOMY_REAPER_INTERVAL_SECONDS" env-default:"60"`
 }

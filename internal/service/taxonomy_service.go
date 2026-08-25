@@ -69,7 +69,6 @@ type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service 
 		ctx context.Context,
 		runID uuid.UUID,
 		tenantID string,
-		embeddingModel string,
 	) ([]uuid.UUID, error)
 	StoreResultAndActivate(
 		ctx context.Context,
@@ -411,6 +410,9 @@ func (s *TaxonomyService) CompleteRun(
 	}
 
 	if existingRun.Status == models.TaxonomyRunStatusSucceeded {
+		// Runs completed before result digests were introduced cannot prove that a retry is identical.
+		// Keep the fail-safe conflict for a missing legacy digest instead of accepting a potentially
+		// different tree as idempotent.
 		if jsonutil.ObjectString(existingRun.Metrics, "result_digest") == resultDigest {
 			return existingRun, nil
 		}
@@ -418,7 +420,7 @@ func (s *TaxonomyService) CompleteRun(
 		return nil, huberrors.NewConflictError("taxonomy run already succeeded with a different result")
 	}
 
-	selectedRecordIDs, err := s.repo.GetRunInputRecordIDs(ctx, runID, existingRun.TenantID, s.embeddingModel)
+	selectedRecordIDs, err := s.repo.GetRunInputRecordIDs(ctx, runID, existingRun.TenantID)
 	if err != nil {
 		return nil, fmt.Errorf("get selected taxonomy input records: %w", err)
 	}

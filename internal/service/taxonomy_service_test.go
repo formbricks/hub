@@ -146,7 +146,6 @@ func (m *mockTaxonomyRepo) GetRunInputRecordIDs(
 	_ context.Context,
 	_ uuid.UUID,
 	_ string,
-	_ string,
 ) ([]uuid.UUID, error) {
 	return m.selectedRecordIDs, m.selectedRecordIDsErr
 }
@@ -640,6 +639,25 @@ func TestTaxonomyService_CompleteRunAddsCanonicalDigestAndIsOrderIndependent(t *
 
 	if repo.storeResultCalls != 1 {
 		t.Fatalf("StoreResultAndActivate() calls after retry = %d, want 1", repo.storeResultCalls)
+	}
+}
+
+func TestTaxonomyService_CompleteRunKeepsLegacySucceededRunFailSafe(t *testing.T) {
+	runID := uuid.MustParse("018e1234-5678-9abc-def0-222222222226")
+	recordID := uuid.MustParse("018e1234-5678-9abc-def0-100000000005")
+	repo := &mockTaxonomyRepo{internalRun: &models.TaxonomyRun{
+		ID: runID, TenantID: "tenant-1", Status: models.TaxonomyRunStatusSucceeded,
+		Metrics: json.RawMessage(`{}`),
+	}}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+	_, err := svc.CompleteRun(context.Background(), runID, validTaxonomyServiceResult(recordID))
+	if err == nil {
+		t.Fatal("CompleteRun() error = nil for legacy succeeded run without a digest")
+	}
+
+	if repo.storeResultCalls != 0 {
+		t.Fatalf("StoreResultAndActivate() calls = %d, want 0", repo.storeResultCalls)
 	}
 }
 

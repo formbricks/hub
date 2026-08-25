@@ -808,10 +808,12 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 
 		fieldIDs := map[string]bool{}
 		sourceTypes := map[string]bool{}
+		selectedRecordIDs := make([]uuid.UUID, 0, len(input.Records))
 
 		for _, record := range input.Records {
 			fieldIDs[record.FieldID] = true
 			sourceTypes[record.SourceType] = true
+			selectedRecordIDs = append(selectedRecordIDs, record.FeedbackRecordID)
 			assert.NotEmpty(t, record.Embedding)
 			assert.NotEmpty(t, record.ValueText)
 		}
@@ -820,6 +822,18 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		assert.True(t, fieldIDs["support_comment"])
 		assert.True(t, sourceTypes["formbricks"])
 		assert.True(t, sourceTypes["support"])
+
+		// Feedback can arrive while a long taxonomy generation is in flight. The completion
+		// contract must remain the exact cross-field directory snapshot returned above; the new,
+		// more-recent row must neither become required nor displace an already-selected row.
+		seedEmbeddedFeedback(ctx, t, harness, firstFieldScope, 1)
+
+		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
+
+		var completed models.TaxonomyRun
+		requestTaxonomyJSON(ctx, t, http.MethodPut, resultURL, harness.internalToken,
+			validTaxonomyResultForRecords(selectedRecordIDs), http.StatusOK, &completed)
+		assert.Equal(t, models.TaxonomyRunStatusSucceeded, completed.Status)
 	})
 
 	t.Run("complete run stores artifacts and activates", func(t *testing.T) {
@@ -836,6 +850,8 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		// Auth is required.
 		requestTaxonomyProblem(ctx, t, http.MethodPut, resultURL, "", result,
 			http.StatusUnauthorized, response.CodeUnauthorized, response.ProblemTypeUnauthorized)
+
+		materializeTaxonomyRunInput(ctx, t, harness, runID)
 
 		var run models.TaxonomyRun
 		requestTaxonomyJSON(ctx, t, http.MethodPut, resultURL, harness.internalToken, result, http.StatusOK, &run)
@@ -982,6 +998,7 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
 		feedbackRecordIDs := seedEmbeddedFeedback(ctx, t, harness, scope, 2)
 		runID := startRunForScope(ctx, t, harness, scope)
+		materializeTaxonomyRunInput(ctx, t, harness, runID)
 		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
 
 		problem := requestTaxonomyProblem(
@@ -1123,6 +1140,7 @@ func TestTaxonomyAPI_InternalErrors(t *testing.T) {
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
 		feedbackRecordID := seedEmbeddedFeedback(ctx, t, harness, scope, 1)[0]
 		runID := startRunForScope(ctx, t, harness, scope)
+		materializeTaxonomyRunInput(ctx, t, harness, runID)
 		result := validTaxonomyResult(feedbackRecordID)
 		resultURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/result"
 
@@ -1303,6 +1321,20 @@ func startRunForScope(ctx context.Context, t *testing.T, harness *taxonomyTestSe
 	return run.ID
 }
 
+func materializeTaxonomyRunInput(
+	ctx context.Context,
+	t *testing.T,
+	harness *taxonomyTestServer,
+	runID uuid.UUID,
+) {
+	t.Helper()
+
+	var input models.TaxonomyRunInputResponse
+	requestTaxonomyJSON(ctx, t, http.MethodGet,
+		harness.server.URL+"/internal/v1/taxonomy/runs/"+runID.String()+"/input",
+		harness.internalToken, nil, http.StatusOK, &input)
+}
+
 // createRunningRun creates a run in the running state without requiring seeded embeddings,
 // for internal endpoints that only need a run in the correct state.
 func createRunningRun(ctx context.Context, t *testing.T, harness *taxonomyTestServer, scope models.TaxonomyScope) uuid.UUID {
@@ -1349,13 +1381,22 @@ func assertTaxonomyRunUnchanged(
 }
 
 func validTaxonomyResult(feedbackRecordID uuid.UUID) models.TaxonomyRunResultRequest {
+	return validTaxonomyResultForRecords([]uuid.UUID{feedbackRecordID})
+}
+
+func validTaxonomyResultForRecords(feedbackRecordIDs []uuid.UUID) models.TaxonomyRunResultRequest {
+	memberships := make([]models.TaxonomyResultMembership, 0, len(feedbackRecordIDs))
+	for _, feedbackRecordID := range feedbackRecordIDs {
+		memberships = append(memberships, models.TaxonomyResultMembership{
+			ClusterKey: 1, FeedbackRecordID: feedbackRecordID, Confidence: new(0.9),
+		})
+	}
+
 	return models.TaxonomyRunResultRequest{
 		Clusters: []models.TaxonomyResultCluster{
-			{ClusterKey: 1, Label: new("login"), Size: 1},
+			{ClusterKey: 1, Label: new("login"), Size: len(feedbackRecordIDs)},
 		},
-		Memberships: []models.TaxonomyResultMembership{
-			{ClusterKey: 1, FeedbackRecordID: feedbackRecordID, Confidence: new(0.9)},
-		},
+		Memberships: memberships,
 		Nodes: []models.TaxonomyResultNode{
 			{
 				NodeKey:  "root",
