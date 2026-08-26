@@ -306,6 +306,10 @@ config:
     WEBHOOK_MAX_COUNT: "500"
     WEBHOOK_HTTP_TIMEOUT_SECONDS: "15"
     WEBHOOK_BLACKLIST: "localhost,127.0.0.1,::1,169.254.169.254"
+    # Re-permits webhook targets the SSRF classifier rejects as private/reserved. Set this only if
+    # your receivers live on internal addresses (e.g. a Tailscale tailnet in 100.64.0.0/10);
+    # WEBHOOK_BLACKLIST entries still win, and a malformed value fails startup.
+    WEBHOOK_ALLOWED_CIDRS: ""
     WEBHOOK_ENQUEUE_MAX_RETRIES: "3"
     WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS: "100"
     WEBHOOK_ENQUEUE_MAX_BACKOFF_MS: "2000"
