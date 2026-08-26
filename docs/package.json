@@ -8,6 +8,7 @@
     "dev": "astro dev",
     "start": "astro dev",
     "build": "astro build",
+    "check:links": "node scripts/check-links.mjs",
     "preview": "astro preview",
     "check": "astro check",
     "astro": "astro",

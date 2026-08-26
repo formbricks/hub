@@ -65,3 +65,10 @@ jobs:
       # vendor coupling we removed in ENG-2369 has crept back in.
       - name: Build
         run: pnpm build
+
+      # Resolves every internal href and src against the page it appears on, the
+      # way a browser does. Added after review caught nine relative ./hub-* links
+      # that resolved into the current directory and 404'd — a class my earlier
+      # hand-checks missed twice.
+      - name: Check internal links
+        run: pnpm check:links
