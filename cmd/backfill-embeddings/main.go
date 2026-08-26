@@ -115,13 +115,14 @@ func run() int {
 	}
 
 	embeddingCfg := service.EmbeddingClientConfig{
-		Provider:            providerCanonical,
-		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
-		Model:               embeddingModel,
-		BaseURL:             cfg.Embedding.BaseURL,
-		Normalize:           cfg.Embedding.Normalize,
-		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
-		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+		Provider:              providerCanonical,
+		ProviderAPIKey:        cfg.Embedding.ProviderAPIKey,
+		Model:                 embeddingModel,
+		BaseURL:               cfg.Embedding.BaseURL,
+		HTTPDisableKeepAlives: cfg.Embedding.HTTPDisableKeepAlives,
+		Normalize:             cfg.Embedding.Normalize,
+		GoogleCloudProject:    cfg.Embedding.GoogleCloudProject,
+		GoogleCloudLocation:   cfg.Embedding.GoogleCloudLocation,
 	}
 	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 		slog.Error(err.Error())

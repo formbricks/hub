@@ -153,6 +153,11 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			return nil, fmt.Errorf("embedding config: %w", err)
 		}
 
+		slog.Info("embedding worker configured",
+			"provider", providerName,
+			"http_disable_keep_alives", cfg.Embedding.HTTPDisableKeepAlives,
+		)
+
 		embeddingClient, err := service.NewEmbeddingClient(context.Background(), embeddingCfg)
 		if err != nil {
 			shutdownObservability(context.Background(), meterProvider, tracerProvider)
@@ -176,7 +181,6 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 				"batch_size", cfg.Embedding.BatchSize,
 				"max_wait_ms", cfg.Embedding.BatchMaxWaitMs,
 				"max_in_flight", cfg.Embedding.BatchMaxInFlight,
-				"http_disable_keep_alives", cfg.Embedding.HTTPDisableKeepAlives,
 			)
 		} else if cfg.Embedding.BatchSize > 1 {
 			slog.Info("embedding document batching unavailable for provider; using single requests",

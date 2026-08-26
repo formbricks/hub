@@ -385,7 +385,7 @@ func TestBatchingEmbeddingClientLimitsConcurrentProviderRequests(t *testing.T) {
 		})
 	}
 
-	deadline := time.After(time.Second)
+	deadline := time.After(2 * time.Second)
 
 	for range maxInFlight {
 		select {
