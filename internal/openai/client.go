@@ -44,11 +44,12 @@ var (
 
 // Client calls the OpenAI embeddings API via the official SDK.
 type Client struct {
-	sdk        openaisdk.Client
-	baseURL    string
-	dimensions int
-	model      string
-	normalize  bool
+	sdk               openaisdk.Client
+	baseURL           string
+	dimensions        int
+	model             string
+	normalize         bool
+	disableKeepAlives bool
 	// temperatureUnsupported latches once the configured model rejects the temperature
 	// parameter (reasoning models do), so later calls omit it instead of failing.
 	temperatureUnsupported atomic.Bool
@@ -87,6 +88,12 @@ func NewClient(apiKey string, opts ...ClientOption) *Client {
 	}
 	if client.baseURL != "" {
 		sdkOpts = append(sdkOpts, option.WithBaseURL(client.baseURL))
+	}
+
+	if client.disableKeepAlives {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DisableKeepAlives = true
+		sdkOpts = append(sdkOpts, option.WithHTTPClient(&http.Client{Transport: transport}))
 	}
 
 	client.sdk = openaisdk.NewClient(sdkOpts...)
@@ -513,6 +520,15 @@ func WithModel(model string) ClientOption {
 func WithBaseURL(baseURL string) ClientOption {
 	return func(c *Client) {
 		c.baseURL = baseURL
+	}
+}
+
+// WithDisableKeepAlives creates a new HTTP connection for every provider request. This lets
+// Kubernetes balance background embedding batches across all endpoints instead of pinning a
+// long-lived worker connection to one pod.
+func WithDisableKeepAlives(disable bool) ClientOption {
+	return func(c *Client) {
+		c.disableKeepAlives = disable
 	}
 }
 

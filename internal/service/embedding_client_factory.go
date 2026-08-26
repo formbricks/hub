@@ -31,13 +31,14 @@ var (
 
 // EmbeddingClientConfig holds configuration for creating an embedding client.
 type EmbeddingClientConfig struct {
-	Provider            string
-	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
-	Model               string
-	BaseURL             string
-	Normalize           bool
-	GoogleCloudProject  string
-	GoogleCloudLocation string
+	Provider              string
+	ProviderAPIKey        string // API key for openai/google providers; not logged or serialized
+	Model                 string
+	BaseURL               string
+	HTTPDisableKeepAlives bool
+	Normalize             bool
+	GoogleCloudProject    string
+	GoogleCloudLocation   string
 	// UsageRecorder receives each provider call's token counts and duration. nil disables it.
 	UsageRecorder llm.UsageRecorder
 }
@@ -75,6 +76,7 @@ func openAIEmbeddingFactory(_ context.Context, cfg EmbeddingClientConfig) (Embed
 		openai.WithModel(cfg.Model),
 		openai.WithBaseURL(cfg.BaseURL),
 		openai.WithUsageRecorder(cfg.UsageRecorder),
+		openai.WithDisableKeepAlives(cfg.HTTPDisableKeepAlives),
 		openai.WithNormalize(cfg.Normalize),
 	), nil
 }

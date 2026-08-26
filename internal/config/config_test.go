@@ -366,6 +366,7 @@ func TestLoad_EmbeddingBatchSettings(t *testing.T) {
 	t.Setenv("EMBEDDING_BATCH_SIZE", "8")
 	t.Setenv("EMBEDDING_BATCH_MAX_WAIT_MS", "37")
 	t.Setenv("EMBEDDING_BATCH_MAX_IN_FLIGHT", "3")
+	t.Setenv("EMBEDDING_HTTP_DISABLE_KEEP_ALIVES", "true")
 
 	cfg, err := Load()
 	if err != nil {
@@ -382,6 +383,10 @@ func TestLoad_EmbeddingBatchSettings(t *testing.T) {
 
 	if cfg.Embedding.BatchMaxInFlight != 3 {
 		t.Errorf("Embedding.BatchMaxInFlight = %d, want 3", cfg.Embedding.BatchMaxInFlight)
+	}
+
+	if !cfg.Embedding.HTTPDisableKeepAlives {
+		t.Error("Embedding.HTTPDisableKeepAlives = false, want true")
 	}
 }
 
@@ -687,6 +692,10 @@ func TestApplyDefaults(t *testing.T) {
 	if cfg.Embedding.BatchSize != 1 || cfg.Embedding.BatchMaxWaitMs != 25 || cfg.Embedding.BatchMaxInFlight != 1 {
 		t.Errorf("Embedding batch defaults = (%d, %d, %d), want (1, 25, 1)",
 			cfg.Embedding.BatchSize, cfg.Embedding.BatchMaxWaitMs, cfg.Embedding.BatchMaxInFlight)
+	}
+
+	if cfg.Embedding.HTTPDisableKeepAlives {
+		t.Error("Embedding.HTTPDisableKeepAlives = true, want false")
 	}
 }
 

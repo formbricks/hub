@@ -132,18 +132,19 @@ type MessagePublisherConfig struct {
 
 // EmbeddingConfig holds embedding provider and queue settings.
 type EmbeddingConfig struct {
-	ProviderAPIKey      string `env:"EMBEDDING_PROVIDER_API_KEY"`
-	Provider            string `env:"EMBEDDING_PROVIDER"`
-	Model               string `env:"EMBEDDING_MODEL"`
-	BaseURL             string `env:"EMBEDDING_BASE_URL"`
-	MaxConcurrent       int    `env:"EMBEDDING_MAX_CONCURRENT"        env-default:"5"`
-	MaxAttempts         int    `env:"EMBEDDING_MAX_ATTEMPTS"          env-default:"3"`
-	BatchSize           int    `env:"EMBEDDING_BATCH_SIZE"            env-default:"1"`
-	BatchMaxWaitMs      int    `env:"EMBEDDING_BATCH_MAX_WAIT_MS"     env-default:"25"`
-	BatchMaxInFlight    int    `env:"EMBEDDING_BATCH_MAX_IN_FLIGHT"   env-default:"1"`
-	Normalize           bool   `env:"EMBEDDING_NORMALIZE"             env-default:"false"`
-	GoogleCloudProject  string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey        string `env:"EMBEDDING_PROVIDER_API_KEY"`
+	Provider              string `env:"EMBEDDING_PROVIDER"`
+	Model                 string `env:"EMBEDDING_MODEL"`
+	BaseURL               string `env:"EMBEDDING_BASE_URL"`
+	MaxConcurrent         int    `env:"EMBEDDING_MAX_CONCURRENT"           env-default:"5"`
+	MaxAttempts           int    `env:"EMBEDDING_MAX_ATTEMPTS"             env-default:"3"`
+	BatchSize             int    `env:"EMBEDDING_BATCH_SIZE"               env-default:"1"`
+	BatchMaxWaitMs        int    `env:"EMBEDDING_BATCH_MAX_WAIT_MS"        env-default:"25"`
+	BatchMaxInFlight      int    `env:"EMBEDDING_BATCH_MAX_IN_FLIGHT"      env-default:"1"`
+	HTTPDisableKeepAlives bool   `env:"EMBEDDING_HTTP_DISABLE_KEEP_ALIVES" env-default:"false"`
+	Normalize             bool   `env:"EMBEDDING_NORMALIZE"                env-default:"false"`
+	GoogleCloudProject    string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation   string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
 }
 
 // TranslationConfig holds the feedback open-text translation enrichment settings

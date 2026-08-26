@@ -137,14 +137,15 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	if providerName != "" {
 		embeddingCfg := service.EmbeddingClientConfig{
-			UsageRecorder:       genAIUsage,
-			Provider:            providerName,
-			ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
-			Model:               embeddingModel,
-			BaseURL:             cfg.Embedding.BaseURL,
-			Normalize:           cfg.Embedding.Normalize,
-			GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
-			GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+			UsageRecorder:         genAIUsage,
+			Provider:              providerName,
+			ProviderAPIKey:        cfg.Embedding.ProviderAPIKey,
+			Model:                 embeddingModel,
+			BaseURL:               cfg.Embedding.BaseURL,
+			HTTPDisableKeepAlives: cfg.Embedding.HTTPDisableKeepAlives,
+			Normalize:             cfg.Embedding.Normalize,
+			GoogleCloudProject:    cfg.Embedding.GoogleCloudProject,
+			GoogleCloudLocation:   cfg.Embedding.GoogleCloudLocation,
 		}
 		if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 			shutdownObservability(context.Background(), meterProvider, tracerProvider)
@@ -175,6 +176,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 				"batch_size", cfg.Embedding.BatchSize,
 				"max_wait_ms", cfg.Embedding.BatchMaxWaitMs,
 				"max_in_flight", cfg.Embedding.BatchMaxInFlight,
+				"http_disable_keep_alives", cfg.Embedding.HTTPDisableKeepAlives,
 			)
 		} else if cfg.Embedding.BatchSize > 1 {
 			slog.Info("embedding document batching unavailable for provider; using single requests",
