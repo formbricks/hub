@@ -321,7 +321,10 @@ func (c *concurrencyTrackingEmbeddingClient) CreateEmbeddings(
 		}
 	}
 
-	c.started <- struct{}{}
+	select {
+	case c.started <- struct{}{}:
+	default:
+	}
 
 	select {
 	case <-c.release:
