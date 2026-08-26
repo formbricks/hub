@@ -31,8 +31,14 @@ jobs:
         working-directory: docs
 
     steps:
+      # persist-credentials: false — this job runs PR-controlled code, and
+      # `pnpm install` executes sharp's and esbuild's build scripts, so leaving the
+      # checkout token in .git/config would put it within reach of a lifecycle
+      # script. Nothing here does an authenticated git operation after checkout.
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       # package_json_file is relative to the repo root, not to
       # defaults.run.working-directory, and the root has no package.json.

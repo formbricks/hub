@@ -10,7 +10,11 @@ export PATH="$HOME/go/bin:${GOPATH:-$HOME/go}/bin:$PATH"
 
 echo "Running pre-commit checks..."
 
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+# Renames and deletions count when deciding what to validate: removing or moving a
+# .go file can break the build just as easily as editing one. They are excluded
+# from STAGED_GO_FILES further down, which only auto-stages formatter fixes and so
+# genuinely wants files that still exist.
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMRD)
 
 # The Go toolchain stages below are pointless for a commit that touches no Go
 # code — docs/ is an Astro site and the only non-Go part of the repo. Mirrors the
@@ -49,8 +53,10 @@ if ! command -v golangci-lint >/dev/null 2>&1; then
 fi
 
 # Format code (make fmt = gofumpt + gci via golangci-lint --fix from .golangci.yml)
-# Keep track of staged Go files so we only auto-stage fixes for those files.
-STAGED_GO_FILES=$(echo "$STAGED_FILES" | grep '\.go$' || true)
+# Keep track of staged Go files so we only auto-stage fixes for those files. Unlike
+# STAGED_FILES this deliberately re-queries with ACM: a formatter fix can only be
+# staged for a file that still exists.
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
 echo "Running make fmt..."
 if ! make fmt; then
     echo ""

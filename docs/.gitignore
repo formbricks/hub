@@ -13,9 +13,11 @@ yarn-error.log*
 pnpm-debug.log*
 
 
-# environment variables
-.env
-.env.production
+# environment variables. Astro also loads mode-specific files (.env.local,
+# .env.development, .env.[mode]), so ignore the whole family and re-admit only the
+# committed template.
+.env*
+!.env.example
 
 # macOS-specific files
 .DS_Store
