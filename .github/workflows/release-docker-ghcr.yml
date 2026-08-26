@@ -135,11 +135,11 @@ jobs:
 
       - name: Sign image with cosign
         env:
-          TAGS: ${{ steps.tags.outputs.tags }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract_version.outputs.VERSION }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          echo "${TAGS}" | xargs -I {} cosign sign --yes "{}@${DIGEST}"
+          cosign sign --yes "${IMAGE_REF}@${DIGEST}"
 
       - name: Output build summary
         env:
