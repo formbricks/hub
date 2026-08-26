@@ -138,20 +138,26 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	if providerName != "" {
 		embeddingCfg := service.EmbeddingClientConfig{
-			UsageRecorder:       genAIUsage,
-			Provider:            providerName,
-			ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
-			Model:               embeddingModel,
-			BaseURL:             cfg.Embedding.BaseURL,
-			Normalize:           cfg.Embedding.Normalize,
-			GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
-			GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
+			UsageRecorder:         genAIUsage,
+			Provider:              providerName,
+			ProviderAPIKey:        cfg.Embedding.ProviderAPIKey,
+			Model:                 embeddingModel,
+			BaseURL:               cfg.Embedding.BaseURL,
+			HTTPDisableKeepAlives: cfg.Embedding.HTTPDisableKeepAlives,
+			Normalize:             cfg.Embedding.Normalize,
+			GoogleCloudProject:    cfg.Embedding.GoogleCloudProject,
+			GoogleCloudLocation:   cfg.Embedding.GoogleCloudLocation,
 		}
 		if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 			shutdownObservability(context.Background(), meterProvider, tracerProvider)
 
 			return nil, fmt.Errorf("embedding config: %w", err)
 		}
+
+		slog.Info("embedding worker configured",
+			"provider", providerName,
+			"http_disable_keep_alives", cfg.Embedding.HTTPDisableKeepAlives,
+		)
 
 		embeddingClient, err := service.NewEmbeddingClient(context.Background(), embeddingCfg)
 		if err != nil {

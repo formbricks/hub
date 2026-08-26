@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -106,6 +107,56 @@ func TestCreateEmbedding_UsesEnvironmentBaseURLWhenExplicitBaseURLIsUnset(t *tes
 	require.NoError(t, err)
 	assert.Equal(t, []float32{3, 4}, embedding)
 	assert.Equal(t, int32(1), envHits.Load())
+}
+
+func TestCreateEmbedding_DisableKeepAlivesControlsConnectionReuse(t *testing.T) {
+	tests := []struct {
+		name              string
+		disableKeepAlives bool
+		wantConnections   int32
+	}{
+		{name: "reuses connections by default", wantConnections: 1},
+		{name: "opens a connection per request when disabled", disableKeepAlives: true, wantConnections: 2},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			var connections atomic.Int32
+
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"object": "list",
+					"model":  "test-model",
+					"data": []map[string]any{{
+						"object": "embedding", "index": 0, "embedding": []float64{1, 2},
+					}},
+					"usage": map[string]any{"prompt_tokens": 1, "total_tokens": 1},
+				}))
+			}))
+			server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					connections.Add(1)
+				}
+			}
+			server.Start()
+			t.Cleanup(server.Close)
+
+			client := NewClient("sk-test",
+				WithBaseURL(server.URL+"/v1"),
+				WithDimensions(2),
+				WithModel("test-model"),
+				WithDisableKeepAlives(testCase.disableKeepAlives),
+			)
+
+			for range 2 {
+				_, err := client.CreateEmbedding(context.Background(), "hello world")
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, testCase.wantConnections, connections.Load())
+		})
+	}
 }
 
 func TestCreateEmbeddingsMapsOutOfOrderResponseAndMatchesSingle(t *testing.T) {
