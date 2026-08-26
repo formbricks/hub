@@ -139,7 +139,20 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          cosign sign --yes "${IMAGE_REF}@${DIGEST}"
+
+          for attempt in 1 2 3; do
+            if cosign sign --yes "${IMAGE_REF}@${DIGEST}"; then
+              exit 0
+            fi
+
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "cosign sign failed (attempt ${attempt}/3); retrying in 10 seconds..."
+              sleep 10
+            fi
+          done
+
+          echo "cosign sign failed after 3 attempts"
+          exit 1
 
       - name: Output build summary
         env:
