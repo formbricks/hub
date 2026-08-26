@@ -135,11 +135,24 @@ jobs:
 
       - name: Sign image with cosign
         env:
-          TAGS: ${{ steps.tags.outputs.tags }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract_version.outputs.VERSION }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          echo "${TAGS}" | xargs -I {} cosign sign --yes "{}@${DIGEST}"
+
+          for attempt in 1 2 3; do
+            if cosign sign --yes "${IMAGE_REF}@${DIGEST}"; then
+              exit 0
+            fi
+
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "cosign sign failed (attempt ${attempt}/3); retrying in 10 seconds..."
+              sleep 10
+            fi
+          done
+
+          echo "cosign sign failed after 3 attempts"
+          exit 1
 
       - name: Output build summary
         env:
