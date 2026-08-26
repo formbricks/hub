@@ -278,12 +278,16 @@ site-search button:hover {
   color: light-dark(#0f172a, #f8fafc);
 }
 
-.hub-signal span,
+/* :not(.hub-label) — the chip label is also a span inside .hub-signal, and
+   `.hub-signal span` (0,1,1) outranks `.hub-label` (0,1,0), so without this the
+   chip loses its own display, font-size and accent colour to the description
+   style. */
+.hub-signal span:not(.hub-label),
 .hub-card p {
   color: light-dark(#64748b, #94a3b8);
 }
 
-.hub-signal span {
+.hub-signal span:not(.hub-label) {
   display: block;
   margin-top: 0.25rem;
   font-size: 0.92rem;

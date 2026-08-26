@@ -10,11 +10,15 @@ export PATH="$HOME/go/bin:${GOPATH:-$HOME/go}/bin:$PATH"
 
 echo "Running pre-commit checks..."
 
-# Renames and deletions count when deciding what to validate: removing or moving a
-# .go file can break the build just as easily as editing one. They are excluded
-# from STAGED_GO_FILES further down, which only auto-stages formatter fixes and so
-# genuinely wants files that still exist.
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMRD)
+# Deletions count when deciding what to validate: removing or moving a .go file can
+# break the build just as easily as editing one.
+#
+# --no-renames is load-bearing, not stylistic. With rename detection on, `git diff
+# --name-only` reports only the DESTINATION path, so renaming foo.go -> notes.txt
+# lists just notes.txt and the Go checks would skip even though a .go file left the
+# build. --no-renames decomposes the rename into a delete plus an add, surfacing
+# both paths (which also makes an R filter redundant).
+STAGED_FILES=$(git diff --cached --name-only --no-renames --diff-filter=ACMD)
 
 # The Go toolchain stages below are pointless for a commit that touches no Go
 # code — docs/ is an Astro site and the only non-Go part of the repo. Mirrors the
@@ -56,7 +60,7 @@ fi
 # Keep track of staged Go files so we only auto-stage fixes for those files. Unlike
 # STAGED_FILES this deliberately re-queries with ACM: a formatter fix can only be
 # staged for a file that still exists.
-STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+STAGED_GO_FILES=$(git diff --cached --name-only --no-renames --diff-filter=ACM | grep '\.go$' || true)
 echo "Running make fmt..."
 if ! make fmt; then
     echo ""
