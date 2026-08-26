@@ -284,7 +284,13 @@ func TestWebhooksService_UpdateWebhook_RejectsSSRFHosts(t *testing.T) {
 // create path, so the classifier is proven where it is actually enforced and not just in isolation.
 func TestWebhooksService_CreateWebhook_SSRFRangeCoverage(t *testing.T) {
 	ctx := context.Background()
-	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, SSRFPolicy{Blacklist: ssrfBlacklist})
+	// The repo returns a webhook so a URL that is wrongly *accepted* fails as a clean assertion
+	// rather than panicking on a nil result. A panic aborts the whole test binary and hides every
+	// remaining subtest — exactly when you most want to see them.
+	svc := NewWebhooksService(
+		&mockWebhooksRepo{count: 0, webhook: &models.Webhook{}},
+		noopPublisher{}, 10, SSRFPolicy{Blacklist: ssrfBlacklist},
+	)
 	validKey := "whsec_" + "abcdefghijklmnopqrstuvwxyz123456"
 	tenantID := "org-123"
 
@@ -305,6 +311,11 @@ func TestWebhooksService_CreateWebhook_SSRFRangeCoverage(t *testing.T) {
 		{"6to4 to loopback", "https://[2002:7f00:1::1]/webhook"},
 		{"IPv6 site-local", "https://[fec0::1]/webhook"},
 		{"IPv6 multicast, site scope", "https://[ff05::1]/webhook"},
+		{"IPv4-translated to loopback", "https://[::ffff:0:7f00:1]/webhook"},
+		{"IPv4-translated to IMDS", "https://[::ffff:0:a9fe:a9fe]/webhook"},
+		{"ORCHIDv2", "https://[2001:20::1]/webhook"},
+		{"documentation (RFC 9637)", "https://[3fff::1]/webhook"},
+		{"SRv6 SIDs", "https://[5f00::1]/webhook"},
 	}
 
 	for _, tt := range tests {
@@ -346,7 +357,7 @@ func TestWebhooksService_CreateWebhook_AllowedCIDR(t *testing.T) {
 	}
 
 	// Without the allowlist the tailnet address is rejected...
-	svc := NewWebhooksService(&mockWebhooksRepo{count: 0}, noopPublisher{}, 10, SSRFPolicy{})
+	svc := NewWebhooksService(&mockWebhooksRepo{count: 0, webhook: &models.Webhook{}}, noopPublisher{}, 10, SSRFPolicy{})
 	if _, err := svc.CreateWebhook(ctx, newReq("https://100.64.0.1/webhook")); !errors.Is(err, huberrors.ErrValidation) {
 		t.Fatalf("expected ErrValidation without allowlist, got %v", err)
 	}
@@ -357,6 +368,20 @@ func TestWebhooksService_CreateWebhook_AllowedCIDR(t *testing.T) {
 
 	if _, err := svc.CreateWebhook(ctx, newReq("https://100.64.0.1/webhook")); err != nil {
 		t.Fatalf("expected the allowlisted range to be accepted, got %v", err)
+	}
+
+	// The same escape hatch has to work for the ranges added after review — an SRv6 deployment
+	// whose receiver sits on a SID is blocked by default and reachable only when named.
+	svc = NewWebhooksService(&mockWebhooksRepo{count: 0, webhook: &models.Webhook{}}, noopPublisher{}, 10, SSRFPolicy{})
+	if _, err := svc.CreateWebhook(ctx, newReq("https://[5f00::1]/webhook")); !errors.Is(err, huberrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation for an SRv6 SID without an allowlist, got %v", err)
+	}
+
+	srv6 := SSRFPolicy{AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("5f00::/16")}}
+	svc = NewWebhooksService(&mockWebhooksRepo{count: 0, webhook: &models.Webhook{}}, noopPublisher{}, 10, srv6)
+
+	if _, err := svc.CreateWebhook(ctx, newReq("https://[5f00::1]/webhook")); err != nil {
+		t.Fatalf("expected the allowlisted SRv6 range to be accepted, got %v", err)
 	}
 
 	// The allowlist is scoped: other private ranges stay blocked.

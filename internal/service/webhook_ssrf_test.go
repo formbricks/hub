@@ -79,6 +79,18 @@ func TestIsPrivateOrReserved(t *testing.T) {
 		{"2001:0:1234::1", true, "Teredo — tunnels IPv4 like 6to4"},
 		{"2001:db8::1", true, "IPv6 documentation range"},
 		{"100::1", true, "IPv6 discard-only prefix"},
+		// IPv4-translated (::ffff:0:0:0/96, RFC 2765/SIIT) is the sixth IPv4-wrapper format, after
+		// IPv4-mapped, IPv4-compatible, NAT64, 6to4 and Teredo. Unmap() only collapses ::ffff:0:0/96,
+		// so this one reaches the CIDR walk as ordinary global unicast.
+		{"::ffff:0:7f00:1", true, "IPv4-translated ::127.0.0.1"},
+		{"::ffff:0:a9fe:a9fe", true, "IPv4-translated ::169.254.169.254 (IMDS)"},
+		// The rest of the IANA special-purpose registry that is not globally reachable.
+		{"2001:20::1", true, "ORCHIDv2 (RFC 7343)"},
+		{"2001:2f:ffff:ffff:ffff:ffff:ffff:ffff", true, "ORCHIDv2, top of the /28"},
+		{"3fff::1", true, "documentation (RFC 9637)"},
+		{"3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff", true, "documentation, top of the /20"},
+		{"5f00::1", true, "SRv6 SIDs (RFC 9602) — forwardable, so internally routable"},
+		{"5f00:ffff::1", true, "SRv6 SIDs, top of the /16"},
 
 		// Must stay reachable. These catch a prefix written one bit too wide.
 		{"8.8.8.8", false, "public DNS"},
@@ -98,6 +110,16 @@ func TestIsPrivateOrReserved(t *testing.T) {
 		{"2001:4860:4860::8888", false, "public IPv6 in 2001::/16 but outside Teredo"},
 		{"2001:db9::1", false, "public IPv6, immediately above the documentation range"},
 		{"101::1", false, "public IPv6, immediately above the discard prefix"},
+		// ::ffff:0:0:0/96 must not reach into the mapped range or past its own end.
+		{"::ffff:1:0:0", false, "public IPv6, immediately above IPv4-translated"},
+		// The registry marks these Globally Reachable = True: public infrastructure, not internal.
+		// 2001:30::/28 in particular sits immediately above ORCHIDv2, so a /24 there would eat it.
+		{"2001:30::1", false, "DRIP (RFC 9153) — globally reachable"},
+		{"2001:1f::1", false, "public IPv6, immediately below ORCHIDv2"},
+		{"3ffe::1", false, "public IPv6, immediately below the 3fff::/20 documentation range"},
+		{"4000::1", false, "public IPv6, immediately above the 3fff::/20 documentation range"},
+		{"5eff::1", false, "public IPv6, immediately below SRv6 SIDs"},
+		{"6000::1", false, "public IPv6, immediately above SRv6 SIDs"},
 	}
 
 	for _, tt := range tests {
@@ -174,6 +196,43 @@ func TestSSRFPolicy_Permits(t *testing.T) {
 			policy: SSRFPolicy{AllowedCIDRs: []netip.Prefix{tailnet}},
 			addr:   "::ffff:100.64.0.1",
 			want:   true,
+		},
+		{
+			// An SRv6 deployment whose webhook receiver genuinely sits on a SID needs a way back in.
+			// Blocked by default, reachable only when the operator names the range.
+			name:   "allowlist re-permits SRv6 SIDs",
+			policy: SSRFPolicy{AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("5f00::/16")}},
+			addr:   "5f00::1",
+			want:   true,
+		},
+		{
+			name:   "SRv6 SIDs blocked without an allowlist entry",
+			policy: SSRFPolicy{},
+			addr:   "5f00::1",
+			want:   false,
+		},
+		{
+			name:   "allowlist re-permits the 3fff::/20 documentation range",
+			policy: SSRFPolicy{AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("3fff::/20")}},
+			addr:   "3fff::1",
+			want:   true,
+		},
+		{
+			// An allowlist entry for one new range must not re-open the others.
+			name:   "allowlisting SRv6 does not re-open ORCHIDv2",
+			policy: SSRFPolicy{AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("5f00::/16")}},
+			addr:   "2001:20::1",
+			want:   false,
+		},
+		{
+			// The blacklist still wins for the newly-blocked ranges, same as everywhere else.
+			name: "blacklist beats an allowlist covering SRv6",
+			policy: SSRFPolicy{
+				Blacklist:    map[string]struct{}{"5f00::1": {}},
+				AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("5f00::/16")},
+			},
+			addr: "5f00::1",
+			want: false,
 		},
 	}
 

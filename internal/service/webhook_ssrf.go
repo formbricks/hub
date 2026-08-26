@@ -132,6 +132,13 @@ func (p SSRFPolicy) permits(addr netip.Addr) bool {
 //
 // Note ::/96 (IPv4-compatible) does not collide with the IPv4-mapped range ::ffff:0:0/96, whose
 // 6th group is ffff — Unmap() handles mapped addresses, and mapped public addresses stay allowed.
+//
+// The IPv6 entries are the IANA special-purpose registry filtered to Globally Reachable = False,
+// minus what the predicates already cover. The registry's Globally-Reachable = True entries are
+// deliberately absent: 2001:3::/32 (AMT), 2001:4:112::/48 and 2620:4f:8000::/48 (AS112),
+// 2001:30::/28 (DRIP) and 192.88.99.0/24 (6to4 relay anycast) are public infrastructure, and
+// blocking them would reject legitimate targets. Note 2001:20::/28 (ORCHIDv2) stops short of
+// 2001:30::/28 for exactly that reason.
 var blockedPrefixes = []netip.Prefix{
 	// IPv4
 	netip.MustParsePrefix("0.0.0.0/8"),        // "this network" — IsUnspecified only matches 0.0.0.0 itself
@@ -145,16 +152,22 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("168.63.129.16/32"), // Azure WireServer — sibling of IMDS, outside 169.254/16
 
 	// IPv6 transition ranges: these encode an IPv4 destination the predicates never see.
-	netip.MustParsePrefix("::/96"),          // IPv4-compatible IPv6, deprecated (::7f00:1 == 127.0.0.1)
-	netip.MustParsePrefix("64:ff9b::/96"),   // NAT64 well-known (64:ff9b::a9fe:a9fe == 169.254.169.254)
-	netip.MustParsePrefix("64:ff9b:1::/48"), // NAT64 local-use (RFC 8215)
-	netip.MustParsePrefix("2001::/32"),      // Teredo — tunnels IPv4 the same way 6to4 does
-	netip.MustParsePrefix("2002::/16"),      // 6to4 (2002:7f00:1::1 == 127.0.0.1)
-	netip.MustParsePrefix("fec0::/10"),      // deprecated site-local, just above fe80::/10
+	netip.MustParsePrefix("::/96"),           // IPv4-compatible IPv6, deprecated (::7f00:1 == 127.0.0.1)
+	netip.MustParsePrefix("64:ff9b::/96"),    // NAT64 well-known (64:ff9b::a9fe:a9fe == 169.254.169.254)
+	netip.MustParsePrefix("64:ff9b:1::/48"),  // NAT64 local-use (RFC 8215)
+	netip.MustParsePrefix("2001::/32"),       // Teredo — tunnels IPv4 the same way 6to4 does
+	netip.MustParsePrefix("2002::/16"),       // 6to4 (2002:7f00:1::1 == 127.0.0.1)
+	netip.MustParsePrefix("::ffff:0:0:0/96"), // IPv4-translated, deprecated (RFC 2765/SIIT; ::ffff:0:7f00:1 == 127.0.0.1)
+	netip.MustParsePrefix("fec0::/10"),       // deprecated site-local, just above fe80::/10
 
-	// Reserved IPv6 ranges with no routable host, mirroring the IPv4 documentation ranges above.
+	// Reserved IPv6 ranges that are not globally reachable, mirroring the IPv4 documentation ranges
+	// above. Most have no routable host at all; 5f00::/16 is the exception — IANA marks it
+	// forwardable, so an SRv6 deployment can route it to an internal destination.
 	netip.MustParsePrefix("100::/64"),      // discard-only (RFC 6666)
+	netip.MustParsePrefix("2001:20::/28"),  // ORCHIDv2 (RFC 7343)
 	netip.MustParsePrefix("2001:db8::/32"), // documentation (RFC 3849)
+	netip.MustParsePrefix("3fff::/20"),     // documentation (RFC 9637)
+	netip.MustParsePrefix("5f00::/16"),     // SRv6 SIDs (RFC 9602) — forwardable, so routable inside an SRv6 deployment
 }
 
 // isPrivateOrReserved returns true if the IP is loopback, private, link-local, multicast,
