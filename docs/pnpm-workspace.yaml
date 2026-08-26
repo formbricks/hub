@@ -1,0 +1,7 @@
+# sharp powers Astro's image optimization and esbuild is part of the build
+# pipeline, so both need their install scripts. core-js's postinstall only
+# prints a funding banner.
+allowBuilds:
+  core-js: false
+  esbuild: true
+  sharp: true

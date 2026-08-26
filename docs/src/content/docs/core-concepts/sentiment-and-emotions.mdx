@@ -1,0 +1,83 @@
+---
+title: Sentiment & Emotions
+description: Hub can classify open-text feedback into a sentiment label and score, and into the emotions it expresses, and store them on the feedback record for analytics and filtering.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Hub can enrich open-text feedback with two related classifications: **sentiment** — the overall polarity of the text — and **emotions** — the specific emotions it expresses. Both run asynchronously and are stored on the same feedback record, so you can filter, segment, and aggregate qualitative feedback without reading every response.
+
+They are independent enrichments: a deployment can run either, both, or neither, and each is separately gated per tenant.
+
+<Aside type="note">
+  Like translation, sentiment and emotion enrichment are additive and
+  asynchronous: the original `value_text` is never changed, ingestion is never
+  blocked, and the results appear shortly after a record is created or updated.
+</Aside>
+
+## The fields
+
+Sentiment and emotions add three read-only fields to every [feedback record](/core-concepts/data-model). All are server-generated — you never set them when creating or updating a record — and are `null` until the record is enriched.
+
+| Field             | Type            | Description                                                                                    |
+| ----------------- | --------------- | ---------------------------------------------------------------------------------------------- |
+| `sentiment`       | String          | Overall sentiment label of the text (for example `positive`, `neutral`, `negative`).           |
+| `sentiment_score` | Number          | Signed polarity from `-1.0` (most negative) to `1.0` (most positive).                          |
+| `emotions`        | Array of String | The emotions the text expresses; empty when none clearly apply (stored as `null`, never `[]`). |
+
+See the [API Reference](/api) for the exact `sentiment` and `emotions` value sets.
+
+## Enabling
+
+Each enrichment runs only where the **deployment has a provider configured** — an operator sets `SENTIMENT_PROVIDER` + `SENTIMENT_MODEL` and/or `EMOTIONS_PROVIDER` + `EMOTIONS_MODEL` (plus provider credentials); see [Environment Variables](/reference/environment-variables#enrichment). With no provider, that enrichment is off for the whole deployment.
+
+Where a provider is configured, each enrichment is **on by default per tenant** and can be turned off with the [`sentiment_enabled` / `emotions_enabled`](/core-concepts/tenant-settings) switches. Setting a switch to `false` stops Hub producing that enrichment for the tenant going forward; unset (or `null`) means enabled.
+
+## How it works
+
+When a text feedback record is created, or its `value_text` changes, Hub enqueues the enrichment jobs for whichever of sentiment and emotions are enabled. A background worker calls the provider and writes the result back to the record. The work happens off the ingestion path, so creating feedback is never slowed down or blocked.
+
+- **Only open text is classified** — records whose `field_type` is `text` with a non-empty `value_text`. Numeric, boolean, date, and categorical answers are left untouched.
+- **Edits re-classify.** Changing `value_text` clears the stored sentiment/emotions and re-runs the classification; emptying `value_text` clears them without re-running. During the brief window between the edit and the worker finishing, the fields read back as `null` (recomputing) rather than a stale value.
+- **A record can express several emotions, or none.** `emotions` is a set (order is not significant); "no clear emotion" is `null`, not an empty array.
+
+<Aside type="note">
+  Sentiment and emotions are **eventually consistent** — populated shortly after
+  ingestion, not synchronously. Read them defensively and treat `null` as "not
+  classified yet".
+</Aside>
+
+## Backfilling existing records
+
+Enrichment runs automatically on new and edited records. To (re)classify an existing backlog — after first enabling an enrichment, or to recover records whose job was lost or finally failed — run the bundled backfill for the type, which enqueues jobs for records missing that classification:
+
+```bash
+# Run inside the Hub deployment, with the SENTIMENT_*/EMOTIONS_* provider and DATABASE_URL configured
+./backfill-classify -type sentiment
+./backfill-classify -type emotions
+```
+
+It is safe to re-run: records already classified are skipped. Re-enabling a tenant's switch does not re-classify its backlog on its own — run the backfill to catch records edited while the enrichment was off.
+
+## Relationship to translation and embeddings
+
+Sentiment and emotions are independent of [translation](/core-concepts/translated-feedback) and of the embeddings used for [semantic search](/guides/hub-self-hosted-embeddings). All classify the original, source-language `value_text`; enabling or disabling one does not affect the others.
+
+## Querying
+
+Because the results live on the record, you can filter and aggregate straight from SQL or any connected BI tool:
+
+```sql
+SELECT sentiment, COUNT(*)
+FROM feedback_records
+WHERE field_type = 'text'
+  AND tenant_id = 'org-123'
+  AND sentiment IS NOT NULL
+GROUP BY sentiment;
+```
+
+## Next Steps
+
+- [Tenant Settings](/core-concepts/tenant-settings) - Toggle `sentiment_enabled` / `emotions_enabled` per tenant
+- [Data Model](/core-concepts/data-model) - How feedback records are stored, including enrichment fields
+- [Environment Variables](/reference/environment-variables#enrichment) - Configure the sentiment and emotion providers

@@ -1,0 +1,237 @@
+---
+title: Webhooks
+description: React to Hub events with signed HTTP callbacks.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Core Concept
+
+Webhooks let Hub push events to your system over HTTP as soon as data changes.
+Instead of polling the API, you register a URL and Hub sends `POST` requests to it.
+
+Hub uses the [Standard Webhooks](https://www.standardwebhooks.com/) signing format, so every delivery includes:
+
+- `webhook-id`
+- `webhook-signature`
+- `webhook-timestamp`
+
+and a JSON payload describing the event.
+
+## How Webhooks Work in Hub
+
+When a supported event happens, Hub:
+
+1. Publishes an internal event (`feedback_record.*` or `webhook.*`).
+2. Looks up enabled webhooks subscribed to that event type.
+3. Enqueues one River job per `(event, webhook)` pair.
+4. A worker sends a signed `POST` request to each webhook URL.
+
+Delivery is asynchronous: the API request that triggered the event does not wait for your webhook endpoint to finish.
+Hub also applies a 24-hour uniqueness window per `(event_id, webhook_id)` at enqueue time.
+
+<Aside type="note">
+  If Hub's in-memory event channel is full, new events are dropped and logged.
+  For high traffic workloads, monitor queue depth and tune the webhook/event env
+  variables.
+</Aside>
+
+## Supported Event Types
+
+Hub currently emits these webhook event types:
+
+- `feedback_record.created`
+- `feedback_record.updated`
+- `feedback_record.deleted` (single delete or bulk delete)
+- `webhook.created`
+- `webhook.updated`
+- `webhook.deleted`
+
+If `event_types` is omitted, `null`, or `[]`, the webhook receives all event types.
+
+## Setup
+
+### 1. Prepare Hub
+
+Start Hub with the [Quick Start Docker Compose setup](/quickstart). It applies
+database migrations and River migrations automatically before starting the API
+and worker:
+
+```bash
+docker compose up -d
+```
+
+### 2. Create a Receiver Endpoint
+
+Create an endpoint in your app (use HTTPS in production) that:
+
+- Accepts `POST` requests
+- Reads raw request body bytes
+- Verifies Standard Webhooks signature
+- Returns a `2xx` quickly after accepting work
+
+### 3. Register a Webhook in Hub
+
+```bash
+curl -X POST http://localhost:8080/v1/webhooks \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/hub-webhooks",
+    "event_types": [
+      "feedback_record.created",
+      "feedback_record.updated"
+    ],
+    "enabled": true
+  }'
+```
+
+If you omit `signing_key`, Hub auto-generates one (`whsec_...`) and returns it in the response.
+
+### 4. Verify Signatures in Your Receiver
+
+Use the same signing key from the webhook record:
+
+```go
+package main
+
+import (
+	"io"
+	"net/http"
+	"os"
+
+	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
+)
+
+func handleHubWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	wh, err := standardwebhooks.NewWebhook(os.Getenv("HUB_WEBHOOK_SIGNING_KEY"))
+	if err != nil {
+		http.Error(w, "invalid signing key", http.StatusInternalServerError)
+		return
+	}
+
+	if err := wh.Verify(body, r.Header); err != nil {
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
+	}
+
+	// Signature is valid. Parse JSON and process the event.
+	w.WriteHeader(http.StatusOK)
+}
+```
+
+<Aside type="note">
+  <strong>Warning:</strong> Verify against the exact raw request body bytes.
+  Re-encoding JSON before verification will break signatures.
+</Aside>
+
+### 5. Process Idempotently
+
+Hub uses one stable event ID for all deliveries of the same event (including retries and different endpoints). Use `webhook-id` as your idempotency key to safely ignore duplicates.
+
+## Delivery Behavior
+
+### Success Criteria
+
+Any `2xx` response is treated as successful delivery.
+
+### Retry and Disable Rules
+
+- Non-2xx responses, network failures, and timeouts are retried by River.
+- `410 Gone` disables the webhook immediately.
+- If the final retry attempt still fails, Hub disables the webhook and sets:
+  - `disabled_reason`
+  - `disabled_at`
+- Re-enable with:
+
+```bash
+curl -X PATCH http://localhost:8080/v1/webhooks/{id} \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+```
+
+Re-enabling clears the disabled fields.
+
+### Timeouts and Redirects
+
+- Outbound webhook HTTP timeout: 15 seconds
+- Redirects are not followed
+
+## Webhook Payload
+
+Hub sends JSON payloads in this shape:
+
+```json
+{
+  "type": "feedback_record.updated",
+  "timestamp": "2026-02-17T10:12:33Z",
+  "data": {
+    "...": "event-specific payload"
+  },
+  "changed_fields": ["value_text", "metadata"]
+}
+```
+
+- `changed_fields` appears only for update events.
+- For delete events (`feedback_record.deleted`, `webhook.deleted`), `data` is an array of deleted UUIDs.
+
+## API Endpoints for Managing Webhooks
+
+- `POST /v1/webhooks` create webhook
+- `GET /v1/webhooks` list webhooks
+- `GET /v1/webhooks/{id}` get webhook by ID
+- `PATCH /v1/webhooks/{id}` update webhook
+- `DELETE /v1/webhooks/{id}` delete webhook
+
+All management endpoints require `Authorization: Bearer <API_KEY>`.
+
+## Useful Configuration
+
+```bash
+# Max concurrent webhook delivery workers (default: 100)
+WEBHOOK_DELIVERY_MAX_CONCURRENT=100
+
+# Max delivery attempts per webhook job (default: 3)
+WEBHOOK_DELIVERY_MAX_ATTEMPTS=3
+
+# Insert batch size when fanning out jobs for one event (default: 500)
+WEBHOOK_MAX_FAN_OUT_PER_EVENT=500
+
+# Max total webhook endpoints allowed (default: 500)
+WEBHOOK_MAX_COUNT=500
+
+# Event channel buffer size (default: 16384)
+MESSAGE_PUBLISHER_QUEUE_MAX_SIZE=16384
+```
+
+## Troubleshooting
+
+### No Webhooks Delivered
+
+1. Confirm `hub-migrate` completed successfully: `docker compose ps --all hub-migrate`
+2. Check webhook is enabled: `GET /v1/webhooks/{id}`
+3. Verify `event_types` includes the emitted event
+4. Ensure your endpoint is reachable from Hub and returns `2xx`
+
+### Signature Verification Fails
+
+1. Confirm you are using that webhook's `signing_key`
+2. Verify against raw body bytes (not transformed JSON)
+3. Check server clock skew (timestamp tolerance is enforced by Standard Webhooks libraries)
+
+### Webhook Became Disabled
+
+Read `disabled_reason` and `disabled_at` from webhook data, fix the endpoint, then re-enable via `PATCH` with `"enabled": true`.
+
+## Next Steps
+
+- [Authentication](/core-concepts/authentication) - Secure webhook management endpoints
+- [Data Model](/core-concepts/data-model) - Understand feedback payload fields
+- [Environment Variables](/reference/environment-variables) - Full config reference

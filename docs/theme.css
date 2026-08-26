@@ -1,0 +1,358 @@
+:root {
+  color-scheme: light dark;
+
+  --fb-teal: #00c4b8;
+  --fb-teal-hover: #00ada3;
+  --fb-teal-strong: #008f87;
+  --fb-teal-muted: #e6fbf9;
+  --fb-teal-border: #9ee7e1;
+  --fb-dark-page: #07111f;
+  --fb-dark-panel: #0b1828;
+  --fb-dark-code: #111c2d;
+  --fb-ink: #0f172a;
+  --fb-muted: #64748b;
+  --fb-border: #e2e8f0;
+  --fb-surface: #ffffff;
+  --fb-surface-soft: #f8fafc;
+  --hub-grid-border: light-dark(#dbe5ef, #1e293b);
+
+  /* Accent tokens the landing page and chrome overrides use. Formerly aliased
+     Stainless's --stl-color-* set; same values, brand-namespaced. */
+  --fb-accent-border: light-dark(var(--fb-teal-border), #126a65);
+  --fb-accent-border-strong: light-dark(var(--fb-teal), #00c4b8);
+  --fb-accent-muted-background: light-dark(var(--fb-teal-muted), #062f2d);
+  --fb-accent-foreground: light-dark(#007a73, #7ff8ef);
+
+  --sl-color-accent: #00c4b8;
+  --sl-color-accent-low: light-dark(#d9fbf8, #063b38);
+  --sl-color-accent-high: light-dark(#007a73, #7ff8ef);
+  --sl-color-text-accent: light-dark(#007a73, #7ff8ef);
+  --sl-color-bg-accent: var(--fb-teal);
+}
+
+:root[data-theme="dark"] {
+  --fb-ink: #f8fafc;
+  --fb-muted: #94a3b8;
+  --fb-border: #1e293b;
+  --fb-surface: var(--fb-dark-page);
+  --fb-surface-soft: #0f172a;
+
+  --sl-color-bg: var(--fb-dark-page);
+  --sl-color-bg-nav: var(--fb-dark-page);
+  --sl-color-bg-sidebar: var(--fb-dark-page);
+  --sl-color-bg-inline-code: #142235;
+  --sl-color-black: var(--fb-dark-page);
+}
+
+html {
+  background: light-dark(#ffffff, var(--fb-dark-page));
+}
+
+body {
+  letter-spacing: 0;
+}
+
+body,
+.page,
+.main-pane {
+  background:
+    linear-gradient(
+      180deg,
+      light-dark(#f8fafc, var(--fb-dark-page)) 0,
+      light-dark(#ffffff, var(--fb-dark-page)) 18rem
+    ),
+    light-dark(#ffffff, var(--fb-dark-page));
+}
+
+::selection {
+  background: color-mix(in srgb, var(--fb-teal) 26%, transparent);
+}
+
+a {
+  text-decoration-color: color-mix(in srgb, var(--fb-teal) 44%, transparent);
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  text-decoration-color: var(--fb-teal);
+}
+
+:focus-visible {
+  outline: 2px solid var(--fb-teal);
+  outline-offset: 3px;
+}
+
+.site-title img {
+  max-height: 2.25rem;
+  width: auto;
+}
+.sidebar-pane {
+  background: light-dark(#ffffff, var(--fb-dark-page));
+}
+
+.sidebar-content a,
+.sidebar-content summary {
+  border-radius: 6px;
+}
+
+.sidebar-content a[aria-current="page"] {
+  color: light-dark(#006e68, #7ff8ef);
+  background: light-dark(#e6fbf9, #052f2d);
+  font-weight: 650;
+}
+
+.sidebar-content a:hover,
+.sidebar-content summary:hover {
+  background: light-dark(#f1f5f9, #0f172a);
+}
+
+site-search button,
+.search-input,
+button[data-open-modal] {
+  border-radius: 999px !important;
+}
+
+site-search button {
+  border-color: light-dark(#dbe5ef, #1e293b) !important;
+  background: light-dark(#ffffff, #07111f) !important;
+}
+
+site-search button:hover {
+  border-color: var(--fb-accent-border) !important;
+  background: light-dark(#f8fafc, #0f172a) !important;
+}
+
+.content-panel {
+  --sl-content-width: 52rem;
+}
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3 {
+  letter-spacing: 0;
+  color: light-dark(#0f172a, #f8fafc);
+}
+
+.sl-markdown-content h1 {
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  line-height: 1.04;
+}
+
+.sl-markdown-content h2 {
+  border-top: 1px solid light-dark(#edf2f7, #142238);
+  padding-top: 2rem;
+}
+
+.sl-markdown-content > p:first-of-type {
+  color: light-dark(#475569, #cbd5e1);
+  font-size: 1.08rem;
+}
+
+.sl-markdown-content table {
+  overflow: hidden;
+  border: 1px solid light-dark(#e2e8f0, #1e293b);
+  border-radius: 8px;
+  background: light-dark(#ffffff, #07111f);
+}
+
+.sl-markdown-content th {
+  color: light-dark(#334155, #e2e8f0);
+  background: light-dark(#f8fafc, #0f172a);
+}
+
+.sl-markdown-content tr:nth-child(even) {
+  background: light-dark(#fbfdff, #08111f);
+}
+
+.sl-markdown-content code:not(pre code) {
+  border: 1px solid light-dark(#dbe5ef, #1f3348);
+  border-radius: 6px;
+  background: light-dark(#f1f5f9, #142235);
+  color: light-dark(#0f766e, #7ff8ef);
+}
+
+.expressive-code,
+.sl-markdown-content pre {
+  border-radius: 8px;
+}
+
+.expressive-code .frame,
+.sl-markdown-content pre {
+  border-color: light-dark(#dbe5ef, #1e293b) !important;
+  box-shadow: 0 16px 44px
+    color-mix(in srgb, light-dark(#64748b, #000000) 12%, transparent);
+}
+
+:root[data-theme="dark"] .expressive-code .frame {
+  --code-background: var(--fb-dark-code);
+}
+
+.pagination-links a {
+  border-radius: 8px;
+}
+
+.pagination-links a:hover {
+  border-color: var(--fb-accent-border-strong);
+}
+
+.hub-hero {
+  display: grid;
+  gap: 1.35rem;
+  padding-block: 1rem 1.5rem;
+}
+
+.hub-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.4rem;
+}
+
+/* Starlight paints its `primary` link button with --sl-color-text-accent, which
+   is #007a73 here. The brand CTA has always been --fb-teal on near-black, so
+   restore it locally rather than moving --sl-color-text-accent — that token also
+   drives body-link colour. Unlayered, so it beats @layer starlight.components
+   without !important. */
+.hub-hero__actions .sl-link-button.primary {
+  background: var(--fb-teal);
+  border-color: var(--fb-teal);
+  color: #001f1d;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--fb-teal) 26%, transparent);
+}
+
+.hub-hero__actions .sl-link-button.primary:hover {
+  background: var(--fb-teal-hover);
+  border-color: var(--fb-teal-hover);
+  color: #001f1d;
+}
+
+.hub-signal-grid,
+.hub-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  align-items: stretch;
+  gap: 0.85rem;
+  margin-block: 1.5rem 2rem;
+}
+
+.hub-signal,
+.hub-card {
+  border: 1px solid var(--hub-grid-border);
+  border-radius: 8px;
+  background: light-dark(#ffffff, var(--fb-dark-panel));
+  box-shadow: 0 12px 36px
+    color-mix(in srgb, light-dark(#64748b, #000000) 10%, transparent);
+}
+
+.hub-signal {
+  display: flex;
+  box-sizing: border-box;
+  height: 10.75rem;
+  flex-direction: column;
+  padding: 1rem;
+}
+
+.hub-label {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  min-height: 1.55rem;
+  margin-bottom: 0.65rem;
+  padding: 0.18rem 0.58rem;
+  border: 1px solid var(--fb-accent-border);
+  border-radius: 999px;
+  background: var(--fb-accent-muted-background);
+  color: var(--fb-accent-foreground);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hub-card {
+  padding: 1.15rem;
+}
+
+.hub-signal strong,
+.hub-card strong {
+  display: block;
+  color: light-dark(#0f172a, #f8fafc);
+}
+
+/* :not(.hub-label) — the chip label is also a span inside .hub-signal, and
+   `.hub-signal span` (0,1,1) outranks `.hub-label` (0,1,0), so without this the
+   chip loses its own display, font-size and accent colour to the description
+   style. */
+.hub-signal span:not(.hub-label),
+.hub-card p {
+  color: light-dark(#64748b, #94a3b8);
+}
+
+.hub-signal span:not(.hub-label) {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.92rem;
+}
+
+.hub-card p {
+  margin: 0.45rem 0 0;
+}
+
+.hub-workflow {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1rem 2rem;
+}
+
+.hub-workflow__item {
+  display: grid;
+  grid-template-columns: 2.35rem 1fr;
+  gap: 0.85rem;
+  align-items: start;
+  padding: 1rem;
+  border: 1px solid var(--hub-grid-border);
+  border-radius: 8px;
+  background: light-dark(#ffffff, var(--fb-dark-panel));
+}
+
+:root[data-theme="dark"] .pagination-links {
+  background-color: var(--fb-dark-page);
+  border-color: #1f3348;
+}
+
+:root[data-theme="dark"] .pagination-links__link--emphasized {
+  background-color: var(--fb-dark-panel);
+  border-color: #263c55;
+}
+
+.hub-workflow__index {
+  display: inline-grid;
+  width: 2.35rem;
+  height: 2.35rem;
+  place-items: center;
+  border-radius: 999px;
+  background: light-dark(#e6fbf9, #063b38);
+  color: light-dark(#006e68, #7ff8ef);
+  font-weight: 750;
+}
+
+.hub-workflow__item strong {
+  display: block;
+  color: light-dark(#0f172a, #f8fafc);
+}
+
+.hub-workflow__item p {
+  margin: 0.25rem 0 0;
+  color: light-dark(#64748b, #94a3b8);
+}
+
+@media (max-width: 38rem) {
+  .sl-markdown-content h1 {
+    font-size: clamp(2.2rem, 14vw, 3.35rem);
+  }
+
+  /* Was `.hub-hero__actions .stl-ui-button` before the Starlight port. */
+  .hub-hero__actions .sl-link-button {
+    width: 100%;
+    justify-content: center;
+  }
+}

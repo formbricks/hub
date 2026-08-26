@@ -1,0 +1,30 @@
+{
+  "name": "hub-docs",
+  "type": "module",
+  "version": "0.0.1",
+  "packageManager": "pnpm@11.5.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "check:links": "node scripts/check-links.mjs",
+    "preview": "astro preview",
+    "check": "astro check",
+    "astro": "astro",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.41.7",
+    "astro": "^7.2.4",
+    "posthog-js": "^1.376.0",
+    "sharp": "^0.34.5",
+    "starlight-openapi": "^0.26.1",
+    "starlight-sidebar-topics": "^0.8.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3"
+  }
+}

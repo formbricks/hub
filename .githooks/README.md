@@ -26,6 +26,14 @@ The pre-commit hook automatically:
 2. Runs `golangci-lint run --fix` (format + fixable issues; gofumpt/gci from config)
 3. Stages any auto-fixed files
 4. Runs the linter to verify no remaining issues (includes gosec for secrets/hardcoded credentials in Go code)
+5. Runs the fast unit tests (`make test-unit`; no database)
+
+Steps 2–5 are skipped when the commit stages no Go-relevant files (`*.go`,
+`go.mod`, `go.sum`, `Makefile`, `.golangci.yml`) — a docs-only change does not
+need the Go toolchain, matching the path filters on `tests.yml` and
+`code-quality.yml`. `golangci-lint` is likewise only required when those steps
+actually run. Docs changes are validated by `pnpm check` / `pnpm build` from
+`docs/`, enforced in CI by `docs-build.yml`.
 
 If any step fails, the commit is blocked.
 
