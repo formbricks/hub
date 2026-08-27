@@ -49,8 +49,12 @@ func (w *TenantTranslationBackfillWorker) Timeout(*river.Job[service.TenantTrans
 }
 
 // Work lists the tenant's stale records and enqueues per-record translation jobs onto the
-// translations queue. The River client is obtained from the context (the only place River
-// sets it) and handed to the service as the inserter, preserving the injected-inserter seam.
+// translation RECONCILE queue, not the live one. A settings change can fan out a tenant's entire
+// history, and on the live queue that backlog sits in front of translations for records arriving
+// right now -- the same starvation the reconciler's separate lanes exist to prevent. Both are
+// bulk catch-up work, so both belong in the lane sized for it. The River client is obtained from
+// the context (the only place River sets it) and handed to the service as the inserter,
+// preserving the injected-inserter seam.
 func (w *TenantTranslationBackfillWorker) Work(
 	ctx context.Context, job *river.Job[service.TenantTranslationBackfillArgs],
 ) error {
@@ -63,7 +67,7 @@ func (w *TenantTranslationBackfillWorker) Work(
 	runID := fmt.Sprintf("job-%d", job.ID)
 
 	enqueued, err := w.service.BackfillTranslationsForTenant(
-		ctx, client, service.TranslationsQueueName, w.maxAttempts, job.Args.TenantID, runID)
+		ctx, client, service.TranslationsReconcileQueueName, w.maxAttempts, job.Args.TenantID, runID)
 	if err != nil {
 		return fmt.Errorf("backfill translations for tenant %s: %w", job.Args.TenantID, err)
 	}

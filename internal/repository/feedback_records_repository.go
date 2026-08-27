@@ -449,17 +449,28 @@ func (r *FeedbackRecordsRepository) ClearEmotions(
 // fields with non-empty value_text whose EFFECTIVE target language differs from the stored
 // translation_lang_key (never translated, or now stale). The effective target is the tenant's
 // own target_language, falling back to $1 (the configured default) when the tenant has none;
-// an empty $1 disables the fallback, so only tenants with their own target qualify. The LEFT
-// JOIN keeps tenants with no settings row eligible under a non-empty default. Callers append
-// ordering / keyset / limit clauses (params $2+).
+// an empty $1 disables the fallback, so only tenants with their own target qualify. The first
+// LEFT JOIN keeps tenants with no settings row eligible under a non-empty default. Callers
+// append ordering / keyset / limit clauses (params $2+).
+//
+// Terminally-failed records are excluded, exactly as the reconciler's pending set excludes them.
+// A terminal marker means the provider refused this text on structural grounds -- content policy,
+// a refusal, input past the model's limit -- so it will refuse it again, and a target-language
+// change would otherwise spend one provider call per permanently-failing record every time
+// somebody edits the setting. Measured at 1517 wasted jobs in a 3000-record run. "Still needs
+// translating" has to mean the same thing here as it does in the sweep, or the sweep's careful
+// skip is undone by the next settings change. Clearing the marker is the retry endpoint's job.
 const translationBackfillSelectSQL = `
 	SELECT fr.id, COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)
 	FROM feedback_records fr
 	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+	LEFT JOIN feedback_record_enrichment_failures f
+		ON f.feedback_record_id = fr.id AND f.enrichment = '` + models.EnrichmentNameTranslation + `' AND f.terminal
 	WHERE fr.field_type = 'text'
 		AND fr.value_text IS NOT NULL AND btrim(fr.value_text) <> ''
 		AND COALESCE(NULLIF(ts.settings->>'target_language', ''), $1) <> ''
-		AND fr.translation_lang_key IS DISTINCT FROM COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)`
+		AND fr.translation_lang_key IS DISTINCT FROM COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)
+		AND f.feedback_record_id IS NULL`
 
 // ListTranslationBackfillTargets returns one keyset page (fr.id > afterID, ordered by id, at
 // most limit rows) of feedback records across all tenants that need (re)translation. Used by
