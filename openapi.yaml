@@ -3047,7 +3047,21 @@ components:
                     pattern: '^[^\x00]*$'
                 metadata:
                     type: object
-                    description: User agent, device, location, referrer, tags, etc. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
+                    description: >-
+                        Arbitrary context for this record, stored as JSON and returned verbatim: the
+                        dimensions you want to slice a dashboard by, such as channel, device, browser,
+                        OS, country, referrer, campaign, plan or tags. Values may be strings, numbers,
+                        booleans, null, or nested objects and arrays.
+
+                        Use snake_case keys and keep them stable across records, since a key is what a
+                        dashboard groups by: `customer_tier`, not a mix of `customerTier` and `tier`.
+                        Numbers keep full precision here (unlike `value_number`, which is a float64),
+                        so a large integer id round-trips exactly.
+
+                        Do not put personal data in metadata unless you mean to retain it — it is not
+                        redacted, and unlike an answer it is duplicated onto every record of a
+                        submission. Rejected with 400: NULL bytes and unpaired UTF-16 surrogates, in
+                        keys or values, because neither can be stored as JSON.
                     additionalProperties: {}
                 source_id:
                     type: [string, "null"]
@@ -3264,7 +3278,9 @@ components:
                     pattern: '^[^\x00]*$'
                 metadata:
                     type: object
-                    description: Additional context
+                    description: >-
+                        Arbitrary context stored with this record, returned exactly as it was sent.
+                        Absent when the record carries none.
                     additionalProperties: {}
                 sentiment:
                     $ref: '#/components/schemas/SentimentValue'
@@ -3633,7 +3649,11 @@ components:
                     pattern: '^[^\x00]*$'
                 metadata:
                     type: object
-                    description: Update metadata. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
+                    description: >-
+                        Replaces the stored metadata object **wholesale** — it is not merged, so send
+                        every key you want to keep or the omitted ones are lost. See the create
+                        operation for the value rules and key conventions. Rejected with 400: NULL
+                        bytes and unpaired UTF-16 surrogates, in keys or values.
                     additionalProperties: {}
                 user_id:
                     type: string
