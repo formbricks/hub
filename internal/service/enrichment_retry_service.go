@@ -160,6 +160,16 @@ func (s *EnrichmentRetryService) Retry(
 	for _, enrichment := range requested {
 		result, retryErr := s.retryOne(ctx, normalizedTenantID, enrichment, settings)
 		if retryErr != nil {
+			// Each clear that already succeeded deleted markers and burned a cooldown, and the
+			// caller is about to see only an error. Without this line the next call answers
+			// `cooling_down` for those enrichments and nobody can explain why -- the work
+			// happened, the response that would have said so was discarded. The results are
+			// not returned alongside the error because a partial success under a failure status
+			// is worse to consume than a log line is to read.
+			slog.ErrorContext(ctx, "enrichment retry: failed part-way through a multi-enrichment request",
+				"tenant_id", normalizedTenantID, "failed_on", enrichment,
+				"already_cleared", response.Results, "error", retryErr)
+
 			return nil, retryErr
 		}
 

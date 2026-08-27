@@ -231,14 +231,37 @@ func TestEnrichmentRetryRejectsUnknownEnrichment(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, status)
 }
 
+// pendingLimit bounds the helper's read of the sweep's pending set. The query is deployment-wide by
+// design, so this is a global limit and the tenant filter happens below -- see pendingIDs. It is
+// set far above what this suite creates rather than at a "reasonable page size", because the number
+// that matters is not how many records the test seeds but how many unrelated pending records the
+// shared database happens to be holding. 500 was not enough on a developer database that had been
+// used for other work, and the symptom was an assertion about a missing record rather than anything
+// pointing at truncation.
+const pendingLimit = 20000
+
 // pendingIDs reads what the reconcile sweep would pick up for one tenant.
+//
+// It deliberately calls the real ListPendingEnrichment rather than a tenant-scoped test query:
+// what these tests assert is that the sweep sees (or stops seeing) a record, and a parallel query
+// written for the test could agree with the assertion while disagreeing with the sweep.
+//
+// The cost of using the real query is that it is cross-tenant and capped, and the tests package
+// shares one database that accumulates records. Relying on the query's newest-first ordering to
+// keep the seeded records on the first page would be relying on a property of the suite rather
+// than of the code, so instead the limit is large enough to hold everything and the guard below
+// fails loudly if it ever is not -- rather than surfacing as an inexplicable assertion failure
+// about a record that was simply pushed off the end.
 func pendingIDs(
 	ctx context.Context, t *testing.T, repo *repository.EnrichmentReconcileRepository, tenant string,
 ) map[uuid.UUID]bool {
 	t.Helper()
 
-	targets, err := repo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", 500)
+	targets, err := repo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", pendingLimit)
 	require.NoError(t, err)
+	require.Less(t, len(targets), pendingLimit,
+		"the shared test database now holds at least %d pending records, so this page is truncated "+
+			"and the seeded records may have been cut off -- raise pendingLimit", pendingLimit)
 
 	ids := map[uuid.UUID]bool{}
 

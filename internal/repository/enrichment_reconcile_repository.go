@@ -87,6 +87,17 @@ func pendingEnrichmentSelect(enrichment, jobKind, gate, notDone, targetColumn, l
 		-- an in-backoff head from starving the tail — a record whose job is waiting out a retry is
 		-- excluded here, so the LIMIT reaches past it to work that can genuinely be enqueued.
 		--
+		-- It is a read, not a lock, so it narrows the window rather than closing it: an event that
+		-- lands between this SELECT and the sweep's InsertMany produces two jobs for one record.
+		-- That is accepted deliberately. Closing it would mean either a shared cross-lane unique
+		-- key — which is the bug enrichment_provider.go documents at length, where the completed
+		-- state, sitting unremovably in River's default state set, swallowed legitimate re-enrichment
+		-- on A→cleared→A — or a per-record lock taken at Work time, which is a lot of machinery to
+		-- buy back a duplicate provider call on a record that happened to change during the
+		-- milliseconds of one sweep. When the racing event IS a content change, the supersession
+		-- guards (ErrClassificationSuperseded / ErrTranslationSuperseded) already drop the stale
+		-- result, so the surviving cost is one wasted call, not a wrong answer.
+		--
 		-- Cheap by construction: the in-flight states are bounded by queue depth (thousands), the
 		-- scan of them is served by River's own (state, queue, ...) index, and the join is one hash
 		-- build over that small set.

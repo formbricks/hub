@@ -1632,6 +1632,41 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/EnrichmentRetryOutputBody'
+                '400':
+                    description: |
+                        Bad Request. Returned for an unknown enrichment name, a body that is not a JSON
+                        object, or a missing tenant id.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                '401':
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                '409':
+                    description: |
+                        Conflict. Returned when the reconciler is disabled on this deployment
+                        (clearing failures would have no effect until it is re-enabled), or when a
+                        tenant data purge currently holds the tenant's write lock.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                '413':
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
     /v1/enrichment-status:
         get:
             tags:

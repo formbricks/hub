@@ -40,6 +40,18 @@ func NewEnrichmentReconcileWorker(sweeper ReconcileSweeper) *EnrichmentReconcile
 	return &EnrichmentReconcileWorker{sweeper: sweeper}
 }
 
+// Timeout bounds one sweep at enrichmentReconcileTimeout.
+//
+// Declaring it is what makes that constant real. River falls back to Config.JobTimeout when a
+// worker returns zero, and RIVER_JOB_TIMEOUT_SECONDS defaults to 0, which River in turn reads as
+// its own one-minute default -- so without this the sweep would be cancelled at a minute and the
+// context.WithTimeout in Work could not extend it, a child context being unable to outlive its
+// parent. With MaxAttempts 1 that cancellation is a discarded job and an error log per tick,
+// which is exactly the "run of them" signal Work describes as meaning coverage has stopped.
+func (w *EnrichmentReconcileWorker) Timeout(*river.Job[service.EnrichmentReconcileArgs]) time.Duration {
+	return enrichmentReconcileTimeout
+}
+
 // Work runs the sweep.
 //
 // A failed sweep returns an error so River retries it, but the retry is not what makes the system
@@ -48,6 +60,9 @@ func NewEnrichmentReconcileWorker(sweeper ReconcileSweeper) *EnrichmentReconcile
 func (w *EnrichmentReconcileWorker) Work(
 	ctx context.Context, _ *river.Job[service.EnrichmentReconcileArgs],
 ) error {
+	// Redundant with Timeout above under River, and deliberately kept: it bounds the sweep for
+	// any caller that invokes Work directly (tests do) and keeps the guarantee local to the code
+	// that relies on it.
 	ctx, cancel := context.WithTimeout(ctx, enrichmentReconcileTimeout)
 	defer cancel()
 
