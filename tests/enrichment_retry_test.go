@@ -336,3 +336,42 @@ func TestEnrichmentRetryCooldownIsAtomic(t *testing.T) {
 	assert.Equal(t, int64(1), cleared.Load(), "exactly one racer claims the window")
 	assert.Equal(t, int64(racers-1), cooling.Load(), "every other racer is told to wait")
 }
+
+// TestEnrichmentRetryRefusedWhileAPurgeHoldsTheTenant binds the tenant write lock gate. Every
+// tenant-owned mutation must be refused while a purge holds the tenant exclusively (AGENTS.md);
+// without this test, deleting the gate from clearTerminalMarkersSQL leaves the suite green and
+// silently reopens the purge/write race the other repository writing this table carefully closes.
+func TestEnrichmentRetryRefusedWhileAPurgeHoldsTheTenant(t *testing.T) {
+	ctx := context.Background()
+	db := newPurgeTestDB(ctx, t)
+	server, cleanupServer := setupTestServer(t)
+
+	defer cleanupServer()
+
+	frepo := repository.NewFeedbackRecordsRepository(db)
+	tenant := "retry-purge-race-" + uuid.NewString()
+	record := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "terminal during purge")
+	insertFailureMarker(t, db, record.ID, tenant, "sentiment", true, "content_filter")
+
+	// Hold the tenant's write lock exclusively, exactly as a running purge does, for the duration
+	// of the retry call.
+	lockTx, err := db.Begin(ctx)
+	require.NoError(t, err)
+
+	defer func() { _ = lockTx.Rollback(ctx) }()
+
+	_, err = lockTx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		repository.TenantWriteLockKey(tenant))
+	require.NoError(t, err)
+
+	status, _ := postRetry(t, server.URL, tenant, map[string]any{"enrichments": []string{"sentiment"}})
+	assert.Equal(t, http.StatusConflict, status, "a purge in progress must refuse the clear, not race it")
+
+	remaining := countRowsIn(ctx, t, db,
+		`SELECT count(*) FROM feedback_record_enrichment_failures WHERE feedback_record_id = $1`, record.ID)
+	assert.Equal(t, int64(1), remaining, "nothing was cleared under the purge's lock")
+
+	cooldowns := countRowsIn(ctx, t, db,
+		`SELECT count(*) FROM enrichment_retry_cooldowns WHERE tenant_id = $1`, tenant)
+	assert.Zero(t, cooldowns, "and no cooldown was stamped for a refused clear")
+}
