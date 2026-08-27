@@ -112,6 +112,7 @@ to a service-account key path when running outside Google Cloud). A custom
 | `TRANSLATION_BASE_URL`              | -       | OpenAI-compatible base URL; honored only with `openai`.                                                                                                |
 | `TRANSLATION_DEFAULT_LANGUAGE`      | -       | Fallback target language (BCP-47, e.g. `en-US`) for tenants with no `target_language`. Empty makes translation per-tenant opt-in.                      |
 | `TRANSLATION_MAX_CONCURRENT`        | `5`     | Max concurrent translation jobs.                                                                                                                       |
+| `TRANSLATION_RECONCILE_MAX_CONCURRENT` | `2`  | Max concurrent translation jobs on the reconcile lane (see [Reconciliation](#reconciliation)).                                                          |
 | `TRANSLATION_MAX_ATTEMPTS`          | `3`     | Max translation attempts.                                                                                                                              |
 | `TRANSLATION_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                                                                            |
 | `TRANSLATION_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                                                                           |
@@ -129,6 +130,7 @@ have not set one.
 | `SENTIMENT_MODEL`                 | -       | Sentiment model name.                                                                              |
 | `SENTIMENT_BASE_URL`              | -       | OpenAI-compatible base URL; honored only with `openai`.                                            |
 | `SENTIMENT_MAX_CONCURRENT`        | `5`     | Max concurrent sentiment jobs.                                                                     |
+| `SENTIMENT_RECONCILE_MAX_CONCURRENT` | `2`  | Max concurrent sentiment jobs on the reconcile lane (see [Reconciliation](#reconciliation)).        |
 | `SENTIMENT_MAX_ATTEMPTS`          | `3`     | Max sentiment attempts.                                                                            |
 | `SENTIMENT_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                        |
 | `SENTIMENT_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                       |
@@ -142,6 +144,7 @@ have not set one.
 | `EMOTIONS_MODEL`                 | -       | Emotion model name.                                                                             |
 | `EMOTIONS_BASE_URL`              | -       | OpenAI-compatible base URL; honored only with `openai`.                                         |
 | `EMOTIONS_MAX_CONCURRENT`        | `5`     | Max concurrent emotion jobs.                                                                    |
+| `EMOTIONS_RECONCILE_MAX_CONCURRENT` | `2`  | Max concurrent emotion jobs on the reconcile lane (see [Reconciliation](#reconciliation)).       |
 | `EMOTIONS_MAX_ATTEMPTS`          | `3`     | Max emotion attempts.                                                                           |
 | `EMOTIONS_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                     |
 | `EMOTIONS_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                    |
@@ -149,6 +152,40 @@ have not set one.
 Sentiment and emotions additionally honor per-directory switches (`sentiment_enabled`,
 `emotions_enabled`) set through the [tenant settings API](/core-concepts/tenant-settings);
 both default to on when the enrichment is configured.
+
+### Reconciliation
+
+Enrichment is enqueued by events as records arrive, which is fast but not complete: a record
+created while a provider was unconfigured has no job at all, a job can be lost to a crash, and a
+transient outage can exhaust a record's retries. The reconciler closes that gap. It periodically
+finds every record that is eligible for an enrichment, has not received one, and has not failed
+terminally, and enqueues the difference. Events remain the fast path; this is what makes coverage
+eventually complete.
+
+It runs on `hub-worker`, on River's elected leader, so a deployment with several workers sweeps
+once between them rather than once each. Disabling it does not affect the event path — it only
+stops coverage from healing itself.
+
+| Variable                                | Default | Description                                                                                                       |
+| --------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ENRICHMENT_RECONCILE_ENABLED`          | `true`  | Master switch for the periodic sweep.                                                                             |
+| `ENRICHMENT_RECONCILE_INTERVAL_SECONDS` | `300`   | How often the sweep runs.                                                                                         |
+| `ENRICHMENT_RECONCILE_TARGET_DEPTH`     | `1000`  | Per-queue top-up target: each tick adds only enough to bring a reconcile queue to this depth. Clamped to `100000`. |
+
+Reconciled work runs on its own `*_reconcile` queue per enrichment, with its own worker budget
+(`*_RECONCILE_MAX_CONCURRENT` above), so draining a large backlog cannot crowd out a record
+submitted a moment ago. Topping up *to* a depth rather than enqueueing *at* a rate makes the sweep
+self-regulating — a tick can only add what the workers have already drained — so the job table
+stays bounded whether the backlog is a thousand records or millions.
+
+Records that failed **terminally** are excluded. A terminal failure means the provider rejected the
+text on structural grounds — a content-policy block, a refusal, input past the model's limit — so
+retrying spends a provider call that cannot succeed, and a sweep that re-enqueued them would never
+terminate. To give those records another chance after the underlying reason has changed (the text
+was edited, or a provider relaxed a policy), clear their markers with
+`POST /v1/tenants/{tenant_id}/enrichments/retry`. That endpoint is rate-limited by a per-tenant,
+per-enrichment cooldown, because clearing the markers is what makes the next sweep spend money on
+records already known to fail.
 
 ## Taxonomy
 
