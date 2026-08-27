@@ -21,10 +21,10 @@ func TestJobKindSpecs(t *testing.T) {
 	want := map[string]lanes{
 		"webhook_dispatch":            {live: river.QueueDefault},
 		"feedback_embedding":          {live: EmbeddingsQueueName},
-		"feedback_translation":        {live: TranslationsQueueName, backfill: TranslationsBackfillQueueName},
+		"feedback_translation":        {live: TranslationsQueueName, backfill: TranslationsReconcileQueueName},
 		"tenant_translation_backfill": {live: TranslationBackfillsQueueName},
-		"feedback_sentiment":          {live: SentimentsQueueName, backfill: SentimentsBackfillQueueName},
-		"feedback_emotions":           {live: EmotionsQueueName, backfill: EmotionsBackfillQueueName},
+		"feedback_sentiment":          {live: SentimentsQueueName, backfill: SentimentsReconcileQueueName},
+		"feedback_emotions":           {live: EmotionsQueueName, backfill: EmotionsReconcileQueueName},
 		"feedback_records_purge":      {live: FeedbackRecordsPurgeQueueName},
 		"enrichment_reconcile":        {live: EnrichmentReconcileQueueName},
 	}
@@ -36,7 +36,7 @@ func TestJobKindSpecs(t *testing.T) {
 		wantLanes, ok := want[spec.Kind()]
 		require.True(t, ok, "unexpected job kind %q", spec.Kind())
 		require.Equal(t, wantLanes.live, spec.Queue, "kind %q is on the wrong queue", spec.Kind())
-		require.Equal(t, wantLanes.backfill, spec.BackfillQueue,
+		require.Equal(t, wantLanes.backfill, spec.ReconcileQueue,
 			"kind %q has the wrong backfill lane", spec.Kind())
 	}
 }
@@ -49,12 +49,12 @@ func TestJobQueueNames(t *testing.T) {
 		river.QueueDefault,
 		EmbeddingsQueueName,
 		TranslationsQueueName,
-		TranslationsBackfillQueueName,
+		TranslationsReconcileQueueName,
 		TranslationBackfillsQueueName,
 		SentimentsQueueName,
-		SentimentsBackfillQueueName,
+		SentimentsReconcileQueueName,
 		EmotionsQueueName,
-		EmotionsBackfillQueueName,
+		EmotionsReconcileQueueName,
 		FeedbackRecordsPurgeQueueName,
 		EnrichmentReconcileQueueName,
 	}, JobQueueNames())

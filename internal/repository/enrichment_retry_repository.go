@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/formbricks/hub/internal/huberrors"
 )
 
 // EnrichmentRetryRepository clears terminal failure markers and holds the cooldown that bounds how
@@ -21,47 +23,76 @@ func NewEnrichmentRetryRepository(db *pgxpool.Pool) *EnrichmentRetryRepository {
 	return &EnrichmentRetryRepository{db: db}
 }
 
-// clearTerminalMarkersSQL deletes one tenant's terminal markers for one enrichment and records the
-// clear, in a single statement so the cooldown cannot be missed if the caller dies between the two.
+// clearTerminalMarkersSQL claims the cooldown window and, only if the claim succeeded, deletes the
+// tenant's terminal markers — one statement, three properties baked in:
 //
-// The cooldown row is written even when no marker was deleted. A caller who clears an empty
-// terminal set has still spent their turn — otherwise "clear, find nothing, clear again" is an
-// unbounded loop that the cooldown was added to prevent, just with an extra step.
+//   - THE TENANT WRITE LOCK GATES EVERYTHING (AGENTS.md: every tenant-owned mutation). The gate CTE
+//     try-acquires the shared advisory lock exactly as recordEnrichmentFailureSQL does; refused
+//     means a purge holds the tenant, and nothing below runs. Skipping it would reopen the
+//     purge/write race for this table, which the OTHER repository writing it carefully closes.
 //
-// The tenant boundary is feedback_records.tenant_id, joined through, not the markers' own
-// denormalized column — the same rule the counting queries follow (see migration 022).
+//   - THE CLAIM IS THE COOLDOWN, ATOMICALLY. The upsert's WHERE takes the window decision inside
+//     the row lock: two concurrent requests serialize on the cooldown row, the second sees the
+//     first's fresh stamp and claims nothing. A separate read-then-clear was tried first and is a
+//     textbook TOCTOU — both callers observe "expired" and both clear, which quietly loosens the
+//     one bound this table exists to enforce.
+//
+//   - THE DELETE RUNS ONLY IF THE CLAIM DID. Deleting is gated on the claim CTE, so a refused
+//     caller cannot clear anything, and a successful caller cannot clear without spending their
+//     window. Clearing an empty set still spends it — otherwise "clear, find nothing, clear again"
+//     is an unbounded loop with an extra step.
+//
+// The victims join keeps fr.tenant_id as the authoritative boundary and adds f.tenant_id as an
+// ADDITIONAL narrowing predicate so idx_enrichment_failures_tenant_enrichment applies — the same
+// additional-not-instead-of rule migration 022 documents for the counting queries.
 const clearTerminalMarkersSQL = `
-	WITH victims AS (
+	WITH gate AS (
+		SELECT pg_try_advisory_xact_lock_shared(hashtextextended($4, 0)) AS locked
+	),
+	claim AS (
+		INSERT INTO enrichment_retry_cooldowns (tenant_id, enrichment, cleared_at)
+		SELECT $1, $2, NOW() FROM gate WHERE gate.locked
+		ON CONFLICT (tenant_id, enrichment) DO UPDATE SET cleared_at = NOW()
+			WHERE enrichment_retry_cooldowns.cleared_at <= NOW() - $3::interval
+		RETURNING 1
+	),
+	victims AS (
 		SELECT f.feedback_record_id
 		FROM feedback_record_enrichment_failures f
 		JOIN feedback_records fr ON fr.id = f.feedback_record_id
-		WHERE fr.tenant_id = $1 AND f.enrichment = $2 AND f.terminal
+		WHERE fr.tenant_id = $1 AND f.tenant_id = $1 AND f.enrichment = $2 AND f.terminal
+			AND EXISTS (SELECT 1 FROM claim)
 	),
 	deleted AS (
 		DELETE FROM feedback_record_enrichment_failures
 		WHERE enrichment = $2 AND feedback_record_id IN (SELECT feedback_record_id FROM victims)
 		RETURNING 1
-	),
-	cooled AS (
-		INSERT INTO enrichment_retry_cooldowns (tenant_id, enrichment, cleared_at)
-		VALUES ($1, $2, NOW())
-		ON CONFLICT (tenant_id, enrichment) DO UPDATE SET cleared_at = NOW()
-		RETURNING 1
 	)
-	SELECT (SELECT count(*) FROM deleted)`
+	SELECT (SELECT gate.locked FROM gate),
+		EXISTS (SELECT 1 FROM claim),
+		(SELECT count(*) FROM deleted)`
 
-// ClearTerminalMarkers removes a tenant's terminal markers for one enrichment and stamps the
-// cooldown. Returns how many markers were cleared.
+// ClearTerminalMarkers atomically claims the cooldown window and removes the tenant's terminal
+// markers for one enrichment. claimed=false with a nil error means the window has not expired —
+// the caller reads the remaining wait separately for its response.
 func (r *EnrichmentRetryRepository) ClearTerminalMarkers(
-	ctx context.Context, tenantID, enrichment string,
-) (int64, error) {
-	var cleared int64
+	ctx context.Context, tenantID, enrichment string, window time.Duration,
+) (claimed bool, cleared int64, err error) {
+	var locked bool
 
-	if err := r.db.QueryRow(ctx, clearTerminalMarkersSQL, tenantID, enrichment).Scan(&cleared); err != nil {
-		return 0, fmt.Errorf("clear terminal enrichment failures: %w", err)
+	err = r.db.QueryRow(ctx, clearTerminalMarkersSQL,
+		tenantID, enrichment, window, TenantWriteLockKey(tenantID),
+	).Scan(&locked, &claimed, &cleared)
+	if err != nil {
+		return false, 0, fmt.Errorf("clear terminal enrichment failures: %w", err)
 	}
 
-	return cleared, nil
+	if !locked {
+		return false, 0, huberrors.NewTenantWriteConflictError(
+			"a purge holds this tenant's write lock; retry later")
+	}
+
+	return claimed, cleared, nil
 }
 
 // cooldownRemainingSQL reports how much of the cooldown window is left, or no row when the tenant
@@ -77,7 +108,7 @@ const cooldownRemainingSQL = `
 	WHERE tenant_id = $1 AND enrichment = $2`
 
 // CooldownRemaining returns how long until this tenant may clear this enrichment again. Zero means
-// now.
+// now. Informational only — the authoritative window decision is ClearTerminalMarkers' claim.
 func (r *EnrichmentRetryRepository) CooldownRemaining(
 	ctx context.Context, tenantID, enrichment string, window time.Duration,
 ) (time.Duration, error) {

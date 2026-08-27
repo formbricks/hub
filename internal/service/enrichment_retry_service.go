@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -22,9 +23,11 @@ const enrichmentRetryQueryTimeout = 10 * time.Second
 // overnight wait. Bounds the amplification to (size of terminal set / this).
 const EnrichmentRetryCooldown = time.Hour
 
-// EnrichmentRetryRepository clears terminal markers and tracks the cooldown.
+// EnrichmentRetryRepository clears terminal markers and tracks the cooldown. ClearTerminalMarkers
+// makes the window decision itself, atomically with the delete; CooldownRemaining only reports the
+// wait for a refused caller's response.
 type EnrichmentRetryRepository interface {
-	ClearTerminalMarkers(ctx context.Context, tenantID, enrichment string) (int64, error)
+	ClearTerminalMarkers(ctx context.Context, tenantID, enrichment string, window time.Duration) (claimed bool, cleared int64, err error)
 	CooldownRemaining(ctx context.Context, tenantID, enrichment string, window time.Duration) (time.Duration, error)
 }
 
@@ -38,15 +41,44 @@ type EnrichmentRetryService struct {
 	settings TenantSettingsReader
 	gates    enrichmentGates
 	cooldown time.Duration
+	// reconcileEnabled mirrors ENRICHMENT_RECONCILE_ENABLED. The endpoint's whole contract is
+	// "cleared markers are picked up by the next sweep" — with the sweep switched off, honoring a
+	// clear would delete the markers, burn the cooldown, drop the failures from the status counts,
+	// and re-enqueue nothing: coverage would silently look BETTER while nothing happened.
+	reconcileEnabled bool
 }
 
-// enrichmentGates is the deployment half of "is this enrichment running", shared with the status
-// service so the two cannot disagree about what is enabled.
+// enrichmentGates is the deployment half of "is this enrichment running", and — via
+// disabledReasonFor — the ONE mapping from an enrichment name to its pair of gates. Both the
+// status service and this one resolve through it, so the two endpoints cannot disagree about
+// whether an enrichment is enabled: the previous shape kept the leaf helpers shared but duplicated
+// the name→gates pairing in two switches, which is exactly the kind of split that drifts when a
+// fourth enrichment arrives.
 type enrichmentGates struct {
 	defaultLang           string
 	translationConfigured bool
 	sentimentConfigured   bool
 	emotionsConfigured    bool
+}
+
+// disabledReasonFor reports which gate is closed for the named enrichment given a tenant's
+// settings, or "" when it is running.
+func (g enrichmentGates) disabledReasonFor(
+	enrichment string, settings *models.TenantSettings,
+) models.DisabledReason {
+	switch enrichment {
+	case models.EnrichmentNameSentiment:
+		return switchedEnrichmentDisabledReason(
+			g.sentimentConfigured, settings.Settings.SentimentEnrichmentEnabled())
+	case models.EnrichmentNameEmotions:
+		return switchedEnrichmentDisabledReason(
+			g.emotionsConfigured, settings.Settings.EmotionsEnrichmentEnabled())
+	case models.EnrichmentNameTranslation:
+		return translationDisabledReason(g.translationConfigured,
+			resolveTargetLang(settings.Settings.TargetLanguage, g.defaultLang))
+	default:
+		return ""
+	}
 }
 
 // NewEnrichmentRetryServiceParams configures the retry service.
@@ -59,6 +91,9 @@ type NewEnrichmentRetryServiceParams struct {
 	EmotionsConfigured    bool
 	// Cooldown overrides the default window. Zero uses EnrichmentRetryCooldown; tests set it short.
 	Cooldown time.Duration
+	// ReconcileEnabled is cfg.EnrichmentReconcile.Enabled — whether anything will ever act on a
+	// clear. False makes Retry refuse outright rather than accept a no-op.
+	ReconcileEnabled bool
 }
 
 // NewEnrichmentRetryService creates an enrichment retry service.
@@ -69,9 +104,10 @@ func NewEnrichmentRetryService(params NewEnrichmentRetryServiceParams) *Enrichme
 	}
 
 	return &EnrichmentRetryService{
-		repo:     params.Repo,
-		settings: params.Settings,
-		cooldown: cooldown,
+		repo:             params.Repo,
+		settings:         params.Settings,
+		cooldown:         cooldown,
+		reconcileEnabled: params.ReconcileEnabled,
 		gates: enrichmentGates{
 			defaultLang:           params.DefaultLang,
 			translationConfigured: params.TranslationConfigured,
@@ -90,6 +126,14 @@ func NewEnrichmentRetryService(params NewEnrichmentRetryServiceParams) *Enrichme
 func (s *EnrichmentRetryService) Retry(
 	ctx context.Context, tenantID string, enrichments []string,
 ) (*models.EnrichmentRetryResponse, error) {
+	// Refused BEFORE validation spends anything: with the reconciler off there is no sweep to pick
+	// the cleared records up, so a 202 here would be a lie the caller pays a cooldown for.
+	if !s.reconcileEnabled {
+		return nil, huberrors.NewConflictError(
+			"the enrichment reconciler is disabled on this deployment (ENRICHMENT_RECONCILE_ENABLED); " +
+				"clearing failures would have no effect until it is re-enabled")
+	}
+
 	normalizedTenantID, err := normalizeRequiredTenantIDValue(tenantID)
 	if err != nil {
 		return nil, err
@@ -135,33 +179,33 @@ func (s *EnrichmentRetryService) retryOne(
 	// Refuse before spending anything when the enrichment will not run: clearing markers for a
 	// switched-off pipeline queues work the worker's own gate skips, so the records would be
 	// re-marked and the caller's cooldown burned for nothing.
-	if reason := s.disabledReason(enrichment, settings); reason != "" {
+	if reason := s.gates.disabledReasonFor(enrichment, settings); reason != "" {
 		result.Outcome = models.RetryOutcomeDisabled
 		result.DisabledReason = reason
 
 		return result, nil
 	}
 
-	remaining, err := s.repo.CooldownRemaining(ctx, tenantID, enrichment, s.cooldown)
-	if err != nil {
-		return result, fmt.Errorf("read retry cooldown: %w", err)
-	}
-
-	if remaining > 0 {
-		result.Outcome = models.RetryOutcomeCoolingDown
-		// Rounded UP: reporting the floor invites a caller to retry a fraction of a second early
-		// and be refused again.
-		result.RetryAfterSeconds = int64(remaining.Round(time.Second).Seconds())
-		if result.RetryAfterSeconds == 0 {
-			result.RetryAfterSeconds = 1
-		}
-
-		return result, nil
-	}
-
-	cleared, err := s.repo.ClearTerminalMarkers(ctx, tenantID, enrichment)
+	// The repository decides the window and clears in one atomic statement — a read-then-clear
+	// here would let two concurrent requests both pass the check, and the cooldown is the one
+	// bound this endpoint has.
+	claimed, cleared, err := s.repo.ClearTerminalMarkers(ctx, tenantID, enrichment, s.cooldown)
 	if err != nil {
 		return result, fmt.Errorf("clear terminal failures: %w", err)
+	}
+
+	if !claimed {
+		remaining, waitErr := s.repo.CooldownRemaining(ctx, tenantID, enrichment, s.cooldown)
+		if waitErr != nil {
+			return result, fmt.Errorf("read retry cooldown: %w", waitErr)
+		}
+
+		result.Outcome = models.RetryOutcomeCoolingDown
+		// CEILED, not rounded: reporting the floor invites a well-behaved caller to sleep exactly
+		// that long, retry a fraction of a second early, and be refused again.
+		result.RetryAfterSeconds = max(int64(math.Ceil(remaining.Seconds())), 1)
+
+		return result, nil
 	}
 
 	result.Outcome = models.RetryOutcomeCleared
@@ -173,26 +217,6 @@ func (s *EnrichmentRetryService) retryOne(
 		"tenant_id", tenantID, "enrichment", enrichment, "cleared", cleared)
 
 	return result, nil
-}
-
-// disabledReason reports which gate is closed for this enrichment, or "" when it is running. The
-// values match the status endpoint's, so a consumer needs one vocabulary rather than two.
-func (s *EnrichmentRetryService) disabledReason(
-	enrichment string, settings *models.TenantSettings,
-) models.DisabledReason {
-	switch enrichment {
-	case models.EnrichmentNameSentiment:
-		return switchedEnrichmentDisabledReason(
-			s.gates.sentimentConfigured, settings.Settings.SentimentEnrichmentEnabled())
-	case models.EnrichmentNameEmotions:
-		return switchedEnrichmentDisabledReason(
-			s.gates.emotionsConfigured, settings.Settings.EmotionsEnrichmentEnabled())
-	case models.EnrichmentNameTranslation:
-		return translationDisabledReason(s.gates.translationConfigured,
-			resolveTargetLang(settings.Settings.TargetLanguage, s.gates.defaultLang))
-	default:
-		return ""
-	}
 }
 
 // normalizeRequestedEnrichments validates the requested set, defaulting to all three.

@@ -83,7 +83,7 @@ func NewRiverWorkersAndQueues(
 	// The backfill lanes get their own, smaller budget. Reconciled work is by definition not urgent
 	// — nobody is watching a record that has been stranded for a week — so it drains in the
 	// background at a rate that cannot crowd out a record submitted a moment ago.
-	backfillWorkers := func(configured int) int {
+	reconcileWorkers := func(configured int) int {
 		if configured <= 0 {
 			return 1
 		}
@@ -121,7 +121,7 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, translationWorker)
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
-		queues[service.TranslationsBackfillQueueName] = river.QueueConfig{MaxWorkers: backfillWorkers(cfg.Translation.BackfillMaxConcurrent)}
+		queues[service.TranslationsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Translation.ReconcileMaxConcurrent)}
 
 		backfillWorker := NewTenantTranslationBackfillWorker(deps.TranslationBackfillService, deps.TranslationMaxAttempts)
 		river.AddWorker(workers, backfillWorker)
@@ -145,7 +145,7 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, sentimentWorker)
 
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: maxSentiment}
-		queues[service.SentimentsBackfillQueueName] = river.QueueConfig{MaxWorkers: backfillWorkers(cfg.Sentiment.BackfillMaxConcurrent)}
+		queues[service.SentimentsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Sentiment.ReconcileMaxConcurrent)}
 	}
 
 	if deps.EmotionsClient != nil {
@@ -155,7 +155,7 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, emotionsWorker)
 
 		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: maxEmotions}
-		queues[service.EmotionsBackfillQueueName] = river.QueueConfig{MaxWorkers: backfillWorkers(cfg.Emotions.BackfillMaxConcurrent)}
+		queues[service.EmotionsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Emotions.ReconcileMaxConcurrent)}
 	}
 
 	return workers, queues

@@ -36,13 +36,22 @@ type EnrichmentReconcileService struct {
 	inserter    RiverBatchInserter
 	defaultLang string
 	targetDepth int
-	// enabled lists the enrichments this deployment has a provider for. An enrichment nobody
-	// configured is not pending work, it is switched off, and sweeping for it would enqueue jobs
-	// whose worker is not even registered.
-	enabled []string
-	// maxAttempts per enrichment, mirroring the live path so a reconciled job is retried the same
-	// number of times as an event-driven one.
-	maxAttempts map[string]int
+	// specs lists the enrichments this deployment has a provider for, in sweep order. An
+	// enrichment nobody configured is not pending work, it is switched off, and sweeping for it
+	// would enqueue jobs whose worker is not even registered.
+	specs []EnrichmentSweepSpec
+}
+
+// EnrichmentSweepSpec is one enrichment's sweep configuration. One struct rather than parallel
+// collections, because the parallel version had a silent failure mode: an enrichment present in
+// the enabled list but missing from the attempts map handed River MaxAttempts 0, which it treats
+// as its default of 25 — quietly betraying the "retried like an event-driven job" promise by a
+// factor of eight in provider calls.
+type EnrichmentSweepSpec struct {
+	Name string
+	// MaxAttempts mirrors the live path, so a reconciled job is retried exactly as many times as
+	// an event-driven one before it writes its failure marker.
+	MaxAttempts int
 }
 
 // NewEnrichmentReconcileServiceParams configures the sweep.
@@ -51,8 +60,7 @@ type NewEnrichmentReconcileServiceParams struct {
 	Inserter    RiverBatchInserter
 	DefaultLang string
 	TargetDepth int
-	Enabled     []string
-	MaxAttempts map[string]int
+	Specs       []EnrichmentSweepSpec
 }
 
 // NewEnrichmentReconcileService creates the reconcile service.
@@ -62,8 +70,7 @@ func NewEnrichmentReconcileService(params NewEnrichmentReconcileServiceParams) *
 		inserter:    params.Inserter,
 		defaultLang: params.DefaultLang,
 		targetDepth: params.TargetDepth,
-		enabled:     params.Enabled,
-		maxAttempts: params.MaxAttempts,
+		specs:       params.Specs,
 	}
 }
 
@@ -108,15 +115,27 @@ func (s *EnrichmentReconcileService) Sweep(ctx context.Context) (ReconcileResult
 		return result, ErrReconcileInserterUnset
 	}
 
-	queues := make([]string, 0, len(s.enabled))
-	for _, enrichment := range s.enabled {
-		if queue := BackfillQueueFor(enrichment); queue != "" {
-			queues = append(queues, queue)
-		}
+	if len(s.specs) == 0 {
+		return result, nil
 	}
 
-	if len(queues) == 0 {
-		return result, nil
+	queues := make([]string, 0, len(s.specs))
+
+	var errs []error
+
+	for _, spec := range s.specs {
+		queue := ReconcileQueueFor(spec.Name)
+		if queue == "" {
+			// A wiring mistake, and the one place it used to fail SILENTLY: an enrichment enabled
+			// but unknown to the queue mapping was dropped from the sweep without a log line —
+			// producing exactly the quiet never-converging coverage this service exists to remove.
+			// Its siblings (pendingQueryFor, reconcileArgsFor) already fail loudly; now this does.
+			errs = append(errs, fmt.Errorf("%s: %w", spec.Name, repository.ErrUnknownEnrichment))
+
+			continue
+		}
+
+		queues = append(queues, queue)
 	}
 
 	depths, err := s.repo.CountRunnableByQueue(ctx, queues)
@@ -124,29 +143,27 @@ func (s *EnrichmentReconcileService) Sweep(ctx context.Context) (ReconcileResult
 		return result, fmt.Errorf("read backfill queue depths: %w", err)
 	}
 
-	var errs []error
-
-	for _, enrichment := range s.enabled {
-		queue := BackfillQueueFor(enrichment)
+	for _, spec := range s.specs {
+		queue := ReconcileQueueFor(spec.Name)
 		if queue == "" {
-			continue
+			continue // already recorded as an error above
 		}
 
 		room := s.targetDepth - int(depths[queue])
 		if room <= 0 {
-			result.Skipped = append(result.Skipped, enrichment)
+			result.Skipped = append(result.Skipped, spec.Name)
 
 			continue
 		}
 
-		enqueued, sweepErr := s.sweepOne(ctx, enrichment, queue, room)
+		enqueued, sweepErr := s.sweepOne(ctx, spec, queue, room)
 		if sweepErr != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", enrichment, sweepErr))
+			errs = append(errs, fmt.Errorf("%s: %w", spec.Name, sweepErr))
 
 			continue
 		}
 
-		result.Enqueued[enrichment] = enqueued
+		result.Enqueued[spec.Name] = enqueued
 	}
 
 	if len(errs) > 0 {
@@ -158,8 +175,10 @@ func (s *EnrichmentReconcileService) Sweep(ctx context.Context) (ReconcileResult
 
 // sweepOne fills one enrichment's queue up to room more jobs.
 func (s *EnrichmentReconcileService) sweepOne(
-	ctx context.Context, enrichment, queue string, room int,
+	ctx context.Context, spec EnrichmentSweepSpec, queue string, room int,
 ) (int, error) {
+	enrichment := spec.Name
+
 	targets, err := s.repo.ListPendingEnrichment(ctx, enrichment, s.defaultLang, room)
 	if err != nil {
 		return 0, fmt.Errorf("list pending: %w", err)
@@ -181,16 +200,19 @@ func (s *EnrichmentReconcileService) sweepOne(
 			Args: args,
 			InsertOpts: &river.InsertOpts{
 				Queue:       queue,
-				MaxAttempts: s.maxAttempts[enrichment],
-				// Uniqueness across the IN-FLIGHT states, so a record the event path already
-				// queued is not enqueued a second time. `retryable` is in the set on purpose: a
-				// job waiting out its backoff will run again by itself, and re-enqueueing it would
-				// double the provider calls for a record that is already being handled.
+				MaxAttempts: spec.MaxAttempts,
+				// Uniqueness dedupes SWEEP-AGAINST-SWEEP only, and it is important to be honest
+				// about that: it cannot see the event path's jobs (those are deliberately inserted
+				// with no unique options, so they carry no key to collide with) nor the one-off
+				// backfill commands' (their args hash differently). What actually prevents
+				// double-enqueueing across lanes is the pending query itself, which excludes any
+				// record with an in-flight job of this kind — see pendingEnrichmentSelect. This is
+				// the belt for the residual race between that read and this insert.
 				//
-				// `completed` must stay OUT. River's default set includes it, and with no ByPeriod
-				// the window is unbounded — the first sweep of a record would be the only one that
-				// ever ran, so a record that failed after a successful enrichment could never be
-				// picked up again.
+				// `completed` must stay OUT of the state set. River's default includes it, and
+				// with no ByPeriod the window is unbounded — the first sweep of a record would be
+				// the only one that ever ran. `retryable` stays IN: a job waiting out its backoff
+				// runs again by itself.
 				UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: InFlightUniqueStates()},
 			},
 		})
@@ -217,9 +239,11 @@ func (s *EnrichmentReconcileService) sweepOne(
 	return inserted, nil
 }
 
-// reconcileArgsFor builds the job args for one pending record. The args are deliberately identical
-// to the event path's: the same worker handles both lanes, and a reconciled job that differed would
-// be a second code path to keep correct.
+// reconcileArgsFor builds the job args for one pending record: the minimal shape the shared worker
+// needs. Deliberately NOT identical to the event path's — those carry an EventID (correlation) and
+// a ValueTextHash (their unique key), neither of which a sweep has or needs: the worker re-reads
+// the record and guards on its Work-time content, and cross-lane dedupe is the pending query's job
+// rather than the args'. This is the same hashless shape the backfill commands' enqueues document.
 func reconcileArgsFor(enrichment string, target repository.PendingEnrichmentTarget) (river.JobArgs, error) {
 	switch enrichment {
 	case models.EnrichmentNameSentiment:

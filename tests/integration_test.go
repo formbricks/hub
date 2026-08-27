@@ -149,6 +149,7 @@ func setupTestServerWithEventProviders(
 			TranslationConfigured: true,
 			SentimentConfigured:   true,
 			EmotionsConfigured:    true,
+			ReconcileEnabled:      true,
 			// Short, so a test can prove the cooldown refuses AND that it expires, without
 			// sleeping for an hour.
 			Cooldown: 2 * time.Second,

@@ -115,13 +115,13 @@ func TestNewRiverWorkersAndQueuesCoversEveryJobKind(t *testing.T) {
 		// The backfill lane too. A kind whose live queue is declared but whose backfill queue is
 		// not would have the reconciler insert onto a queue no worker is assigned to, and those
 		// jobs sit there forever looking enqueued.
-		if spec.BackfillQueue == "" {
+		if spec.ReconcileQueue == "" {
 			continue
 		}
 
-		if _, ok := queues[spec.BackfillQueue]; !ok {
+		if _, ok := queues[spec.ReconcileQueue]; !ok {
 			t.Fatalf("backfill queue %q for kind %q missing from queue config, want declared",
-				spec.BackfillQueue, spec.Kind())
+				spec.ReconcileQueue, spec.Kind())
 		}
 	}
 

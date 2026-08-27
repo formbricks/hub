@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -55,13 +54,8 @@ type enrichmentRetryRequest struct {
 func (h *EnrichmentRetryHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenant_id")
 
-	enrichments, err := decodeRetryBody(r)
-	if err != nil {
-		response.RespondErrorWithLogAttrs(w, r, err,
-			"tenant_id_present", tenantID != "",
-			"tenant_id_length", len(tenantID),
-		)
-
+	enrichments, ok := decodeRetryBody(w, r)
+	if !ok {
 		return
 	}
 
@@ -78,36 +72,36 @@ func (h *EnrichmentRetryHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusAccepted, accepted)
 }
 
-// decodeRetryBody reads the optional body. An absent or empty body means "all enrichments", which
-// is the common case from a UI button, so it must not be an error.
-func decodeRetryBody(r *http.Request) ([]string, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxRetryBodyBytes+1))
-	if err != nil {
-		return nil, huberrors.NewValidationError("body", "could not read request body")
-	}
+// decodeRetryBody reads the optional body via the same MaxBytesReader idiom every other handler
+// uses (see decodeSettingsBody), so an oversized body is a 413 here like everywhere else rather
+// than this endpoint's own 400. An absent or empty body means "all enrichments" — the common case
+// from a UI button — so it must not be an error.
+func decodeRetryBody(w http.ResponseWriter, r *http.Request) ([]string, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRetryBodyBytes)
 
-	if len(body) > maxRetryBodyBytes {
-		return nil, huberrors.NewValidationError("body", "request body is too large")
-	}
-
-	if len(body) == 0 {
-		return nil, nil
-	}
-
-	var parsed enrichmentRetryRequest
-
-	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder := json.NewDecoder(r.Body)
 	// Unknown fields are rejected rather than ignored: a caller who misspells the key would
 	// otherwise get a 202 that silently cleared everything instead of the one thing they named.
 	decoder.DisallowUnknownFields()
 
+	var parsed enrichmentRetryRequest
+
 	if err := decoder.Decode(&parsed); err != nil {
 		if errors.Is(err, io.EOF) {
-			return nil, nil
+			return nil, true // no body at all — every enrichment
 		}
 
-		return nil, huberrors.NewValidationError("body", "request body must be a JSON object")
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
+
+			return nil, false
+		}
+
+		response.RespondError(w, r, huberrors.NewValidationError("body", "request body must be a JSON object"))
+
+		return nil, false
 	}
 
-	return parsed.Enrichments, nil
+	return parsed.Enrichments, true
 }

@@ -14,7 +14,7 @@ type JobKindSpec struct {
 	// A kind, not a worker, is what River registers, so the same worker serves both lanes and the
 	// queue is purely a concurrency budget. That is the entire mechanism keeping a large sweep from
 	// starving a record submitted right now: the two lanes draw from different MaxWorkers.
-	BackfillQueue string
+	ReconcileQueue string
 }
 
 // Kind returns the River job kind this spec describes.
@@ -38,16 +38,16 @@ func JobKindSpecs() []JobKindSpec {
 		{Args: FeedbackEmbeddingArgs{}, Queue: EmbeddingsQueueName},
 		{
 			Args: FeedbackTranslationArgs{}, Queue: TranslationsQueueName,
-			BackfillQueue: TranslationsBackfillQueueName,
+			ReconcileQueue: TranslationsReconcileQueueName,
 		},
 		{Args: TenantTranslationBackfillArgs{}, Queue: TranslationBackfillsQueueName},
 		{
 			Args: FeedbackSentimentArgs{}, Queue: SentimentsQueueName,
-			BackfillQueue: SentimentsBackfillQueueName,
+			ReconcileQueue: SentimentsReconcileQueueName,
 		},
 		{
 			Args: FeedbackEmotionsArgs{}, Queue: EmotionsQueueName,
-			BackfillQueue: EmotionsBackfillQueueName,
+			ReconcileQueue: EmotionsReconcileQueueName,
 		},
 		{Args: FeedbackRecordsPurgeArgs{}, Queue: FeedbackRecordsPurgeQueueName},
 		{Args: EnrichmentReconcileArgs{}, Queue: EnrichmentReconcileQueueName},
@@ -60,12 +60,10 @@ func JobQueueNames() []string {
 	return distinctQueues(JobKindSpecs())
 }
 
-// distinctQueues collapses specs to their queue names, preserving declaration order and dropping
-// repeats. Taking the specs as a parameter keeps the dedup reachable from a test: every kind
-// declared today owns its own queue, so the duplicate path would otherwise never run.
-// distinctQueues lists every queue any kind is inserted on, live and backfill lanes alike, in
-// declaration order and without repeats. The backfill lanes belong on the depth gauge for the same
-// reason the live ones do — a sweep that is not draining is exactly what an operator needs to see.
+// distinctQueues lists every queue any kind is inserted on — live and reconcile lanes alike — in
+// declaration order and without repeats. The reconcile lanes belong on the depth gauge for the
+// same reason the live ones do: a sweep that is enqueueing but not draining is exactly what an
+// operator needs to see. Taking the specs as a parameter keeps the dedup reachable from a test.
 func distinctQueues(specs []JobKindSpec) []string {
 	seen := make(map[string]struct{}, len(specs))
 	queues := make([]string, 0, len(specs))
@@ -85,7 +83,7 @@ func distinctQueues(specs []JobKindSpec) []string {
 
 	for _, spec := range specs {
 		add(spec.Queue)
-		add(spec.BackfillQueue)
+		add(spec.ReconcileQueue)
 	}
 
 	return queues

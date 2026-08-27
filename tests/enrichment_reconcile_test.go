@@ -71,6 +71,40 @@ func TestListPendingEnrichment(t *testing.T) {
 	}
 
 	assert.True(t, ids[pending.ID], "never-attempted record must be pending")
+
+	// A record whose enrichment already has a job in flight — on ANY queue — is not pending: it is
+	// scheduled. This exclusion, not River uniqueness, is what stops the sweep double-enqueueing
+	// work the event path or a backfill command is already handling (their jobs carry no matching
+	// unique key), and it is what keeps an in-backoff head from starving the tail.
+	inflight := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "already queued elsewhere")
+	_, err = db.Exec(ctx, `
+		INSERT INTO river_job (state, queue, kind, priority, args, max_attempts)
+		VALUES ('retryable', 'sentiments', 'feedback_sentiment', 1,
+			jsonb_build_object('feedback_record_id', $1::text, 'value_text_hash', 'abc'), 3)`, inflight.ID)
+	require.NoError(t, err)
+
+	// And one whose job FINISHED (completed): finished jobs are not in flight, so if the record is
+	// somehow still un-enriched it must be pending again — the exclusion must not overreach.
+	finished := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "job completed but record untouched")
+	_, err = db.Exec(ctx, `
+		INSERT INTO river_job (state, queue, kind, priority, args, max_attempts, finalized_at)
+		VALUES ('completed', 'sentiments', 'feedback_sentiment', 1,
+			jsonb_build_object('feedback_record_id', $1::text, 'value_text_hash', 'abc'), 3, NOW())`, finished.ID)
+	require.NoError(t, err)
+
+	got2, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", 500)
+	require.NoError(t, err)
+
+	ids2 := map[uuid.UUID]bool{}
+
+	for _, target := range got2 {
+		if target.TenantID == tenant {
+			ids2[target.ID] = true
+		}
+	}
+
+	assert.False(t, ids2[inflight.ID], "a record with an in-flight job must not be re-enqueued")
+	assert.True(t, ids2[finished.ID], "a finished job is not in flight; the record is pending again")
 	assert.True(t, ids[transient.ID], "a retryable provider failure must come back as pending")
 	assert.True(t, ids[writeFailed.ID], "a failed write is retryable too, and must come back as pending")
 	assert.False(t, ids[terminal.ID], "a terminal failure must be excluded or the sweep never ends")

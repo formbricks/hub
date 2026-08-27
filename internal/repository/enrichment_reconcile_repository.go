@@ -55,17 +55,50 @@ type PendingEnrichmentTarget struct {
 //
 // Newest first. A backlog drains from the top of the feedback table, so the records someone is
 // most likely to be looking at fill in first and the long tail drains underneath.
-func pendingEnrichmentSelect(enrichment, gate, notDone, targetColumn, limitParam string) string {
+// The River job kinds the three enrichments run under, spelled here rather than imported: the
+// repository layer cannot depend on service, and a kind is as stable a name as the enrichment
+// itself (both live in CHECK constraints and job rows). A parity test in internal/service asserts
+// these match the args types' Kind() so they cannot drift silently.
+// Exported so the parity test in internal/service (which owns the args types) can assert they
+// match Kind() — the repository cannot import service to derive them.
+const (
+	FeedbackSentimentJobKind   = "feedback_sentiment"
+	FeedbackEmotionsJobKind    = "feedback_emotions"
+	FeedbackTranslationJobKind = "feedback_translation"
+)
+
+// pendingInFlightStates are the river_job states in which a record's enrichment is already being
+// handled, matching service.InFlightUniqueStates. A record with such a job is NOT pending: it is
+// scheduled, and re-enqueueing it would spend a second provider call on the same text.
+const pendingInFlightStates = `('available', 'pending', 'retryable', 'running', 'scheduled')`
+
+func pendingEnrichmentSelect(enrichment, jobKind, gate, notDone, targetColumn, limitParam string) string {
 	return `
 	SELECT fr.id, fr.tenant_id, ` + targetColumn + `
 	FROM feedback_records fr
 	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
 	LEFT JOIN feedback_record_enrichment_failures f
 		ON f.feedback_record_id = fr.id AND f.enrichment = '` + enrichment + `' AND f.terminal
+	LEFT JOIN (
+		-- Records whose enrichment already has a job in flight, on ANY queue. This is what actually
+		-- keeps the sweep from double-enqueueing: River's ByArgs uniqueness cannot do it, because
+		-- the event path deliberately inserts with no unique options (its jobs carry no unique key
+		-- to collide with) and the other backfill lanes hash their args differently. It also keeps
+		-- an in-backoff head from starving the tail — a record whose job is waiting out a retry is
+		-- excluded here, so the LIMIT reaches past it to work that can genuinely be enqueued.
+		--
+		-- Cheap by construction: the in-flight states are bounded by queue depth (thousands), the
+		-- scan of them is served by River's own (state, queue, ...) index, and the join is one hash
+		-- build over that small set.
+		SELECT (j.args->>'feedback_record_id') AS record_id
+		FROM river_job j
+		WHERE j.kind = '` + jobKind + `' AND j.state IN ` + pendingInFlightStates + `
+	) inflight ON inflight.record_id = fr.id::text
 	WHERE ` + enrichmentEligibleText + `
 		AND ` + gate + `
 		AND ` + notDone + `
 		AND f.feedback_record_id IS NULL
+		AND inflight.record_id IS NULL
 	ORDER BY fr.collected_at DESC, fr.id DESC
 	LIMIT ` + limitParam
 }
@@ -78,11 +111,14 @@ func pendingEnrichmentSelect(enrichment, gate, notDone, targetColumn, limitParam
 // builds the matching argument list.
 var (
 	pendingSentimentSQL = pendingEnrichmentSelect(
-		models.EnrichmentNameSentiment, enrichmentSentimentOn, enrichmentSentimentNotDone, `''`, `$1`)
+		models.EnrichmentNameSentiment, FeedbackSentimentJobKind,
+		enrichmentSentimentOn, enrichmentSentimentNotDone, `''`, `$1`)
 	pendingEmotionsSQL = pendingEnrichmentSelect(
-		models.EnrichmentNameEmotions, enrichmentEmotionsOn, enrichmentEmotionsNotDone, `''`, `$1`)
+		models.EnrichmentNameEmotions, FeedbackEmotionsJobKind,
+		enrichmentEmotionsOn, enrichmentEmotionsNotDone, `''`, `$1`)
 	pendingTranslationSQL = pendingEnrichmentSelect(
-		models.EnrichmentNameTranslation, enrichmentEffectiveTarget+` <> ''`, enrichmentTranslationNotDone,
+		models.EnrichmentNameTranslation, FeedbackTranslationJobKind,
+		enrichmentEffectiveTarget+` <> ''`, enrichmentTranslationNotDone,
 		enrichmentEffectiveTarget, `$2`)
 )
 

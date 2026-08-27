@@ -161,27 +161,34 @@ type TranslationConfig struct {
 	// target_language of its own. Empty means no fallback — translation is then per-tenant
 	// opt-in (a tenant is translated only once it sets its own target). Normalized to
 	// canonical form at load.
-	DefaultLanguage       string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
-	MaxConcurrent         int    `env:"TRANSLATION_MAX_CONCURRENT"          env-default:"5"`
-	MaxAttempts           int    `env:"TRANSLATION_MAX_ATTEMPTS"            env-default:"3"`
-	BackfillMaxConcurrent int    `env:"TRANSLATION_BACKFILL_MAX_CONCURRENT" env-default:"2"`
-	GoogleCloudProject    string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation   string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
+	DefaultLanguage        string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
+	MaxConcurrent          int    `env:"TRANSLATION_MAX_CONCURRENT"           env-default:"5"`
+	MaxAttempts            int    `env:"TRANSLATION_MAX_ATTEMPTS"             env-default:"3"`
+	ReconcileMaxConcurrent int    `env:"TRANSLATION_RECONCILE_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject     string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation    string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
 }
 
 // SentimentConfig holds the feedback sentiment-enrichment provider settings (ENG-1529).
 // Sentiment enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate embeddings and translation use (there is no separate enable flag).
 type SentimentConfig struct {
-	ProviderAPIKey        string `env:"SENTIMENT_PROVIDER_API_KEY"`
-	Provider              string `env:"SENTIMENT_PROVIDER"`
-	Model                 string `env:"SENTIMENT_MODEL"`
-	BaseURL               string `env:"SENTIMENT_BASE_URL"`
-	MaxConcurrent         int    `env:"SENTIMENT_MAX_CONCURRENT"          env-default:"5"`
-	MaxAttempts           int    `env:"SENTIMENT_MAX_ATTEMPTS"            env-default:"3"`
-	BackfillMaxConcurrent int    `env:"SENTIMENT_BACKFILL_MAX_CONCURRENT" env-default:"2"`
-	GoogleCloudProject    string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation   string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey         string `env:"SENTIMENT_PROVIDER_API_KEY"`
+	Provider               string `env:"SENTIMENT_PROVIDER"`
+	Model                  string `env:"SENTIMENT_MODEL"`
+	BaseURL                string `env:"SENTIMENT_BASE_URL"`
+	MaxConcurrent          int    `env:"SENTIMENT_MAX_CONCURRENT"           env-default:"5"`
+	MaxAttempts            int    `env:"SENTIMENT_MAX_ATTEMPTS"             env-default:"3"`
+	ReconcileMaxConcurrent int    `env:"SENTIMENT_RECONCILE_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject     string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation    string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
+}
+
+// Enabled reports whether translation enrichment is configured (provider and model both set).
+// The single definition of "translation is configured": the API's status and retry gates and the
+// worker's client and sweep gates all call this, so the policy cannot diverge between processes.
+func (c TranslationConfig) Enabled() bool {
+	return c.Provider != "" && c.Model != ""
 }
 
 // Enabled reports whether sentiment enrichment is configured (provider and model both set).
@@ -193,15 +200,15 @@ func (c SentimentConfig) Enabled() bool {
 // Emotion enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate the other enrichments use (there is no separate enable flag).
 type EmotionsConfig struct {
-	ProviderAPIKey        string `env:"EMOTIONS_PROVIDER_API_KEY"`
-	Provider              string `env:"EMOTIONS_PROVIDER"`
-	Model                 string `env:"EMOTIONS_MODEL"`
-	BaseURL               string `env:"EMOTIONS_BASE_URL"`
-	MaxConcurrent         int    `env:"EMOTIONS_MAX_CONCURRENT"          env-default:"5"`
-	MaxAttempts           int    `env:"EMOTIONS_MAX_ATTEMPTS"            env-default:"3"`
-	BackfillMaxConcurrent int    `env:"EMOTIONS_BACKFILL_MAX_CONCURRENT" env-default:"2"`
-	GoogleCloudProject    string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation   string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey         string `env:"EMOTIONS_PROVIDER_API_KEY"`
+	Provider               string `env:"EMOTIONS_PROVIDER"`
+	Model                  string `env:"EMOTIONS_MODEL"`
+	BaseURL                string `env:"EMOTIONS_BASE_URL"`
+	MaxConcurrent          int    `env:"EMOTIONS_MAX_CONCURRENT"           env-default:"5"`
+	MaxAttempts            int    `env:"EMOTIONS_MAX_ATTEMPTS"             env-default:"3"`
+	ReconcileMaxConcurrent int    `env:"EMOTIONS_RECONCILE_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject     string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation    string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
 }
 
 // Enabled reports whether emotion enrichment is configured (provider and model both set).
@@ -678,13 +685,23 @@ func (c EnrichmentReconcileConfig) Interval() time.Duration {
 	return time.Duration(c.IntervalSeconds) * time.Second
 }
 
-// Depth returns the per-queue target depth, falling back to the default when misconfigured. Zero
-// would mean a sweep that enqueues nothing, which looks identical to a broken reconciler.
+// Depth returns the per-queue target depth, clamped on both sides. Zero or negative falls back to
+// the default — a sweep that enqueues nothing looks identical to a broken reconciler. The ceiling
+// bounds a fat-fingered value: the depth flows straight into one LIMIT query and one InsertMany
+// batch per enrichment per tick, so an unclamped 5,000,000 would be a five-million-row insert in a
+// single statement.
 func (c EnrichmentReconcileConfig) Depth() int {
-	const defaultDepth = 1000
+	const (
+		defaultDepth = 1000
+		maxDepth     = 100_000
+	)
 
 	if c.TargetDepth <= 0 {
 		return defaultDepth
+	}
+
+	if c.TargetDepth > maxDepth {
+		return maxDepth
 	}
 
 	return c.TargetDepth

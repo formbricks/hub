@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -247,4 +249,90 @@ func pendingIDs(
 	}
 
 	return ids
+}
+
+// TestEnrichmentRetryIsTenantScoped is the alternate-path regression AGENTS.md requires for a bulk
+// mutation: tenant A's clear must not touch tenant B's markers, even a marker whose denormalized
+// stamp lies about its tenant — the boundary is the record's tenant, joined through, and this is
+// the query that would leak if that predicate were dropped.
+func TestEnrichmentRetryIsTenantScoped(t *testing.T) {
+	ctx := context.Background()
+	db := newPurgeTestDB(ctx, t)
+	server, cleanupServer := setupTestServer(t)
+
+	defer cleanupServer()
+
+	frepo := repository.NewFeedbackRecordsRepository(db)
+
+	tenantA := "retry-scope-a-" + uuid.NewString()
+	tenantB := "retry-scope-b-" + uuid.NewString()
+
+	recordA := seedEnrichmentRecord(t, frepo, tenantA, models.FieldTypeText, "tenant A terminal")
+	recordB := seedEnrichmentRecord(t, frepo, tenantB, models.FieldTypeText, "tenant B terminal")
+	insertFailureMarker(t, db, recordA.ID, tenantA, "sentiment", true, "content_filter")
+	insertFailureMarker(t, db, recordB.ID, tenantB, "sentiment", true, "refusal")
+
+	// And tenant B's record carrying tenant A's STAMP — unproducible in production, seeded to prove
+	// the delete keys on the record's tenant rather than the marker's column.
+	misstamped := seedEnrichmentRecord(t, frepo, tenantB, models.FieldTypeText, "B record, A stamp")
+	insertFailureMarker(t, db, misstamped.ID, tenantA, "sentiment", true, "recitation")
+
+	status, resp := postRetry(t, server.URL, tenantA, map[string]any{"enrichments": []string{"sentiment"}})
+	require.Equal(t, http.StatusAccepted, status)
+	assert.Equal(t, int64(1), outcomeFor(resp, "sentiment").Cleared,
+		"tenant A owns exactly one terminal marker; the misstamped one belongs to B's record")
+
+	for record, want := range map[uuid.UUID]int64{recordB.ID: 1, misstamped.ID: 1, recordA.ID: 0} {
+		got := countRowsIn(ctx, t, db,
+			`SELECT count(*) FROM feedback_record_enrichment_failures WHERE feedback_record_id = $1`, record)
+		assert.Equal(t, want, got, "record %s", record)
+	}
+}
+
+// TestEnrichmentRetryCooldownIsAtomic races N concurrent retries for the same (tenant, enrichment).
+// The claim is decided inside the cooldown row's lock, so exactly one may win — a check-then-act
+// version let every racer through, which quietly voided the one bound this endpoint has.
+func TestEnrichmentRetryCooldownIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	db := newPurgeTestDB(ctx, t)
+	server, cleanupServer := setupTestServer(t)
+
+	defer cleanupServer()
+
+	frepo := repository.NewFeedbackRecordsRepository(db)
+	tenant := "retry-atomic-" + uuid.NewString()
+	record := seedEnrichmentRecord(t, frepo, tenant, models.FieldTypeText, "raced terminal")
+	insertFailureMarker(t, db, record.ID, tenant, "sentiment", true, "content_filter")
+
+	const racers = 8
+
+	var (
+		racersGroup sync.WaitGroup
+		cleared     atomic.Int64
+		cooling     atomic.Int64
+	)
+
+	for range racers {
+		racersGroup.Go(func() {
+			status, resp := postRetry(t, server.URL, tenant, map[string]any{"enrichments": []string{"sentiment"}})
+			if status != http.StatusAccepted {
+				return
+			}
+
+			switch outcomeFor(resp, "sentiment").Outcome {
+			case models.RetryOutcomeCleared:
+				cleared.Add(1)
+			case models.RetryOutcomeCoolingDown:
+				cooling.Add(1)
+			case models.RetryOutcomeDisabled:
+				// Sentiment is configured in the test server; a disabled outcome would fail the
+				// count assertions below, which is the right failure.
+			}
+		})
+	}
+
+	racersGroup.Wait()
+
+	assert.Equal(t, int64(1), cleared.Load(), "exactly one racer claims the window")
+	assert.Equal(t, int64(racers-1), cooling.Load(), "every other racer is told to wait")
 }

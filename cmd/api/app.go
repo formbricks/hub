@@ -400,7 +400,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	// the enqueue path (translation's target language; the sentiment and emotion per-directory
 	// switches), so they share one short-TTL cache over tenant settings. The cache is evicted on a
 	// settings write (below) so a toggle is visible to the gates immediately, not after TTL expiry.
-	translationEnabled := cfg.Translation.Provider != "" && cfg.Translation.Model != ""
+	translationEnabled := cfg.Translation.Enabled()
 
 	var tenantSettingsCache *service.CachedTenantSettings
 
@@ -492,7 +492,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		Repo:                  repository.NewEnrichmentStatusRepository(db),
 		Settings:              tenantSettingsService,
 		DefaultLang:           cfg.Translation.DefaultLanguage,
-		TranslationConfigured: cfg.Translation.Provider != "" && cfg.Translation.Model != "",
+		TranslationConfigured: cfg.Translation.Enabled(),
 		SentimentConfigured:   cfg.Sentiment.Enabled(),
 		EmotionsConfigured:    cfg.Emotions.Enabled(),
 	})
@@ -506,9 +506,10 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		Repo:                  repository.NewEnrichmentRetryRepository(db),
 		Settings:              tenantSettingsService,
 		DefaultLang:           cfg.Translation.DefaultLanguage,
-		TranslationConfigured: cfg.Translation.Provider != "" && cfg.Translation.Model != "",
+		TranslationConfigured: cfg.Translation.Enabled(),
 		SentimentConfigured:   cfg.Sentiment.Enabled(),
 		EmotionsConfigured:    cfg.Emotions.Enabled(),
+		ReconcileEnabled:      cfg.EnrichmentReconcile.Enabled,
 	})
 	enrichmentRetryHandler := handlers.NewEnrichmentRetryHandler(enrichmentRetryService)
 

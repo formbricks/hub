@@ -91,8 +91,7 @@ func newSweepService(repo *fakeReconcileRepo, inserter *fakeBatchInserter, depth
 	svc := NewEnrichmentReconcileService(NewEnrichmentReconcileServiceParams{
 		Repo:        repo,
 		TargetDepth: depth,
-		Enabled:     []string{models.EnrichmentNameSentiment},
-		MaxAttempts: map[string]int{models.EnrichmentNameSentiment: 3},
+		Specs:       []EnrichmentSweepSpec{{Name: models.EnrichmentNameSentiment, MaxAttempts: 3}},
 	})
 	svc.SetInserter(inserter)
 
@@ -105,7 +104,7 @@ func newSweepService(repo *fakeReconcileRepo, inserter *fakeBatchInserter, depth
 func TestSweepTopsUpToTargetDepth(t *testing.T) {
 	t.Run("asks for exactly the remaining room", func(t *testing.T) {
 		repo := &fakeReconcileRepo{
-			depths:  map[string]int64{SentimentsBackfillQueueName: 400},
+			depths:  map[string]int64{SentimentsReconcileQueueName: 400},
 			pending: map[string][]repository.PendingEnrichmentTarget{models.EnrichmentNameSentiment: targets(1000)},
 		}
 		inserter := &fakeBatchInserter{}
@@ -120,7 +119,7 @@ func TestSweepTopsUpToTargetDepth(t *testing.T) {
 
 	t.Run("a full queue is skipped, not topped up", func(t *testing.T) {
 		repo := &fakeReconcileRepo{
-			depths:  map[string]int64{SentimentsBackfillQueueName: 1000},
+			depths:  map[string]int64{SentimentsReconcileQueueName: 1000},
 			pending: map[string][]repository.PendingEnrichmentTarget{models.EnrichmentNameSentiment: targets(50)},
 		}
 		inserter := &fakeBatchInserter{}
@@ -138,7 +137,7 @@ func TestSweepTopsUpToTargetDepth(t *testing.T) {
 	// negative limit, which Postgres rejects.
 	t.Run("a queue past the target does not ask for a negative limit", func(t *testing.T) {
 		repo := &fakeReconcileRepo{
-			depths:  map[string]int64{SentimentsBackfillQueueName: 5000},
+			depths:  map[string]int64{SentimentsReconcileQueueName: 5000},
 			pending: map[string][]repository.PendingEnrichmentTarget{models.EnrichmentNameSentiment: targets(50)},
 		}
 		inserter := &fakeBatchInserter{}
@@ -162,7 +161,7 @@ func TestSweepEnqueuesTheRightShape(t *testing.T) {
 	require.Len(t, inserter.params, 1)
 
 	opts := inserter.params[0].InsertOpts
-	assert.Equal(t, SentimentsBackfillQueueName, opts.Queue, "reconciled work never lands on the live queue")
+	assert.Equal(t, SentimentsReconcileQueueName, opts.Queue, "reconciled work never lands on the live queue")
 	assert.Equal(t, 3, opts.MaxAttempts, "a reconciled job is retried like an event-driven one")
 	assert.True(t, opts.UniqueOpts.ByArgs)
 	assert.Equal(t, InFlightUniqueStates(), opts.UniqueOpts.ByState)
@@ -204,8 +203,10 @@ func TestSweepIsIndependentPerEnrichment(t *testing.T) {
 	svc := NewEnrichmentReconcileService(NewEnrichmentReconcileServiceParams{
 		Repo:        repo,
 		TargetDepth: 100,
-		Enabled:     []string{models.EnrichmentNameSentiment, models.EnrichmentNameEmotions},
-		MaxAttempts: map[string]int{},
+		Specs: []EnrichmentSweepSpec{
+			{Name: models.EnrichmentNameSentiment, MaxAttempts: 3},
+			{Name: models.EnrichmentNameEmotions, MaxAttempts: 3},
+		},
 	})
 	svc.SetInserter(inserter)
 
@@ -218,8 +219,8 @@ func TestSweepIsIndependentPerEnrichment(t *testing.T) {
 // so a missed SetInserter is a live possibility. Reporting a successful zero would hide it forever.
 func TestSweepRefusesWithoutAnInserter(t *testing.T) {
 	svc := NewEnrichmentReconcileService(NewEnrichmentReconcileServiceParams{
-		Repo:    &fakeReconcileRepo{},
-		Enabled: []string{models.EnrichmentNameSentiment},
+		Repo:  &fakeReconcileRepo{},
+		Specs: []EnrichmentSweepSpec{{Name: models.EnrichmentNameSentiment, MaxAttempts: 3}},
 	})
 
 	_, err := svc.Sweep(context.Background())
@@ -231,10 +232,35 @@ func TestSweepRefusesWithoutAnInserter(t *testing.T) {
 func TestSweepWithNothingEnabledDoesNotQuery(t *testing.T) {
 	repo := &fakeReconcileRepo{}
 	svc := newSweepService(repo, &fakeBatchInserter{}, 100)
-	svc.enabled = nil
+	svc.specs = nil
 
 	result, err := svc.Sweep(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, result.Enqueued)
 	assert.Zero(t, repo.depthCalls)
+}
+
+// TestSweepFailsLoudlyOnAnUnknownQueue: an enrichment enabled but unknown to the queue mapping
+// used to be dropped from the sweep without a log line — the quiet never-converging coverage this
+// service exists to remove. Its siblings already fail loudly; this pins that this one does too.
+func TestSweepFailsLoudlyOnAnUnknownQueue(t *testing.T) {
+	repo := &fakeReconcileRepo{
+		pending: map[string][]repository.PendingEnrichmentTarget{models.EnrichmentNameSentiment: targets(2)},
+	}
+	inserter := &fakeBatchInserter{}
+	svc := NewEnrichmentReconcileService(NewEnrichmentReconcileServiceParams{
+		Repo:        repo,
+		TargetDepth: 100,
+		Specs: []EnrichmentSweepSpec{
+			{Name: "embeddings", MaxAttempts: 3}, // no reconcile queue exists for it
+			{Name: models.EnrichmentNameSentiment, MaxAttempts: 3},
+		},
+	})
+	svc.SetInserter(inserter)
+
+	result, err := svc.Sweep(context.Background())
+	require.Error(t, err, "an unmapped enrichment is a wiring mistake, not a silent skip")
+	require.ErrorIs(t, err, repository.ErrUnknownEnrichment)
+	assert.Equal(t, 2, result.Enqueued[models.EnrichmentNameSentiment],
+		"the mapped enrichment is still swept — one wiring mistake must not stop the others")
 }

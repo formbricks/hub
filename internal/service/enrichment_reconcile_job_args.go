@@ -8,7 +8,11 @@ import (
 
 const enrichmentReconcileKind = "enrichment_reconcile"
 
-// The backfill queues. One per enrichment, separate from the live queue that the event path feeds.
+// The reconcile queues. One per enrichment, separate from the live queue that the event path
+// feeds — and named `_reconcile` rather than `_backfill` deliberately, because the pre-existing
+// `translation_backfills` (the tenant fan-out) is one character-transposition away from a
+// `translations_backfill`, and a mix-up there compiles, passes the parity test, and silently
+// swaps the two queues' concurrency budgets.
 //
 // Separation is the rate control. The reconciler can enqueue a large sweep without a record
 // submitted right now having to queue behind it, because the two draw from different MaxWorkers
@@ -25,28 +29,28 @@ const (
 	// long scan cannot occupy a worker the webhook dispatcher needs.
 	EnrichmentReconcileQueueName = "enrichment_reconcile"
 
-	SentimentsBackfillQueueName   = "sentiments_backfill"
-	EmotionsBackfillQueueName     = "emotions_backfill"
-	TranslationsBackfillQueueName = "translations_backfill"
+	SentimentsReconcileQueueName   = "sentiments_reconcile"
+	EmotionsReconcileQueueName     = "emotions_reconcile"
+	TranslationsReconcileQueueName = "translations_reconcile"
 )
 
-// BackfillQueueFor maps an enrichment to the queue its reconciled work belongs on. Unknown names
+// ReconcileQueueFor maps an enrichment to the queue its reconciled work belongs on. Unknown names
 // return "" — callers treat that as a wiring mistake rather than routing to the live queue by
 // accident, which would defeat the separation above.
-func BackfillQueueFor(enrichment string) string {
+func ReconcileQueueFor(enrichment string) string {
 	switch enrichment {
 	case models.EnrichmentNameSentiment:
-		return SentimentsBackfillQueueName
+		return SentimentsReconcileQueueName
 	case models.EnrichmentNameEmotions:
-		return EmotionsBackfillQueueName
+		return EmotionsReconcileQueueName
 	case models.EnrichmentNameTranslation:
-		return TranslationsBackfillQueueName
+		return TranslationsReconcileQueueName
 	default:
 		return ""
 	}
 }
 
-// EnrichmentReconcileArgs is one sweep: find records still owed enrichments and top the backfill
+// EnrichmentReconcileArgs is one sweep: find records still owed enrichments and top the reconcile
 // queues up towards their target depth.
 //
 // It carries no arguments. The sweep's inputs are the database's current state and the deployment
@@ -57,12 +61,12 @@ func BackfillQueueFor(enrichment string) string {
 // previous sweep is still running collapses into it rather than running two scans concurrently.
 // `completed` is deliberately NOT in that set: with no ByPeriod the window is unbounded, so
 // including it would mean the first sweep is the only one that ever runs.
-type EnrichmentReconcileArgs struct {
-	// Sweep is a constant discriminator. River's ByArgs uniqueness hashes the encoded args, and an
-	// empty struct encodes identically for every insert — which is what we want — but a field with
-	// a stable value makes that explicit rather than incidental.
-	Sweep string `json:"sweep" river:"unique"`
-}
+//
+// Deliberately an EMPTY struct: every insert encodes identically, so every insert site shares the
+// one unique key and there is nothing a second site could get wrong. A discriminator field was
+// tried and rejected — it created the drift channel it claimed to document, since an insert
+// spelling the value differently would silently stop collapsing into the scheduled job.
+type EnrichmentReconcileArgs struct{}
 
 // Kind returns the River job kind.
 func (EnrichmentReconcileArgs) Kind() string { return enrichmentReconcileKind }

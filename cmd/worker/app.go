@@ -214,7 +214,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.EmbeddingMetrics = embeddingMetrics
 	}
 
-	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
+	if cfg.Translation.Enabled() {
 		translationCfg := service.TranslationClientConfig{
 			UsageRecorder:       genAIUsage,
 			Provider:            cfg.Translation.Provider,
@@ -344,8 +344,15 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			river.NewPeriodicJob(
 				river.PeriodicInterval(cfg.EnrichmentReconcile.Interval()),
 				func() (river.JobArgs, *river.InsertOpts) {
-					return service.EnrichmentReconcileArgs{Sweep: "all"}, &river.InsertOpts{
+					return service.EnrichmentReconcileArgs{}, &river.InsertOpts{
 						Queue: service.EnrichmentReconcileQueueName,
+						// ONE attempt, deliberately. A failed sweep needs no retry — the next
+						// scheduled tick IS the retry, and it sees the same backlog. With River's
+						// default 25 attempts a failing sweep's backoff grows past the tick
+						// interval, and because the retryable job holds the unique key, every
+						// subsequent tick would be skipped as a duplicate: a DB blip would then
+						// silence reconciliation for hours, not minutes.
+						MaxAttempts: 1,
 						// Uniqueness across the in-flight states, so a tick arriving while the
 						// previous sweep is still running collapses into it instead of queueing
 						// a second scan behind the first.
@@ -548,30 +555,32 @@ func newEnrichmentReconcileService(cfg *config.Config, db *pgxpool.Pool) *servic
 	// query, so it is not swept.
 	const recordLevelEnrichments = 3
 
-	enabled := make([]string, 0, recordLevelEnrichments)
-	maxAttempts := map[string]int{}
+	specs := make([]service.EnrichmentSweepSpec, 0, recordLevelEnrichments)
 
-	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
-		enabled = append(enabled, models.EnrichmentNameTranslation)
-		maxAttempts[models.EnrichmentNameTranslation] = cfg.Translation.MaxAttempts
+	if cfg.Translation.Enabled() {
+		specs = append(specs, service.EnrichmentSweepSpec{
+			Name: models.EnrichmentNameTranslation, MaxAttempts: cfg.Translation.MaxAttempts,
+		})
 	}
 
 	if cfg.Sentiment.Enabled() {
-		enabled = append(enabled, models.EnrichmentNameSentiment)
-		maxAttempts[models.EnrichmentNameSentiment] = cfg.Sentiment.MaxAttempts
+		specs = append(specs, service.EnrichmentSweepSpec{
+			Name: models.EnrichmentNameSentiment, MaxAttempts: cfg.Sentiment.MaxAttempts,
+		})
 	}
 
 	if cfg.Emotions.Enabled() {
-		enabled = append(enabled, models.EnrichmentNameEmotions)
-		maxAttempts[models.EnrichmentNameEmotions] = cfg.Emotions.MaxAttempts
+		specs = append(specs, service.EnrichmentSweepSpec{
+			Name: models.EnrichmentNameEmotions, MaxAttempts: cfg.Emotions.MaxAttempts,
+		})
 	}
 
-	if len(enabled) == 0 {
+	if len(specs) == 0 {
 		return nil
 	}
 
 	slog.Info("enrichment reconcile: enabled",
-		"enrichments", enabled,
+		"enrichments", len(specs),
 		"interval", cfg.EnrichmentReconcile.Interval(),
 		"target_depth", cfg.EnrichmentReconcile.Depth())
 
@@ -579,8 +588,7 @@ func newEnrichmentReconcileService(cfg *config.Config, db *pgxpool.Pool) *servic
 		Repo:        repository.NewEnrichmentReconcileRepository(db),
 		DefaultLang: cfg.Translation.DefaultLanguage,
 		TargetDepth: cfg.EnrichmentReconcile.Depth(),
-		Enabled:     enabled,
-		MaxAttempts: maxAttempts,
+		Specs:       specs,
 	})
 }
 
