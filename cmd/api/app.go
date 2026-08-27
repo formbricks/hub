@@ -510,6 +510,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		SentimentConfigured:   cfg.Sentiment.Enabled(),
 		EmotionsConfigured:    cfg.Emotions.Enabled(),
 		ReconcileEnabled:      cfg.EnrichmentReconcile.Enabled,
+		Metrics:               reconcileMetrics(metrics),
 	})
 	enrichmentRetryHandler := handlers.NewEnrichmentRetryHandler(enrichmentRetryService)
 
@@ -1170,4 +1171,15 @@ func clearFailedRecords(failures observability.EnrichmentFailureMetrics) {
 	if failures != nil {
 		failures.ClearFailedRecords()
 	}
+}
+
+// reconcileMetrics returns the reconcile/retry metrics, nil-guarding the aggregate. Mirrors the
+// helper of the same name in cmd/worker: a typed nil inside a non-nil interface would pass the
+// service's "metrics != nil" check and panic on the first retry.
+func reconcileMetrics(metrics *observability.Metrics) observability.EnrichmentReconcileMetrics {
+	if metrics == nil {
+		return nil
+	}
+
+	return metrics.EnrichmentReconcile
 }

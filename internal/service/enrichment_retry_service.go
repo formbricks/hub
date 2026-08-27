@@ -10,6 +10,7 @@ import (
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // enrichmentRetryQueryTimeout bounds the whole request. The work is a handful of keyed deletes and
@@ -46,6 +47,8 @@ type EnrichmentRetryService struct {
 	// clear would delete the markers, burn the cooldown, drop the failures from the status counts,
 	// and re-enqueue nothing: coverage would silently look BETTER while nothing happened.
 	reconcileEnabled bool
+	// metrics may be nil (metrics disabled); every use is guarded.
+	metrics observability.EnrichmentReconcileMetrics
 }
 
 // enrichmentGates is the deployment half of "is this enrichment running", and — via
@@ -94,6 +97,8 @@ type NewEnrichmentRetryServiceParams struct {
 	// ReconcileEnabled is cfg.EnrichmentReconcile.Enabled — whether anything will ever act on a
 	// clear. False makes Retry refuse outright rather than accept a no-op.
 	ReconcileEnabled bool
+	// Metrics counts each enrichment's retry outcome. nil disables them; retries still work.
+	Metrics observability.EnrichmentReconcileMetrics
 }
 
 // NewEnrichmentRetryService creates an enrichment retry service.
@@ -108,6 +113,7 @@ func NewEnrichmentRetryService(params NewEnrichmentRetryServiceParams) *Enrichme
 		settings:         params.Settings,
 		cooldown:         cooldown,
 		reconcileEnabled: params.ReconcileEnabled,
+		metrics:          params.Metrics,
 		gates: enrichmentGates{
 			defaultLang:           params.DefaultLang,
 			translationConfigured: params.TranslationConfigured,
@@ -171,6 +177,10 @@ func (s *EnrichmentRetryService) Retry(
 				"already_cleared", response.Results, "error", retryErr)
 
 			return nil, retryErr
+		}
+
+		if s.metrics != nil {
+			s.metrics.RecordRetry(ctx, enrichment, string(result.Outcome))
 		}
 
 		response.Results = append(response.Results, result)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/riverqueue/river"
 
+	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
 
@@ -33,11 +34,16 @@ type EnrichmentReconcileWorker struct {
 	river.WorkerDefaults[service.EnrichmentReconcileArgs]
 
 	sweeper ReconcileSweeper
+	// metrics may be nil (metrics disabled); every use is guarded. The sweep is unattended, so
+	// these are the only non-log evidence it ran at all.
+	metrics observability.EnrichmentReconcileMetrics
 }
 
-// NewEnrichmentReconcileWorker creates the reconcile worker.
-func NewEnrichmentReconcileWorker(sweeper ReconcileSweeper) *EnrichmentReconcileWorker {
-	return &EnrichmentReconcileWorker{sweeper: sweeper}
+// NewEnrichmentReconcileWorker creates the reconcile worker. metrics may be nil.
+func NewEnrichmentReconcileWorker(
+	sweeper ReconcileSweeper, metrics observability.EnrichmentReconcileMetrics,
+) *EnrichmentReconcileWorker {
+	return &EnrichmentReconcileWorker{sweeper: sweeper, metrics: metrics}
 }
 
 // Timeout bounds one sweep at enrichmentReconcileTimeout.
@@ -69,22 +75,38 @@ func (w *EnrichmentReconcileWorker) Work(
 	start := time.Now()
 
 	result, err := w.sweeper.Sweep(ctx)
+	elapsed := time.Since(start)
 
 	total := 0
 	for _, count := range result.Enqueued {
 		total += count
 	}
 
+	// Recorded on both paths, and BEFORE the error return: a sweep that failed part-way still
+	// enqueued what it enqueued, and a failing sweep is precisely when someone needs its duration.
+	if w.metrics != nil {
+		outcome := observability.OutcomeSuccess
+		if err != nil {
+			outcome = observability.OutcomeError
+		}
+
+		w.metrics.RecordSweep(ctx, outcome, elapsed)
+
+		for enrichment, count := range result.Enqueued {
+			w.metrics.RecordEnqueued(ctx, enrichment, count)
+		}
+	}
+
 	if err != nil {
 		slog.ErrorContext(ctx, "enrichment reconcile: sweep failed",
-			"enqueued_before_failure", total, "duration", time.Since(start), "error", err)
+			"enqueued_before_failure", total, "duration", elapsed, "error", err)
 
 		return fmt.Errorf("enrichment reconcile: %w", err)
 	}
 
 	slog.InfoContext(ctx, "enrichment reconcile: sweep complete",
 		"enqueued", total, "by_enrichment", result.Enqueued,
-		"at_target_depth", result.Skipped, "duration", time.Since(start))
+		"at_target_depth", result.Skipped, "duration", elapsed)
 
 	return nil
 }

@@ -58,6 +58,9 @@ type RiverDeps struct {
 	// Shared by the three classify pipelines; nil disables recording, which leaves the API
 	// under-reporting failures but changes no enrichment behaviour.
 	Failures FailureRecorder
+	// ReconcileMetrics reports the sweep's own outcome, duration and enqueue counts. nil disables
+	// them; the sweep still runs.
+	ReconcileMetrics observability.EnrichmentReconcileMetrics
 	// FailureMetrics counts permanent give-ups by cause, for whoever watches the deployment
 	// rather than a single tenant. nil disables it.
 	FailureMetrics observability.EnrichmentFailureMetrics
@@ -130,7 +133,7 @@ func NewRiverWorkersAndQueues(
 	}
 
 	if deps.ReconcileSweeper != nil {
-		river.AddWorker(workers, NewEnrichmentReconcileWorker(deps.ReconcileSweeper))
+		river.AddWorker(workers, NewEnrichmentReconcileWorker(deps.ReconcileSweeper, deps.ReconcileMetrics))
 
 		// MaxWorkers 1: one sweep at a time, structurally. The job's uniqueness already collapses
 		// overlapping ticks, but a queue that cannot run two makes that true even if the unique

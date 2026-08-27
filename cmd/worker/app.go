@@ -126,6 +126,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		// nil when the sweep is switched off or no enrichment is configured, which leaves the
 		// reconcile worker and its queue unregistered rather than registered-and-idle.
 		ReconcileSweeper: reconcileSweeperOrNil(reconcileService),
+		ReconcileMetrics: reconcileMetrics(metrics),
 	}
 
 	providerName, embeddingModel := embeddingProviderAndModel(cfg)
@@ -538,6 +539,17 @@ func failureMetrics(metrics *observability.Metrics) observability.EnrichmentFail
 	}
 
 	return metrics.EnrichmentFailures
+}
+
+// reconcileMetrics is failureMetrics for the sweep's own signals. Same nil-guard: a typed nil
+// inside a non-nil interface would pass the worker's "metrics != nil" check and panic on the
+// first sweep.
+func reconcileMetrics(metrics *observability.Metrics) observability.EnrichmentReconcileMetrics {
+	if metrics == nil {
+		return nil
+	}
+
+	return metrics.EnrichmentReconcile
 }
 
 // newEnrichmentReconcileService builds the sweep, or returns nil when it should not run: the kill

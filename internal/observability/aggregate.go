@@ -25,7 +25,10 @@ type Metrics struct {
 	// EnrichmentFailures counts permanent give-ups by cause and gauges how many records are
 	// currently failed. Carries the enrichment as a label rather than in the metric name.
 	EnrichmentFailures EnrichmentFailureMetrics
-	Taxonomy           TaxonomyMetrics
+	// EnrichmentReconcile reports the level-triggered sweep and the manual retry endpoint — two
+	// paths that spend provider money with nobody watching a request.
+	EnrichmentReconcile EnrichmentReconcileMetrics
+	Taxonomy            TaxonomyMetrics
 }
 
 // NewMetrics creates EventMetrics, WebhookMetrics, EmbeddingMetrics, TranslationMetrics, and CacheMetrics from the given meter.
@@ -86,22 +89,28 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("create enrichment failure metrics: %w", err)
 	}
 
+	enrichmentReconcile, err := NewEnrichmentReconcileMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("create enrichment reconcile metrics: %w", err)
+	}
+
 	taxonomy, err := NewTaxonomyMetrics(meter)
 	if err != nil {
 		return nil, fmt.Errorf("taxonomy metrics: %w", err)
 	}
 
 	return &Metrics{
-		Events:             events,
-		Webhooks:           webhooks,
-		Embeddings:         embeddings,
-		Translation:        translation,
-		Sentiment:          sentiment,
-		Emotions:           emotions,
-		Cache:              cache,
-		EnrichmentClear:    enrichmentClear,
-		EnrichmentBacklog:  enrichmentBacklog,
-		EnrichmentFailures: enrichmentFailures,
-		Taxonomy:           taxonomy,
+		Events:              events,
+		Webhooks:            webhooks,
+		Embeddings:          embeddings,
+		Translation:         translation,
+		Sentiment:           sentiment,
+		Emotions:            emotions,
+		Cache:               cache,
+		EnrichmentClear:     enrichmentClear,
+		EnrichmentBacklog:   enrichmentBacklog,
+		EnrichmentFailures:  enrichmentFailures,
+		EnrichmentReconcile: enrichmentReconcile,
+		Taxonomy:            taxonomy,
 	}, nil
 }
