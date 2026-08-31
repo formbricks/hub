@@ -411,7 +411,7 @@ func TestCountFailedRecordsAggregateIsGated(t *testing.T) {
 		return 0
 	}
 
-	before, err := statusRepo.CountFailedRecordsAggregate(ctx)
+	before, err := statusRepo.CountFailedRecordsAggregate(ctx, "")
 	require.NoError(t, err)
 
 	// A tenant that switched sentiment off. Its failures are history, not work.
@@ -435,7 +435,7 @@ func TestCountFailedRecordsAggregateIsGated(t *testing.T) {
 	liveRecord := seedEnrichmentRecord(t, frepo, live, models.FieldTypeText, "genuinely failed sentiment")
 	insertFailureMarker(t, db, liveRecord.ID, live, "sentiment", false, "provider_error")
 
-	after, err := statusRepo.CountFailedRecordsAggregate(ctx)
+	after, err := statusRepo.CountFailedRecordsAggregate(ctx, "")
 	require.NoError(t, err)
 
 	delta := countFor("sentiment", false, after) - countFor("sentiment", false, before)
@@ -448,6 +448,65 @@ func TestCountFailedRecordsAggregateIsGated(t *testing.T) {
 		require.NoError(t, statusErr)
 		assert.Zero(t, counts.SentimentFailed, "%s: the endpoint reports nothing failed", tenant)
 	}
+}
+
+func TestCountFailedRecordsAggregateIncludesOnlyCurrentTaxonomyEmbeddingFailures(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	failureRepo := repository.NewEnrichmentFailuresRepository(db)
+	feedbackRepo := repository.NewFeedbackRecordsRepository(db)
+	statusRepo := repository.NewEnrichmentStatusRepository(db)
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	tenantID := "aggregate-taxonomy-failure-" + uuid.NewString()
+	model := "taxonomy:aggregate-" + uuid.NewString()
+
+	t.Cleanup(func() {
+		_, _ = db.Exec(ctx, `DELETE FROM feedback_records WHERE tenant_id = $1`, tenantID)
+	})
+
+	countFor := func(counts []repository.FailedRecordCount) int64 {
+		for _, count := range counts {
+			if count.Enrichment == models.EnrichmentNameTaxonomyEmbedding && !count.Terminal {
+				return count.Count
+			}
+		}
+
+		return 0
+	}
+
+	before, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
+	require.NoError(t, err)
+
+	record := seedEnrichmentRecord(t, feedbackRepo, tenantID, models.FieldTypeText, "embedding provider timed out")
+	require.NoError(t, failureRepo.RecordFailure(ctx, models.EnrichmentFailure{
+		FeedbackRecordID: record.ID,
+		TenantID:         tenantID,
+		Enrichment:       models.EnrichmentNameTaxonomyEmbedding,
+		Reason:           models.EnrichmentFailureReasonProviderError,
+		Attempts:         5,
+		ContextKey:       model,
+		SourceUpdatedAt:  &record.UpdatedAt,
+	}))
+
+	afterFailure, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), countFor(afterFailure)-countFor(before))
+
+	embedding := make([]float32, models.EmbeddingVectorDimensions)
+	embedding[0] = 0.25
+	require.NoError(t, embeddingsRepo.Upsert(ctx, record.ID, model, embedding, nil))
+
+	afterSuccess, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
+	require.NoError(t, err)
+	assert.Equal(t, countFor(before), countFor(afterSuccess),
+		"a stale marker must stop counting once the exact embedding exists")
 }
 
 func countRowsIn(ctx context.Context, t *testing.T, db *pgxpool.Pool, query string, args ...any) int64 {

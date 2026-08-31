@@ -52,8 +52,8 @@ type FailureRecorder interface {
 // lose when nothing is healthy.
 const enrichmentFailureWriteTimeout = time.Second
 
-// enrichmentJobTimeout limits one enrichment job run; shared by all four pipelines (LLM and
-// embedding calls dominate, and every provider client keeps its own shorter HTTP timeout).
+// enrichmentJobTimeout limits one structured enrichment job run. Embeddings use their own
+// configurable deadline because CPU inference can legitimately take longer under bounded load.
 const enrichmentJobTimeout = 30 * time.Second
 
 // enrichmentWorkerConfig configures an enrichmentWorker: how to read the record and extract its id,

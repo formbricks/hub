@@ -36,6 +36,12 @@ func (stubFeedbackRecordsPurgeService) Purge(
 	return &models.FeedbackRecordsPurgeCounts{}, nil
 }
 
+type stubEmbeddingReconcileSweeper struct{}
+
+func (stubEmbeddingReconcileSweeper) Sweep(context.Context) (service.EmbeddingReconcileResult, error) {
+	return service.EmbeddingReconcileResult{}, nil
+}
+
 // kindProbe re-registers a job kind to observe whether it is already registered.
 // river.AddWorkerSafely errors only on a duplicate kind, and *river.Workers exposes no way to
 // enumerate its kinds (workersMap is unexported with no accessor), so this is the only way to assert
@@ -68,9 +74,10 @@ func fullRiverDeps() RiverDeps {
 		WebhookSender:  &mockSender{},
 		WebhookMetrics: newCountingWebhookMetrics(),
 
-		EmbeddingService: &mockEmbeddingService{},
-		EmbeddingClient:  &mockEmbeddingClient{},
-		EmbeddingMetrics: &countingEmbeddingMetrics{},
+		EmbeddingService:          &mockEmbeddingService{},
+		EmbeddingClient:           &mockEmbeddingClient{},
+		EmbeddingMetrics:          &countingEmbeddingMetrics{},
+		EmbeddingReconcileSweeper: stubEmbeddingReconcileSweeper{},
 
 		TranslationService:         &mockTranslationWorkerService{},
 		TranslationClient:          &stubTranslationClient{},
@@ -113,8 +120,9 @@ func TestNewRiverWorkersAndQueuesCoversEveryJobKind(t *testing.T) {
 	assertKindRegistered[service.FeedbackSentimentArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackEmotionsArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackRecordsPurgeArgs](t, workerBundle, true)
+	assertKindRegistered[service.EmbeddingReconcileArgs](t, workerBundle, true)
 
-	const probedKinds = 7
+	const probedKinds = 8
 	if got := len(service.JobKindSpecs()); got != probedKinds {
 		t.Fatalf("JobKindSpecs has %d kinds but %d are probed above — add a probe for the new kind "+
 			"and register a worker for it in NewRiverWorkersAndQueues", got, probedKinds)

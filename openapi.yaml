@@ -3909,6 +3909,14 @@ components:
                     type: integer
                     format: int64
                     description: Number of those records that have an embedding.
+                embedding_failed_count:
+                    type: integer
+                    format: int64
+                    description: Number of missing taxonomy embeddings whose latest bounded attempts failed transiently and can be retried.
+                embedding_failed_terminal_count:
+                    type: integer
+                    format: int64
+                    description: Number of missing taxonomy embeddings rejected permanently for the current model and record revision.
             required:
                 - tenant_id
                 - source_type
@@ -3916,6 +3924,8 @@ components:
                 - field_id
                 - record_count
                 - embedding_count
+                - embedding_failed_count
+                - embedding_failed_terminal_count
         TaxonomyFieldsOutputBody:
             type: object
             additionalProperties: false

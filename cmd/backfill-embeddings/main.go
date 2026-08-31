@@ -219,7 +219,15 @@ func run() int {
 	}
 
 	docPrefix := service.EmbeddingPrefixForProvider(providerCanonical)
-	embeddingWorker := workers.NewFeedbackEmbeddingWorker(feedbackRecordsService, embeddingClient, docPrefix, nil)
+	embeddingWorker := workers.NewFeedbackEmbeddingWorkerWithOptions(
+		feedbackRecordsService,
+		embeddingClient,
+		docPrefix,
+		nil,
+		cfg.Embedding.JobTimeout.Duration(),
+		nil,
+		nil,
+	)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, embeddingWorker)
 

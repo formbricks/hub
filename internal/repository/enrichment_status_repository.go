@@ -543,7 +543,15 @@ var countFailedRecordsAggregateSQL = `
 	  AND ((f.enrichment = 'sentiment'   AND fr.sentiment IS NULL AND ` + enrichmentSentimentOn + `)
 	    OR (f.enrichment = 'emotions'    AND fr.emotions_classified_at IS NULL AND fr.emotions IS NULL
 	                                     AND ` + enrichmentEmotionsOn + `)
-	    OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL))
+	    OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL)
+	    OR (f.enrichment = 'taxonomy_embedding'
+	        AND $1 <> ''
+	        AND f.context_key = $1
+	        AND f.source_updated_at = fr.updated_at
+	        AND NOT EXISTS (
+	          SELECT 1 FROM embeddings e
+	          WHERE e.feedback_record_id = fr.id AND e.model = $1
+	        )))
 	GROUP BY f.enrichment, f.terminal`
 
 // CountFailedRecordsAggregate returns the cross-tenant failed-record counts per enrichment.
@@ -556,9 +564,9 @@ var countFailedRecordsAggregateSQL = `
 // for a deployment-wide gauge, and written down so the two are not mistaken for a bug when they
 // disagree.
 func (r *EnrichmentStatusRepository) CountFailedRecordsAggregate(
-	ctx context.Context,
+	ctx context.Context, taxonomyEmbeddingModel string,
 ) ([]FailedRecordCount, error) {
-	rows, err := r.db.Query(ctx, countFailedRecordsAggregateSQL)
+	rows, err := r.db.Query(ctx, countFailedRecordsAggregateSQL, taxonomyEmbeddingModel)
 	if err != nil {
 		return nil, fmt.Errorf("count failed records: %w", err)
 	}

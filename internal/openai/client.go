@@ -437,7 +437,41 @@ func wrapOpenAIError(op string, err error) error {
 		return huberrors.NewRateLimitError(openaiRetryAfter(apiErr), wrapped)
 	}
 
+	if isOpenAIInputLengthError(apiErr) {
+		return huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength, wrapped)
+	}
+
 	return wrapped
+}
+
+// isOpenAIInputLengthError recognizes only explicit per-request input/context limit failures.
+// Other 4xx responses (auth, model configuration, dimensions, malformed requests) remain
+// retryable at the record layer because classifying them as terminal would permanently suppress
+// every record after an operator fixes the deployment.
+func isOpenAIInputLengthError(apiErr *openaisdk.Error) bool {
+	if apiErr == nil || (apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusRequestEntityTooLarge) {
+		return false
+	}
+
+	code := strings.ToLower(strings.TrimSpace(apiErr.Code))
+	if code == "context_length_exceeded" || code == "input_too_long" || code == "max_tokens_exceeded" {
+		return true
+	}
+
+	message := strings.ToLower(apiErr.Message)
+	for _, marker := range []string{
+		"maximum context length",
+		"context length exceeded",
+		"input token count exceeds",
+		"input is too long",
+		"too many tokens",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // openaiRetryAfter reads the retry hint from a 429 response: retry-after-ms

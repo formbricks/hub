@@ -25,6 +25,8 @@ type RiverDeps struct {
 	EmbeddingClient    service.EmbeddingClient
 	EmbeddingDocPrefix string
 	EmbeddingMetrics   observability.EmbeddingMetrics
+	// EmbeddingReconcileSweeper is non-nil only when automatic taxonomy embedding repair is enabled.
+	EmbeddingReconcileSweeper EmbeddingReconcileSweeper
 
 	// Translation worker (optional; if TranslationClient is nil, translation worker is not registered)
 	TranslationService translationWorkerService
@@ -94,10 +96,28 @@ func NewRiverWorkersAndQueues(
 	}
 
 	if deps.EmbeddingClient != nil {
-		embeddingWorker := NewFeedbackEmbeddingWorker(deps.EmbeddingService, deps.EmbeddingClient, deps.EmbeddingDocPrefix, deps.EmbeddingMetrics)
+		embeddingWorker := NewFeedbackEmbeddingWorkerWithOptions(
+			deps.EmbeddingService,
+			deps.EmbeddingClient,
+			deps.EmbeddingDocPrefix,
+			deps.EmbeddingMetrics,
+			cfg.Embedding.JobTimeout.Duration(),
+			deps.Failures,
+			deps.FailureMetrics,
+		)
 		river.AddWorker(workers, embeddingWorker)
 
 		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: maxEmbedding}
+
+		if deps.EmbeddingReconcileSweeper != nil {
+			river.AddWorker(workers, NewEmbeddingReconcileWorker(
+				deps.EmbeddingReconcileSweeper, deps.EmbeddingMetrics))
+
+			queues[service.EmbeddingReconcileQueueName] = river.QueueConfig{MaxWorkers: 1}
+			queues[service.EmbeddingsReconcileQueueName] = river.QueueConfig{
+				MaxWorkers: cfg.Embedding.ReconcileMaxConcurrent,
+			}
+		}
 	}
 
 	if deps.TranslationClient != nil {

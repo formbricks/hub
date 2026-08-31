@@ -68,9 +68,20 @@ func (r *TaxonomyRepository) ListFieldOptions(
 			fr.field_id,
 			COALESCE(MAX(fr.field_label) FILTER (WHERE fr.field_label IS NOT NULL AND btrim(fr.field_label) <> ''), ''),
 			COUNT(*)::int,
-			COUNT(e.feedback_record_id)::int
+			COUNT(e.feedback_record_id)::int,
+			COUNT(failure.feedback_record_id) FILTER (
+				WHERE e.feedback_record_id IS NULL AND NOT failure.terminal
+			)::int,
+			COUNT(failure.feedback_record_id) FILTER (
+				WHERE e.feedback_record_id IS NULL AND failure.terminal
+			)::int
 		FROM feedback_records fr
 		LEFT JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $2
+		LEFT JOIN feedback_record_enrichment_failures failure
+		  ON failure.feedback_record_id = fr.id
+		 AND failure.enrichment = 'taxonomy_embedding'
+		 AND failure.context_key = $2
+		 AND failure.source_updated_at = fr.updated_at
 		WHERE fr.tenant_id = $1
 		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
 		GROUP BY fr.tenant_id, fr.source_type, COALESCE(NULLIF(btrim(fr.source_id), ''), ''), fr.field_id
@@ -95,6 +106,8 @@ func (r *TaxonomyRepository) ListFieldOptions(
 			&option.FieldLabel,
 			&option.RecordCount,
 			&option.EmbeddingCount,
+			&option.EmbeddingFailedCount,
+			&option.EmbeddingFailedTerminalCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan taxonomy field option: %w", err)
 		}

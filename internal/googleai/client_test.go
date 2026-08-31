@@ -322,6 +322,52 @@ func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
 	assert.Equal(t, 17*time.Second, rateLimited.RetryAfter)
 }
 
+func TestWrapGenaiErrorClassifiesOnlyExplicitInputLengthFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      genai.APIError
+		terminal bool
+	}{
+		{
+			name: "input token limit",
+			err: genai.APIError{
+				Code:    http.StatusBadRequest,
+				Status:  "INVALID_ARGUMENT",
+				Message: "The input token count exceeds the maximum number of tokens allowed",
+			},
+			terminal: true,
+		},
+		{
+			name: "generic invalid argument stays recoverable",
+			err: genai.APIError{
+				Code:    http.StatusBadRequest,
+				Status:  "INVALID_ARGUMENT",
+				Message: "the configured output dimensionality is unsupported",
+			},
+		},
+		{
+			name: "permission failure stays recoverable",
+			err: genai.APIError{
+				Code:    http.StatusForbidden,
+				Status:  "PERMISSION_DENIED",
+				Message: "permission denied",
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := wrapGenaiError("gemini embedding", testCase.err)
+			reason, terminal := huberrors.TerminalReasonOf(err)
+			assert.Equal(t, testCase.terminal, terminal)
+
+			if terminal {
+				assert.Equal(t, huberrors.TerminalReasonLength, reason)
+			}
+		})
+	}
+}
+
 // TestTerminalEmptyReason pins which empty Gemini responses are permanent for the input and which
 // stay retryable. Same asymmetry as the OpenAI client: when a reason is ambiguous, retry, because
 // a false terminal abandons a record for good.

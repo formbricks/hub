@@ -25,7 +25,12 @@ type FeedbackEmbeddingWorker struct {
 	embeddingClient  service.EmbeddingClient
 	docPrefix        string // model-specific prefix for document embedding
 	metrics          observability.EmbeddingMetrics
+	jobTimeout       time.Duration
+	failures         FailureRecorder
+	failureMetrics   observability.EnrichmentFailureMetrics
 }
+
+const defaultEmbeddingJobTimeout = 60 * time.Second
 
 // feedbackEmbeddingService is the minimal interface needed by the worker.
 type feedbackEmbeddingService interface {
@@ -45,17 +50,42 @@ func NewFeedbackEmbeddingWorker(
 	docPrefix string,
 	metrics observability.EmbeddingMetrics,
 ) *FeedbackEmbeddingWorker {
+	return NewFeedbackEmbeddingWorkerWithOptions(
+		embeddingService, embeddingClient, docPrefix, metrics,
+		defaultEmbeddingJobTimeout, nil, nil,
+	)
+}
+
+// NewFeedbackEmbeddingWorkerWithOptions creates an embedding worker with an explicit job deadline
+// and durable failure recording. The simple constructor remains for tools/tests that do not need
+// deployment wiring.
+func NewFeedbackEmbeddingWorkerWithOptions(
+	embeddingService feedbackEmbeddingService,
+	embeddingClient service.EmbeddingClient,
+	docPrefix string,
+	metrics observability.EmbeddingMetrics,
+	jobTimeout time.Duration,
+	failures FailureRecorder,
+	failureMetrics observability.EnrichmentFailureMetrics,
+) *FeedbackEmbeddingWorker {
+	if jobTimeout <= 0 {
+		jobTimeout = defaultEmbeddingJobTimeout
+	}
+
 	return &FeedbackEmbeddingWorker{
 		embeddingService: embeddingService,
 		embeddingClient:  embeddingClient,
 		docPrefix:        docPrefix,
 		metrics:          metrics,
+		jobTimeout:       jobTimeout,
+		failures:         failures,
+		failureMetrics:   failureMetrics,
 	}
 }
 
 // Timeout limits how long a single embedding job can run.
 func (w *FeedbackEmbeddingWorker) Timeout(*river.Job[service.FeedbackEmbeddingArgs]) time.Duration {
-	return enrichmentJobTimeout
+	return w.jobTimeout
 }
 
 // Work loads the record, generates or clears the embedding, and persists it.
@@ -122,14 +152,17 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	embedding, err := w.embeddingClient.CreateEmbedding(ctx, text)
 	if err != nil {
-		return w.handleEmbedError(ctx, err, job, log, start)
+		return w.handleEmbedError(ctx, err, job, record, log, start)
 	}
 
 	err = w.embeddingService.SetEmbedding(ctx, args.FeedbackRecordID, args.Model, embedding, stillCurrent)
 	if err != nil {
 		isLastAttempt := job.Attempt >= job.MaxAttempts
 
-		return w.handleSetEmbeddingError(ctx, err, log, start, isLastAttempt, "set feedback record embedding")
+		return w.handleSetEmbeddingError(
+			ctx, err, log, start, record, job.Args.Model, inputKind, job.Attempt, isLastAttempt,
+			"set feedback record embedding",
+		)
 	}
 
 	log.Info("embedding: stored")
@@ -147,7 +180,12 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 // jobs than the provider's rate limit and would otherwise mass-discard them as failed_final
 // (mirrors the classify workers) — while anything else retries, failing on the last attempt.
 func (w *FeedbackEmbeddingWorker) handleEmbedError(
-	ctx context.Context, err error, job *river.Job[service.FeedbackEmbeddingArgs], log *slog.Logger, start time.Time,
+	ctx context.Context,
+	err error,
+	job *river.Job[service.FeedbackEmbeddingArgs],
+	record *models.FeedbackRecord,
+	log *slog.Logger,
+	start time.Time,
 ) error {
 	if delay, ok := rateLimitSnoozeDelay(err, job.CreatedAt); ok {
 		if w.metrics != nil {
@@ -162,6 +200,32 @@ func (w *FeedbackEmbeddingWorker) handleEmbedError(
 
 		//nolint:wrapcheck // river sentinel: JobSnooze must be returned unwrapped for River to detect the snooze
 		return river.JobSnooze(delay)
+	}
+
+	inputKind := models.NormalizeEmbeddingInputKind(job.Args.InputKind)
+
+	if reason, terminal := huberrors.TerminalReasonOf(err); terminal {
+		if w.metrics != nil {
+			w.metrics.RecordWorkerError(ctx, "embedding_api_failed")
+			w.metrics.RecordEmbeddingOutcome(ctx, "failed_final")
+			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
+		}
+
+		if w.failureMetrics != nil {
+			w.failureMetrics.RecordTerminalFailure(
+				ctx, models.EnrichmentNameTaxonomyEmbedding, string(reason))
+		}
+
+		w.markTaxonomyEmbeddingFailed(
+			ctx, log, record, inputKind, job.Args.Model, job.Attempt, true, string(reason))
+		log.Error("embedding: provider failed permanently for this record, not retrying",
+			"reason", string(reason),
+			"attempt", job.Attempt,
+			"error", err,
+		)
+
+		//nolint:wrapcheck // River must see JobCancel directly to suppress remaining attempts.
+		return river.JobCancel(fmt.Errorf("embedding API (terminal, %s): %w", reason, err))
 	}
 
 	isLastAttempt := job.Attempt >= job.MaxAttempts
@@ -179,6 +243,10 @@ func (w *FeedbackEmbeddingWorker) handleEmbedError(
 	}
 
 	if isLastAttempt {
+		w.markTaxonomyEmbeddingFailed(
+			ctx, log, record, inputKind, job.Args.Model, job.Attempt, false,
+			models.EnrichmentFailureReasonProviderError,
+		)
 		log.Error("embedding: API failed (final attempt)",
 			"error", err,
 		)
@@ -200,6 +268,10 @@ func (w *FeedbackEmbeddingWorker) handleSetEmbeddingError(
 	err error,
 	log *slog.Logger,
 	start time.Time,
+	record *models.FeedbackRecord,
+	model string,
+	inputKind models.EmbeddingInputKind,
+	attempt int,
 	isLastAttempt bool,
 	action string,
 ) error {
@@ -255,6 +327,13 @@ func (w *FeedbackEmbeddingWorker) handleSetEmbeddingError(
 			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), outcome)
 		}
 
+		if isLastAttempt {
+			w.markTaxonomyEmbeddingFailed(
+				ctx, log, record, inputKind, model, attempt, false,
+				models.EnrichmentFailureReasonWriteFailed,
+			)
+		}
+
 		log.Error("embedding: "+action+" failed",
 			"final_attempt", isLastAttempt,
 			"error", err,
@@ -262,6 +341,51 @@ func (w *FeedbackEmbeddingWorker) handleSetEmbeddingError(
 
 		return fmt.Errorf("%s: %w", action, err)
 	}
+}
+
+// markTaxonomyEmbeddingFailed writes failure bookkeeping only for the translated taxonomy model.
+// Raw search embeddings are intentionally outside the taxonomy progress/reconcile contract.
+func (w *FeedbackEmbeddingWorker) markTaxonomyEmbeddingFailed(
+	ctx context.Context,
+	log *slog.Logger,
+	record *models.FeedbackRecord,
+	inputKind models.EmbeddingInputKind,
+	model string,
+	attempts int,
+	terminal bool,
+	reason string,
+) {
+	if w.failures == nil || record == nil ||
+		models.NormalizeEmbeddingInputKind(inputKind) != models.EmbeddingInputKindTaxonomyTranslated {
+		return
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), enrichmentFailureWriteTimeout)
+	defer cancel()
+
+	err := w.failures.RecordFailure(writeCtx, models.EnrichmentFailure{
+		FeedbackRecordID: record.ID,
+		TenantID:         record.TenantID,
+		Enrichment:       models.EnrichmentNameTaxonomyEmbedding,
+		Terminal:         terminal,
+		Reason:           reason,
+		Attempts:         attempts,
+		ContextKey:       model,
+		SourceUpdatedAt:  &record.UpdatedAt,
+	})
+	if err == nil || errors.Is(err, huberrors.ErrNotFound) || errors.Is(err, huberrors.ErrTenantWriteConflict) {
+		return
+	}
+
+	if w.metrics != nil {
+		w.metrics.RecordWorkerError(ctx, "failure_marker_write_failed")
+	}
+
+	log.Error("embedding: could not record taxonomy embedding failure",
+		"terminal", terminal,
+		"reason", reason,
+		"error", err,
+	)
 }
 
 // handleEmptyText clears the embedding for text fields when value_text is empty, or records skip for non-text.
@@ -280,7 +404,18 @@ func (w *FeedbackEmbeddingWorker) handleEmptyText(
 		if err != nil {
 			isLastAttempt := job.Attempt >= job.MaxAttempts
 
-			return w.handleSetEmbeddingError(ctx, err, log, start, isLastAttempt, "clear feedback record embedding")
+			return w.handleSetEmbeddingError(
+				ctx,
+				err,
+				log,
+				start,
+				record,
+				job.Args.Model,
+				models.NormalizeEmbeddingInputKind(job.Args.InputKind),
+				job.Attempt,
+				isLastAttempt,
+				"clear feedback record embedding",
+			)
 		}
 
 		if w.metrics != nil {

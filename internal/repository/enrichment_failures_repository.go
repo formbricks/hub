@@ -31,8 +31,8 @@ func NewEnrichmentFailuresRepository(db *pgxpool.Pool) *EnrichmentFailuresReposi
 }
 
 // enrichmentFailureLockKeyParam is the placeholder carrying the tenant write-lock key, after the
-// six inserted values.
-const enrichmentFailureLockKeyParam = 7
+// eight inserted values.
+const enrichmentFailureLockKeyParam = 9
 
 // recordEnrichmentFailureSQL upserts the marker for one (record, enrichment).
 //
@@ -49,14 +49,17 @@ const enrichmentFailureLockKeyParam = 7
 // init, and every fragment is a compile-time literal, never caller input.
 var recordEnrichmentFailureSQL = `
 	INSERT INTO feedback_record_enrichment_failures
-		(feedback_record_id, enrichment, tenant_id, failed_at, attempts, terminal, reason)
-	SELECT $1, $2, $3, NOW(), $4, $5, $6
+		(feedback_record_id, enrichment, tenant_id, failed_at, attempts, terminal, reason,
+		 context_key, source_updated_at)
+	SELECT $1, $2, $3, NOW(), $4, $5, $6, NULLIF($7, ''), $8
 	WHERE ` + tenantWriteLockGate(enrichmentFailureLockKeyParam) + `
 	ON CONFLICT (feedback_record_id, enrichment) DO UPDATE SET
 		failed_at = NOW(),
 		attempts  = EXCLUDED.attempts,
 		terminal  = EXCLUDED.terminal,
-		reason    = EXCLUDED.reason`
+		reason    = EXCLUDED.reason,
+		context_key = EXCLUDED.context_key,
+		source_updated_at = EXCLUDED.source_updated_at`
 
 // RecordFailure persists one enrichment failure.
 //
@@ -81,6 +84,8 @@ func (r *EnrichmentFailuresRepository) RecordFailure(ctx context.Context, failur
 		failure.Attempts,
 		failure.Terminal,
 		failure.Reason,
+		failure.ContextKey,
+		failure.SourceUpdatedAt,
 		TenantWriteLockKey(failure.TenantID),
 	)
 	if err != nil {

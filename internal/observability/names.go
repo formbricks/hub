@@ -138,12 +138,14 @@ var allowedEmbeddingOutcomeStatuses = map[string]bool{
 
 // allowedEmbeddingWorkerReasons for hub_embedding_worker_errors_total.
 var allowedEmbeddingWorkerReasons = map[string]bool{
-	"embedding_api_failed":  true,
-	"get_record_failed":     true,
-	"update_failed":         true,
-	"tenant_write_conflict": true,
-	"rate_limited":          true,
-	"superseded":            true,
+	"embedding_api_failed":        true,
+	"get_record_failed":           true,
+	"update_failed":               true,
+	"tenant_write_conflict":       true,
+	"rate_limited":                true,
+	"reconcile_failed":            true,
+	"failure_marker_write_failed": true,
+	"superseded":                  true,
 }
 
 // AllowedEmbeddingProviderReason returns true if reason is allowed for embedding provider errors.
