@@ -35,11 +35,11 @@ const (
 	lowSurrogateStart  = 0xdc00
 	lowSurrogateEnd    = 0xdfff
 
-	escapeLen   = 6  // \uXXXX
-	decimalBase = 10 // first hex value a letter digit stands for
-	hexDigits   = 4
-	pairLen     = escapeLen * 2
-	nibbleBits  = 4
+	escapeLen       = 6  // \uXXXX
+	hexLetterOffset = 10 // 'a'/'A' stands for 0xa, so a letter digit's value is offset by ten
+	hexDigits       = 4
+	pairLen         = escapeLen * 2
+	nibbleBits      = 4
 )
 
 // validateStorableJSON is the `storable_json` tag: it accepts anything that is not a raw JSON field
@@ -151,9 +151,9 @@ func parseHex4(digits []byte) (int, bool) {
 		case digit >= '0' && digit <= '9':
 			nibble = int(digit - '0')
 		case digit >= 'a' && digit <= 'f':
-			nibble = int(digit-'a') + decimalBase
+			nibble = int(digit-'a') + hexLetterOffset
 		case digit >= 'A' && digit <= 'F':
-			nibble = int(digit-'A') + decimalBase
+			nibble = int(digit-'A') + hexLetterOffset
 		default:
 			return 0, false
 		}

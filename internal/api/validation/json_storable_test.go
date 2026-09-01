@@ -31,7 +31,7 @@ func TestIsStorableJSON(t *testing.T) {
 		{name: "lone high surrogate", raw: `{"note":"bad\ud83dvalue"}`, storable: false},
 		{name: "lone low surrogate", raw: `{"note":"bad\ude00value"}`, storable: false},
 		{name: "high surrogate at end of input", raw: `{"note":"bad\ud83d"}`, storable: false},
-		{name: "high surrogate followed by a non-surrogate escape", raw: `{"note":"\ud83dA"}`, storable: false},
+		{name: "high surrogate followed by a plain character", raw: `{"note":"\ud83dA"}`, storable: false},
 		{name: "valid surrogate pair", raw: `{"note":"ok\ud83d\ude00"}`, storable: true},
 		{name: "valid pair uppercase hex", raw: `{"note":"ok\uD83D\uDE00"}`, storable: true},
 		{name: "two valid pairs back to back", raw: `{"note":"\ud83d\ude00\ud83d\ude01"}`, storable: true},

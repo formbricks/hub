@@ -3056,14 +3056,16 @@ components:
 
                         Use snake_case keys and keep them stable across records, since a key is what a
                         dashboard groups by: `customer_tier`, not a mix of `customerTier` and `tier`.
-                        Numbers keep full precision here (unlike `value_number`, which is a float64),
-                        so a large integer id round-trips exactly.
+                        Numbers keep full precision in storage (unlike `value_number`, which is a
+                        float64), so a large integer id round-trips exactly through this API — though
+                        a JavaScript client will still lose precision above 2^53 when it parses the
+                        response.
 
                         Do not put personal data in metadata unless you mean to retain it — it is not
                         redacted, and unlike an answer it is duplicated onto every record of a
-                        submission. Rejected with 400: NULL bytes and unpaired UTF-16 surrogates in
-                        keys or values, and numbers outside Postgres numeric range, because none of
-                        them can be stored as JSON.
+                        submission. Rejected with 400, because none of them can be stored: invalid
+                        UTF-8; NULL bytes or unpaired UTF-16 surrogates in keys or values; and
+                        numbers outside the storable numeric range.
                     additionalProperties: {}
                 source_id:
                     type: [string, "null"]
@@ -3282,8 +3284,8 @@ components:
                     type: object
                     description: >-
                         Arbitrary context stored with this record, returned with equivalent values
-                        (key order and number formatting are normalized). Absent when the record
-                        carries none.
+                        (key order and number formatting are normalized). Omitted when the record has
+                        no metadata; a record explicitly stored with a JSON `null` returns `null`.
                     additionalProperties: {}
                 sentiment:
                     $ref: '#/components/schemas/SentimentValue'
@@ -3655,8 +3657,9 @@ components:
                     description: >-
                         Replaces the stored metadata object **wholesale** — it is not merged, so send
                         every key you want to keep or the omitted ones are lost. See the create
-                        operation for the value rules and key conventions. Rejected with 400: NULL
-                        bytes and unpaired UTF-16 surrogates, in keys or values.
+                        operation for the value rules and key conventions, including the same 400
+                        rejections (invalid UTF-8, NULL bytes, unpaired surrogates, out-of-range
+                        numbers).
                     additionalProperties: {}
                 user_id:
                     type: string
