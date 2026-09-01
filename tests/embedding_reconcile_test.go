@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 		_, _ = db.Exec(ctx, `DELETE FROM feedback_records WHERE tenant_id = $1`, tenantID)
 	})
 
-	seed := func(label string) *models.FeedbackRecord {
+	seedValues := func(label, valueText, valueTextTranslated string) *models.FeedbackRecord {
 		t.Helper()
 
 		var record models.FeedbackRecord
@@ -55,16 +56,21 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 		err := db.QueryRow(ctx, `
 			INSERT INTO feedback_records (
 				source_type, source_id, field_id, field_label, field_type,
-				value_text, value_text_translated, tenant_id, submission_id
+				value_text, value_text_translated, tenant_id, submission_id, collected_at
 			)
 			VALUES ('formbricks', $1, 'feedback', 'Feedback', 'text'::field_type_enum,
-			        $2, $3, $4, $5)
+			        $2, $3, $4, $5, '-infinity'::timestamptz)
 			RETURNING id, tenant_id, updated_at`,
-			"source-"+label, "raw "+label, "translated "+label, tenantID, "submission-"+uuid.NewString(),
+			"source-"+label, valueText, valueTextTranslated, tenantID, "submission-"+uuid.NewString(),
 		).Scan(&record.ID, &record.TenantID, &record.UpdatedAt)
 		require.NoError(t, err)
 
 		return &record
+	}
+	seed := func(label string) *models.FeedbackRecord {
+		t.Helper()
+
+		return seedValues(label, "raw "+label, "translated "+label)
 	}
 
 	eligible := seed("eligible")
@@ -75,6 +81,13 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 	terminalOldRevision := seed("terminal-old-revision")
 	transientFailure := seed("transient-failure")
 	transientRetryable := seed("transient-retryable")
+
+	whitespaceOnly := make([]*models.FeedbackRecord, 0, 7)
+	for i, value := range []string{"\t", "\n", "\r\n", "\v", "\f", "\u00a0", "\u3000"} {
+		whitespaceOnly = append(whitespaceOnly, seedValues(
+			fmt.Sprintf("whitespace-%d", i), value, value,
+		))
+	}
 
 	vector := make([]float32, models.EmbeddingVectorDimensions)
 	vector[0] = 0.5
@@ -119,9 +132,9 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 	require.NoError(t, err)
 
 	// This repository is shared by local integration runs, and a unique model makes every existing
-	// fixture look missing. Use a deliberately large inspection limit here; bounded production
-	// top-up is asserted separately in the service unit test.
-	ids, err := embeddingsRepo.ListPendingTaxonomyEmbeddingIDs(ctx, model, time.Now().Add(-15*time.Minute), 100_000)
+	// fixture look missing. The fixture timestamps sort first so the assertion does not depend on a
+	// database-wide inspection limit; bounded production top-up is asserted in the service unit test.
+	ids, err := embeddingsRepo.ListPendingTaxonomyEmbeddingIDs(ctx, model, time.Now().Add(-15*time.Minute), 1_000)
 	require.NoError(t, err)
 
 	got := make(map[uuid.UUID]struct{}, len(ids))
@@ -135,5 +148,9 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 
 	for _, record := range []*models.FeedbackRecord{embedded, activeJob, terminalCurrent, transientFailure} {
 		assert.NotContains(t, got, record.ID, "already handled record %s must not be selected", record.ID)
+	}
+
+	for _, record := range whitespaceOnly {
+		assert.NotContains(t, got, record.ID, "whitespace-only record %s must not be selected", record.ID)
 	}
 }

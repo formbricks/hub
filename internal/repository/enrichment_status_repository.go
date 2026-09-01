@@ -248,7 +248,7 @@ const countTaxonomyEmbeddingBacklogAggregateSQL = `
 	SELECT COUNT(*)
 	FROM feedback_records fr
 	WHERE fr.field_type = 'text'
-	  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+	  AND ` + taxonomyEmbeddingEligibleTextSQL + `
 	  AND NOT EXISTS (
 		SELECT 1
 		FROM embeddings e

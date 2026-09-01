@@ -23,6 +23,19 @@ import (
 var errEmbeddingBackfillTenantRequired = errors.New("tenant id is required for tenant embedding backfill")
 
 const (
+	// taxonomyEmbeddingEligibleTextSQL mirrors Go strings.TrimSpace, which is used by
+	// BuildEmbeddingInputFromValues before an embedding call. PostgreSQL's one-argument btrim only
+	// removes ASCII spaces, so records containing only tabs, line breaks, or Unicode whitespace
+	// would otherwise be selected and cleared on every reconciliation sweep forever. Unicode escape
+	// literals keep the complete White_Space set visible and reviewable in source.
+	taxonomyEmbeddingTrimCharactersSQL = `E' \t\n\v\f\r' ||
+		U&'\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A' ||
+		U&'\2028\2029\202F\205F\3000'`
+	taxonomyEmbeddingEligibleTextSQL = `COALESCE(
+		NULLIF(btrim(fr.value_text_translated, ` + taxonomyEmbeddingTrimCharactersSQL + `), ''),
+		NULLIF(btrim(fr.value_text, ` + taxonomyEmbeddingTrimCharactersSQL + `), '')
+	) IS NOT NULL`
+
 	// hnswEfSearch increases HNSW graph traversal candidates (default 40); higher improves recall.
 	hnswEfSearch = 200
 	// hnswIterativeScanMode makes the HNSW scan resume past ef_search candidates until the query's
@@ -294,6 +307,13 @@ func (r *EmbeddingsRepository) ListTenantFeedbackRecordIDsForBackfillByInputKind
 // preventing the same poison records from monopolizing every bounded sweep. Candidates are
 // ordered oldest first so successful/cooldown-filtered sweeps advance through the backlog rather
 // than repeatedly selecting whichever tenant is ingesting the newest records.
+//
+// The ordered eligibility scan is deliberately deployment-wide rather than tenant-scoped: the
+// repair lane must make progress without requiring tenant discovery or allowing a busy tenant to
+// monopolize it. Its operational impact is bounded by the five-minute sweep cadence and two-minute
+// worker deadline, while the target-depth LIMIT bounds returned rows and queued work (not scan
+// cost). Changing the access path requires production-scale query-plan evidence because the
+// missing-embedding predicate lives in a separate table.
 func (r *EmbeddingsRepository) ListPendingTaxonomyEmbeddingIDs(
 	ctx context.Context, model string, retryBefore time.Time, limit int,
 ) ([]uuid.UUID, error) {
@@ -310,7 +330,7 @@ func (r *EmbeddingsRepository) ListPendingTaxonomyEmbeddingIDs(
 		 AND failure.context_key = $1
 		 AND failure.source_updated_at = fr.updated_at
 		WHERE fr.field_type = 'text'
-		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+		  AND `+taxonomyEmbeddingEligibleTextSQL+`
 		  AND NOT EXISTS (
 			SELECT 1 FROM embeddings e
 			WHERE e.feedback_record_id = fr.id AND e.model = $1

@@ -320,6 +320,8 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	require.True(t, isLeader, "the first replica to poll becomes the leader")
 
 	seedEnrichmentRecord(t, fallbackRepo, testTenantID("taxonomy-backlog-text"), models.FieldTypeText, "taxonomy pending")
+	seedEnrichmentRecord(t, fallbackRepo, testTenantID("taxonomy-backlog-ascii-space"), models.FieldTypeText, "\t\r\n")
+	seedEnrichmentRecord(t, fallbackRepo, testTenantID("taxonomy-backlog-unicode-space"), models.FieldTypeText, "\u00a0\u3000")
 	seedEnrichmentRecord(
 		t, fallbackRepo, testTenantID("taxonomy-backlog-categorical"), models.FieldTypeCategorical, "not enrichable")
 
@@ -327,7 +329,7 @@ func TestCountEnrichmentBacklogAggregateIfLeader(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isLeader)
 	assert.Equal(t, before.TaxonomyEmbeddingPending+1, counts.TaxonomyEmbeddingPending,
-		"only the text record enters the live translation-to-taxonomy backlog")
+		"only the non-blank text record enters the live translation-to-taxonomy backlog")
 
 	// Prove the leader returns the real aggregate, not a zero value.
 	want, err := repository.NewEnrichmentStatusRepository(dbLeader).CountEnrichmentBacklogAggregate(ctx, "")
