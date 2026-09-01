@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/formbricks/hub/internal/models"
 )
 
 func TestIsStorableJSON(t *testing.T) {
@@ -104,4 +106,45 @@ func TestStorableJSONTagIgnoresNonRawJSONFields(t *testing.T) {
 	}
 
 	require.NoError(t, ValidateStruct(request{Name: "anything at all"}))
+}
+
+// The tests above pin the tag's behavior on a local struct; these pin that the tag is actually
+// PRESENT on the two request structs the endpoint decodes into. Reverting only the models hunk of
+// the ENG-2745 fix — the part that protects the endpoint — left the whole suite green before this.
+func TestRealRequestStructsCarryStorableJSONTag(t *testing.T) {
+	badMetadata := json.RawMessage(`{"note":"bad\u0000value"}`)
+
+	t.Run("CreateFeedbackRecordRequest rejects unstorable metadata", func(t *testing.T) {
+		err := ValidateStruct(models.CreateFeedbackRecordRequest{
+			SourceType:   "survey",
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			TenantID:     "tenant-1",
+			SubmissionID: "s1",
+			Metadata:     badMetadata,
+		})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "metadata must not contain NULL bytes or unpaired UTF-16 surrogates")
+	})
+
+	t.Run("UpdateFeedbackRecordRequest rejects unstorable metadata", func(t *testing.T) {
+		err := ValidateStruct(models.UpdateFeedbackRecordRequest{Metadata: badMetadata})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "metadata must not contain NULL bytes or unpaired UTF-16 surrogates")
+	})
+
+	t.Run("both accept storable metadata", func(t *testing.T) {
+		fine := json.RawMessage(`{"source":"link"}`)
+		require.NoError(t, ValidateStruct(models.CreateFeedbackRecordRequest{
+			SourceType:   "survey",
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			TenantID:     "tenant-1",
+			SubmissionID: "s1",
+			Metadata:     fine,
+		}))
+		require.NoError(t, ValidateStruct(models.UpdateFeedbackRecordRequest{Metadata: fine}))
+	})
 }

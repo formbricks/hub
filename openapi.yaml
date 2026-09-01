@@ -3048,7 +3048,8 @@ components:
                 metadata:
                     type: object
                     description: >-
-                        Arbitrary context for this record, stored as JSON and returned verbatim: the
+                        Arbitrary context for this record, stored as JSON and returned with
+                        equivalent values (key order and number formatting are normalized): the
                         dimensions you want to slice a dashboard by, such as channel, device, browser,
                         OS, country, referrer, campaign, plan or tags. Values may be strings, numbers,
                         booleans, null, or nested objects and arrays.
@@ -3060,8 +3061,9 @@ components:
 
                         Do not put personal data in metadata unless you mean to retain it — it is not
                         redacted, and unlike an answer it is duplicated onto every record of a
-                        submission. Rejected with 400: NULL bytes and unpaired UTF-16 surrogates, in
-                        keys or values, because neither can be stored as JSON.
+                        submission. Rejected with 400: NULL bytes and unpaired UTF-16 surrogates in
+                        keys or values, and numbers outside Postgres numeric range, because none of
+                        them can be stored as JSON.
                     additionalProperties: {}
                 source_id:
                     type: [string, "null"]
@@ -3279,8 +3281,9 @@ components:
                 metadata:
                     type: object
                     description: >-
-                        Arbitrary context stored with this record, returned exactly as it was sent.
-                        Absent when the record carries none.
+                        Arbitrary context stored with this record, returned with equivalent values
+                        (key order and number formatting are normalized). Absent when the record
+                        carries none.
                     additionalProperties: {}
                 sentiment:
                     $ref: '#/components/schemas/SentimentValue'

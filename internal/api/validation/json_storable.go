@@ -7,8 +7,8 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-// Postgres refuses exactly two things when text is written into a jsonb column, and both arrive as
-// escapes inside otherwise-valid JSON:
+// Postgres refuses two character-level things when text is written into a jsonb column, and both
+// arrive as escapes inside otherwise-valid JSON:
 //
 //	SELECT '{"note":"bad\u0000value"}'::jsonb  -- ERROR: unsupported Unicode escape sequence
 //	SELECT '{"note":"bad\ud83dvalue"}'::jsonb  -- ERROR: invalid input syntax for type json
@@ -17,6 +17,11 @@ import (
 // by anything upstream: the request parses, the struct validates, and the failure lands as an
 // unmapped driver error — a 500 on input the API documents as invalid. `no_null_bytes` cannot cover
 // it either, because it skips any field that is not a string kind and json.RawMessage is a []byte.
+//
+// (Postgres also refuses a third, non-character thing: numbers that do not fit numeric, e.g.
+// 1e1000000. That is a range property of the parsed value, invisible to a byte scan, so it is
+// handled where it surfaces — the feedback-records repository maps SQLSTATE 22003 to a metadata
+// validation error.)
 //
 // The check runs over the raw bytes rather than the unmarshalled value on purpose. Unmarshalling
 // rewrites both cases — encoding/json turns a \u0000 escape into a real NUL and replaces an
