@@ -28,7 +28,7 @@ const (
 	// removes ASCII spaces, so records containing only tabs, line breaks, or Unicode whitespace
 	// would otherwise be selected and cleared on every reconciliation sweep forever. Unicode escape
 	// literals keep the complete White_Space set visible and reviewable in source.
-	taxonomyEmbeddingTrimCharactersSQL = `E' \t\n\v\f\r' ||
+	taxonomyEmbeddingTrimCharactersSQL = `U&'\0009\000A\000B\000C\000D\0020' ||
 		U&'\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A' ||
 		U&'\2028\2029\202F\205F\3000'`
 	taxonomyEmbeddingEligibleTextSQL = `COALESCE(
