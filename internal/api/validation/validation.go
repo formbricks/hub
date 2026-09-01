@@ -395,7 +395,7 @@ func FormatFieldError(fieldErr validator.FieldError) string {
 	case "no_null_bytes":
 		return "must not contain NULL bytes"
 	case storableJSONTag:
-		return "must not contain NULL bytes or unpaired UTF-16 surrogates"
+		return "must contain valid UTF-8 and no NULL bytes or unpaired UTF-16 surrogates"
 	case "http_url":
 		return "must be a valid HTTP or HTTPS URL"
 	case "url":

@@ -87,7 +87,7 @@ func TestStorableJSONTagOnRequestStruct(t *testing.T) {
 
 		require.Error(t, err)
 		require.ErrorIs(t, err, ErrValidationFailed)
-		assert.Contains(t, err.Error(), "metadata must not contain NULL bytes or unpaired UTF-16 surrogates")
+		assert.Contains(t, err.Error(), "metadata must contain valid UTF-8 and no NULL bytes or unpaired UTF-16 surrogates")
 	})
 
 	t.Run("rejects an unpaired surrogate", func(t *testing.T) {
@@ -125,14 +125,14 @@ func TestRealRequestStructsCarryStorableJSONTag(t *testing.T) {
 		})
 
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "metadata must not contain NULL bytes or unpaired UTF-16 surrogates")
+		assert.Contains(t, err.Error(), "metadata must contain valid UTF-8 and no NULL bytes or unpaired UTF-16 surrogates")
 	})
 
 	t.Run("UpdateFeedbackRecordRequest rejects unstorable metadata", func(t *testing.T) {
 		err := ValidateStruct(models.UpdateFeedbackRecordRequest{Metadata: badMetadata})
 
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "metadata must not contain NULL bytes or unpaired UTF-16 surrogates")
+		assert.Contains(t, err.Error(), "metadata must contain valid UTF-8 and no NULL bytes or unpaired UTF-16 surrogates")
 	})
 
 	t.Run("both accept storable metadata", func(t *testing.T) {

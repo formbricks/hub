@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +24,7 @@ func TestFeedbackRecordMetadataUnstorableInputIsA400(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	// Unique per run: the accepted-metadata subtest inserts a real row, and the identity triple
 	// (tenant_id, submission_id, field_id) would 409 on the next run against the same database.
