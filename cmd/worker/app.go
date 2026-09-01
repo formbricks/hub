@@ -417,7 +417,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 func embeddingReconcileConfigured(cfg *config.Config) bool {
 	return cfg.Embedding.ReconcileEnabled &&
 		cfg.Embedding.Provider != "" && cfg.Embedding.Model != "" &&
-		(cfg.Taxonomy.ServiceURL != "" || cfg.Taxonomy.ServiceToken != "")
+		cfg.Taxonomy.ServiceURL != ""
 }
 
 // embeddingProviderAndModel returns (canonical provider, model) when embeddings are enabled

@@ -49,6 +49,20 @@ func (m *countingEmbeddingMetrics) AddEmbeddingBatchInFlight(context.Context, in
 
 var _ observability.EmbeddingMetrics = (*countingEmbeddingMetrics)(nil)
 
+type countingFailureMetrics struct {
+	terminal int
+}
+
+func (m *countingFailureMetrics) RecordTerminalFailure(context.Context, string, string) {
+	m.terminal++
+}
+
+func (m *countingFailureMetrics) SetFailedRecords(string, bool, int64) {}
+
+func (m *countingFailureMetrics) ClearFailedRecords() {}
+
+var _ observability.EnrichmentFailureMetrics = (*countingFailureMetrics)(nil)
+
 type mockEmbeddingService struct {
 	record          *models.FeedbackRecord
 	getErr          error
@@ -193,15 +207,18 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 
 	t.Run("raw embedding failures never enter taxonomy state", func(t *testing.T) {
 		failures := &recordingFailureRecorder{}
+		failureMetrics := &countingFailureMetrics{}
 		worker := NewFeedbackEmbeddingWorkerWithOptions(
 			&mockEmbeddingService{record: record},
-			&mockEmbeddingClient{err: errors.New("provider unavailable")},
-			"", nil, time.Minute, failures, nil)
+			&mockEmbeddingClient{err: huberrors.NewTerminalProviderError(
+				huberrors.TerminalReasonContentFilter, errors.New("blocked"))},
+			"", nil, time.Minute, failures, failureMetrics)
 		job := embeddingJob()
-		job.Attempt = job.MaxAttempts
 
-		require.Error(t, worker.Work(context.Background(), job))
+		var cancelErr *river.JobCancelError
+		require.ErrorAs(t, worker.Work(context.Background(), job), &cancelErr)
 		assert.Empty(t, failures.calls)
+		assert.Zero(t, failureMetrics.terminal)
 	})
 }
 

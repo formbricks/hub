@@ -41,4 +41,11 @@ func TestEmbeddingReconcileConfigured(t *testing.T) {
 		cfg.Taxonomy.ServiceURL = ""
 		assert.False(t, embeddingReconcileConfigured(cfg))
 	})
+
+	t.Run("taxonomy token without a service URL is not configured", func(t *testing.T) {
+		cfg := base()
+		cfg.Taxonomy.ServiceURL = ""
+		cfg.Taxonomy.ServiceToken = "configured-token"
+		assert.False(t, embeddingReconcileConfigured(cfg))
+	})
 }

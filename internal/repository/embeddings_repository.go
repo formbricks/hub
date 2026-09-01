@@ -323,9 +323,13 @@ func (r *EmbeddingsRepository) ListPendingTaxonomyEmbeddingIDs(
 			FROM river_job job
 			WHERE job.kind = 'feedback_embedding'
 			  AND job.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
-			  AND job.args->>'feedback_record_id' = fr.id::text
-			  AND job.args->>'model' = $1
-			  AND job.args->>'input_kind' = $2
+			  -- River's GIN index on args supports containment; separate ->> equality
+			  -- predicates would filter every job remaining after the kind lookup.
+			  AND job.args @> jsonb_build_object(
+				'feedback_record_id', fr.id::text,
+				'model', $1::text,
+				'input_kind', $2::text
+			  )
 		  )
 		ORDER BY fr.collected_at, fr.id
 		LIMIT $5`,

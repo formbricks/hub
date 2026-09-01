@@ -165,6 +165,30 @@ func TestNewRiverWorkersAndQueuesWithoutOptionalClients(t *testing.T) {
 	assertKindRegistered[service.FeedbackEmotionsArgs](t, workerBundle, false)
 }
 
+// TestNewRiverWorkersAndQueuesDrainsExistingRepairsWhenSweeperDisabled ensures disabling future
+// sweeps cannot strand repair jobs that were queued by an earlier worker configuration.
+func TestNewRiverWorkersAndQueuesDrainsExistingRepairsWhenSweeperDisabled(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Embedding.MaxConcurrent = 3
+	cfg.Embedding.ReconcileMaxConcurrent = 1
+	deps := fullRiverDeps()
+	deps.EmbeddingReconcileSweeper = nil
+
+	workerBundle, queues := NewRiverWorkersAndQueues(cfg, deps)
+
+	if got := queues[service.EmbeddingsReconcileQueueName].MaxWorkers; got != 1 {
+		t.Fatalf("queue %q MaxWorkers = %d, want 1", service.EmbeddingsReconcileQueueName, got)
+	}
+
+	_, sweepQueueRegistered := queues[service.EmbeddingReconcileQueueName]
+	if sweepQueueRegistered {
+		t.Fatalf("queue %q registered with sweeper disabled, want absent", service.EmbeddingReconcileQueueName)
+	}
+
+	assertKindRegistered[service.FeedbackEmbeddingArgs](t, workerBundle, true)
+	assertKindRegistered[service.EmbeddingReconcileArgs](t, workerBundle, false)
+}
+
 // TestNewRiverWorkersAndQueuesUsesConfiguredConcurrency pins each queue to its own configured
 // concurrency. hub-worker is the only caller, so a queue silently picking up another enrichment's
 // limit — or a zero, which would stall it entirely — would otherwise go unnoticed.

@@ -211,7 +211,8 @@ func (w *FeedbackEmbeddingWorker) handleEmbedError(
 			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
 		}
 
-		if w.failureMetrics != nil {
+		if w.failureMetrics != nil &&
+			inputKind == models.EmbeddingInputKindTaxonomyTranslated {
 			w.failureMetrics.RecordTerminalFailure(
 				ctx, models.EnrichmentNameTaxonomyEmbedding, string(reason))
 		}
