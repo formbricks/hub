@@ -3046,7 +3046,7 @@ components:
                     maxLength: 10
                     pattern: '^[^\x00]*$'
                 metadata:
-                    type: object
+                    type: [object, "null"]
                     description: >-
                         Arbitrary context for this record, stored as JSON and returned with
                         equivalent values (key order and number formatting are normalized): the
@@ -3061,11 +3061,16 @@ components:
                         a JavaScript client will still lose precision above 2^53 when it parses the
                         response.
 
-                        Do not put personal data in metadata unless you mean to retain it — it is not
-                        redacted, and unlike an answer it is duplicated onto every record of a
-                        submission. Rejected with 400, because none of them can be stored: invalid
-                        UTF-8; NULL bytes or unpaired UTF-16 surrogates in keys or values; and
-                        numbers outside the storable numeric range.
+                        Nothing here is redacted or sent anywhere else — unlike `value_text`, which
+                        the enrichment pipelines also ship to LLM and embedding providers. Erasure
+                        covers metadata, with one precondition worth knowing:
+                        `DELETE /v1/feedback-records` matches on `user_id` and hard-deletes the whole
+                        row, metadata included — so a record written **without** a `user_id` cannot
+                        be reached that way. Set `user_id` on anything you may later have to erase.
+
+                        Three kinds of content are rejected with 400, because none of them can be
+                        stored: invalid UTF-8; NULL bytes or unpaired UTF-16 surrogates, in keys or
+                        values; and numbers outside the storable numeric range.
                     additionalProperties: {}
                 source_id:
                     type: [string, "null"]
@@ -3281,11 +3286,16 @@ components:
                     description: ISO language code. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
                 metadata:
-                    type: object
                     description: >-
                         Arbitrary context stored with this record, returned with equivalent values
-                        (key order and number formatting are normalized). Omitted when the record has
-                        no metadata; a record explicitly stored with a JSON `null` returns `null`.
+                        (key order is normalized, and so are number exponents — `1e2` reads back as
+                        `100`). Omitted when the record has no metadata; a record explicitly stored
+                        with a JSON `null` returns `null`.
+
+                        Deliberately untyped: an object is the supported shape and what the request
+                        schemas accept, but the column stores whatever JSON was written, so a record
+                        created before that convention can return any JSON value. Constraining this
+                        to an object would make a generated client reject such a record.
                     additionalProperties: {}
                 sentiment:
                     $ref: '#/components/schemas/SentimentValue'
@@ -3653,7 +3663,7 @@ components:
                     maxLength: 10
                     pattern: '^[^\x00]*$'
                 metadata:
-                    type: object
+                    type: [object, "null"]
                     description: >-
                         Replaces the stored metadata object **wholesale** — it is not merged, so send
                         every key you want to keep or the omitted ones are lost. See the create
