@@ -21,6 +21,17 @@ import (
 // constraint violations (23505 unique_violation).
 const uniqueViolationSQLState = "23505"
 
+// numericOverflowSQLState (22003 numeric_value_out_of_range) fires when jsonb metadata carries a
+// number that does not fit Postgres numeric — e.g. `{"n":1e1000000}`, fifteen bytes of perfectly
+// valid JSON. The storable_json request validator cannot see this class: it is a range property of
+// the parsed number, not of the bytes. Metadata is the only place it can originate on these
+// queries — value_number is float8, and every Go float64 fits float8 — so the error is mapped to a
+// metadata validation failure rather than surfacing as an unmapped 500 (ENG-2745).
+const numericOverflowSQLState = "22003"
+
+// numericOverflowMessage is the invalid_params reason for the mapping above.
+const numericOverflowMessage = "contains a number outside the storable range"
+
 // FeedbackRecordsRepository handles data access for feedback records.
 type FeedbackRecordsRepository struct {
 	db *pgxpool.Pool
@@ -137,6 +148,10 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
 			return nil, huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
+		}
+
+		if errors.As(err, &pgErr) && pgErr.Code == numericOverflowSQLState {
+			return nil, huberrors.NewValidationError("metadata", numericOverflowMessage)
 		}
 
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -964,6 +979,11 @@ func (r *FeedbackRecordsRepository) Update(
 		if scanErr != nil {
 			if errors.Is(scanErr, pgx.ErrNoRows) {
 				return huberrors.NewNotFoundError("feedback record", "feedback record not found")
+			}
+
+			var pgErr *pgconn.PgError
+			if errors.As(scanErr, &pgErr) && pgErr.Code == numericOverflowSQLState {
+				return huberrors.NewValidationError("metadata", numericOverflowMessage)
 			}
 
 			return fmt.Errorf("failed to update feedback record: %w", scanErr)
