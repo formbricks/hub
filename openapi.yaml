@@ -3061,9 +3061,11 @@ components:
                         a JavaScript client will still lose precision above 2^53 when it parses the
                         response.
 
-                        Nothing here is redacted or sent anywhere else — unlike `value_text`, which
-                        the enrichment pipelines also ship to LLM and embedding providers. Erasure
-                        covers metadata, with one precondition worth knowing:
+                        Nothing here is redacted. Metadata is **not** sent to the LLM or embedding
+                        enrichment providers, unlike `value_text` — but it **is** included in the
+                        `feedback_record.created` and `feedback_record.updated` webhook payloads, so
+                        it reaches whatever URL a tenant has configured. Erasure covers metadata,
+                        with one precondition worth knowing:
                         `DELETE /v1/feedback-records` matches on `user_id` and hard-deletes the whole
                         row, metadata included — so a record written **without** a `user_id` cannot
                         be reached that way. Set `user_id` on anything you may later have to erase.
@@ -3286,17 +3288,20 @@ components:
                     description: ISO language code. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
                 metadata:
+                    type: [object, array, string, number, boolean, "null"]
+                    # Required alongside `array` in the union; any element is valid, since the union
+                    # exists to describe legacy rows rather than to constrain new writes.
+                    items: {}
                     description: >-
                         Arbitrary context stored with this record, returned with equivalent values
                         (key order is normalized, and so are number exponents — `1e2` reads back as
                         `100`). Omitted when the record has no metadata; a record explicitly stored
                         with a JSON `null` returns `null`.
 
-                        Deliberately untyped: an object is the supported shape and what the request
-                        schemas accept, but the column stores whatever JSON was written, so a record
-                        created before that convention can return any JSON value. Constraining this
-                        to an object would make a generated client reject such a record.
-                    additionalProperties: {}
+                        An object is the supported shape and the only one the request schemas accept.
+                        The wider union is for reading: the column stores whatever JSON was written,
+                        so a record created before that convention can return an array or a scalar,
+                        and an object-only response schema would make a generated client reject it.
                 sentiment:
                     $ref: '#/components/schemas/SentimentValue'
                     description: Sentiment polarity inferred from value_text (sentiment enrichment). Read-only; absent until the record is enriched.
