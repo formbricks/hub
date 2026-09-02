@@ -83,7 +83,7 @@ func (r *TaxonomyRepository) ListFieldOptions(
 		 AND failure.context_key = $2
 		 AND failure.source_updated_at = fr.updated_at
 		WHERE fr.tenant_id = $1
-		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+		  AND `+taxonomyEmbeddingEligibleTextSQL+`
 		GROUP BY fr.tenant_id, fr.source_type, COALESCE(NULLIF(btrim(fr.source_id), ''), ''), fr.field_id
 		ORDER BY fr.source_type, COALESCE(NULLIF(btrim(fr.source_id), ''), ''), fr.field_id`,
 		tenantID, embeddingModel,
@@ -142,7 +142,7 @@ func (r *TaxonomyRepository) CountScopeInput(
 			FROM feedback_records fr
 			LEFT JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $2
 			WHERE fr.tenant_id = $1
-			  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`,
+			  AND `+taxonomyEmbeddingEligibleTextSQL,
 			scope.TenantID, embeddingModel,
 		).Scan(&recordCount, &embeddingCount)
 		if err != nil {
@@ -163,7 +163,7 @@ func (r *TaxonomyRepository) CountScopeInput(
 		  AND fr.source_type = $2
 		  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($3), '')
 		  AND fr.field_id = $4
-		  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`,
+		  AND `+taxonomyEmbeddingEligibleTextSQL,
 		scope.TenantID, scope.SourceType, scope.SourceID, scope.FieldID, embeddingModel,
 	).Scan(&recordCount, &embeddingCount, &fieldLabel)
 	if err != nil {
@@ -1458,10 +1458,7 @@ func materializeRunInputSnapshot(
 				FROM feedback_records fr
 				INNER JOIN embeddings e ON e.feedback_record_id = fr.id AND e.model = $4
 				WHERE fr.tenant_id = $2
-				  AND COALESCE(
-					NULLIF(btrim(fr.value_text_translated), ''),
-					NULLIF(btrim(fr.value_text), '')
-				  ) IS NOT NULL
+				  AND `+taxonomyEmbeddingEligibleTextSQL+`
 				ORDER BY fr.collected_at DESC, fr.id ASC
 				LIMIT $3
 			) selected`,
@@ -1488,10 +1485,7 @@ func materializeRunInputSnapshot(
 			  AND fr.source_type = $3
 			  AND NULLIF(btrim(fr.source_id), '') IS NOT DISTINCT FROM NULLIF(btrim($4), '')
 			  AND fr.field_id = $5
-			  AND COALESCE(
-				NULLIF(btrim(fr.value_text_translated), ''),
-				NULLIF(btrim(fr.value_text), '')
-			  ) IS NOT NULL
+			  AND `+taxonomyEmbeddingEligibleTextSQL+`
 			ORDER BY fr.collected_at DESC, fr.id ASC
 			LIMIT $6
 		) selected`,
@@ -1575,7 +1569,7 @@ func queryMaterializedRunInputRows(
 			COALESCE(NULLIF(btrim(fr.source_id), ''), ''),
 			fr.field_id,
 			COALESCE(fr.field_label, ''),
-			COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')),
+			`+taxonomyEmbeddingInputTextSQL+`,
 			e.embedding
 		FROM taxonomy_run_input_records input
 		INNER JOIN feedback_records fr

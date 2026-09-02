@@ -81,16 +81,19 @@ func TestCountEnrichmentStatus(t *testing.T) {
 		// Ineligible rows that must NOT be counted:
 		mkRecord(tenant, models.FieldTypeCategorical, "some choice") // non-text carries value_text
 		mkRecord(tenant, models.FieldTypeText, "\t\n ")              // whitespace-only content
+		mkRecord(tenant, models.FieldTypeText, "\v")                 // vertical tab is whitespace on every supported PG
+		mkRecord(tenant, models.FieldTypeText, "\u00a0\u3000")       // Unicode whitespace mirrors Go TrimSpace
 		mkRecord(tenant, models.FieldTypeText, "")                   // empty content
+		mkRecord(tenant, models.FieldTypeText, "v")                  // PG16 must not treat E'\v' as this literal letter
 
 		counts, err := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
 		require.NoError(t, err)
 
-		assert.Equal(t, int64(3), counts.SentimentEligible, "3 text records with content are eligible")
+		assert.Equal(t, int64(4), counts.SentimentEligible, "4 text records with content are eligible")
 		assert.Equal(t, int64(2), counts.SentimentDone, "doneAll + staleTrans have sentiment")
-		assert.Equal(t, int64(3), counts.EmotionsEligible)
+		assert.Equal(t, int64(4), counts.EmotionsEligible)
 		assert.Equal(t, int64(1), counts.EmotionsDone, "only doneAll has emotions")
-		assert.Equal(t, int64(3), counts.TranslationEligible, "all 3 have the effective target de-DE")
+		assert.Equal(t, int64(4), counts.TranslationEligible, "all 4 have the effective target de-DE")
 		assert.Equal(t, int64(1), counts.TranslationDone, "only doneAll's lang key matches; fr-FR is stale")
 	})
 

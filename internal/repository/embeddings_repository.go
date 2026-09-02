@@ -23,18 +23,19 @@ import (
 var errEmbeddingBackfillTenantRequired = errors.New("tenant id is required for tenant embedding backfill")
 
 const (
-	// taxonomyEmbeddingEligibleTextSQL mirrors Go strings.TrimSpace, which is used by
-	// BuildEmbeddingInputFromValues before an embedding call. PostgreSQL's one-argument btrim only
-	// removes ASCII spaces, so records containing only tabs, line breaks, or Unicode whitespace
-	// would otherwise be selected and cleared on every reconciliation sweep forever. Unicode escape
-	// literals keep the complete White_Space set visible and reviewable in source.
-	taxonomyEmbeddingTrimCharactersSQL = `U&'\0009\000A\000B\000C\000D\0020' ||
+	// trimSpaceCharactersSQL is the complete Unicode White_Space set used by Go strings.TrimSpace.
+	// Unicode escape literals keep the characters visible and make the result stable across supported
+	// PostgreSQL versions (PostgreSQL 16 interprets E'\v' as the literal letter "v").
+	trimSpaceCharactersSQL = `U&'\0009\000A\000B\000C\000D\0020' ||
 		U&'\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A' ||
 		U&'\2028\2029\202F\205F\3000'`
-	taxonomyEmbeddingEligibleTextSQL = `COALESCE(
-		NULLIF(btrim(fr.value_text_translated, ` + taxonomyEmbeddingTrimCharactersSQL + `), ''),
-		NULLIF(btrim(fr.value_text, ` + taxonomyEmbeddingTrimCharactersSQL + `), '')
-	) IS NOT NULL`
+	// taxonomyEmbeddingInputTextSQL mirrors BuildEmbeddingInputFromValues: prefer non-blank
+	// translated text, then fall back to non-blank source text.
+	taxonomyEmbeddingInputTextSQL = `COALESCE(
+		NULLIF(btrim(fr.value_text_translated, ` + trimSpaceCharactersSQL + `), ''),
+		NULLIF(btrim(fr.value_text, ` + trimSpaceCharactersSQL + `), '')
+	)`
+	taxonomyEmbeddingEligibleTextSQL = taxonomyEmbeddingInputTextSQL + ` IS NOT NULL`
 
 	// hnswEfSearch increases HNSW graph traversal candidates (default 40); higher improves recall.
 	hnswEfSearch = 200

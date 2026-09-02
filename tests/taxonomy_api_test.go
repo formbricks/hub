@@ -804,6 +804,57 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 		assert.Equal(t, translated, input.Records[0].ValueText)
 	})
 
+	t.Run("run input falls back from whitespace translation and excludes blank embedded rows", func(t *testing.T) {
+		scope := uniqueTaxonomyScope("tax-internal-translation-whitespace")
+		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
+
+		original := "Source text remains usable"
+
+		var validID, blankID uuid.UUID
+
+		err := harness.db.QueryRow(ctx, `
+			INSERT INTO feedback_records (
+				source_type, source_id, field_id, field_label, field_type,
+				value_text, value_text_translated, tenant_id, submission_id
+			)
+			VALUES ($1, $2, $3, 'Feedback', 'text'::field_type_enum, $4, U&'\3000', $5, $6)
+			RETURNING id`,
+			scope.SourceType, scope.SourceID, scope.FieldID, original,
+			scope.TenantID, "submission-"+uuid.NewString(),
+		).Scan(&validID)
+		require.NoError(t, err)
+
+		err = harness.db.QueryRow(ctx, `
+			INSERT INTO feedback_records (
+				source_type, source_id, field_id, field_label, field_type,
+				value_text, value_text_translated, tenant_id, submission_id
+			)
+			VALUES ($1, $2, $3, 'Feedback', 'text'::field_type_enum, U&'\000B', U&'\00A0\3000', $4, $5)
+			RETURNING id`,
+			scope.SourceType, scope.SourceID, scope.FieldID,
+			scope.TenantID, "submission-"+uuid.NewString(),
+		).Scan(&blankID)
+		require.NoError(t, err)
+
+		embedding := make([]float32, models.EmbeddingVectorDimensions)
+		embedding[0] = 0.25
+		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, validID, taxonomyEmbeddingModel, embedding, nil))
+		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, blankID, taxonomyEmbeddingModel, embedding, nil))
+
+		recordCount, embeddingCount, _, err := harness.repo.CountScopeInput(ctx, scope, taxonomyEmbeddingModel)
+		require.NoError(t, err)
+		assert.Equal(t, 1, recordCount)
+		assert.Equal(t, 1, embeddingCount)
+
+		runID := startRunForScope(ctx, t, harness, scope)
+		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"
+
+		var input models.TaxonomyRunInputResponse
+		requestTaxonomyJSON(ctx, t, http.MethodGet, inputURL, harness.internalToken, nil, http.StatusOK, &input)
+		require.Len(t, input.Records, 1)
+		assert.Equal(t, original, input.Records[0].ValueText)
+	})
+
 	t.Run("run input includes translated-only records", func(t *testing.T) {
 		scope := uniqueTaxonomyScope("tax-internal-translated-only-input")
 		cleanupTaxonomyTenant(ctx, t, harness.db, scope.TenantID)
@@ -860,6 +911,24 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 
 		seedEmbeddedFeedback(ctx, t, harness, firstFieldScope, taxonomyMinEmbeddedRecords)
 		seedEmbeddedFeedback(ctx, t, harness, secondFieldScope, taxonomyMinEmbeddedRecords+1)
+
+		var blankID uuid.UUID
+
+		err := harness.db.QueryRow(ctx, `
+			INSERT INTO feedback_records (
+				source_type, source_id, field_id, field_label, field_type,
+				value_text, value_text_translated, tenant_id, submission_id
+			)
+			VALUES ($1, $2, $3, 'Feedback', 'text'::field_type_enum, U&'\000B', U&'\00A0\3000', $4, $5)
+			RETURNING id`,
+			firstFieldScope.SourceType, firstFieldScope.SourceID, firstFieldScope.FieldID,
+			directoryScope.TenantID, "submission-"+uuid.NewString(),
+		).Scan(&blankID)
+		require.NoError(t, err)
+
+		embedding := make([]float32, models.EmbeddingVectorDimensions)
+		embedding[0] = 0.25
+		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, blankID, taxonomyEmbeddingModel, embedding, nil))
 
 		runID := startRunForScope(ctx, t, harness, directoryScope)
 		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"

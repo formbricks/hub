@@ -49,7 +49,8 @@ type EnrichmentStatusCounts struct {
 
 // enrichmentEligibleText is the data-level eligibility predicate: an open-text field with content.
 //
-// It trims the full ASCII whitespace set (space, tab, VT, FF, CR, LF). This deliberately does NOT
+// It trims the same Unicode White_Space set as Go strings.TrimSpace, using version-stable Unicode
+// escapes so PostgreSQL 16 cannot interpret `\v` as the literal letter "v". This deliberately does NOT
 // match the backfill queries (classifyBackfillEligibleSQL / translationBackfillSelectSQL), whose
 // bare btrim() strips spaces only: a value of "\t\n" is enqueued by those but counted ineligible
 // here. That asymmetry is intentional -- what matters for a progress count is agreeing with the
@@ -57,14 +58,10 @@ type EnrichmentStatusCounts struct {
 // than enrich it. Counting it eligible would leave it pending forever. Do not "restore parity" by
 // weakening this to bare btrim.
 //
-// It remains an approximation in one direction: strings.TrimSpace also strips exotic Unicode
-// whitespace (NBSP U+00A0, ideographic space U+3000, ...), so a value composed ENTIRELY of those is
-// still counted eligible while the worker treats it as empty. Rare enough to accept; expressing the
-// full Unicode set here would mean embedding invisible characters in this source file.
-//
 // field_type = 'text' is load-bearing: matrix/multi-choice expansion writes value_text on
 // categorical/number rows that are not enrichable.
-const enrichmentEligibleText = `fr.field_type = 'text' AND fr.value_text IS NOT NULL AND btrim(fr.value_text, E' \t\n\v\f\r') <> ''`
+const enrichmentEligibleText = `fr.field_type = 'text' AND fr.value_text IS NOT NULL AND btrim(fr.value_text, ` +
+	trimSpaceCharactersSQL + `) <> ''`
 
 // enrichmentEffectiveTarget resolves a tenant's effective translation target: its own
 // target_language, falling back to the deployment default ($1). An empty result means translation
