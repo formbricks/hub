@@ -8,16 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 )
-
-// WebhookDispatchInserter inserts webhook_dispatch jobs in batch (e.g. River client).
-type WebhookDispatchInserter interface {
-	InsertMany(ctx context.Context, params []river.InsertManyParams) ([]*rivertype.JobInsertResult, error)
-}
 
 // WebhookProviderRepository lists tenant-scoped webhooks eligible for event fan-out.
 type WebhookProviderRepository interface {
@@ -27,7 +21,7 @@ type WebhookProviderRepository interface {
 // WebhookProvider implements eventPublisher by enqueueing one River job per (event, webhook).
 type WebhookProvider struct {
 	repo                  WebhookProviderRepository
-	inserter              WebhookDispatchInserter
+	inserter              RiverBatchInserter
 	maxAttempts           int
 	maxFanOut             int
 	enqueueMaxRetries     int
@@ -41,7 +35,7 @@ type WebhookProvider struct {
 // enqueueMaxRetries, enqueueInitialBackoff, enqueueMaxBackoff configure retries when InsertMany fails (transient River/DB errors).
 // metrics may be nil when metrics are disabled.
 func NewWebhookProvider(
-	inserter WebhookDispatchInserter, repo WebhookProviderRepository,
+	inserter RiverBatchInserter, repo WebhookProviderRepository,
 	maxAttempts, maxFanOut int,
 	enqueueMaxRetries int, enqueueInitialBackoff, enqueueMaxBackoff time.Duration,
 	metrics observability.WebhookMetrics,

@@ -391,6 +391,36 @@ func TestLoad_EmbeddingBatchSettings(t *testing.T) {
 	}
 }
 
+func TestLoad_EmbeddingRecoverySettings(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("EMBEDDING_MAX_ATTEMPTS", "7")
+	t.Setenv("EMBEDDING_JOB_TIMEOUT_SECONDS", "75")
+	t.Setenv("EMBEDDING_RECONCILE_ENABLED", "true")
+	t.Setenv("EMBEDDING_RECONCILE_INTERVAL_SECONDS", "240")
+	t.Setenv("EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS", "600")
+	t.Setenv("EMBEDDING_RECONCILE_TARGET_DEPTH", "64")
+	t.Setenv("EMBEDDING_RECONCILE_MAX_CONCURRENT", "2")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.MaxAttempts != 7 || cfg.Embedding.JobTimeout.Duration() != 75*time.Second {
+		t.Errorf("Embedding attempt/timeout = (%d, %v), want (7, 75s)",
+			cfg.Embedding.MaxAttempts, cfg.Embedding.JobTimeout.Duration())
+	}
+
+	if !cfg.Embedding.ReconcileEnabled || cfg.Embedding.ReconcileInterval.Duration() != 4*time.Minute ||
+		cfg.Embedding.ReconcileRetryAfter.Duration() != 10*time.Minute ||
+		cfg.Embedding.ReconcileTargetDepth != 64 || cfg.Embedding.ReconcileMaxConcurrent != 2 {
+		t.Errorf("Embedding reconcile settings = (%v, %v, %v, %d, %d), want (true, 4m, 10m, 64, 2)",
+			cfg.Embedding.ReconcileEnabled, cfg.Embedding.ReconcileInterval.Duration(),
+			cfg.Embedding.ReconcileRetryAfter.Duration(),
+			cfg.Embedding.ReconcileTargetDepth, cfg.Embedding.ReconcileMaxConcurrent)
+	}
+}
+
 func TestLoad_EmbeddingBaseURLValidation(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -686,8 +716,21 @@ func TestApplyDefaults(t *testing.T) {
 		t.Errorf("Embedding.MaxConcurrent = %d, want 5", cfg.Embedding.MaxConcurrent)
 	}
 
-	if cfg.Embedding.MaxAttempts != 3 {
-		t.Errorf("Embedding.MaxAttempts = %d, want 3", cfg.Embedding.MaxAttempts)
+	if cfg.Embedding.MaxAttempts != 5 {
+		t.Errorf("Embedding.MaxAttempts = %d, want 5", cfg.Embedding.MaxAttempts)
+	}
+
+	if cfg.Embedding.JobTimeout.Duration() != 60*time.Second {
+		t.Errorf("Embedding.JobTimeout = %v, want 60s", cfg.Embedding.JobTimeout.Duration())
+	}
+
+	if cfg.Embedding.ReconcileInterval.Duration() != 5*time.Minute ||
+		cfg.Embedding.ReconcileRetryAfter.Duration() != 15*time.Minute ||
+		cfg.Embedding.ReconcileTargetDepth != 100 || cfg.Embedding.ReconcileMaxConcurrent != 1 {
+		t.Errorf("Embedding reconcile defaults = (%v, %v, %d, %d), want (5m, 15m, 100, 1)",
+			cfg.Embedding.ReconcileInterval.Duration(), cfg.Embedding.ReconcileRetryAfter.Duration(),
+			cfg.Embedding.ReconcileTargetDepth,
+			cfg.Embedding.ReconcileMaxConcurrent)
 	}
 
 	if cfg.Embedding.BatchSize != 1 || cfg.Embedding.BatchMaxWaitMs != 25 || cfg.Embedding.BatchMaxInFlight != 1 {

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
@@ -134,6 +135,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	var (
 		translationRecordsService *service.FeedbackRecordsService
 		embeddingBatch            *service.BatchingEmbeddingClient
+		embeddingReconcileService *service.EmbeddingReconcileService
 	)
 
 	if providerName != "" {
@@ -206,6 +208,24 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.EmbeddingClient = embeddingClient
 		deps.EmbeddingDocPrefix = docPrefix
 		deps.EmbeddingMetrics = embeddingMetrics
+
+		if embeddingReconcileConfigured(cfg) {
+			embeddingReconcileService = service.NewEmbeddingReconcileService(
+				embeddingsRepo,
+				taxonomyEmbeddingModel,
+				cfg.Embedding.ReconcileTargetDepth,
+				cfg.Embedding.MaxAttempts,
+				cfg.Embedding.ReconcileRetryAfter.Duration(),
+			)
+			deps.EmbeddingReconcileSweeper = embeddingReconcileService
+
+			slog.Info("taxonomy embedding reconciliation configured",
+				"interval", cfg.Embedding.ReconcileInterval.Duration(),
+				"retry_after", cfg.Embedding.ReconcileRetryAfter.Duration(),
+				"target_depth", cfg.Embedding.ReconcileTargetDepth,
+				"max_concurrent", cfg.Embedding.ReconcileMaxConcurrent,
+			)
+		}
 	}
 
 	if cfg.Translation.Provider != "" && cfg.Translation.Model != "" {
@@ -323,6 +343,30 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		Queues:  queues,
 		Workers: riverWorkers,
 	}
+
+	if embeddingReconcileService != nil {
+		riverCfg.PeriodicJobs = append(riverCfg.PeriodicJobs, river.NewPeriodicJob(
+			river.PeriodicInterval(cfg.Embedding.ReconcileInterval.Duration()),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return service.EmbeddingReconcileArgs{}, &river.InsertOpts{
+					Queue:       service.EmbeddingReconcileQueueName,
+					MaxAttempts: 1,
+					UniqueOpts: river.UniqueOpts{
+						ByArgs: true,
+						ByState: []rivertype.JobState{
+							rivertype.JobStateAvailable,
+							rivertype.JobStatePending,
+							rivertype.JobStateRetryable,
+							rivertype.JobStateRunning,
+							rivertype.JobStateScheduled,
+						},
+					},
+				}
+			},
+			&river.PeriodicJobOpts{RunOnStart: true},
+		))
+	}
+
 	if cfg.River.JobTimeoutSec.Duration() > 0 {
 		riverCfg.JobTimeout = cfg.River.JobTimeoutSec.Duration()
 	}
@@ -352,6 +396,10 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		translationRecordsService.SetEmbeddingInserter(riverClient)
 	}
 
+	if embeddingReconcileService != nil {
+		embeddingReconcileService.SetInserter(riverClient)
+	}
+
 	return &WorkerApp{
 		cfg:            cfg,
 		db:             db,
@@ -360,6 +408,16 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		meterProvider:  meterProvider,
 		tracerProvider: tracerProvider,
 	}, nil
+}
+
+// embeddingReconcileConfigured keeps automatic repair aligned with the taxonomy embedding
+// backlog contract: embeddings and taxonomy must be configured before the worker spends provider
+// calls creating taxonomy-only vectors. Translation is intentionally not a gate because taxonomy
+// input falls back to the source text when a deployment does not translate records.
+func embeddingReconcileConfigured(cfg *config.Config) bool {
+	return cfg.Embedding.ReconcileEnabled &&
+		cfg.Embedding.Provider != "" && cfg.Embedding.Model != "" &&
+		cfg.Taxonomy.ServiceURL != ""
 }
 
 // embeddingProviderAndModel returns (canonical provider, model) when embeddings are enabled

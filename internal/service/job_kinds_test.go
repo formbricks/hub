@@ -18,6 +18,7 @@ func TestJobKindSpecs(t *testing.T) {
 		"feedback_sentiment":          SentimentsQueueName,
 		"feedback_emotions":           EmotionsQueueName,
 		"feedback_records_purge":      FeedbackRecordsPurgeQueueName,
+		"embedding_reconcile":         EmbeddingReconcileQueueName,
 	}
 
 	specs := JobKindSpecs()
@@ -27,6 +28,12 @@ func TestJobKindSpecs(t *testing.T) {
 		wantQueue, ok := want[spec.Kind()]
 		require.True(t, ok, "unexpected job kind %q", spec.Kind())
 		require.Equal(t, wantQueue, spec.Queue, "kind %q is on the wrong queue", spec.Kind())
+
+		if spec.Kind() == "feedback_embedding" {
+			require.Equal(t, EmbeddingsReconcileQueueName, spec.ReconcileQueue)
+		} else {
+			require.Empty(t, spec.ReconcileQueue)
+		}
 	}
 }
 
@@ -34,11 +41,13 @@ func TestJobQueueNames(t *testing.T) {
 	require.Equal(t, []string{
 		river.QueueDefault,
 		EmbeddingsQueueName,
+		EmbeddingsReconcileQueueName,
 		TranslationsQueueName,
 		TranslationBackfillsQueueName,
 		SentimentsQueueName,
 		EmotionsQueueName,
 		FeedbackRecordsPurgeQueueName,
+		EmbeddingReconcileQueueName,
 	}, JobQueueNames())
 }
 

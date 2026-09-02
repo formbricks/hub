@@ -49,7 +49,8 @@ type EnrichmentStatusCounts struct {
 
 // enrichmentEligibleText is the data-level eligibility predicate: an open-text field with content.
 //
-// It trims the full ASCII whitespace set (space, tab, VT, FF, CR, LF). This deliberately does NOT
+// It trims the same Unicode White_Space set as Go strings.TrimSpace, using version-stable Unicode
+// escapes so PostgreSQL 16 cannot interpret `\v` as the literal letter "v". This deliberately does NOT
 // match the backfill queries (classifyBackfillEligibleSQL / translationBackfillSelectSQL), whose
 // bare btrim() strips spaces only: a value of "\t\n" is enqueued by those but counted ineligible
 // here. That asymmetry is intentional -- what matters for a progress count is agreeing with the
@@ -57,14 +58,10 @@ type EnrichmentStatusCounts struct {
 // than enrich it. Counting it eligible would leave it pending forever. Do not "restore parity" by
 // weakening this to bare btrim.
 //
-// It remains an approximation in one direction: strings.TrimSpace also strips exotic Unicode
-// whitespace (NBSP U+00A0, ideographic space U+3000, ...), so a value composed ENTIRELY of those is
-// still counted eligible while the worker treats it as empty. Rare enough to accept; expressing the
-// full Unicode set here would mean embedding invisible characters in this source file.
-//
 // field_type = 'text' is load-bearing: matrix/multi-choice expansion writes value_text on
 // categorical/number rows that are not enrichable.
-const enrichmentEligibleText = `fr.field_type = 'text' AND fr.value_text IS NOT NULL AND btrim(fr.value_text, E' \t\n\v\f\r') <> ''`
+const enrichmentEligibleText = `fr.field_type = 'text' AND fr.value_text IS NOT NULL AND btrim(fr.value_text, ` +
+	trimSpaceCharactersSQL + `) <> ''`
 
 // enrichmentEffectiveTarget resolves a tenant's effective translation target: its own
 // target_language, falling back to the deployment default ($1). An empty result means translation
@@ -248,7 +245,7 @@ const countTaxonomyEmbeddingBacklogAggregateSQL = `
 	SELECT COUNT(*)
 	FROM feedback_records fr
 	WHERE fr.field_type = 'text'
-	  AND COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL
+	  AND ` + taxonomyEmbeddingEligibleTextSQL + `
 	  AND NOT EXISTS (
 		SELECT 1
 		FROM embeddings e
@@ -543,7 +540,15 @@ var countFailedRecordsAggregateSQL = `
 	  AND ((f.enrichment = 'sentiment'   AND fr.sentiment IS NULL AND ` + enrichmentSentimentOn + `)
 	    OR (f.enrichment = 'emotions'    AND fr.emotions_classified_at IS NULL AND fr.emotions IS NULL
 	                                     AND ` + enrichmentEmotionsOn + `)
-	    OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL))
+	    OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL)
+	    OR (f.enrichment = 'taxonomy_embedding'
+	        AND $1 <> ''
+	        AND f.context_key = $1
+	        AND f.source_updated_at = fr.updated_at
+	        AND NOT EXISTS (
+	          SELECT 1 FROM embeddings e
+	          WHERE e.feedback_record_id = fr.id AND e.model = $1
+	        )))
 	GROUP BY f.enrichment, f.terminal`
 
 // CountFailedRecordsAggregate returns the cross-tenant failed-record counts per enrichment.
@@ -556,9 +561,9 @@ var countFailedRecordsAggregateSQL = `
 // for a deployment-wide gauge, and written down so the two are not mistaken for a bug when they
 // disagree.
 func (r *EnrichmentStatusRepository) CountFailedRecordsAggregate(
-	ctx context.Context,
+	ctx context.Context, taxonomyEmbeddingModel string,
 ) ([]FailedRecordCount, error) {
-	rows, err := r.db.Query(ctx, countFailedRecordsAggregateSQL)
+	rows, err := r.db.Query(ctx, countFailedRecordsAggregateSQL, taxonomyEmbeddingModel)
 	if err != nil {
 		return nil, fmt.Errorf("count failed records: %w", err)
 	}

@@ -302,7 +302,15 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 
 			// The record now has no translation and, with empty text, is owed none — so a marker
 			// describing a failed attempt on the old text has nothing left to describe.
-			return clearEnrichmentFailure(ctx, dbTx, feedbackRecordID, models.EnrichmentNameTranslation)
+			if err := clearEnrichmentFailure(
+				ctx, dbTx, feedbackRecordID, models.EnrichmentNameTranslation,
+			); err != nil {
+				return err
+			}
+
+			return clearEnrichmentFailure(
+				ctx, dbTx, feedbackRecordID, models.EnrichmentNameTaxonomyEmbedding,
+			)
 		}
 
 		// Setting a translation persists only while langKey still equals the tenant's current
@@ -337,7 +345,18 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 			return huberrors.ErrTranslationSuperseded
 		}
 
-		return clearEnrichmentFailure(ctx, dbTx, feedbackRecordID, models.EnrichmentNameTranslation)
+		if err := clearEnrichmentFailure(
+			ctx, dbTx, feedbackRecordID, models.EnrichmentNameTranslation,
+		); err != nil {
+			return err
+		}
+
+		// A new translation changes the taxonomy embedding input. Clear any terminal marker from
+		// the previous content so the new input is eligible for reconciliation if its direct
+		// enqueue is lost.
+		return clearEnrichmentFailure(
+			ctx, dbTx, feedbackRecordID, models.EnrichmentNameTaxonomyEmbedding,
+		)
 	})
 }
 

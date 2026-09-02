@@ -8,6 +8,9 @@ type JobKindSpec struct {
 	Args river.JobArgs
 	// Queue is the River queue the kind is inserted on.
 	Queue string
+	// ReconcileQueue is an optional lower-concurrency lane for repaired historical work handled by
+	// the same worker kind. Keeping it separate prevents a large repair backlog delaying live data.
+	ReconcileQueue string
 }
 
 // Kind returns the River job kind this spec describes.
@@ -28,12 +31,13 @@ func (s JobKindSpec) Kind() string { return s.Args.Kind() }
 func JobKindSpecs() []JobKindSpec {
 	return []JobKindSpec{
 		{Args: WebhookDispatchArgs{}, Queue: river.QueueDefault},
-		{Args: FeedbackEmbeddingArgs{}, Queue: EmbeddingsQueueName},
+		{Args: FeedbackEmbeddingArgs{}, Queue: EmbeddingsQueueName, ReconcileQueue: EmbeddingsReconcileQueueName},
 		{Args: FeedbackTranslationArgs{}, Queue: TranslationsQueueName},
 		{Args: TenantTranslationBackfillArgs{}, Queue: TranslationBackfillsQueueName},
 		{Args: FeedbackSentimentArgs{}, Queue: SentimentsQueueName},
 		{Args: FeedbackEmotionsArgs{}, Queue: EmotionsQueueName},
 		{Args: FeedbackRecordsPurgeArgs{}, Queue: FeedbackRecordsPurgeQueueName},
+		{Args: EmbeddingReconcileArgs{}, Queue: EmbeddingReconcileQueueName},
 	}
 }
 
@@ -50,13 +54,22 @@ func distinctQueues(specs []JobKindSpec) []string {
 	seen := make(map[string]struct{}, len(specs))
 	queues := make([]string, 0, len(specs))
 
-	for _, spec := range specs {
-		if _, ok := seen[spec.Queue]; ok {
-			continue
+	add := func(queue string) {
+		if queue == "" {
+			return
 		}
 
-		seen[spec.Queue] = struct{}{}
-		queues = append(queues, spec.Queue)
+		if _, ok := seen[queue]; ok {
+			return
+		}
+
+		seen[queue] = struct{}{}
+		queues = append(queues, queue)
+	}
+
+	for _, spec := range specs {
+		add(spec.Queue)
+		add(spec.ReconcileQueue)
 	}
 
 	return queues

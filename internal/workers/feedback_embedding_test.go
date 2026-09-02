@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
@@ -18,15 +20,18 @@ import (
 
 // countingEmbeddingMetrics records outcome/worker-error counts for assertions.
 type countingEmbeddingMetrics struct {
-	outcomes  map[string]int
-	workerErr map[string]int
+	outcomes     map[string]int
+	workerErr    map[string]int
+	jobsEnqueued int64
 }
 
 func newCountingEmbeddingMetrics() *countingEmbeddingMetrics {
 	return &countingEmbeddingMetrics{outcomes: map[string]int{}, workerErr: map[string]int{}}
 }
 
-func (m *countingEmbeddingMetrics) RecordJobsEnqueued(context.Context, int64)   {}
+func (m *countingEmbeddingMetrics) RecordJobsEnqueued(_ context.Context, count int64) {
+	m.jobsEnqueued += count
+}
 func (m *countingEmbeddingMetrics) RecordProviderError(context.Context, string) {}
 
 func (m *countingEmbeddingMetrics) RecordEmbeddingOutcome(_ context.Context, status string) {
@@ -43,6 +48,20 @@ func (m *countingEmbeddingMetrics) RecordEmbeddingBatch(context.Context, int64, 
 func (m *countingEmbeddingMetrics) AddEmbeddingBatchInFlight(context.Context, int64) {}
 
 var _ observability.EmbeddingMetrics = (*countingEmbeddingMetrics)(nil)
+
+type countingFailureMetrics struct {
+	terminal int
+}
+
+func (m *countingFailureMetrics) RecordTerminalFailure(context.Context, string, string) {
+	m.terminal++
+}
+
+func (m *countingFailureMetrics) SetFailedRecords(string, bool, int64) {}
+
+func (m *countingFailureMetrics) ClearFailedRecords() {}
+
+var _ observability.EnrichmentFailureMetrics = (*countingFailureMetrics)(nil)
 
 type mockEmbeddingService struct {
 	record          *models.FeedbackRecord
@@ -108,6 +127,99 @@ func translatedTextRecord(valueText, valueTextTranslated string) *models.Feedbac
 	record.ValueTextTranslated = &valueTextTranslated
 
 	return record
+}
+
+func taxonomyEmbeddingJob(attempt int) *river.Job[service.FeedbackEmbeddingArgs] {
+	job := embeddingJob()
+	job.Attempt = attempt
+	job.MaxAttempts = 5
+	job.Args.InputKind = models.EmbeddingInputKindTaxonomyTranslated
+
+	return job
+}
+
+func TestFeedbackEmbeddingWorkerUsesConfiguredTimeout(t *testing.T) {
+	worker := NewFeedbackEmbeddingWorkerWithOptions(
+		&mockEmbeddingService{}, &mockEmbeddingClient{}, "", nil, 75*time.Second, nil, nil)
+
+	assert.Equal(t, 75*time.Second, worker.Timeout(embeddingJob()))
+}
+
+func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
+	record := translatedTextRecord("Bonjour", "Hello")
+	record.ID = uuid.Must(uuid.NewV7())
+	record.TenantID = "tenant-embedding-failure"
+
+	t.Run("transient provider failure records only after final attempt", func(t *testing.T) {
+		failures := &recordingFailureRecorder{}
+		worker := NewFeedbackEmbeddingWorkerWithOptions(
+			&mockEmbeddingService{record: record},
+			&mockEmbeddingClient{err: errors.New("provider unavailable")},
+			"", nil, time.Minute, failures, nil)
+
+		require.Error(t, worker.Work(context.Background(), taxonomyEmbeddingJob(1)))
+		assert.Empty(t, failures.calls)
+
+		require.Error(t, worker.Work(context.Background(), taxonomyEmbeddingJob(5)))
+		require.Len(t, failures.calls, 1)
+		failure := failures.calls[0]
+		assert.Equal(t, record.ID, failure.FeedbackRecordID)
+		assert.Equal(t, record.TenantID, failure.TenantID)
+		assert.Equal(t, models.EnrichmentNameTaxonomyEmbedding, failure.Enrichment)
+		assert.False(t, failure.Terminal)
+		assert.Equal(t, models.EnrichmentFailureReasonProviderError, failure.Reason)
+		assert.Equal(t, 5, failure.Attempts)
+		assert.Equal(t, "test-model", failure.ContextKey)
+		require.NotNil(t, failure.SourceUpdatedAt)
+		assert.Equal(t, record.UpdatedAt, *failure.SourceUpdatedAt)
+	})
+
+	t.Run("terminal provider failure cancels immediately", func(t *testing.T) {
+		failures := &recordingFailureRecorder{}
+		worker := NewFeedbackEmbeddingWorkerWithOptions(
+			&mockEmbeddingService{record: record},
+			&mockEmbeddingClient{err: huberrors.NewTerminalProviderError(
+				huberrors.TerminalReasonContentFilter, errors.New("blocked"))},
+			"", nil, time.Minute, failures, nil)
+
+		err := worker.Work(context.Background(), taxonomyEmbeddingJob(1))
+
+		var cancelErr *river.JobCancelError
+		require.ErrorAs(t, err, &cancelErr)
+		require.Len(t, failures.calls, 1)
+		assert.True(t, failures.calls[0].Terminal)
+		assert.Equal(t, string(huberrors.TerminalReasonContentFilter), failures.calls[0].Reason)
+		assert.Equal(t, 1, failures.calls[0].Attempts)
+	})
+
+	t.Run("final write failure is distinguished", func(t *testing.T) {
+		failures := &recordingFailureRecorder{}
+		worker := NewFeedbackEmbeddingWorkerWithOptions(
+			&mockEmbeddingService{record: record, setErr: errors.New("database unavailable")},
+			&mockEmbeddingClient{embedding: []float32{0.1}},
+			"", nil, time.Minute, failures, nil)
+
+		require.Error(t, worker.Work(context.Background(), taxonomyEmbeddingJob(5)))
+		require.Len(t, failures.calls, 1)
+		assert.False(t, failures.calls[0].Terminal)
+		assert.Equal(t, models.EnrichmentFailureReasonWriteFailed, failures.calls[0].Reason)
+	})
+
+	t.Run("raw embedding failures never enter taxonomy state", func(t *testing.T) {
+		failures := &recordingFailureRecorder{}
+		failureMetrics := &countingFailureMetrics{}
+		worker := NewFeedbackEmbeddingWorkerWithOptions(
+			&mockEmbeddingService{record: record},
+			&mockEmbeddingClient{err: huberrors.NewTerminalProviderError(
+				huberrors.TerminalReasonContentFilter, errors.New("blocked"))},
+			"", nil, time.Minute, failures, failureMetrics)
+		job := embeddingJob()
+
+		var cancelErr *river.JobCancelError
+		require.ErrorAs(t, worker.Work(context.Background(), job), &cancelErr)
+		assert.Empty(t, failures.calls)
+		assert.Zero(t, failureMetrics.terminal)
+	})
 }
 
 func TestFeedbackEmbeddingWorker_GetNotFoundRecordsSkipped(t *testing.T) {

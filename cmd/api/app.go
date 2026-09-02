@@ -827,7 +827,7 @@ func runEnrichmentBacklogPoller(
 		// gauge for as long as the scan stays slow. A separate timeout off the same parent keeps
 		// the bound and drops the coupling.
 		failedCtx, cancelFailed := context.WithTimeout(ctx, enrichmentBacklogQueryTimeout)
-		refreshFailedRecords(failedCtx, statusRepo, failures)
+		refreshFailedRecords(failedCtx, statusRepo, failures, cfg.taxonomyEmbeddingModel)
 		cancelFailed()
 	}
 
@@ -1110,12 +1110,13 @@ func refreshFailedRecords(
 	ctx context.Context,
 	statusRepo *repository.EnrichmentStatusRepository,
 	failures observability.EnrichmentFailureMetrics,
+	taxonomyEmbeddingModel string,
 ) {
 	if failures == nil {
 		return
 	}
 
-	counts, err := statusRepo.CountFailedRecordsAggregate(ctx)
+	counts, err := statusRepo.CountFailedRecordsAggregate(ctx, taxonomyEmbeddingModel)
 	if err != nil {
 		failures.ClearFailedRecords()
 
@@ -1131,11 +1132,16 @@ func refreshFailedRecords(
 	// Zero the known buckets before applying, so an enrichment whose last failure was resolved
 	// reports 0 rather than keeping its final non-zero reading forever. The query returns no row
 	// for an empty bucket, which would otherwise be indistinguishable from "not refreshed".
-	for _, enrichment := range []string{
+	enrichments := []string{
 		observability.EnrichmentTypeSentiment,
 		observability.EnrichmentTypeEmotions,
 		observability.EnrichmentTypeTranslation,
-	} {
+	}
+	if taxonomyEmbeddingModel != "" {
+		enrichments = append(enrichments, observability.EnrichmentTypeTaxonomyEmbedding)
+	}
+
+	for _, enrichment := range enrichments {
 		failures.SetFailedRecords(enrichment, true, 0)
 		failures.SetFailedRecords(enrichment, false, 0)
 	}
