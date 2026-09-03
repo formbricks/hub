@@ -168,7 +168,7 @@ stops coverage from healing itself.
 
 | Variable                                | Default | Description                                                                                                       |
 | --------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
-| `ENRICHMENT_RECONCILE_ENABLED`          | `true`  | Master switch for the periodic sweep.                                                                             |
+| `ENRICHMENT_RECONCILE_ENABLED`          | `true`  | Master switch for the periodic sweep. **Set it identically on hub-api and hub-worker** — see below.               |
 | `ENRICHMENT_RECONCILE_INTERVAL_SECONDS` | `300`   | How often the sweep runs.                                                                                         |
 | `ENRICHMENT_RECONCILE_TARGET_DEPTH`     | `1000`  | Per-queue top-up target: each tick adds only enough to bring a reconcile queue to this depth. Clamped to `100000`. |
 
@@ -177,6 +177,14 @@ Reconciled work runs on its own `*_reconcile` queue per enrichment, with its own
 submitted a moment ago. Topping up *to* a depth rather than enqueueing *at* a rate makes the sweep
 self-regulating — a tick can only add what the workers have already drained — so the job table
 stays bounded whether the backlog is a thousand records or millions.
+
+`ENRICHMENT_RECONCILE_ENABLED` must carry the same value on **both** `hub-api` and `hub-worker`.
+The sweep itself runs on the worker, but the API reads the flag too, to decide whether clearing
+terminal failures could ever lead to anything. Disable it on the worker alone — the natural thing
+to do for a worker-only feature, since that is where the Helm chart's `worker.extraEnv` applies —
+and the API still accepts a retry: it deletes the markers, spends the tenant's cooldown, drops
+those records out of the status endpoint's failed counts, and no sweep ever picks them up. Set it
+on the API alone and every retry is refused with a 409 while the worker sweeps normally.
 
 Records that failed **terminally** are excluded. A terminal failure means the provider rejected the
 text on structural grounds — a content-policy block, a refusal, input past the model's limit — so

@@ -264,3 +264,36 @@ func TestSweepFailsLoudlyOnAnUnknownQueue(t *testing.T) {
 	assert.Equal(t, 2, result.Enqueued[models.EnrichmentNameSentiment],
 		"the mapped enrichment is still swept — one wiring mistake must not stop the others")
 }
+
+// TestSweepKeepsWiringErrorsWhenTheDepthQueryFails pins the interaction between the two failure
+// paths in Sweep.
+//
+// An unmapped enrichment is permanent: it is never swept until someone fixes the wiring. A failed
+// depth query is transient. Returning only the transient one — which is what the early return used
+// to do — hands the operator a connection error to retry, and buries the misconfiguration that is
+// silently starving an enrichment. Both must survive.
+func TestSweepKeepsWiringErrorsWhenTheDepthQueryFails(t *testing.T) {
+	depthErr := errors.New("connection reset by peer")
+	repo := &fakeReconcileRepo{
+		pending:   map[string][]repository.PendingEnrichmentTarget{models.EnrichmentNameSentiment: targets(2)},
+		depthsErr: depthErr,
+	}
+	svc := NewEnrichmentReconcileService(NewEnrichmentReconcileServiceParams{
+		Repo:        repo,
+		TargetDepth: 100,
+		Specs: []EnrichmentSweepSpec{
+			{Name: "embeddings", MaxAttempts: 3}, // no reconcile queue exists for it
+			{Name: models.EnrichmentNameSentiment, MaxAttempts: 3},
+		},
+	})
+	svc.SetInserter(&fakeBatchInserter{})
+
+	_, err := svc.Sweep(context.Background())
+
+	require.Error(t, err)
+	// The wiring mistake first: it is the one this test exists for, and the one the early return
+	// used to drop.
+	require.ErrorIs(t, err, repository.ErrUnknownEnrichment,
+		"the permanent wiring mistake must not be swallowed by the transient one")
+	require.ErrorIs(t, err, depthErr, "the transient failure is why this sweep stopped")
+}

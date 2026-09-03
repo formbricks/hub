@@ -140,7 +140,13 @@ func (s *EnrichmentReconcileService) Sweep(ctx context.Context) (ReconcileResult
 
 	depths, err := s.repo.CountRunnableByQueue(ctx, queues)
 	if err != nil {
-		return result, fmt.Errorf("read backfill queue depths: %w", err)
+		// Join rather than replace: errs holds the unknown-enrichment wiring mistakes collected
+		// above, and those are permanent. Returning only this one would let a transient database
+		// error hide a misconfiguration that leaves an enrichment never swept — the operator sees
+		// a connection reset, retries, and never learns the real problem.
+		errs = append(errs, fmt.Errorf("read backfill queue depths: %w", err))
+
+		return result, fmt.Errorf("reconcile sweep: %w", errors.Join(errs...))
 	}
 
 	for _, spec := range s.specs {

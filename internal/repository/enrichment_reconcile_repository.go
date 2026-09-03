@@ -191,17 +191,27 @@ func (r *EnrichmentReconcileRepository) ListPendingEnrichment(
 	return targets, nil
 }
 
-// countRunnableByQueueSQL counts jobs that are queued or about to be, per queue.
+// countRunnableByQueueSQL counts the jobs already occupying a queue, per queue.
 //
-// "Runnable" is the set that has not finished and is not being retried into the future:
-// available, pending, running and scheduled. Retryable is deliberately EXCLUDED — a job waiting
-// out its backoff will run again on its own, so counting it would have the reconciler treat a
-// queue as full while nothing is draining, and a stuck backoff would stall the sweep indefinitely.
+// The state set is deliberately the SAME one pendingInFlightStates uses, retryable included, and
+// the two have to agree or the depth control stops bounding anything. A retryable job's record is
+// excluded from the pending set, so if the job is also invisible here the sweep sees an empty
+// queue and tops it up with DIFFERENT records, on top of the ones already backing off. With a
+// retry window longer than the sweep interval — reachable by raising *_MAX_ATTEMPTS, since River
+// backs off by roughly attempt^4 seconds — that repeats every tick and the queue grows without
+// limit, which is precisely the unbounded river_job growth TargetDepth exists to prevent.
+//
+// An earlier version excluded retryable, reasoning that counting it would let a stuck backoff
+// stall the sweep. It would not: retryable is a bounded state, since a job either succeeds or
+// exhausts MaxAttempts and leaves for discarded/cancelled, writing its failure marker. And
+// pausing IS the right behaviour while a lane is full of backing-off work — the provider is
+// failing, and enqueueing another TargetDepth of records against a failing provider spends money
+// to make the backlog worse. The event path is unaffected either way.
 const countRunnableByQueueSQL = `
 	SELECT queue, count(*)
 	FROM river_job
 	WHERE queue = ANY($1)
-	  AND state IN ('available', 'pending', 'running', 'scheduled')
+	  AND state IN ` + pendingInFlightStates + `
 	GROUP BY queue`
 
 // CountRunnableByQueue returns the current depth of each named queue. Queues with nothing runnable

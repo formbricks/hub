@@ -19,6 +19,16 @@ import (
 // a never-attempted record left out means the endpoint reports a remainder nothing drains, a
 // retryable failure left out means an outage strands records permanently, and a terminal failure
 // left IN means the sweep re-runs a content-filtered record forever at a provider call each tick.
+// reconcilePageLimit bounds this file's reads of the sweep's pending set.
+//
+// ListPendingEnrichment is deliberately cross-tenant, so this is a GLOBAL limit and the per-tenant
+// filter happens in Go afterwards. That makes every assertion below depend on the seeded records
+// landing inside the page: enough unrelated un-enriched text records in the shared database and
+// the seeds fall off the end, the sets come back empty, and the failure blames the query rather
+// than the page. Set far above what this suite creates, with a guard below so truncation names
+// itself. The same limit and guard live in enrichment_retry_test.go, which reads the same query.
+const reconcilePageLimit = 20000
+
 func TestListPendingEnrichment(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := config.Load()
@@ -59,8 +69,11 @@ func TestListPendingEnrichment(t *testing.T) {
 	label, score := models.SentimentPositive, 1.0
 	require.NoError(t, frepo.SetSentiment(ctx, doneRec.ID, &label, &score, nil))
 
-	got, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", 500)
+	got, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", reconcilePageLimit)
 	require.NoError(t, err)
+	require.Less(t, len(got), reconcilePageLimit,
+		"the shared test database now fills this page, so the seeded records may be truncated off "+
+			"the end — raise reconcilePageLimit rather than trusting the assertions below")
 
 	ids := map[uuid.UUID]bool{}
 
@@ -92,8 +105,11 @@ func TestListPendingEnrichment(t *testing.T) {
 			jsonb_build_object('feedback_record_id', $1::text, 'value_text_hash', 'abc'), 3, NOW())`, finished.ID)
 	require.NoError(t, err)
 
-	got2, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", 500)
+	got2, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", reconcilePageLimit)
 	require.NoError(t, err)
+	require.Less(t, len(got2), reconcilePageLimit,
+		"the shared test database now fills this page, so the seeded records may be truncated off "+
+			"the end — raise reconcilePageLimit rather than trusting the assertions below")
 
 	ids2 := map[uuid.UUID]bool{}
 
@@ -114,4 +130,55 @@ func TestListPendingEnrichment(t *testing.T) {
 	// The reconciler is cross-tenant on purpose — a provider outage is deployment-wide — so it
 	// must return other tenants' work too. Only the per-tenant filter above hides it here.
 	assert.NotEmpty(t, got, "the sweep is global, not tenant-scoped")
+}
+
+// TestQueueDepthCountsRetryableJobs binds the state set the depth control uses to the one the
+// pending set uses. They have to be the same set, and the reason is not obvious from either alone.
+//
+// A record whose job is retryable is excluded from the pending set — correctly, it is already
+// being handled. If that same job is also invisible to the depth count, the sweep sees an empty
+// queue and tops it up to TargetDepth with DIFFERENT records, on top of the ones backing off.
+// Whenever the retry window exceeds the sweep interval — reachable by raising *_MAX_ATTEMPTS,
+// since River backs off by roughly attempt^4 seconds — that repeats every tick and the queue grows
+// without limit, which is exactly the unbounded river_job growth TargetDepth exists to prevent.
+//
+// Scheduled is pinned alongside it because River moves a job retryable -> scheduled as its backoff
+// elapses, so a set that counted only one of the two would leave the same hole open for part of
+// every retry cycle.
+func TestQueueDepthCountsRetryableJobs(t *testing.T) {
+	ctx := context.Background()
+	db := newPurgeTestDB(ctx, t)
+	rrepo := repository.NewEnrichmentReconcileRepository(db)
+
+	queue := "depth-probe-" + uuid.NewString()
+
+	insert := func(state string, finalized bool) {
+		if finalized {
+			_, err := db.Exec(ctx, `INSERT INTO river_job (state, queue, kind, priority, args, max_attempts, finalized_at)
+				VALUES ($1, $2, 'feedback_sentiment', 1, '{}'::jsonb, 3, NOW())`, state, queue)
+			require.NoError(t, err)
+
+			return
+		}
+
+		_, err := db.Exec(ctx, `INSERT INTO river_job (state, queue, kind, priority, args, max_attempts)
+			VALUES ($1, $2, 'feedback_sentiment', 1, '{}'::jsonb, 3)`, state, queue)
+		require.NoError(t, err)
+	}
+
+	for _, state := range []string{"available", "pending", "retryable", "running", "scheduled"} {
+		insert(state, false)
+	}
+
+	// Finished work must NOT count: it occupies no capacity, and counting it would wedge the queue
+	// at its target forever once TargetDepth jobs had ever completed on it.
+	insert("completed", true)
+	insert("cancelled", true)
+
+	depths, err := rrepo.CountRunnableByQueue(ctx, []string{queue})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(5), depths[queue],
+		"every in-flight state occupies the lane, retryable included — otherwise the sweep tops up "+
+			"on top of work that is already backing off and TargetDepth bounds nothing")
 }
