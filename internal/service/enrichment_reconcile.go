@@ -21,7 +21,7 @@ type EnrichmentReconcileRepository interface {
 	ListPendingEnrichment(
 		ctx context.Context, enrichment, defaultLang string, limit int,
 	) ([]repository.PendingEnrichmentTarget, error)
-	CountRunnableByQueue(ctx context.Context, queues []string) (map[string]int64, error)
+	CountInFlightByQueue(ctx context.Context, queues []string) (map[string]int64, error)
 }
 
 // EnrichmentReconcileService tops the backfill queues up towards a target depth with records that
@@ -138,7 +138,7 @@ func (s *EnrichmentReconcileService) Sweep(ctx context.Context) (ReconcileResult
 		queues = append(queues, queue)
 	}
 
-	depths, err := s.repo.CountRunnableByQueue(ctx, queues)
+	depths, err := s.repo.CountInFlightByQueue(ctx, queues)
 	if err != nil {
 		// Join rather than replace: errs holds the unknown-enrichment wiring mistakes collected
 		// above, and those are permanent. Returning only this one would let a transient database

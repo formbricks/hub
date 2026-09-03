@@ -13,6 +13,19 @@ import (
 
 const testAPIKey = "test-api-key-12345"
 
+// pendingPageLimit bounds every read of the reconciler's pending set in this package.
+//
+// ListPendingEnrichment is deliberately cross-tenant, so this is a GLOBAL limit and callers filter
+// by tenant in Go afterwards. That makes their assertions depend on the seeded records landing
+// inside the page: enough unrelated un-enriched text records in the shared database and the seeds
+// fall off the end, the sets come back empty, and the failure blames the query rather than the
+// page. Set far above what this suite creates, and every caller pairs it with a require.Less guard
+// so a full page names itself.
+//
+// One constant rather than one per file: the limit and the guard only work as a pair, and two
+// copies drift.
+const pendingPageLimit = 20000
+
 // CleanupTestData removes test data from the database.
 func CleanupTestData(t *testing.T) {
 	ctx := context.Background()

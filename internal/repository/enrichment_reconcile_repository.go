@@ -191,7 +191,7 @@ func (r *EnrichmentReconcileRepository) ListPendingEnrichment(
 	return targets, nil
 }
 
-// countRunnableByQueueSQL counts the jobs already occupying a queue, per queue.
+// countInFlightByQueueSQL counts the jobs already occupying a queue, per queue.
 //
 // The state set is deliberately the SAME one pendingInFlightStates uses, retryable included, and
 // the two have to agree or the depth control stops bounding anything. A retryable job's record is
@@ -207,21 +207,28 @@ func (r *EnrichmentReconcileRepository) ListPendingEnrichment(
 // pausing IS the right behaviour while a lane is full of backing-off work — the provider is
 // failing, and enqueueing another TargetDepth of records against a failing provider spends money
 // to make the backlog worse. The event path is unaffected either way.
-const countRunnableByQueueSQL = `
+const countInFlightByQueueSQL = `
 	SELECT queue, count(*)
 	FROM river_job
 	WHERE queue = ANY($1)
 	  AND state IN ` + pendingInFlightStates + `
 	GROUP BY queue`
 
-// CountRunnableByQueue returns the current depth of each named queue. Queues with nothing runnable
-// are absent from the map rather than zero, so callers must treat a missing key as empty.
-func (r *EnrichmentReconcileRepository) CountRunnableByQueue(
+// CountInFlightByQueue returns how many jobs currently occupy each named queue.
+//
+// "In flight", not "runnable": a retryable job is not runnable right now, but it still occupies the
+// lane and its record is still excluded from the pending set, so the depth control has to see it.
+// The name says in-flight to match pendingInFlightStates, because the two sharing one state set is
+// the invariant that makes TargetDepth mean anything.
+//
+// Queues with nothing in flight are absent from the map rather than zero, so callers must treat a
+// missing key as empty.
+func (r *EnrichmentReconcileRepository) CountInFlightByQueue(
 	ctx context.Context, queues []string,
 ) (map[string]int64, error) {
-	rows, err := r.db.Query(ctx, countRunnableByQueueSQL, queues)
+	rows, err := r.db.Query(ctx, countInFlightByQueueSQL, queues)
 	if err != nil {
-		return nil, fmt.Errorf("count runnable jobs by queue: %w", err)
+		return nil, fmt.Errorf("count in-flight jobs by queue: %w", err)
 	}
 
 	defer rows.Close()

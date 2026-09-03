@@ -19,16 +19,6 @@ import (
 // a never-attempted record left out means the endpoint reports a remainder nothing drains, a
 // retryable failure left out means an outage strands records permanently, and a terminal failure
 // left IN means the sweep re-runs a content-filtered record forever at a provider call each tick.
-// reconcilePageLimit bounds this file's reads of the sweep's pending set.
-//
-// ListPendingEnrichment is deliberately cross-tenant, so this is a GLOBAL limit and the per-tenant
-// filter happens in Go afterwards. That makes every assertion below depend on the seeded records
-// landing inside the page: enough unrelated un-enriched text records in the shared database and
-// the seeds fall off the end, the sets come back empty, and the failure blames the query rather
-// than the page. Set far above what this suite creates, with a guard below so truncation names
-// itself. The same limit and guard live in enrichment_retry_test.go, which reads the same query.
-const reconcilePageLimit = 20000
-
 func TestListPendingEnrichment(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := config.Load()
@@ -69,11 +59,11 @@ func TestListPendingEnrichment(t *testing.T) {
 	label, score := models.SentimentPositive, 1.0
 	require.NoError(t, frepo.SetSentiment(ctx, doneRec.ID, &label, &score, nil))
 
-	got, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", reconcilePageLimit)
+	got, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", pendingPageLimit)
 	require.NoError(t, err)
-	require.Less(t, len(got), reconcilePageLimit,
+	require.Less(t, len(got), pendingPageLimit,
 		"the shared test database now fills this page, so the seeded records may be truncated off "+
-			"the end — raise reconcilePageLimit rather than trusting the assertions below")
+			"the end — raise pendingPageLimit rather than trusting the assertions below")
 
 	ids := map[uuid.UUID]bool{}
 
@@ -105,11 +95,11 @@ func TestListPendingEnrichment(t *testing.T) {
 			jsonb_build_object('feedback_record_id', $1::text, 'value_text_hash', 'abc'), 3, NOW())`, finished.ID)
 	require.NoError(t, err)
 
-	got2, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", reconcilePageLimit)
+	got2, err := rrepo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", pendingPageLimit)
 	require.NoError(t, err)
-	require.Less(t, len(got2), reconcilePageLimit,
+	require.Less(t, len(got2), pendingPageLimit,
 		"the shared test database now fills this page, so the seeded records may be truncated off "+
-			"the end — raise reconcilePageLimit rather than trusting the assertions below")
+			"the end — raise pendingPageLimit rather than trusting the assertions below")
 
 	ids2 := map[uuid.UUID]bool{}
 
@@ -175,7 +165,7 @@ func TestQueueDepthCountsRetryableJobs(t *testing.T) {
 	insert("completed", true)
 	insert("cancelled", true)
 
-	depths, err := rrepo.CountRunnableByQueue(ctx, []string{queue})
+	depths, err := rrepo.CountInFlightByQueue(ctx, []string{queue})
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(5), depths[queue],

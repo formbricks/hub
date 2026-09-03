@@ -231,15 +231,6 @@ func TestEnrichmentRetryRejectsUnknownEnrichment(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, status)
 }
 
-// pendingLimit bounds the helper's read of the sweep's pending set. The query is deployment-wide by
-// design, so this is a global limit and the tenant filter happens below -- see pendingIDs. It is
-// set far above what this suite creates rather than at a "reasonable page size", because the number
-// that matters is not how many records the test seeds but how many unrelated pending records the
-// shared database happens to be holding. 500 was not enough on a developer database that had been
-// used for other work, and the symptom was an assertion about a missing record rather than anything
-// pointing at truncation.
-const pendingLimit = 20000
-
 // pendingIDs reads what the reconcile sweep would pick up for one tenant.
 //
 // It deliberately calls the real ListPendingEnrichment rather than a tenant-scoped test query:
@@ -257,11 +248,11 @@ func pendingIDs(
 ) map[uuid.UUID]bool {
 	t.Helper()
 
-	targets, err := repo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", pendingLimit)
+	targets, err := repo.ListPendingEnrichment(ctx, models.EnrichmentNameSentiment, "", pendingPageLimit)
 	require.NoError(t, err)
-	require.Less(t, len(targets), pendingLimit,
+	require.Less(t, len(targets), pendingPageLimit,
 		"the shared test database now holds at least %d pending records, so this page is truncated "+
-			"and the seeded records may have been cut off -- raise pendingLimit", pendingLimit)
+			"and the seeded records may have been cut off -- raise pendingPageLimit", pendingPageLimit)
 
 	ids := map[uuid.UUID]bool{}
 

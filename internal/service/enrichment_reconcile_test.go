@@ -24,7 +24,7 @@ type fakeReconcileRepo struct {
 	depthCalls int
 }
 
-func (f *fakeReconcileRepo) CountRunnableByQueue(_ context.Context, _ []string) (map[string]int64, error) {
+func (f *fakeReconcileRepo) CountInFlightByQueue(_ context.Context, _ []string) (map[string]int64, error) {
 	f.depthCalls++
 
 	if f.depthsErr != nil {
