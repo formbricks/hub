@@ -141,6 +141,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	var (
 		translationRecordsService *service.FeedbackRecordsService
 		embeddingBatch            *service.BatchingEmbeddingClient
+		embeddingReconcileService *service.EmbeddingReconcileService
 	)
 
 	if providerName != "" {
@@ -213,6 +214,24 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.EmbeddingClient = embeddingClient
 		deps.EmbeddingDocPrefix = docPrefix
 		deps.EmbeddingMetrics = embeddingMetrics
+
+		if embeddingReconcileConfigured(cfg) {
+			embeddingReconcileService = service.NewEmbeddingReconcileService(
+				embeddingsRepo,
+				taxonomyEmbeddingModel,
+				cfg.Embedding.ReconcileTargetDepth,
+				cfg.Embedding.MaxAttempts,
+				cfg.Embedding.ReconcileRetryAfter.Duration(),
+			)
+			deps.EmbeddingReconcileSweeper = embeddingReconcileService
+
+			slog.Info("taxonomy embedding reconciliation configured",
+				"interval", cfg.Embedding.ReconcileInterval.Duration(),
+				"retry_after", cfg.Embedding.ReconcileRetryAfter.Duration(),
+				"target_depth", cfg.Embedding.ReconcileTargetDepth,
+				"max_concurrent", cfg.Embedding.ReconcileMaxConcurrent,
+			)
+		}
 	}
 
 	if cfg.Translation.Enabled() {
@@ -341,28 +360,43 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	// same reason: after a deploy, converging sooner is strictly better than waiting out a full
 	// interval, and the sweep is idempotent.
 	if reconcileService != nil {
-		riverCfg.PeriodicJobs = []*river.PeriodicJob{
-			river.NewPeriodicJob(
-				river.PeriodicInterval(cfg.EnrichmentReconcile.Interval()),
-				func() (river.JobArgs, *river.InsertOpts) {
-					return service.EnrichmentReconcileArgs{}, &river.InsertOpts{
-						Queue: service.EnrichmentReconcileQueueName,
-						// ONE attempt, deliberately. A failed sweep needs no retry — the next
-						// scheduled tick IS the retry, and it sees the same backlog. With River's
-						// default 25 attempts a failing sweep's backoff grows past the tick
-						// interval, and because the retryable job holds the unique key, every
-						// subsequent tick would be skipped as a duplicate: a DB blip would then
-						// silence reconciliation for hours, not minutes.
-						MaxAttempts: 1,
-						// Uniqueness across the in-flight states, so a tick arriving while the
-						// previous sweep is still running collapses into it instead of queueing
-						// a second scan behind the first.
-						UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: service.InFlightUniqueStates()},
-					}
-				},
-				&river.PeriodicJobOpts{RunOnStart: true},
-			),
-		}
+		riverCfg.PeriodicJobs = append(riverCfg.PeriodicJobs, river.NewPeriodicJob(
+			river.PeriodicInterval(cfg.EnrichmentReconcile.Interval()),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return service.EnrichmentReconcileArgs{}, &river.InsertOpts{
+					Queue: service.EnrichmentReconcileQueueName,
+					// ONE attempt, deliberately. A failed sweep needs no retry — the next
+					// scheduled tick IS the retry, and it sees the same backlog. With River's
+					// default 25 attempts a failing sweep's backoff grows past the tick
+					// interval, and because the retryable job holds the unique key, every
+					// subsequent tick would be skipped as a duplicate: a DB blip would then
+					// silence reconciliation for hours, not minutes.
+					MaxAttempts: 1,
+					// Uniqueness across the in-flight states, so a tick arriving while the
+					// previous sweep is still running collapses into it instead of queueing
+					// a second scan behind the first.
+					UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: service.InFlightUniqueStates()},
+				}
+			},
+			&river.PeriodicJobOpts{RunOnStart: true},
+		))
+	}
+
+	if embeddingReconcileService != nil {
+		riverCfg.PeriodicJobs = append(riverCfg.PeriodicJobs, river.NewPeriodicJob(
+			river.PeriodicInterval(cfg.Embedding.ReconcileInterval.Duration()),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return service.EmbeddingReconcileArgs{}, &river.InsertOpts{
+					Queue:       service.EmbeddingReconcileQueueName,
+					MaxAttempts: 1,
+					// The same in-flight set the enrichment sweep uses, via the shared helper
+					// rather than a second copy: the two lanes now sit in one file, and the
+					// helper's doc explains why getting this set wrong fails silently.
+					UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: service.InFlightUniqueStates()},
+				}
+			},
+			&river.PeriodicJobOpts{RunOnStart: true},
+		))
 	}
 
 	if cfg.River.JobTimeoutSec.Duration() > 0 {
@@ -398,6 +432,10 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		reconcileService.SetInserter(riverClient)
 	}
 
+	if embeddingReconcileService != nil {
+		embeddingReconcileService.SetInserter(riverClient)
+	}
+
 	return &WorkerApp{
 		cfg:            cfg,
 		db:             db,
@@ -406,6 +444,16 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		meterProvider:  meterProvider,
 		tracerProvider: tracerProvider,
 	}, nil
+}
+
+// embeddingReconcileConfigured keeps automatic repair aligned with the taxonomy embedding
+// backlog contract: embeddings and taxonomy must be configured before the worker spends provider
+// calls creating taxonomy-only vectors. Translation is intentionally not a gate because taxonomy
+// input falls back to the source text when a deployment does not translate records.
+func embeddingReconcileConfigured(cfg *config.Config) bool {
+	return cfg.Embedding.ReconcileEnabled &&
+		cfg.Embedding.Provider != "" && cfg.Embedding.Model != "" &&
+		cfg.Taxonomy.ServiceURL != ""
 }
 
 // embeddingProviderAndModel returns (canonical provider, model) when embeddings are enabled

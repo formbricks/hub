@@ -11,21 +11,22 @@ import (
 // so the pairing of every kind to its queue is pinned here rather than left implicit.
 func TestJobKindSpecs(t *testing.T) {
 	type lanes struct {
-		live     string
-		backfill string
+		live      string
+		reconcile string
 	}
 
-	// The three record-level enrichments carry a backfill lane; nothing else does. That asymmetry
-	// is the design, not an omission: only work the reconciler can re-derive from the records
-	// themselves has a second lane to put it on.
+	// Embeddings and the three record-level enrichments carry a reconcile lane; nothing else does.
+	// That asymmetry is the design, not an omission: only work a reconciler can re-derive from the
+	// records themselves has a second lane to put it on.
 	want := map[string]lanes{
 		"webhook_dispatch":            {live: river.QueueDefault},
-		"feedback_embedding":          {live: EmbeddingsQueueName},
-		"feedback_translation":        {live: TranslationsQueueName, backfill: TranslationsReconcileQueueName},
+		"feedback_embedding":          {live: EmbeddingsQueueName, reconcile: EmbeddingsReconcileQueueName},
+		"feedback_translation":        {live: TranslationsQueueName, reconcile: TranslationsReconcileQueueName},
 		"tenant_translation_backfill": {live: TranslationBackfillsQueueName},
-		"feedback_sentiment":          {live: SentimentsQueueName, backfill: SentimentsReconcileQueueName},
-		"feedback_emotions":           {live: EmotionsQueueName, backfill: EmotionsReconcileQueueName},
+		"feedback_sentiment":          {live: SentimentsQueueName, reconcile: SentimentsReconcileQueueName},
+		"feedback_emotions":           {live: EmotionsQueueName, reconcile: EmotionsReconcileQueueName},
 		"feedback_records_purge":      {live: FeedbackRecordsPurgeQueueName},
+		"embedding_reconcile":         {live: EmbeddingReconcileQueueName},
 		"enrichment_reconcile":        {live: EnrichmentReconcileQueueName},
 	}
 
@@ -36,8 +37,8 @@ func TestJobKindSpecs(t *testing.T) {
 		wantLanes, ok := want[spec.Kind()]
 		require.True(t, ok, "unexpected job kind %q", spec.Kind())
 		require.Equal(t, wantLanes.live, spec.Queue, "kind %q is on the wrong queue", spec.Kind())
-		require.Equal(t, wantLanes.backfill, spec.ReconcileQueue,
-			"kind %q has the wrong backfill lane", spec.Kind())
+		require.Equal(t, wantLanes.reconcile, spec.ReconcileQueue,
+			"kind %q has the wrong reconcile lane", spec.Kind())
 	}
 }
 
@@ -48,6 +49,7 @@ func TestJobQueueNames(t *testing.T) {
 	require.Equal(t, []string{
 		river.QueueDefault,
 		EmbeddingsQueueName,
+		EmbeddingsReconcileQueueName,
 		TranslationsQueueName,
 		TranslationsReconcileQueueName,
 		TranslationBackfillsQueueName,
@@ -56,6 +58,7 @@ func TestJobQueueNames(t *testing.T) {
 		EmotionsQueueName,
 		EmotionsReconcileQueueName,
 		FeedbackRecordsPurgeQueueName,
+		EmbeddingReconcileQueueName,
 		EnrichmentReconcileQueueName,
 	}, JobQueueNames())
 }

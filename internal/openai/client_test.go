@@ -639,6 +639,58 @@ func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
 	assert.Equal(t, 9*time.Second, rateLimited.RetryAfter)
 }
 
+func TestWrapOpenAIErrorClassifiesOnlyExplicitInputLengthFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *openaisdk.Error
+		terminal bool
+	}{
+		{
+			name: "standard context length code",
+			err: &openaisdk.Error{
+				StatusCode: http.StatusBadRequest,
+				Code:       "context_length_exceeded",
+			},
+			terminal: true,
+		},
+		{
+			name: "vllm context length message",
+			err: &openaisdk.Error{
+				StatusCode: http.StatusBadRequest,
+				Message:    "This model's maximum context length is 8192 tokens",
+			},
+			terminal: true,
+		},
+		{
+			name: "invalid model stays recoverable",
+			err: &openaisdk.Error{
+				StatusCode: http.StatusBadRequest,
+				Code:       "model_not_found",
+				Message:    "the configured model does not exist",
+			},
+		},
+		{
+			name: "permission failure stays recoverable",
+			err: &openaisdk.Error{
+				StatusCode: http.StatusForbidden,
+				Message:    "permission denied",
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := wrapOpenAIError("openai embedding", testCase.err)
+			reason, terminal := huberrors.TerminalReasonOf(err)
+			assert.Equal(t, testCase.terminal, terminal)
+
+			if terminal {
+				assert.Equal(t, huberrors.TerminalReasonLength, reason)
+			}
+		})
+	}
+}
+
 // TestCompletionTextTerminalClassification pins which empty-completion outcomes are permanent for
 // the input and which stay retryable. The asymmetry is deliberate: a false terminal abandons a
 // record for good, a false transient costs a few wasted calls.

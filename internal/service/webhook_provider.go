@@ -24,7 +24,7 @@ type WebhookProviderRepository interface {
 // WebhookProvider implements eventPublisher by enqueueing one River job per (event, webhook).
 type WebhookProvider struct {
 	repo                  WebhookProviderRepository
-	inserter              WebhookDispatchInserter
+	inserter              RiverBatchInserter
 	maxAttempts           int
 	maxFanOut             int
 	enqueueMaxRetries     int
@@ -38,7 +38,7 @@ type WebhookProvider struct {
 // enqueueMaxRetries, enqueueInitialBackoff, enqueueMaxBackoff configure retries when InsertMany fails (transient River/DB errors).
 // metrics may be nil when metrics are disabled.
 func NewWebhookProvider(
-	inserter WebhookDispatchInserter, repo WebhookProviderRepository,
+	inserter RiverBatchInserter, repo WebhookProviderRepository,
 	maxAttempts, maxFanOut int,
 	enqueueMaxRetries int, enqueueInitialBackoff, enqueueMaxBackoff time.Duration,
 	metrics observability.WebhookMetrics,

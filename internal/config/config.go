@@ -49,6 +49,12 @@ var (
 //nolint:gosec // test default URL, not a production secret
 const DefaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
 
+const (
+	defaultEmbeddingJobTimeout          = 60 * time.Second
+	defaultEmbeddingReconcileInterval   = 5 * time.Minute
+	defaultEmbeddingReconcileRetryAfter = 15 * time.Minute
+)
+
 // Config holds all application configuration in nested groups.
 type Config struct {
 	Server              ServerConfig
@@ -135,19 +141,25 @@ type MessagePublisherConfig struct {
 
 // EmbeddingConfig holds embedding provider and queue settings.
 type EmbeddingConfig struct {
-	ProviderAPIKey        string `env:"EMBEDDING_PROVIDER_API_KEY"`
-	Provider              string `env:"EMBEDDING_PROVIDER"`
-	Model                 string `env:"EMBEDDING_MODEL"`
-	BaseURL               string `env:"EMBEDDING_BASE_URL"`
-	MaxConcurrent         int    `env:"EMBEDDING_MAX_CONCURRENT"           env-default:"5"`
-	MaxAttempts           int    `env:"EMBEDDING_MAX_ATTEMPTS"             env-default:"3"`
-	BatchSize             int    `env:"EMBEDDING_BATCH_SIZE"               env-default:"1"`
-	BatchMaxWaitMs        int    `env:"EMBEDDING_BATCH_MAX_WAIT_MS"        env-default:"25"`
-	BatchMaxInFlight      int    `env:"EMBEDDING_BATCH_MAX_IN_FLIGHT"      env-default:"1"`
-	HTTPDisableKeepAlives bool   `env:"EMBEDDING_HTTP_DISABLE_KEEP_ALIVES" env-default:"false"`
-	Normalize             bool   `env:"EMBEDDING_NORMALIZE"                env-default:"false"`
-	GoogleCloudProject    string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation   string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey         string      `env:"EMBEDDING_PROVIDER_API_KEY"`
+	Provider               string      `env:"EMBEDDING_PROVIDER"`
+	Model                  string      `env:"EMBEDDING_MODEL"`
+	BaseURL                string      `env:"EMBEDDING_BASE_URL"`
+	MaxConcurrent          int         `env:"EMBEDDING_MAX_CONCURRENT"                env-default:"5"`
+	MaxAttempts            int         `env:"EMBEDDING_MAX_ATTEMPTS"                  env-default:"5"`
+	JobTimeout             DurationSec `env:"EMBEDDING_JOB_TIMEOUT_SECONDS"           env-default:"60"`
+	BatchSize              int         `env:"EMBEDDING_BATCH_SIZE"                    env-default:"1"`
+	BatchMaxWaitMs         int         `env:"EMBEDDING_BATCH_MAX_WAIT_MS"             env-default:"25"`
+	BatchMaxInFlight       int         `env:"EMBEDDING_BATCH_MAX_IN_FLIGHT"           env-default:"1"`
+	ReconcileEnabled       bool        `env:"EMBEDDING_RECONCILE_ENABLED"`
+	ReconcileInterval      DurationSec `env:"EMBEDDING_RECONCILE_INTERVAL_SECONDS"    env-default:"300"`
+	ReconcileRetryAfter    DurationSec `env:"EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS" env-default:"900"`
+	ReconcileTargetDepth   int         `env:"EMBEDDING_RECONCILE_TARGET_DEPTH"        env-default:"100"`
+	ReconcileMaxConcurrent int         `env:"EMBEDDING_RECONCILE_MAX_CONCURRENT"      env-default:"1"`
+	HTTPDisableKeepAlives  bool        `env:"EMBEDDING_HTTP_DISABLE_KEEP_ALIVES"      env-default:"false"`
+	Normalize              bool        `env:"EMBEDDING_NORMALIZE"                     env-default:"false"`
+	GoogleCloudProject     string      `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation    string      `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
 }
 
 // TranslationConfig holds the feedback open-text translation enrichment settings
@@ -460,7 +472,6 @@ func applyDefaults(cfg *Config) {
 	// or, worse, flow into InsertOpts where River substitutes its default of 25 attempts — 25
 	// LLM calls per failing job instead of the intended 3.
 	for _, tunables := range []struct{ maxConcurrent, maxAttempts *int }{
-		{&cfg.Embedding.MaxConcurrent, &cfg.Embedding.MaxAttempts},
 		{&cfg.Translation.MaxConcurrent, &cfg.Translation.MaxAttempts},
 		{&cfg.Sentiment.MaxConcurrent, &cfg.Sentiment.MaxAttempts},
 		{&cfg.Emotions.MaxConcurrent, &cfg.Emotions.MaxAttempts},
@@ -474,6 +485,18 @@ func applyDefaults(cfg *Config) {
 		}
 	}
 
+	if cfg.Embedding.MaxConcurrent <= 0 {
+		cfg.Embedding.MaxConcurrent = 5
+	}
+
+	if cfg.Embedding.MaxAttempts <= 0 {
+		cfg.Embedding.MaxAttempts = 5
+	}
+
+	if cfg.Embedding.JobTimeout.Duration() <= 0 {
+		cfg.Embedding.JobTimeout = DurationSec(defaultEmbeddingJobTimeout)
+	}
+
 	if cfg.Embedding.BatchSize <= 0 {
 		cfg.Embedding.BatchSize = 1
 	}
@@ -484,6 +507,22 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Embedding.BatchMaxInFlight <= 0 {
 		cfg.Embedding.BatchMaxInFlight = 1
+	}
+
+	if cfg.Embedding.ReconcileInterval.Duration() <= 0 {
+		cfg.Embedding.ReconcileInterval = DurationSec(defaultEmbeddingReconcileInterval)
+	}
+
+	if cfg.Embedding.ReconcileRetryAfter.Duration() <= 0 {
+		cfg.Embedding.ReconcileRetryAfter = DurationSec(defaultEmbeddingReconcileRetryAfter)
+	}
+
+	if cfg.Embedding.ReconcileTargetDepth <= 0 {
+		cfg.Embedding.ReconcileTargetDepth = 100
+	}
+
+	if cfg.Embedding.ReconcileMaxConcurrent <= 0 {
+		cfg.Embedding.ReconcileMaxConcurrent = 1
 	}
 
 	// Default the cache size only when the operator did not set it. An explicit 0 (or

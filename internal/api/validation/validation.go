@@ -104,6 +104,10 @@ func init() {
 		slog.Error("Failed to register no_null_bytes validator", "error", err)
 	}
 
+	if err := validate.RegisterValidation(storableJSONTag, validateStorableJSON); err != nil {
+		slog.Error("Failed to register storable_json validator", "error", err)
+	}
+
 	// Element validators for the repeatable enum filters, applied via `dive`. They are a second
 	// gate behind registerEnumSliceTypes, not a replacement: see the comment there for why the
 	// decoder alone cannot be trusted to have run.
@@ -390,6 +394,8 @@ func FormatFieldError(fieldErr validator.FieldError) string {
 		return "must be in RFC3339 (ISO 8601) format"
 	case "no_null_bytes":
 		return "must not contain NULL bytes"
+	case storableJSONTag:
+		return "must contain valid UTF-8 and no NULL bytes or unpaired UTF-16 surrogates"
 	case "http_url":
 		return "must be a valid HTTP or HTTPS URL"
 	case "url":

@@ -391,7 +391,36 @@ func wrapGenaiError(op string, err error) error {
 		return huberrors.NewRateLimitError(genaiRetryAfter(apiErr), wrapped)
 	}
 
+	if isGenaiInputLengthError(apiErr) {
+		return huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength, wrapped)
+	}
+
 	return wrapped
+}
+
+// isGenaiInputLengthError deliberately requires an explicit token/input limit phrase. INVALID_ARGUMENT
+// also covers deployment mistakes, which must stay retryable after an operator corrects them rather
+// than becoming permanent record exclusions.
+func isGenaiInputLengthError(apiErr genai.APIError) bool {
+	if apiErr.Code != http.StatusBadRequest && apiErr.Code != http.StatusRequestEntityTooLarge {
+		return false
+	}
+
+	message := strings.ToLower(apiErr.Message)
+	for _, marker := range []string{
+		"input token count exceeds",
+		"maximum number of tokens",
+		"maximum context length",
+		"context length exceeded",
+		"input is too long",
+		"too many tokens",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // genaiRetryAfter extracts the RetryInfo retryDelay from a RESOURCE_EXHAUSTED error's

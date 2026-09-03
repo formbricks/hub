@@ -8,12 +8,13 @@ type JobKindSpec struct {
 	Args river.JobArgs
 	// Queue is the River queue the kind is inserted on by the event path.
 	Queue string
-	// BackfillQueue is the second queue the same kind is inserted on when the work is reconciled
-	// rather than event-driven, or "" for kinds that have no backfill lane.
+	// ReconcileQueue is the second, lower-concurrency queue the same kind is inserted on when the
+	// work is repaired historical data rather than event-driven, or "" for kinds with no such lane.
 	//
 	// A kind, not a worker, is what River registers, so the same worker serves both lanes and the
-	// queue is purely a concurrency budget. That is the entire mechanism keeping a large sweep from
-	// starving a record submitted right now: the two lanes draw from different MaxWorkers.
+	// queue is purely a concurrency budget. That is the entire mechanism keeping a large repair
+	// backlog from starving a record submitted right now: the two lanes draw from different
+	// MaxWorkers.
 	ReconcileQueue string
 }
 
@@ -35,7 +36,10 @@ func (s JobKindSpec) Kind() string { return s.Args.Kind() }
 func JobKindSpecs() []JobKindSpec {
 	return []JobKindSpec{
 		{Args: WebhookDispatchArgs{}, Queue: river.QueueDefault},
-		{Args: FeedbackEmbeddingArgs{}, Queue: EmbeddingsQueueName},
+		{
+			Args: FeedbackEmbeddingArgs{}, Queue: EmbeddingsQueueName,
+			ReconcileQueue: EmbeddingsReconcileQueueName,
+		},
 		{
 			Args: FeedbackTranslationArgs{}, Queue: TranslationsQueueName,
 			ReconcileQueue: TranslationsReconcileQueueName,
@@ -50,6 +54,7 @@ func JobKindSpecs() []JobKindSpec {
 			ReconcileQueue: EmotionsReconcileQueueName,
 		},
 		{Args: FeedbackRecordsPurgeArgs{}, Queue: FeedbackRecordsPurgeQueueName},
+		{Args: EmbeddingReconcileArgs{}, Queue: EmbeddingReconcileQueueName},
 		{Args: EnrichmentReconcileArgs{}, Queue: EnrichmentReconcileQueueName},
 	}
 }

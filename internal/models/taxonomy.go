@@ -77,14 +77,16 @@ type TaxonomyScope struct {
 
 // TaxonomyFieldOption describes a feedback field that can be used for taxonomy generation.
 type TaxonomyFieldOption struct {
-	TenantID       string `json:"tenant_id"`
-	SourceType     string `json:"source_type"`
-	SourceID       string `json:"source_id"`
-	SourceName     string `json:"source_name,omitempty"`
-	FieldID        string `json:"field_id"`
-	FieldLabel     string `json:"field_label,omitempty"`
-	RecordCount    int    `json:"record_count"`
-	EmbeddingCount int    `json:"embedding_count"`
+	TenantID                     string `json:"tenant_id"`
+	SourceType                   string `json:"source_type"`
+	SourceID                     string `json:"source_id"`
+	SourceName                   string `json:"source_name,omitempty"`
+	FieldID                      string `json:"field_id"`
+	FieldLabel                   string `json:"field_label,omitempty"`
+	RecordCount                  int    `json:"record_count"`
+	EmbeddingCount               int    `json:"embedding_count"`
+	EmbeddingFailedCount         int    `json:"embedding_failed_count"`
+	EmbeddingFailedTerminalCount int    `json:"embedding_failed_terminal_count"`
 }
 
 // TaxonomyFieldsResponse contains taxonomy-capable field options.

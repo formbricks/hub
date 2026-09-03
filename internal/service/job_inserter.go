@@ -15,11 +15,13 @@ type RiverJobInserter interface {
 }
 
 // RiverBatchInserter inserts many River jobs in one round trip. Shared by the webhook fan-out and
-// the enrichment reconcile sweep, both of which enqueue in batches; satisfied by the River client.
+// the enrichment reconcile sweep, both of which enqueue in batches; the concrete River client
+// satisfies it, and keeping the seam this small is what lets their tests run without a
+// database-backed queue.
 //
 // InsertMany, never InsertManyFast. The fast variant skips the unique-options machinery and fails
-// the entire batch on a conflict, and both callers here depend on uniqueness to avoid enqueueing
-// work that is already in flight.
+// the entire batch on a conflict, and callers here depend on uniqueness to avoid enqueueing work
+// that is already in flight.
 type RiverBatchInserter interface {
 	InsertMany(ctx context.Context, params []river.InsertManyParams) ([]*rivertype.JobInsertResult, error)
 }

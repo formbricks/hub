@@ -1,6 +1,10 @@
 package models
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // The enrichment names. These are the values in migration 022's CHECK, the `enrichment` metric
 // label, and the discriminator on every failure marker, so they are declared once rather than
@@ -9,6 +13,9 @@ const (
 	EnrichmentNameTranslation = "translation"
 	EnrichmentNameSentiment   = "sentiment"
 	EnrichmentNameEmotions    = "emotions"
+	// EnrichmentNameTaxonomyEmbedding is the translated-text embedding consumed by taxonomy.
+	// Raw search embeddings are intentionally not reconciled by this pipeline.
+	EnrichmentNameTaxonomyEmbedding = "taxonomy_embedding"
 )
 
 // The two non-terminal reasons. Both mean "did not succeed this time"; they differ in which half
@@ -49,4 +56,9 @@ type EnrichmentFailure struct {
 	Reason   string
 	// Attempts spent before giving up. Diagnostic only.
 	Attempts int
+	// ContextKey and SourceUpdatedAt bind a taxonomy-embedding marker to the exact model and
+	// record revision that failed. They are empty for the other enrichment types. Without both,
+	// a terminal failure from an old model or content revision could suppress repair forever.
+	ContextKey      string
+	SourceUpdatedAt *time.Time
 }

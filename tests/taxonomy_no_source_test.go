@@ -70,6 +70,24 @@ func TestTaxonomyNoSourceScope(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	// The taxonomy UI and CreateRun coverage gate must use the same input eligibility as the
+	// embedding worker and reconciler. Blank translated text falls back to source text, while
+	// records containing only ASCII or Unicode whitespace are excluded entirely.
+	//nolint:dupword // The two blank rows intentionally repeat each value in raw and translated columns.
+	_, err := db.Exec(ctx, `
+		INSERT INTO feedback_records (
+			source_type, source_id, field_id, field_label, field_type,
+			value_text, value_text_translated, tenant_id, submission_id
+		)
+		VALUES
+			($1, NULL, $2, 'Feedback', 'text'::field_type_enum, 'Fallback text', U&'\3000', $3, $4),
+			($1, NULL, $2, 'Feedback', 'text'::field_type_enum, U&'\000B', U&'\000B', $3, $5),
+			($1, NULL, $2, 'Feedback', 'text'::field_type_enum, U&'\00A0\3000', U&'\00A0\3000', $3, $6)`,
+		sourceType, fieldID, tenantID,
+		"submission-"+uuid.NewString(), "submission-"+uuid.NewString(), "submission-"+uuid.NewString(),
+	)
+	require.NoError(t, err)
+
 	// Discovery surfaces the records as a single "no source" bucket with empty SourceID.
 	options, err := repo.ListFieldOptions(ctx, tenantID, embeddingModel)
 	require.NoError(t, err)
@@ -84,7 +102,8 @@ func TestTaxonomyNoSourceScope(t *testing.T) {
 
 	require.NotNil(t, noSource, "expected a discovered field option for the no-source bucket")
 	require.Empty(t, noSource.SourceID, "no-source bucket must expose an empty source_id")
-	require.Equal(t, 2, noSource.RecordCount, "NULL and blank source_id must collapse into one bucket")
+	require.Equal(t, 3, noSource.RecordCount,
+		"source text plus translated-whitespace fallback count; whitespace-only records do not")
 
 	// Counting the empty-source scope matches both NULL and blank feedback rows.
 	scope := models.TaxonomyScope{
@@ -96,7 +115,14 @@ func TestTaxonomyNoSourceScope(t *testing.T) {
 
 	recordCount, _, _, err := repo.CountScopeInput(ctx, scope, embeddingModel)
 	require.NoError(t, err)
-	require.Equal(t, 2, recordCount, "empty-source scope must null-safe match NULL/blank source rows")
+	require.Equal(t, 3, recordCount, "field scope must use worker-equivalent text eligibility")
+
+	directoryCount, _, _, err := repo.CountScopeInput(ctx, models.TaxonomyScope{
+		ScopeType: models.TaxonomyScopeTypeDirectory,
+		TenantID:  tenantID,
+	}, embeddingModel)
+	require.NoError(t, err)
+	require.Equal(t, 3, directoryCount, "directory scope must use worker-equivalent text eligibility")
 
 	// A taxonomy run can be created for the empty-source scope and is found by the
 	// in-progress guard (empty string is a valid, comparable key in taxonomy tables).
