@@ -6,6 +6,7 @@
 - `cmd/backfill-*/` are one-off enqueue commands that (re)enrich an existing backlog: `backfill-embeddings`, `backfill-translations`, and `backfill-classify -type sentiment|emotions`. hub-worker processes the jobs they enqueue.
 - `internal/` contains the application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, `config`, `workers`, `observability` (OTel metrics/tracing), the LLM seam (`llm`, `openai`, `googleai`), `datatypes`, and `huberrors`.
 - `pkg/` provides shared utilities: `database`, `cursor` (keyset pagination), and `embeddings`.
+- `sdks/typescript/` holds the generator config for the published `@formbricks/hub` npm package. The generated client is **not committed** — see TypeScript SDK below.
 - `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.
 - `tests/` contains integration tests (they require a pgvector database — see Testing Guidelines).
 - `docs/` holds the documentation site for hub.formbricks.com (Astro + Starlight) — the only non-Go part of the repo. See Documentation Site below.
@@ -20,6 +21,7 @@
 - `make tests-coverage`: generate `coverage.html`.
 - `make check-coverage`: run all tests with coverage and fail if below COVERAGE_THRESHOLD (excludes cmd/api and cmd/worker main packages).
 - `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations (`-- +goose up` / `-- +goose down`). Name files with a sequential number and short description (e.g. `002_add_webhooks_table.sql`); goose orders by the numeric prefix. For webhook delivery, run `make river-migrate` after `init-db` to apply River job queue migrations.
+- SDK commands run from `sdks/typescript/` and use pnpm, not make — see TypeScript SDK below.
 - `make fmt`: format code (runs `golangci-lint run --fix`; uses gofumpt/gci from config).
 - `make lint`: run `golangci-lint` (includes format checks; requires `make install-tools`).
 - Docs commands run from `docs/` and use pnpm, not make — see Documentation Site below.
@@ -28,6 +30,29 @@
 - Language: Go; format with `make fmt` (golangci-lint applies gofumpt/gci).
 - Prefer Go naming conventions (CamelCase for exported, lowerCamel for unexported).
 - Keep package names short and domain-focused (e.g., `repository`, `service`).
+
+## TypeScript SDK (`sdks/typescript/`)
+
+The published [`@formbricks/hub`](https://www.npmjs.com/package/@formbricks/hub) client, generated from `openapi.yaml` by [`@hey-api/openapi-ts`](https://heyapi.dev/).
+
+**The SDK is a build artifact. The config is committed; the output is not.** `src/generated/` and `dist/` are gitignored, produced in CI, and published to npm by `.github/workflows/publish-sdk.yml` on a stable Hub release. Do not commit generated files, and do not hand-edit them — they are overwritten on every run.
+
+- `openapi-ts.config.ts` — the generator config. Reads `../../openapi.yaml`.
+- `src/index.ts` — the hand-written entry point, and the place for anything that cannot be generated (it exports `createHubClient` on top of the generated client).
+- `src/schemas.ts` — re-exports the generated zod validators behind the `@formbricks/hub/schemas` entry, so importing the client itself pulls in no dependencies and `zod` stays an optional peer.
+- `tests/wire.test.mjs` — runs against the **built** package, so it covers the exports map too.
+
+Commands, from `sdks/typescript/`: `pnpm install`, `pnpm generate`, `pnpm build`, `pnpm check`, `pnpm test`.
+
+**To change the API surface, change `openapi.yaml`.** Never patch the SDK to paper over a spec problem — the next generation run erases it.
+
+**Bump `version` in `sdks/typescript/package.json` by hand** when a release should ship a new SDK. The publish workflow compares the generated output against what is on npm: identical output skips the publish, and changed output with an already-published version fails the build rather than overwriting it. The SDK version line is deliberately independent of the Hub's release version — they have never matched.
+
+The generator version is pinned exactly. Bumping it is a deliberate change: regenerate, run `pnpm test`, and read the surface diff the `sdk-preview` workflow prints on the PR.
+
+**Publishing is credential-free by design.** Authentication is npm trusted publishing (OIDC), bound to this repository, the `publish-sdk.yml` filename and the `npm-publish` environment. There is no npm token, and none should be introduced. Consequences: renaming that workflow file breaks publishing until the npm configuration is updated, and the job that runs the generator deliberately holds no publishing permission — only the separate publish job does.
+
+**Keep `example:` values in `openapi.yaml` synthetic.** They now ship twice — into the published SDK's docblocks and onto the docs site — so a real tenant id, key or customer name in an example is published, not merely committed.
 
 ## Enrichment Framework
 

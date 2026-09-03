@@ -1,0 +1,11 @@
+# The SDK is a build artifact: the generator config is committed, its output is not.
+# See AGENTS.md -> TypeScript SDK. Regenerate with `pnpm generate`.
+src/generated/
+dist/
+
+node_modules/
+*.tgz
+
+# Scratch from the publish workflow's compare-against-npm step
+.compare/
+.pack/

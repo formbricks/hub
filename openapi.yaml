@@ -3781,9 +3781,6 @@ components:
         TaxonomyRunData:
             type: object
             additionalProperties: false
-            # Reused across list/get/create/tree responses; declare a model so the SDK
-            # emits one shared TaxonomyRun type instead of duplicating it (Model/Recommended).
-            x-stainless-model: taxonomy.run
             description: A persisted taxonomy generation run.
             properties:
                 id:
@@ -3859,9 +3856,6 @@ components:
         TaxonomyNodeData:
             type: object
             additionalProperties: false
-            # Self-referential via `children`; a recursive schema must be a named model
-            # or Stainless drops the recursion (Schema/RecursiveMustBeModel error).
-            x-stainless-model: taxonomy.node
             description: A node in a taxonomy tree. Non-root nodes have a parent; leaf nodes reference the cluster they summarize.
             properties:
                 id:
@@ -3980,10 +3974,6 @@ components:
         EnrichmentTypeStatus:
             type: object
             additionalProperties: false
-            # Reused for translation/sentiment/emotions; declare a model so the SDK emits one shared
-            # type instead of three structurally identical inline copies (Model/Recommended).
-            # Model paths are snake_case (Name/NotSnakeCase), unlike the resource/method names.
-            x-stainless-model: enrichment_status.type_status
             description: One enrichment's progress for a tenant. When `enabled` is false, `eligible` and `done` are zero.
             properties:
                 enabled:
