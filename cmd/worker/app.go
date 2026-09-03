@@ -350,54 +350,8 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		Workers: riverWorkers,
 	}
 
-	// River runs periodic jobs from the ELECTED LEADER only, which is the whole reason the sweep
-	// is scheduled this way rather than by a ticker in this process: with several hub-workers
-	// deployed, a ticker would have every replica sweeping at once.
-	//
-	// The scheduler keeps its state in memory, so a restart or a leader change starts the cycle
-	// over. That costs nothing here — the sweep is level-triggered, so a missed tick is invisible
-	// and an extra one finds a queue already at depth and does nothing. RunOnStart is on for the
-	// same reason: after a deploy, converging sooner is strictly better than waiting out a full
-	// interval, and the sweep is idempotent.
-	if reconcileService != nil {
-		riverCfg.PeriodicJobs = append(riverCfg.PeriodicJobs, river.NewPeriodicJob(
-			river.PeriodicInterval(cfg.EnrichmentReconcile.Interval()),
-			func() (river.JobArgs, *river.InsertOpts) {
-				return service.EnrichmentReconcileArgs{}, &river.InsertOpts{
-					Queue: service.EnrichmentReconcileQueueName,
-					// ONE attempt, deliberately. A failed sweep needs no retry — the next
-					// scheduled tick IS the retry, and it sees the same backlog. With River's
-					// default 25 attempts a failing sweep's backoff grows past the tick
-					// interval, and because the retryable job holds the unique key, every
-					// subsequent tick would be skipped as a duplicate: a DB blip would then
-					// silence reconciliation for hours, not minutes.
-					MaxAttempts: 1,
-					// Uniqueness across the in-flight states, so a tick arriving while the
-					// previous sweep is still running collapses into it instead of queueing
-					// a second scan behind the first.
-					UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: service.InFlightUniqueStates()},
-				}
-			},
-			&river.PeriodicJobOpts{RunOnStart: true},
-		))
-	}
-
-	if embeddingReconcileService != nil {
-		riverCfg.PeriodicJobs = append(riverCfg.PeriodicJobs, river.NewPeriodicJob(
-			river.PeriodicInterval(cfg.Embedding.ReconcileInterval.Duration()),
-			func() (river.JobArgs, *river.InsertOpts) {
-				return service.EmbeddingReconcileArgs{}, &river.InsertOpts{
-					Queue:       service.EmbeddingReconcileQueueName,
-					MaxAttempts: 1,
-					// The same in-flight set the enrichment sweep uses, via the shared helper
-					// rather than a second copy: the two lanes now sit in one file, and the
-					// helper's doc explains why getting this set wrong fails silently.
-					UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: service.InFlightUniqueStates()},
-				}
-			},
-			&river.PeriodicJobOpts{RunOnStart: true},
-		))
-	}
+	riverCfg.PeriodicJobs = append(riverCfg.PeriodicJobs,
+		reconcilePeriodicJobs(cfg, reconcileService != nil, embeddingReconcileService != nil)...)
 
 	if cfg.River.JobTimeoutSec.Duration() > 0 {
 		riverCfg.JobTimeout = cfg.River.JobTimeoutSec.Duration()
@@ -661,4 +615,88 @@ func reconcileSweeperOrNil(svc *service.EnrichmentReconcileService) workers.Reco
 	}
 
 	return svc
+}
+
+// reconcileSweepSchedule is one periodic sweep's schedule, split out so it can be asserted on
+// without standing up a River client or a database.
+type reconcileSweepSchedule struct {
+	interval time.Duration
+	args     river.JobArgs
+	opts     *river.InsertOpts
+}
+
+// reconcileSweepSchedules returns the schedules for the sweeps that are enabled.
+//
+// This exists as its own function because the two sweeps are independent and appended to the same
+// slice, which is a shape that loses work silently: assign instead of append, or resolve a merge
+// by keeping one side, and one reconciler simply never runs. Nothing about that fails — it builds,
+// every test passes, and the only symptom is coverage quietly not converging weeks later. Keeping
+// the selection here means a test can hold both sweeps to being present.
+//
+// River runs periodic jobs from the ELECTED LEADER only, which is the whole reason the sweeps are
+// scheduled this way rather than by a ticker in this process: with several hub-workers deployed, a
+// ticker would have every replica sweeping at once.
+//
+// The scheduler keeps its state in memory, so a restart or a leader change starts the cycle over.
+// That costs nothing here — the sweeps are level-triggered, so a missed tick is invisible and an
+// extra one finds a queue already at depth and does nothing. RunOnStart is on for the same reason:
+// after a deploy, converging sooner is strictly better than waiting out a full interval.
+func reconcileSweepSchedules(
+	cfg *config.Config, enrichmentSweep, embeddingSweep bool,
+) []reconcileSweepSchedule {
+	var schedules []reconcileSweepSchedule
+
+	if enrichmentSweep {
+		schedules = append(schedules, reconcileSweepSchedule{
+			interval: cfg.EnrichmentReconcile.Interval(),
+			args:     service.EnrichmentReconcileArgs{},
+			opts: &river.InsertOpts{
+				Queue: service.EnrichmentReconcileQueueName,
+				// ONE attempt, deliberately. A failed sweep needs no retry — the next scheduled
+				// tick IS the retry, and it sees the same backlog. With River's default 25
+				// attempts a failing sweep's backoff grows past the tick interval, and because the
+				// retryable job holds the unique key, every subsequent tick would be skipped as a
+				// duplicate: a DB blip would then silence reconciliation for hours, not minutes.
+				MaxAttempts: 1,
+				// Uniqueness across the in-flight states, so a tick arriving while the previous
+				// sweep is still running collapses into it instead of queueing a second scan.
+				UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: service.InFlightUniqueStates()},
+			},
+		})
+	}
+
+	if embeddingSweep {
+		schedules = append(schedules, reconcileSweepSchedule{
+			interval: cfg.Embedding.ReconcileInterval.Duration(),
+			args:     service.EmbeddingReconcileArgs{},
+			opts: &river.InsertOpts{
+				Queue:       service.EmbeddingReconcileQueueName,
+				MaxAttempts: 1,
+				// The same in-flight set the enrichment sweep uses, via the shared helper rather
+				// than a second copy: the helper's doc explains why getting this set wrong is
+				// silent in both directions.
+				UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: service.InFlightUniqueStates()},
+			},
+		})
+	}
+
+	return schedules
+}
+
+// reconcilePeriodicJobs turns the enabled schedules into River periodic jobs.
+func reconcilePeriodicJobs(
+	cfg *config.Config, enrichmentSweep, embeddingSweep bool,
+) []*river.PeriodicJob {
+	schedules := reconcileSweepSchedules(cfg, enrichmentSweep, embeddingSweep)
+	jobs := make([]*river.PeriodicJob, 0, len(schedules))
+
+	for _, schedule := range schedules {
+		jobs = append(jobs, river.NewPeriodicJob(
+			river.PeriodicInterval(schedule.interval),
+			func() (river.JobArgs, *river.InsertOpts) { return schedule.args, schedule.opts },
+			&river.PeriodicJobOpts{RunOnStart: true},
+		))
+	}
+
+	return jobs
 }
