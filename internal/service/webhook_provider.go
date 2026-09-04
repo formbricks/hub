@@ -13,6 +13,9 @@ import (
 	"github.com/formbricks/hub/internal/observability"
 )
 
+// WebhookDispatchInserter inserts webhook_dispatch jobs in batch (e.g. River client).
+type WebhookDispatchInserter = RiverBatchInserter
+
 // WebhookProviderRepository lists tenant-scoped webhooks eligible for event fan-out.
 type WebhookProviderRepository interface {
 	ListEnabledForEventTypeAndTenant(ctx context.Context, eventType string, tenantID *string) ([]models.Webhook, error)

@@ -6,10 +6,15 @@ import "github.com/riverqueue/river"
 type JobKindSpec struct {
 	// Args is a zero value of the job's argument type; Args.Kind() is the River job kind.
 	Args river.JobArgs
-	// Queue is the River queue the kind is inserted on.
+	// Queue is the River queue the kind is inserted on by the event path.
 	Queue string
-	// ReconcileQueue is an optional lower-concurrency lane for repaired historical work handled by
-	// the same worker kind. Keeping it separate prevents a large repair backlog delaying live data.
+	// ReconcileQueue is the second, lower-concurrency queue the same kind is inserted on when the
+	// work is repaired historical data rather than event-driven, or "" for kinds with no such lane.
+	//
+	// A kind, not a worker, is what River registers, so the same worker serves both lanes and the
+	// queue is purely a concurrency budget. That is the entire mechanism keeping a large repair
+	// backlog from starving a record submitted right now: the two lanes draw from different
+	// MaxWorkers.
 	ReconcileQueue string
 }
 
@@ -31,13 +36,26 @@ func (s JobKindSpec) Kind() string { return s.Args.Kind() }
 func JobKindSpecs() []JobKindSpec {
 	return []JobKindSpec{
 		{Args: WebhookDispatchArgs{}, Queue: river.QueueDefault},
-		{Args: FeedbackEmbeddingArgs{}, Queue: EmbeddingsQueueName, ReconcileQueue: EmbeddingsReconcileQueueName},
-		{Args: FeedbackTranslationArgs{}, Queue: TranslationsQueueName},
+		{
+			Args: FeedbackEmbeddingArgs{}, Queue: EmbeddingsQueueName,
+			ReconcileQueue: EmbeddingsReconcileQueueName,
+		},
+		{
+			Args: FeedbackTranslationArgs{}, Queue: TranslationsQueueName,
+			ReconcileQueue: TranslationsReconcileQueueName,
+		},
 		{Args: TenantTranslationBackfillArgs{}, Queue: TranslationBackfillsQueueName},
-		{Args: FeedbackSentimentArgs{}, Queue: SentimentsQueueName},
-		{Args: FeedbackEmotionsArgs{}, Queue: EmotionsQueueName},
+		{
+			Args: FeedbackSentimentArgs{}, Queue: SentimentsQueueName,
+			ReconcileQueue: SentimentsReconcileQueueName,
+		},
+		{
+			Args: FeedbackEmotionsArgs{}, Queue: EmotionsQueueName,
+			ReconcileQueue: EmotionsReconcileQueueName,
+		},
 		{Args: FeedbackRecordsPurgeArgs{}, Queue: FeedbackRecordsPurgeQueueName},
 		{Args: EmbeddingReconcileArgs{}, Queue: EmbeddingReconcileQueueName},
+		{Args: EnrichmentReconcileArgs{}, Queue: EnrichmentReconcileQueueName},
 	}
 }
 
@@ -47,9 +65,10 @@ func JobQueueNames() []string {
 	return distinctQueues(JobKindSpecs())
 }
 
-// distinctQueues collapses specs to their queue names, preserving declaration order and dropping
-// repeats. Taking the specs as a parameter keeps the dedup reachable from a test: every kind
-// declared today owns its own queue, so the duplicate path would otherwise never run.
+// distinctQueues lists every queue any kind is inserted on — live and reconcile lanes alike — in
+// declaration order and without repeats. The reconcile lanes belong on the depth gauge for the
+// same reason the live ones do: a sweep that is enqueueing but not draining is exactly what an
+// operator needs to see. Taking the specs as a parameter keeps the dedup reachable from a test.
 func distinctQueues(specs []JobKindSpec) []string {
 	seen := make(map[string]struct{}, len(specs))
 	queues := make([]string, 0, len(specs))

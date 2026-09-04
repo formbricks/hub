@@ -400,7 +400,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	// the enqueue path (translation's target language; the sentiment and emotion per-directory
 	// switches), so they share one short-TTL cache over tenant settings. The cache is evicted on a
 	// settings write (below) so a toggle is visible to the gates immediately, not after TTL expiry.
-	translationEnabled := cfg.Translation.Provider != "" && cfg.Translation.Model != ""
+	translationEnabled := cfg.Translation.Enabled()
 
 	var tenantSettingsCache *service.CachedTenantSettings
 
@@ -492,11 +492,27 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		Repo:                  repository.NewEnrichmentStatusRepository(db),
 		Settings:              tenantSettingsService,
 		DefaultLang:           cfg.Translation.DefaultLanguage,
-		TranslationConfigured: cfg.Translation.Provider != "" && cfg.Translation.Model != "",
+		TranslationConfigured: cfg.Translation.Enabled(),
 		SentimentConfigured:   cfg.Sentiment.Enabled(),
 		EmotionsConfigured:    cfg.Emotions.Enabled(),
 	})
 	enrichmentStatusHandler := handlers.NewEnrichmentStatusHandler(enrichmentStatusService)
+
+	// The retry service resolves the same gates as the status service above, from the same config
+	// and the same settings reader, so the two cannot disagree about whether an enrichment is
+	// running — refusing a retry for an enrichment the status endpoint reports as enabled (or the
+	// reverse) would be indefensible to a caller looking at both.
+	enrichmentRetryService := service.NewEnrichmentRetryService(service.NewEnrichmentRetryServiceParams{
+		Repo:                  repository.NewEnrichmentRetryRepository(db),
+		Settings:              tenantSettingsService,
+		DefaultLang:           cfg.Translation.DefaultLanguage,
+		TranslationConfigured: cfg.Translation.Enabled(),
+		SentimentConfigured:   cfg.Sentiment.Enabled(),
+		EmotionsConfigured:    cfg.Emotions.Enabled(),
+		ReconcileEnabled:      cfg.EnrichmentReconcile.Enabled,
+		Metrics:               reconcileMetrics(metrics),
+	})
+	enrichmentRetryHandler := handlers.NewEnrichmentRetryHandler(enrichmentRetryService)
 
 	healthHandler := handlers.NewHealthHandler()
 
@@ -511,7 +527,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg, healthHandler, openapiHandler, feedbackRecordsHandler, feedbackRecordsPurgeHandler,
 		webhooksHandler, tenantDataHandler,
 		tenantSettingsHandler, searchHandler,
-		taxonomyHandler, taxonomyInternalHandler, enrichmentStatusHandler,
+		taxonomyHandler, taxonomyInternalHandler, enrichmentStatusHandler, enrichmentRetryHandler,
 		meterProvider, tracerProvider,
 	)
 
@@ -544,6 +560,7 @@ func newHTTPServer(
 	taxonomy *handlers.TaxonomyHandler,
 	taxonomyInternal *handlers.TaxonomyInternalHandler,
 	enrichmentStatus *handlers.EnrichmentStatusHandler,
+	enrichmentRetry *handlers.EnrichmentRetryHandler,
 	meterProvider *sdkmetric.MeterProvider,
 	tracerProvider *sdktrace.TracerProvider,
 ) *http.Server {
@@ -575,6 +592,9 @@ func newHTTPServer(
 	protected.HandleFunc("PATCH /v1/tenants/{tenant_id}/settings", tenantSettings.Patch)
 
 	protected.HandleFunc("GET /v1/enrichment-status", enrichmentStatus.GetStatus)
+	// Under /v1/tenants/, deliberately — see EnrichmentRetryHandler.Retry. Nothing routes that
+	// prefix publicly, which is what keeps a provider-spending bulk operation off the internet.
+	protected.HandleFunc("POST /v1/tenants/{tenant_id}/enrichments/retry", enrichmentRetry.Retry)
 
 	// Search endpoints are always registered; when embeddings are disabled, the handler returns 503.
 	protected.HandleFunc("POST /v1/feedback-records/search/semantic", search.SemanticSearch)
@@ -1157,4 +1177,15 @@ func clearFailedRecords(failures observability.EnrichmentFailureMetrics) {
 	if failures != nil {
 		failures.ClearFailedRecords()
 	}
+}
+
+// reconcileMetrics returns the reconcile/retry metrics, nil-guarding the aggregate. Mirrors the
+// helper of the same name in cmd/worker: a typed nil inside a non-nil interface would pass the
+// service's "metrics != nil" check and panic on the first retry.
+func reconcileMetrics(metrics *observability.Metrics) observability.EnrichmentReconcileMetrics {
+	if metrics == nil {
+		return nil
+	}
+
+	return metrics.EnrichmentReconcile
 }

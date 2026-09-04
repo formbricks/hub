@@ -52,10 +52,17 @@ type RiverDeps struct {
 	// an enrichment, so it has no client to gate on).
 	FeedbackRecordsPurgeService feedbackRecordsPurgeService
 
+	// ReconcileSweeper runs the level-triggered enrichment sweep. nil leaves the reconciler out
+	// entirely — the kill switch, and the shape a deployment with no enrichment provider takes.
+	ReconcileSweeper ReconcileSweeper
+
 	// Failures records the durable marker a classify worker writes when it gives up on a record.
 	// Shared by the three classify pipelines; nil disables recording, which leaves the API
 	// under-reporting failures but changes no enrichment behaviour.
 	Failures FailureRecorder
+	// ReconcileMetrics reports the sweep's own outcome, duration and enqueue counts. nil disables
+	// them; the sweep still runs.
+	ReconcileMetrics observability.EnrichmentReconcileMetrics
 	// FailureMetrics counts permanent give-ups by cause, for whoever watches the deployment
 	// rather than a single tenant. nil disables it.
 	FailureMetrics observability.EnrichmentFailureMetrics
@@ -78,6 +85,17 @@ func NewRiverWorkersAndQueues(
 
 	maxDefault := cfg.Webhook.DeliveryMaxConcurrent
 	maxEmbedding := cfg.Embedding.MaxConcurrent
+	// The backfill lanes get their own, smaller budget. Reconciled work is by definition not urgent
+	// — nobody is watching a record that has been stranded for a week — so it drains in the
+	// background at a rate that cannot crowd out a record submitted a moment ago.
+	reconcileWorkers := func(configured int) int {
+		if configured <= 0 {
+			return 1
+		}
+
+		return configured
+	}
+
 	maxTranslation := cfg.Translation.MaxConcurrent
 	maxSentiment := cfg.Sentiment.MaxConcurrent
 	maxEmotions := cfg.Emotions.MaxConcurrent
@@ -128,11 +146,21 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, translationWorker)
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
+		queues[service.TranslationsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Translation.ReconcileMaxConcurrent)}
 
 		backfillWorker := NewTenantTranslationBackfillWorker(deps.TranslationBackfillService, deps.TranslationMaxAttempts)
 		river.AddWorker(workers, backfillWorker)
 
 		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
+	}
+
+	if deps.ReconcileSweeper != nil {
+		river.AddWorker(workers, NewEnrichmentReconcileWorker(deps.ReconcileSweeper, deps.ReconcileMetrics))
+
+		// MaxWorkers 1: one sweep at a time, structurally. The job's uniqueness already collapses
+		// overlapping ticks, but a queue that cannot run two makes that true even if the unique
+		// options are ever loosened.
+		queues[service.EnrichmentReconcileQueueName] = river.QueueConfig{MaxWorkers: 1}
 	}
 
 	if deps.SentimentClient != nil {
@@ -142,6 +170,7 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, sentimentWorker)
 
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: maxSentiment}
+		queues[service.SentimentsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Sentiment.ReconcileMaxConcurrent)}
 	}
 
 	if deps.EmotionsClient != nil {
@@ -151,6 +180,7 @@ func NewRiverWorkersAndQueues(
 		river.AddWorker(workers, emotionsWorker)
 
 		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: maxEmotions}
+		queues[service.EmotionsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Emotions.ReconcileMaxConcurrent)}
 	}
 
 	return workers, queues

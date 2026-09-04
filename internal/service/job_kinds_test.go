@@ -10,44 +10,56 @@ import (
 // JobKindSpecs is what the API's queue-depth gauge and the worker-registration parity test both read,
 // so the pairing of every kind to its queue is pinned here rather than left implicit.
 func TestJobKindSpecs(t *testing.T) {
-	want := map[string]string{
-		"webhook_dispatch":            river.QueueDefault,
-		"feedback_embedding":          EmbeddingsQueueName,
-		"feedback_translation":        TranslationsQueueName,
-		"tenant_translation_backfill": TranslationBackfillsQueueName,
-		"feedback_sentiment":          SentimentsQueueName,
-		"feedback_emotions":           EmotionsQueueName,
-		"feedback_records_purge":      FeedbackRecordsPurgeQueueName,
-		"embedding_reconcile":         EmbeddingReconcileQueueName,
+	type lanes struct {
+		live      string
+		reconcile string
+	}
+
+	// Embeddings and the three record-level enrichments carry a reconcile lane; nothing else does.
+	// That asymmetry is the design, not an omission: only work a reconciler can re-derive from the
+	// records themselves has a second lane to put it on.
+	want := map[string]lanes{
+		"webhook_dispatch":            {live: river.QueueDefault},
+		"feedback_embedding":          {live: EmbeddingsQueueName, reconcile: EmbeddingsReconcileQueueName},
+		"feedback_translation":        {live: TranslationsQueueName, reconcile: TranslationsReconcileQueueName},
+		"tenant_translation_backfill": {live: TranslationBackfillsQueueName},
+		"feedback_sentiment":          {live: SentimentsQueueName, reconcile: SentimentsReconcileQueueName},
+		"feedback_emotions":           {live: EmotionsQueueName, reconcile: EmotionsReconcileQueueName},
+		"feedback_records_purge":      {live: FeedbackRecordsPurgeQueueName},
+		"embedding_reconcile":         {live: EmbeddingReconcileQueueName},
+		"enrichment_reconcile":        {live: EnrichmentReconcileQueueName},
 	}
 
 	specs := JobKindSpecs()
 	require.Len(t, specs, len(want), "a new job kind needs a worker registered for it in internal/workers")
 
 	for _, spec := range specs {
-		wantQueue, ok := want[spec.Kind()]
+		wantLanes, ok := want[spec.Kind()]
 		require.True(t, ok, "unexpected job kind %q", spec.Kind())
-		require.Equal(t, wantQueue, spec.Queue, "kind %q is on the wrong queue", spec.Kind())
-
-		if spec.Kind() == "feedback_embedding" {
-			require.Equal(t, EmbeddingsReconcileQueueName, spec.ReconcileQueue)
-		} else {
-			require.Empty(t, spec.ReconcileQueue)
-		}
+		require.Equal(t, wantLanes.live, spec.Queue, "kind %q is on the wrong queue", spec.Kind())
+		require.Equal(t, wantLanes.reconcile, spec.ReconcileQueue,
+			"kind %q has the wrong reconcile lane", spec.Kind())
 	}
 }
 
 func TestJobQueueNames(t *testing.T) {
+	// Both lanes, in declaration order. The backfill queues belong on the depth gauge for the same
+	// reason the live ones do: a sweep that is enqueueing but not draining is exactly what an
+	// operator needs to see, and it is invisible if the queue has no series.
 	require.Equal(t, []string{
 		river.QueueDefault,
 		EmbeddingsQueueName,
 		EmbeddingsReconcileQueueName,
 		TranslationsQueueName,
+		TranslationsReconcileQueueName,
 		TranslationBackfillsQueueName,
 		SentimentsQueueName,
+		SentimentsReconcileQueueName,
 		EmotionsQueueName,
+		EmotionsReconcileQueueName,
 		FeedbackRecordsPurgeQueueName,
 		EmbeddingReconcileQueueName,
+		EnrichmentReconcileQueueName,
 	}, JobQueueNames())
 }
 

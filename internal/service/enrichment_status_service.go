@@ -83,26 +83,32 @@ func (s *EnrichmentStatusService) GetEnrichmentStatus(
 	// when the response happened to be written. UTC because it crosses a process boundary.
 	asOf := time.Now().UTC()
 
+	// One gate mapping for every consumer: the retry endpoint resolves the same
+	// enrichmentGates, so the two endpoints cannot disagree about what is enabled.
+	gates := enrichmentGates{
+		defaultLang:           s.defaultLang,
+		translationConfigured: s.translationConfigured,
+		sentimentConfigured:   s.sentimentConfigured,
+		emotionsConfigured:    s.emotionsConfigured,
+	}
+
 	return &models.EnrichmentStatusResponse{
 		TenantID: normalizedTenantID,
 		AsOf:     asOf,
 		Translation: enrichmentTypeStatus(
-			translationDisabledReason(s.translationConfigured,
-				resolveTargetLang(settings.Settings.TargetLanguage, s.defaultLang)),
+			gates.disabledReasonFor(models.EnrichmentNameTranslation, settings),
 			enrichmentCounts{
 				eligible: counts.TranslationEligible, done: counts.TranslationDone,
 				failed: counts.TranslationFailed, failedTerminal: counts.TranslationFailedTerminal,
 			}),
 		Sentiment: enrichmentTypeStatus(
-			switchedEnrichmentDisabledReason(s.sentimentConfigured,
-				settings.Settings.SentimentEnrichmentEnabled()),
+			gates.disabledReasonFor(models.EnrichmentNameSentiment, settings),
 			enrichmentCounts{
 				eligible: counts.SentimentEligible, done: counts.SentimentDone,
 				failed: counts.SentimentFailed, failedTerminal: counts.SentimentFailedTerminal,
 			}),
 		Emotions: enrichmentTypeStatus(
-			switchedEnrichmentDisabledReason(s.emotionsConfigured,
-				settings.Settings.EmotionsEnrichmentEnabled()),
+			gates.disabledReasonFor(models.EnrichmentNameEmotions, settings),
 			enrichmentCounts{
 				eligible: counts.EmotionsEligible, done: counts.EmotionsDone,
 				failed: counts.EmotionsFailed, failedTerminal: counts.EmotionsFailedTerminal,
