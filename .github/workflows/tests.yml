@@ -101,7 +101,7 @@ jobs:
         run: go mod download
 
       - name: Install goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.28.0
 
       - name: Validate migrations
         run: make migrate-validate
@@ -111,7 +111,7 @@ jobs:
 
       - name: Run River migrations
         run: |
-          go install github.com/riverqueue/river/cmd/river@v0.39.0
+          go install github.com/riverqueue/river/cmd/river@v0.47.0
           make river-migrate
 
       - name: Run integration tests
@@ -164,14 +164,14 @@ jobs:
         run: go mod download
 
       - name: Install goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.28.0
 
       - name: Initialize database schema
         run: make init-db
 
       - name: Run River migrations
         run: |
-          go install github.com/riverqueue/river/cmd/river@v0.39.0
+          go install github.com/riverqueue/river/cmd/river@v0.47.0
           make river-migrate
 
       - name: Check coverage (excludes cmd/api)
