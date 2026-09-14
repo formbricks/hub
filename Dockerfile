@@ -2,17 +2,17 @@
 # Stage 1: Build
 # =============================================================================
 # TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
-FROM golang:1.26.6-alpine AS builder
+FROM golang:1.27.1-alpine AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
-ARG GOOSE_VERSION=v3.27.1
-ARG RIVER_VERSION=v0.39.0
-ARG OTEL_VERSION=v1.44.0
-ARG GRPC_VERSION=v1.82.1
-ARG X_CRYPTO_VERSION=v0.53.0
-ARG X_NET_VERSION=v0.56.0
-ARG X_SYS_VERSION=v0.46.0
-ARG X_TEXT_VERSION=v0.39.0
+ARG GOOSE_VERSION=v3.28.0
+ARG RIVER_VERSION=v0.47.0
+ARG OTEL_VERSION=v1.46.0
+ARG GRPC_VERSION=v1.83.2
+ARG X_CRYPTO_VERSION=v0.57.0
+ARG X_NET_VERSION=v0.59.0
+ARG X_SYS_VERSION=v0.48.0
+ARG X_TEXT_VERSION=v0.42.0
 
 RUN apk add --no-cache git ca-certificates
 
@@ -49,7 +49,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/h
 # =============================================================================
 # Stage 2: Runtime (default: hub-api)
 # =============================================================================
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata wget
 
