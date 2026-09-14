@@ -92,8 +92,7 @@ func (h *TaxonomyInternalHandler) CompleteRun(w http.ResponseWriter, r *http.Req
 
 	var req models.TaxonomyRunResultRequest
 	if err := decodeAndValidateJSON(r, &req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
 
 			return

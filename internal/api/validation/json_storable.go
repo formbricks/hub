@@ -47,7 +47,7 @@ const (
 func validateStorableJSON(fl validator.FieldLevel) bool {
 	field := fl.Field()
 
-	if field.Kind() == reflect.Ptr {
+	if field.Kind() == reflect.Pointer {
 		if field.IsNil() {
 			return true // nil pointer is valid (handled by omitempty)
 		}

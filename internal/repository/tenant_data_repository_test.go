@@ -111,9 +111,7 @@ func assertTenantDeleteCounts(t *testing.T, counts *models.TenantDataDeleteCount
 func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 	t.Run("locks tenant exclusively, commits transaction, and returns counts", func(t *testing.T) {
 		transaction := &fakeTenantWriteTx{
-			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				tags: append(purgeLockTags(), tenantDeleteTags()...),
-			},
+			tags:        append(purgeLockTags(), tenantDeleteTags()...),
 			rollbackErr: pgx.ErrTxClosed,
 		}
 		repo := &TenantDataRepository{db: &fakeTenantWriteDB{tx: transaction}, purgeLockTimeout: 5 * time.Second}
@@ -150,10 +148,8 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 
 	t.Run("lock timeout returns tenant write conflict without deletes", func(t *testing.T) {
 		transaction := &fakeTenantWriteTx{
-			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				errAtQuery: 2,
-				err:        &pgconn.PgError{Code: lockNotAvailableSQLState},
-			},
+			errAtQuery: 2,
+			err:        &pgconn.PgError{Code: lockNotAvailableSQLState},
 		}
 		repo := &TenantDataRepository{db: &fakeTenantWriteDB{tx: transaction}, purgeLockTimeout: time.Second}
 
@@ -184,10 +180,8 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 	t.Run("rolls back and returns delete error", func(t *testing.T) {
 		rollbackErr := errors.New("rollback failed")
 		transaction := &fakeTenantWriteTx{
-			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				tags:       purgeLockTags(),
-				errAtQuery: 5,
-			},
+			tags:        purgeLockTags(),
+			errAtQuery:  5,
 			rollbackErr: rollbackErr,
 		}
 		repo := &TenantDataRepository{db: &fakeTenantWriteDB{tx: transaction}}
@@ -227,9 +221,7 @@ func TestTenantDataRepository_DeleteByTenant(t *testing.T) {
 	t.Run("returns commit error", func(t *testing.T) {
 		commitErr := errors.New("commit failed")
 		transaction := &fakeTenantWriteTx{
-			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				tags: append(purgeLockTags(), tenantDeleteTags()...),
-			},
+			tags:        append(purgeLockTags(), tenantDeleteTags()...),
 			commitErr:   commitErr,
 			rollbackErr: pgx.ErrTxClosed,
 		}

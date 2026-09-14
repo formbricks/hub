@@ -524,8 +524,7 @@ func (c *Client) recordUsage(
 // what "timeout" means.
 func errorTypeOf(err error) string {
 	return llm.ClassifyError(err, func(err error) (int, bool) {
-		var apiErr *openaisdk.Error
-		if errors.As(err, &apiErr) {
+		if apiErr, ok := errors.AsType[*openaisdk.Error](err); ok {
 			return apiErr.StatusCode, true
 		}
 

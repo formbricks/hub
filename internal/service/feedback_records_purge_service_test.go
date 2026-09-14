@@ -137,10 +137,8 @@ func TestFeedbackRecordsPurgeService_Purge(t *testing.T) {
 		repo := &stubPurgeRepo{counts: &models.FeedbackRecordsPurgeCounts{
 			DeletedFeedbackRecords: 3,
 			DeletedEmbeddings:      2,
-			TenantTaxonomyDeleteCounts: models.TenantTaxonomyDeleteCounts{
-				ClusterMemberships: 5,
-				Runs:               1,
-			},
+			ClusterMemberships:     5,
+			Runs:                   1,
 		}}
 
 		counts, err := NewFeedbackRecordsPurgeService(repo, nil).Purge(context.Background(), "org-1")

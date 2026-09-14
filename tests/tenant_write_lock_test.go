@@ -523,12 +523,10 @@ func TestRepositoryWritesConflictDuringPurge(t *testing.T) {
 	webhook := createTenantDataWebhook(ctx, t, client, server.URL, tenantA, "tenant-lock-repo")
 
 	pendingRun, created, err := taxonomyRepo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{
-		TaxonomyScope: models.TaxonomyScope{
-			TenantID:   tenantA,
-			SourceType: "formbricks",
-			SourceID:   "tenant-lock-source",
-			FieldID:    record.FieldID,
-		},
+		TenantID:       tenantA,
+		SourceType:     "formbricks",
+		SourceID:       "tenant-lock-source",
+		FieldID:        record.FieldID,
 		RecordCount:    1,
 		EmbeddingCount: 1,
 	})
@@ -568,12 +566,10 @@ func TestRepositoryWritesConflictDuringPurge(t *testing.T) {
 
 	t.Run("taxonomy run create and transitions conflict", func(t *testing.T) {
 		_, _, err := taxonomyRepo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{
-			TaxonomyScope: models.TaxonomyScope{
-				TenantID:   tenantA,
-				SourceType: "formbricks",
-				SourceID:   "tenant-lock-source-2",
-				FieldID:    record.FieldID,
-			},
+			TenantID:       tenantA,
+			SourceType:     "formbricks",
+			SourceID:       "tenant-lock-source-2",
+			FieldID:        record.FieldID,
 			RecordCount:    1,
 			EmbeddingCount: 1,
 		})

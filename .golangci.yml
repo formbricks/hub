@@ -9,7 +9,7 @@ run:
   timeout: 5m
   concurrency: 4
   modules-download-mode: readonly
-  go: "1.26.6"
+  go: "1.27.1"
   # Allow linting test files but suppress specific strict rules via exclusion below
   tests: true
 
@@ -32,7 +32,14 @@ formatters:
         - default
         - prefix(github.com/formbricks/hub)
     gofumpt:
-      extra-rules: true
+      # Migrated off the deprecated `extra-rules: true`, which enabled all three
+      # of gofumpt's extra rules. balance-calls is deliberately left off: it moves
+      # the closing paren of a wrapped call onto its own line, which would reformat
+      # ~43 call sites across the repo for no benefit. The deprecation notice only
+      # mentions group-params, so list what we actually want.
+      extra:
+        group-params: true
+        clothe-returns: true
 
 linters:
   # Disable everything first to have full control

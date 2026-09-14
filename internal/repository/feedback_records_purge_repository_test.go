@@ -25,10 +25,10 @@ func purgeBatches(batches ...[]int64) *fakeTenantWriteTx {
 	highWaterMark := uuid.New()
 
 	return &fakeTenantWriteTx{
-		fakeTenantDataExecutor: fakeTenantDataExecutor{tags: purgeLockTags()},
-		highWaterMark:          &highWaterMark,
-		purgeBatchRows:         batches,
-		rollbackErr:            pgx.ErrTxClosed,
+		tags:           purgeLockTags(),
+		highWaterMark:  &highWaterMark,
+		purgeBatchRows: batches,
+		rollbackErr:    pgx.ErrTxClosed,
 	}
 }
 
@@ -237,8 +237,8 @@ func TestTenantDataRepository_PurgeFeedbackRecordsByTenant(t *testing.T) {
 	// behind by an earlier run.
 	t.Run("skips the record loop when the tenant has none", func(t *testing.T) {
 		transaction := &fakeTenantWriteTx{
-			fakeTenantDataExecutor: fakeTenantDataExecutor{tags: purgeLockTags()},
-			rollbackErr:            pgx.ErrTxClosed,
+			tags:        purgeLockTags(),
+			rollbackErr: pgx.ErrTxClosed,
 		}
 
 		counts, err := newRecordsPurgeRepo(transaction).
@@ -270,11 +270,9 @@ func TestTenantDataRepository_PurgeFeedbackRecordsByTenant(t *testing.T) {
 
 	t.Run("lock timeout returns a retryable conflict without deleting", func(t *testing.T) {
 		transaction := &fakeTenantWriteTx{
-			fakeTenantDataExecutor: fakeTenantDataExecutor{
-				tags:       purgeLockTags(),
-				errAtQuery: 2,
-				err:        &pgconn.PgError{Code: lockNotAvailableSQLState},
-			},
+			tags:        purgeLockTags(),
+			errAtQuery:  2,
+			err:         &pgconn.PgError{Code: lockNotAvailableSQLState},
 			rollbackErr: pgx.ErrTxClosed,
 		}
 
