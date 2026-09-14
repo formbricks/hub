@@ -494,7 +494,7 @@ type CreateFeedbackRecordRequest struct {
 	ValueNumber     *float64        `json:"value_number,omitempty"`
 	ValueBoolean    *bool           `json:"value_boolean,omitempty"`
 	ValueDate       *time.Time      `json:"value_date,omitempty"`
-	Metadata        json.RawMessage `json:"metadata,omitempty"`
+	Metadata        json.RawMessage `json:"metadata,omitempty"          validate:"omitempty,storable_json"`
 	Language        *string         `json:"language,omitempty"          validate:"omitempty,no_null_bytes,max=10"`
 	UserID          *string         `json:"user_id,omitempty"           validate:"omitempty,no_null_bytes,max=255"`
 	TenantID        string          `json:"tenant_id"                   validate:"required,no_null_bytes,max=255"`
@@ -516,7 +516,7 @@ type UpdateFeedbackRecordRequest struct {
 	ValueNumber  *float64        `json:"value_number,omitempty"`
 	ValueBoolean *bool           `json:"value_boolean,omitempty"`
 	ValueDate    *time.Time      `json:"value_date,omitempty"`
-	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"      validate:"omitempty,storable_json"`
 	Language     *string         `json:"language,omitempty"      validate:"omitempty,no_null_bytes,max=10"`
 	UserID       *string         `json:"user_id,omitempty"       validate:"omitempty,no_null_bytes,max=255"`
 }

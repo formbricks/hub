@@ -597,6 +597,7 @@ func newTestHTTPServerWithConfig(t *testing.T, publicBaseURL string, taxonomy co
 		handlers.NewTaxonomyHandler(nil),
 		handlers.NewTaxonomyInternalHandler(),
 		handlers.NewEnrichmentStatusHandler(nil),
+		handlers.NewEnrichmentRetryHandler(nil),
 		nil,
 		nil,
 	)

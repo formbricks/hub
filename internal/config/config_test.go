@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -366,6 +367,7 @@ func TestLoad_EmbeddingBatchSettings(t *testing.T) {
 	t.Setenv("EMBEDDING_BATCH_SIZE", "8")
 	t.Setenv("EMBEDDING_BATCH_MAX_WAIT_MS", "37")
 	t.Setenv("EMBEDDING_BATCH_MAX_IN_FLIGHT", "3")
+	t.Setenv("EMBEDDING_HTTP_DISABLE_KEEP_ALIVES", "true")
 
 	cfg, err := Load()
 	if err != nil {
@@ -382,6 +384,40 @@ func TestLoad_EmbeddingBatchSettings(t *testing.T) {
 
 	if cfg.Embedding.BatchMaxInFlight != 3 {
 		t.Errorf("Embedding.BatchMaxInFlight = %d, want 3", cfg.Embedding.BatchMaxInFlight)
+	}
+
+	if !cfg.Embedding.HTTPDisableKeepAlives {
+		t.Error("Embedding.HTTPDisableKeepAlives = false, want true")
+	}
+}
+
+func TestLoad_EmbeddingRecoverySettings(t *testing.T) {
+	t.Setenv("API_KEY", "test-api-key")
+	t.Setenv("EMBEDDING_MAX_ATTEMPTS", "7")
+	t.Setenv("EMBEDDING_JOB_TIMEOUT_SECONDS", "75")
+	t.Setenv("EMBEDDING_RECONCILE_ENABLED", "true")
+	t.Setenv("EMBEDDING_RECONCILE_INTERVAL_SECONDS", "240")
+	t.Setenv("EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS", "600")
+	t.Setenv("EMBEDDING_RECONCILE_TARGET_DEPTH", "64")
+	t.Setenv("EMBEDDING_RECONCILE_MAX_CONCURRENT", "2")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Embedding.MaxAttempts != 7 || cfg.Embedding.JobTimeout.Duration() != 75*time.Second {
+		t.Errorf("Embedding attempt/timeout = (%d, %v), want (7, 75s)",
+			cfg.Embedding.MaxAttempts, cfg.Embedding.JobTimeout.Duration())
+	}
+
+	if !cfg.Embedding.ReconcileEnabled || cfg.Embedding.ReconcileInterval.Duration() != 4*time.Minute ||
+		cfg.Embedding.ReconcileRetryAfter.Duration() != 10*time.Minute ||
+		cfg.Embedding.ReconcileTargetDepth != 64 || cfg.Embedding.ReconcileMaxConcurrent != 2 {
+		t.Errorf("Embedding reconcile settings = (%v, %v, %v, %d, %d), want (true, 4m, 10m, 64, 2)",
+			cfg.Embedding.ReconcileEnabled, cfg.Embedding.ReconcileInterval.Duration(),
+			cfg.Embedding.ReconcileRetryAfter.Duration(),
+			cfg.Embedding.ReconcileTargetDepth, cfg.Embedding.ReconcileMaxConcurrent)
 	}
 }
 
@@ -680,13 +716,30 @@ func TestApplyDefaults(t *testing.T) {
 		t.Errorf("Embedding.MaxConcurrent = %d, want 5", cfg.Embedding.MaxConcurrent)
 	}
 
-	if cfg.Embedding.MaxAttempts != 3 {
-		t.Errorf("Embedding.MaxAttempts = %d, want 3", cfg.Embedding.MaxAttempts)
+	if cfg.Embedding.MaxAttempts != 5 {
+		t.Errorf("Embedding.MaxAttempts = %d, want 5", cfg.Embedding.MaxAttempts)
+	}
+
+	if cfg.Embedding.JobTimeout.Duration() != 60*time.Second {
+		t.Errorf("Embedding.JobTimeout = %v, want 60s", cfg.Embedding.JobTimeout.Duration())
+	}
+
+	if cfg.Embedding.ReconcileInterval.Duration() != 5*time.Minute ||
+		cfg.Embedding.ReconcileRetryAfter.Duration() != 15*time.Minute ||
+		cfg.Embedding.ReconcileTargetDepth != 100 || cfg.Embedding.ReconcileMaxConcurrent != 1 {
+		t.Errorf("Embedding reconcile defaults = (%v, %v, %d, %d), want (5m, 15m, 100, 1)",
+			cfg.Embedding.ReconcileInterval.Duration(), cfg.Embedding.ReconcileRetryAfter.Duration(),
+			cfg.Embedding.ReconcileTargetDepth,
+			cfg.Embedding.ReconcileMaxConcurrent)
 	}
 
 	if cfg.Embedding.BatchSize != 1 || cfg.Embedding.BatchMaxWaitMs != 25 || cfg.Embedding.BatchMaxInFlight != 1 {
 		t.Errorf("Embedding batch defaults = (%d, %d, %d), want (1, 25, 1)",
 			cfg.Embedding.BatchSize, cfg.Embedding.BatchMaxWaitMs, cfg.Embedding.BatchMaxInFlight)
+	}
+
+	if cfg.Embedding.HTTPDisableKeepAlives {
+		t.Error("Embedding.HTTPDisableKeepAlives = true, want false")
 	}
 }
 
@@ -988,4 +1041,98 @@ func TestLoad_SurfacesEnvCoercionError(t *testing.T) {
 	if !strings.Contains(err.Error(), "SENTIMENT_MAX_ATTEMPTS") {
 		t.Fatalf("Load() error = %v, want it to name the offending SENTIMENT_MAX_ATTEMPTS variable", err)
 	}
+}
+
+func TestCIDRSetSetValue(t *testing.T) {
+	var set CIDRSet
+
+	if err := set.SetValue("100.64.0.0/10, 64:ff9b::/96 ,"); err != nil {
+		t.Fatalf("SetValue() error = %v, want nil", err)
+	}
+
+	if len(set) != 2 {
+		t.Fatalf("len(set) = %d, want 2 (blank entries skipped)", len(set))
+	}
+
+	if got := set[0].String(); got != "100.64.0.0/10" {
+		t.Errorf("set[0] = %q, want %q", got, "100.64.0.0/10")
+	}
+
+	if !set[0].Contains(netip.MustParseAddr("100.100.100.100")) {
+		t.Error("parsed prefix does not contain an address inside its range")
+	}
+
+	var empty CIDRSet
+	if err := empty.SetValue(""); err != nil {
+		t.Fatalf("SetValue(\"\") error = %v, want nil", err)
+	}
+
+	if len(empty) != 0 {
+		t.Errorf("len(empty) = %d, want 0", len(empty))
+	}
+}
+
+// A typo in an SSRF allowlist must fail startup rather than being silently skipped: skipping it
+// would leave the operator believing a range is permitted when it is not, and a mistyped prefix
+// could name a wider range than intended.
+func TestCIDRSetSetValue_RejectsMalformedEntry(t *testing.T) {
+	for _, raw := range []string{"not-a-cidr", "100.64.0.0", "100.64.0.0/99", "100.64.0.0/10,garbage"} {
+		var set CIDRSet
+		if err := set.SetValue(raw); err == nil {
+			t.Errorf("SetValue(%q) error = nil, want error", raw)
+		}
+	}
+}
+
+// A host address (e.g. 100.64.0.1/10) is normalized to its network so Contains behaves as the
+// operator expects rather than depending on which host they happened to type.
+func TestCIDRSetSetValue_MasksHostBits(t *testing.T) {
+	var set CIDRSet
+	if err := set.SetValue("100.64.0.5/10"); err != nil {
+		t.Fatalf("SetValue() error = %v, want nil", err)
+	}
+
+	if got := set[0].String(); got != "100.64.0.0/10" {
+		t.Errorf("set[0] = %q, want %q", got, "100.64.0.0/10")
+	}
+}
+
+func TestLoad_WebhookAllowedCIDRs(t *testing.T) {
+	t.Run("empty when unset", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if len(cfg.Webhook.AllowedCIDRs) != 0 {
+			t.Errorf("Webhook.AllowedCIDRs = %v, want empty by default", cfg.Webhook.AllowedCIDRs)
+		}
+	})
+
+	t.Run("parsed from WEBHOOK_ALLOWED_CIDRS", func(t *testing.T) {
+		t.Setenv("WEBHOOK_ALLOWED_CIDRS", "100.64.0.0/10,64:ff9b::/96")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if len(cfg.Webhook.AllowedCIDRs) != 2 {
+			t.Fatalf("len(Webhook.AllowedCIDRs) = %d, want 2", len(cfg.Webhook.AllowedCIDRs))
+		}
+
+		if !cfg.Webhook.AllowedCIDRs[0].Contains(netip.MustParseAddr("100.64.0.1")) {
+			t.Error("configured tailnet prefix does not contain 100.64.0.1")
+		}
+	})
+
+	// Fail closed: a malformed allowlist must stop the process, not start it with a policy the
+	// operator did not write.
+	t.Run("malformed value fails startup", func(t *testing.T) {
+		t.Setenv("WEBHOOK_ALLOWED_CIDRS", "100.64.0.0/10,not-a-cidr")
+
+		if _, err := Load(); err == nil {
+			t.Fatal("Load() error = nil, want error for a malformed WEBHOOK_ALLOWED_CIDRS")
+		}
+	})
 }

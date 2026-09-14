@@ -1,0 +1,65 @@
+---
+title: Metrics
+description: The OpenTelemetry metrics Hub emits from the API and worker — enrichment pipelines, webhooks, job queues, semantic search, and caches — for dashboards and alerting.
+---
+
+Hub emits [OpenTelemetry](https://opentelemetry.io/) metrics from both `hub-api` and `hub-worker`. They are exported only when a metrics exporter is configured (see [`OTEL_METRICS_EXPORTER`](/reference/environment-variables#observability)); with none set, metric recording is a no-op. Standard HTTP server metrics (request duration, counts) are also emitted for the API via OpenTelemetry's `net/http` instrumentation — the tables below cover Hub's own instruments.
+
+Label cardinality is deliberately bounded: label values come from fixed sets, and an unexpected value collapses to `other` rather than opening a new series.
+
+## Enrichment pipelines
+
+Embeddings, translation, sentiment, and emotions each emit the same five instruments under a per-type prefix — `{type}` is one of `embedding`, `translation`, `sentiment`, `emotions`:
+
+| Metric                             | Type      | Labels   | Description                                                                                                                       |
+| ---------------------------------- | --------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `hub_{type}_jobs_enqueued_total`   | counter   | —        | Jobs enqueued by the enqueue provider.                                                                                            |
+| `hub_{type}_provider_errors_total` | counter   | `reason` | Enqueue-path failures (for example `enqueue_failed`, `settings_read_failed`).                                                     |
+| `hub_{type}_outcomes_total`        | counter   | `status` | Worker outcomes: `success`, `retry`, `failed_final`, `skipped`.                                                                   |
+| `hub_{type}_worker_errors_total`   | counter   | `reason` | Worker-side errors (for example `{type}_api_failed`, `get_record_failed`, `rate_limited`, `superseded`, `tenant_write_conflict`). |
+| `hub_{type}_duration_seconds`      | histogram | `status` | Time to process one job.                                                                                                          |
+
+Two enrichment-wide instruments:
+
+| Metric                                 | Type    | Labels       | Description                                                                                                                                                                |
+| -------------------------------------- | ------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hub_provider_panics_total`            | counter | `event_type` | Recovered panics in an event fan-out provider. Expected to stay flat; a rising value means a provider is repeatedly crashing.                                              |
+| `hub_enrichment_outputs_cleared_total` | counter | `output`     | Enrichment outputs (`sentiment`, `emotions`, `translation`) nulled by an edit's eager-clear. A high rate with no matching re-enrichment points at backfill-recovery cases. |
+
+## Semantic search
+
+| Metric                             | Type        | Labels | Description                                                                                                                  |
+| ---------------------------------- | ----------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `hub_hnsw_iterative_scan_degraded` | gauge (0/1) | —      | `1` when HNSW iterative scan is latched off (pgvector < 0.8 fallback; recall capped at `ef_search` until restart), else `0`. |
+
+## Webhooks
+
+| Metric                                  | Type      | Labels   | Description                                            |
+| --------------------------------------- | --------- | -------- | ------------------------------------------------------ |
+| `hub_webhook_jobs_enqueued_total`       | counter   | —        | Webhook delivery jobs enqueued.                        |
+| `hub_webhook_provider_errors_total`     | counter   | `reason` | Enqueue-path failures.                                 |
+| `hub_webhook_deliveries_total`          | counter   | `status` | Delivery outcomes: `success`, `retry`, `failed_final`. |
+| `hub_webhook_disabled_total`            | counter   | `reason` | Endpoints auto-disabled (`410_gone`, `max_attempts`).  |
+| `hub_webhook_dispatch_errors_total`     | counter   | `reason` | Dispatch-time errors.                                  |
+| `hub_webhook_delivery_duration_seconds` | histogram | `status` | Outbound webhook request duration.                     |
+
+## Event publisher & job queues
+
+| Metric                                           | Type      | Labels  | Description                                                                                                            |
+| ------------------------------------------------ | --------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `hub_events_discarded_total`                     | counter   | —       | Events dropped because the in-memory fan-out channel was full. Should be ~0; a rise means the publisher can't keep up. |
+| `hub_message_publisher_fan_out_duration_seconds` | histogram | —       | Time to fan one event out to all providers.                                                                            |
+| `hub_event_channel_depth`                        | gauge     | —       | Current depth of the event fan-out channel.                                                                            |
+| `hub_river_queue_depth`                          | gauge     | `queue` | Waiting River jobs per queue (available / retryable / scheduled).                                                      |
+| `hub_river_queue_oldest_age_seconds`             | gauge     | `queue` | Age in seconds of the oldest waiting job per queue (0 when empty) — drives lag SLOs where depth alone cannot.          |
+
+## Caches
+
+| Metric                   | Type    | Labels  | Description                                                                     |
+| ------------------------ | ------- | ------- | ------------------------------------------------------------------------------- |
+| `hub_cache_hits_total`   | counter | `cache` | Cache hits. `cache` is `search_query_embedding` or `tenant_settings`.           |
+| `hub_cache_misses_total` | counter | `cache` | Cache misses. Hit ratio = `rate(hits) / (rate(hits) + rate(misses))` per cache. |
+
+## Histogram buckets
+
+All `*_duration_seconds` histograms share explicit second buckets up to 60s (`…, 5, 7.5, 10, 30, 60`), covering the 30s enrichment/LLM job timeouts so a final-attempt latency lands in a real bucket rather than `+Inf`.

@@ -5,6 +5,7 @@ package models
 // the whole taxonomy, so they report the same numbers.
 type TenantTaxonomyDeleteCounts struct {
 	Runs               int64
+	InputRecords       int64
 	Clusters           int64
 	ClusterMemberships int64
 	Nodes              int64
@@ -22,6 +23,7 @@ type TenantDataDeleteCounts struct {
 	// purge (not via feedback-record cascades). Each field is the exact row
 	// count deleted from its taxonomy table for the tenant.
 	DeletedTaxonomyRuns               int64
+	DeletedTaxonomyRunInputRecords    int64
 	DeletedTaxonomyClusters           int64
 	DeletedTaxonomyClusterMemberships int64
 	DeletedTaxonomyNodes              int64
@@ -43,6 +45,7 @@ type TenantDataDeleteResponse struct {
 	DeletedEmbeddings                 int64  `json:"deleted_embeddings"`
 	DeletedWebhooks                   int64  `json:"deleted_webhooks"`
 	DeletedTaxonomyRuns               int64  `json:"deleted_taxonomy_runs"`
+	DeletedTaxonomyRunInputRecords    int64  `json:"deleted_taxonomy_run_input_records"`
 	DeletedTaxonomyClusters           int64  `json:"deleted_taxonomy_clusters"`
 	DeletedTaxonomyClusterMemberships int64  `json:"deleted_taxonomy_cluster_memberships"`
 	DeletedTaxonomyNodes              int64  `json:"deleted_taxonomy_nodes"`

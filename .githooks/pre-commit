@@ -10,14 +10,24 @@ export PATH="$HOME/go/bin:${GOPATH:-$HOME/go}/bin:$PATH"
 
 echo "Running pre-commit checks..."
 
-# Check if golangci-lint is installed
-if ! command -v golangci-lint >/dev/null 2>&1; then
-    echo "Error: golangci-lint not found. Install it with: make install-tools"
-    exit 1
-fi
+# Deletions count when deciding what to validate: removing or moving a .go file can
+# break the build just as easily as editing one.
+#
+# --no-renames is load-bearing, not stylistic. With rename detection on, `git diff
+# --name-only` reports only the DESTINATION path, so renaming foo.go -> notes.txt
+# lists just notes.txt and the Go checks would skip even though a .go file left the
+# build. --no-renames decomposes the rename into a delete plus an add, surfacing
+# both paths (which also makes an R filter redundant).
+STAGED_FILES=$(git diff --cached --name-only --no-renames --diff-filter=ACMD)
+
+# The Go toolchain stages below are pointless for a commit that touches no Go
+# code — docs/ is an Astro site and the only non-Go part of the repo. Mirrors the
+# path filters on tests.yml and code-quality.yml so local and CI agree on what a
+# change is worth checking.
+STAGED_GO_RELEVANT=$(echo "$STAGED_FILES" | grep -E '\.go$|^go\.(mod|sum)$|^Makefile$|^\.golangci\.yml$' || true)
 
 # Validate migrations if any staged file is in migrations/
-STAGED_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACM | grep '^migrations/' || true)
+STAGED_MIGRATIONS=$(echo "$STAGED_FILES" | grep '^migrations/' || true)
 if [ -n "$STAGED_MIGRATIONS" ]; then
     echo "Validating migration files..."
     if ! command -v goose >/dev/null 2>&1; then
@@ -31,9 +41,26 @@ if [ -n "$STAGED_MIGRATIONS" ]; then
     fi
 fi
 
+if [ -z "$STAGED_GO_RELEVANT" ]; then
+    echo "No Go changes staged — skipping fmt, lint and unit tests."
+    if echo "$STAGED_FILES" | grep -q '^docs/'; then
+        echo "Docs changed: validate with 'pnpm check' and 'pnpm build' from docs/ (also enforced by docs-build.yml)."
+    fi
+    echo "✅ Pre-commit checks passed!"
+    exit 0
+fi
+
+# Check if golangci-lint is installed
+if ! command -v golangci-lint >/dev/null 2>&1; then
+    echo "Error: golangci-lint not found. Install it with: make install-tools"
+    exit 1
+fi
+
 # Format code (make fmt = gofumpt + gci via golangci-lint --fix from .golangci.yml)
-# Keep track of staged Go files so we only auto-stage fixes for those files.
-STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+# Keep track of staged Go files so we only auto-stage fixes for those files. Unlike
+# STAGED_FILES this deliberately re-queries with ACM: a formatter fix can only be
+# staged for a file that still exists.
+STAGED_GO_FILES=$(git diff --cached --name-only --no-renames --diff-filter=ACM | grep '\.go$' || true)
 echo "Running make fmt..."
 if ! make fmt; then
     echo ""

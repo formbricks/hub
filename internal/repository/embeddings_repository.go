@@ -23,6 +23,20 @@ import (
 var errEmbeddingBackfillTenantRequired = errors.New("tenant id is required for tenant embedding backfill")
 
 const (
+	// trimSpaceCharactersSQL is the complete Unicode White_Space set used by Go strings.TrimSpace.
+	// Unicode escape literals keep the characters visible and make the result stable across supported
+	// PostgreSQL versions (PostgreSQL 16 interprets E'\v' as the literal letter "v").
+	trimSpaceCharactersSQL = `U&'\0009\000A\000B\000C\000D\0020' ||
+		U&'\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A' ||
+		U&'\2028\2029\202F\205F\3000'`
+	// taxonomyEmbeddingInputTextSQL mirrors BuildEmbeddingInputFromValues: prefer non-blank
+	// translated text, then fall back to non-blank source text.
+	taxonomyEmbeddingInputTextSQL = `COALESCE(
+		NULLIF(btrim(fr.value_text_translated, ` + trimSpaceCharactersSQL + `), ''),
+		NULLIF(btrim(fr.value_text, ` + trimSpaceCharactersSQL + `), '')
+	)`
+	taxonomyEmbeddingEligibleTextSQL = taxonomyEmbeddingInputTextSQL + ` IS NOT NULL`
+
 	// hnswEfSearch increases HNSW graph traversal candidates (default 40); higher improves recall.
 	hnswEfSearch = 200
 	// hnswIterativeScanMode makes the HNSW scan resume past ef_search candidates until the query's
@@ -285,6 +299,106 @@ func (r *EmbeddingsRepository) ListTenantFeedbackRecordIDsForBackfillByInputKind
 	}
 
 	return r.listFeedbackRecordIDsForBackfillByInputKind(ctx, model, inputKind, tenantID, true, afterID, limit)
+}
+
+// ListPendingTaxonomyEmbeddingIDs returns eligible text records that still lack the exact
+// taxonomy embedding model and do not already have an in-flight embedding job on any queue.
+// Terminal failures are excluded: retrying content the provider has conclusively rejected would
+// spend a call on every sweep forever. Non-terminal failures become eligible after retryBefore,
+// preventing the same poison records from monopolizing every bounded sweep. Candidates are
+// ordered oldest first so successful/cooldown-filtered sweeps advance through the backlog rather
+// than repeatedly selecting whichever tenant is ingesting the newest records.
+//
+// The ordered eligibility scan is deliberately deployment-wide rather than tenant-scoped: the
+// repair lane must make progress without requiring tenant discovery or allowing a busy tenant to
+// monopolize it. Its operational impact is bounded by the five-minute sweep cadence and two-minute
+// worker deadline, while the target-depth LIMIT bounds returned rows and queued work (not scan
+// cost). Changing the access path requires production-scale query-plan evidence because the
+// missing-embedding predicate lives in a separate table.
+func (r *EmbeddingsRepository) ListPendingTaxonomyEmbeddingIDs(
+	ctx context.Context, model string, retryBefore time.Time, limit int,
+) ([]uuid.UUID, error) {
+	if limit <= 0 {
+		return []uuid.UUID{}, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT fr.id
+		FROM feedback_records fr
+		LEFT JOIN feedback_record_enrichment_failures failure
+		  ON failure.feedback_record_id = fr.id
+		 AND failure.enrichment = $3
+		 AND failure.context_key = $1
+		 AND failure.source_updated_at = fr.updated_at
+		WHERE fr.field_type = 'text'
+		  AND `+taxonomyEmbeddingEligibleTextSQL+`
+		  AND NOT EXISTS (
+			SELECT 1 FROM embeddings e
+			WHERE e.feedback_record_id = fr.id AND e.model = $1
+		  )
+		  AND (failure.feedback_record_id IS NULL OR (
+		    NOT failure.terminal AND failure.failed_at <= $4
+		  ))
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM river_job job
+			WHERE job.kind = 'feedback_embedding'
+			  AND job.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
+			  -- River's GIN index on args supports containment; separate ->> equality
+			  -- predicates would filter every job remaining after the kind lookup.
+			  AND job.args @> jsonb_build_object(
+				'feedback_record_id', fr.id::text,
+				'model', $1::text,
+				'input_kind', $2::text
+			  )
+		  )
+		ORDER BY fr.collected_at, fr.id
+		LIMIT $5`,
+		model,
+		models.EmbeddingInputKindTaxonomyTranslated,
+		models.EnrichmentNameTaxonomyEmbedding,
+		retryBefore,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pending taxonomy embedding ids: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]uuid.UUID, 0, limit)
+
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan pending taxonomy embedding id: %w", err)
+		}
+
+		ids = append(ids, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending taxonomy embedding ids: %w", err)
+	}
+
+	return ids, nil
+}
+
+// CountRunnableEmbeddingJobs returns the current runnable depth of one embedding queue. Retryable
+// jobs are included: although they are waiting out backoff rather than occupying a worker now,
+// excluding them would let every sweep add another copy and defeat the target-depth bound.
+func (r *EmbeddingsRepository) CountRunnableEmbeddingJobs(ctx context.Context, queue string) (int, error) {
+	var count int
+	if err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM river_job
+		WHERE queue = $1
+		  AND kind = 'feedback_embedding'
+		  AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')`, queue,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count runnable embedding jobs: %w", err)
+	}
+
+	return count, nil
 }
 
 //nolint:funcorder // scoped helper stays with the public backfill methods

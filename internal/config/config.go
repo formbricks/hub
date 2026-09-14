@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -48,6 +49,12 @@ var (
 //nolint:gosec // test default URL, not a production secret
 const DefaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?sslmode=disable"
 
+const (
+	defaultEmbeddingJobTimeout          = 60 * time.Second
+	defaultEmbeddingReconcileInterval   = 5 * time.Minute
+	defaultEmbeddingReconcileRetryAfter = 15 * time.Minute
+)
+
 // Config holds all application configuration in nested groups.
 type Config struct {
 	Server              ServerConfig
@@ -56,6 +63,7 @@ type Config struct {
 	Webhook             WebhookConfig
 	MessagePublisher    MessagePublisherConfig
 	Embedding           EmbeddingConfig
+	EnrichmentReconcile EnrichmentReconcileConfig
 	Translation         TranslationConfig
 	Sentiment           SentimentConfig
 	Emotions            EmotionsConfig
@@ -122,6 +130,7 @@ type WebhookConfig struct {
 	EnqueueInitialBackoffMs int          `env:"WEBHOOK_ENQUEUE_INITIAL_BACKOFF_MS" env-default:"100"`
 	EnqueueMaxBackoffMs     int          `env:"WEBHOOK_ENQUEUE_MAX_BACKOFF_MS"     env-default:"2000"`
 	URLBlacklist            BlacklistSet `env:"WEBHOOK_BLACKLIST"                  env-default:"localhost,127.0.0.1,::1,169.254.169.254"`
+	AllowedCIDRs            CIDRSet      `env:"WEBHOOK_ALLOWED_CIDRS"`
 }
 
 // MessagePublisherConfig holds event channel and timeout settings.
@@ -132,18 +141,25 @@ type MessagePublisherConfig struct {
 
 // EmbeddingConfig holds embedding provider and queue settings.
 type EmbeddingConfig struct {
-	ProviderAPIKey      string `env:"EMBEDDING_PROVIDER_API_KEY"`
-	Provider            string `env:"EMBEDDING_PROVIDER"`
-	Model               string `env:"EMBEDDING_MODEL"`
-	BaseURL             string `env:"EMBEDDING_BASE_URL"`
-	MaxConcurrent       int    `env:"EMBEDDING_MAX_CONCURRENT"        env-default:"5"`
-	MaxAttempts         int    `env:"EMBEDDING_MAX_ATTEMPTS"          env-default:"3"`
-	BatchSize           int    `env:"EMBEDDING_BATCH_SIZE"            env-default:"1"`
-	BatchMaxWaitMs      int    `env:"EMBEDDING_BATCH_MAX_WAIT_MS"     env-default:"25"`
-	BatchMaxInFlight    int    `env:"EMBEDDING_BATCH_MAX_IN_FLIGHT"   env-default:"1"`
-	Normalize           bool   `env:"EMBEDDING_NORMALIZE"             env-default:"false"`
-	GoogleCloudProject  string `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation string `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey         string      `env:"EMBEDDING_PROVIDER_API_KEY"`
+	Provider               string      `env:"EMBEDDING_PROVIDER"`
+	Model                  string      `env:"EMBEDDING_MODEL"`
+	BaseURL                string      `env:"EMBEDDING_BASE_URL"`
+	MaxConcurrent          int         `env:"EMBEDDING_MAX_CONCURRENT"                env-default:"5"`
+	MaxAttempts            int         `env:"EMBEDDING_MAX_ATTEMPTS"                  env-default:"5"`
+	JobTimeout             DurationSec `env:"EMBEDDING_JOB_TIMEOUT_SECONDS"           env-default:"60"`
+	BatchSize              int         `env:"EMBEDDING_BATCH_SIZE"                    env-default:"1"`
+	BatchMaxWaitMs         int         `env:"EMBEDDING_BATCH_MAX_WAIT_MS"             env-default:"25"`
+	BatchMaxInFlight       int         `env:"EMBEDDING_BATCH_MAX_IN_FLIGHT"           env-default:"1"`
+	ReconcileEnabled       bool        `env:"EMBEDDING_RECONCILE_ENABLED"`
+	ReconcileInterval      DurationSec `env:"EMBEDDING_RECONCILE_INTERVAL_SECONDS"    env-default:"300"`
+	ReconcileRetryAfter    DurationSec `env:"EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS" env-default:"900"`
+	ReconcileTargetDepth   int         `env:"EMBEDDING_RECONCILE_TARGET_DEPTH"        env-default:"100"`
+	ReconcileMaxConcurrent int         `env:"EMBEDDING_RECONCILE_MAX_CONCURRENT"      env-default:"1"`
+	HTTPDisableKeepAlives  bool        `env:"EMBEDDING_HTTP_DISABLE_KEEP_ALIVES"      env-default:"false"`
+	Normalize              bool        `env:"EMBEDDING_NORMALIZE"                     env-default:"false"`
+	GoogleCloudProject     string      `env:"EMBEDDING_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation    string      `env:"EMBEDDING_GOOGLE_CLOUD_LOCATION"`
 }
 
 // TranslationConfig holds the feedback open-text translation enrichment settings
@@ -157,25 +173,34 @@ type TranslationConfig struct {
 	// target_language of its own. Empty means no fallback — translation is then per-tenant
 	// opt-in (a tenant is translated only once it sets its own target). Normalized to
 	// canonical form at load.
-	DefaultLanguage     string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
-	MaxConcurrent       int    `env:"TRANSLATION_MAX_CONCURRENT"        env-default:"5"`
-	MaxAttempts         int    `env:"TRANSLATION_MAX_ATTEMPTS"          env-default:"3"`
-	GoogleCloudProject  string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
+	DefaultLanguage        string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
+	MaxConcurrent          int    `env:"TRANSLATION_MAX_CONCURRENT"           env-default:"5"`
+	MaxAttempts            int    `env:"TRANSLATION_MAX_ATTEMPTS"             env-default:"3"`
+	ReconcileMaxConcurrent int    `env:"TRANSLATION_RECONCILE_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject     string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation    string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
 }
 
 // SentimentConfig holds the feedback sentiment-enrichment provider settings (ENG-1529).
 // Sentiment enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate embeddings and translation use (there is no separate enable flag).
 type SentimentConfig struct {
-	ProviderAPIKey      string `env:"SENTIMENT_PROVIDER_API_KEY"`
-	Provider            string `env:"SENTIMENT_PROVIDER"`
-	Model               string `env:"SENTIMENT_MODEL"`
-	BaseURL             string `env:"SENTIMENT_BASE_URL"`
-	MaxConcurrent       int    `env:"SENTIMENT_MAX_CONCURRENT"        env-default:"5"`
-	MaxAttempts         int    `env:"SENTIMENT_MAX_ATTEMPTS"          env-default:"3"`
-	GoogleCloudProject  string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey         string `env:"SENTIMENT_PROVIDER_API_KEY"`
+	Provider               string `env:"SENTIMENT_PROVIDER"`
+	Model                  string `env:"SENTIMENT_MODEL"`
+	BaseURL                string `env:"SENTIMENT_BASE_URL"`
+	MaxConcurrent          int    `env:"SENTIMENT_MAX_CONCURRENT"           env-default:"5"`
+	MaxAttempts            int    `env:"SENTIMENT_MAX_ATTEMPTS"             env-default:"3"`
+	ReconcileMaxConcurrent int    `env:"SENTIMENT_RECONCILE_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject     string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation    string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
+}
+
+// Enabled reports whether translation enrichment is configured (provider and model both set).
+// The single definition of "translation is configured": the API's status and retry gates and the
+// worker's client and sweep gates all call this, so the policy cannot diverge between processes.
+func (c TranslationConfig) Enabled() bool {
+	return c.Provider != "" && c.Model != ""
 }
 
 // Enabled reports whether sentiment enrichment is configured (provider and model both set).
@@ -187,14 +212,15 @@ func (c SentimentConfig) Enabled() bool {
 // Emotion enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate the other enrichments use (there is no separate enable flag).
 type EmotionsConfig struct {
-	ProviderAPIKey      string `env:"EMOTIONS_PROVIDER_API_KEY"`
-	Provider            string `env:"EMOTIONS_PROVIDER"`
-	Model               string `env:"EMOTIONS_MODEL"`
-	BaseURL             string `env:"EMOTIONS_BASE_URL"`
-	MaxConcurrent       int    `env:"EMOTIONS_MAX_CONCURRENT"        env-default:"5"`
-	MaxAttempts         int    `env:"EMOTIONS_MAX_ATTEMPTS"          env-default:"3"`
-	GoogleCloudProject  string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
-	GoogleCloudLocation string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
+	ProviderAPIKey         string `env:"EMOTIONS_PROVIDER_API_KEY"`
+	Provider               string `env:"EMOTIONS_PROVIDER"`
+	Model                  string `env:"EMOTIONS_MODEL"`
+	BaseURL                string `env:"EMOTIONS_BASE_URL"`
+	MaxConcurrent          int    `env:"EMOTIONS_MAX_CONCURRENT"           env-default:"5"`
+	MaxAttempts            int    `env:"EMOTIONS_MAX_ATTEMPTS"             env-default:"3"`
+	ReconcileMaxConcurrent int    `env:"EMOTIONS_RECONCILE_MAX_CONCURRENT" env-default:"2"`
+	GoogleCloudProject     string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
+	GoogleCloudLocation    string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
 }
 
 // Enabled reports whether emotion enrichment is configured (provider and model both set).
@@ -220,10 +246,10 @@ type TaxonomyConfig struct {
 	EmbeddingModel         string `env:"TAXONOMY_EMBEDDING_MODEL"`
 	MinimumEmbeddedRecords int    `env:"TAXONOMY_MIN_EMBEDDED_RECORDS" env-default:"20"`
 	// StuckRunTimeout is the maximum time a pending/running run may go without its updated_at being
-	// bumped (via the internal heartbeat endpoint) before the reaper force-fails it. Once the taxonomy
-	// service heartbeats during generation this can be tuned down to a small multiple of the heartbeat
-	// interval; until then updated_at only advances on state changes, so keep it above the longest
-	// legitimate run so healthy long-running generations are not reaped.
+	// bumped (via the internal heartbeat endpoint) before the reaper force-fails it. Keep the default
+	// compatible with taxonomy images that do not heartbeat through terminal callbacks; operators may
+	// lower it after deploying a heartbeat-capable image and retaining several heartbeat intervals of
+	// headroom.
 	StuckRunTimeout DurationSec `env:"TAXONOMY_STUCK_RUN_TIMEOUT_SECONDS" env-default:"1800"`
 	// ReaperInterval is how often the reaper sweeps for stuck runs.
 	ReaperInterval DurationSec `env:"TAXONOMY_REAPER_INTERVAL_SECONDS" env-default:"60"`
@@ -266,6 +292,47 @@ func (d *DurationSec) SetValue(s string) error {
 // Duration returns the value as time.Duration.
 func (d *DurationSec) Duration() time.Duration {
 	return time.Duration(*d)
+}
+
+// CIDRSet is a list of CIDR ranges that re-permit otherwise-blocked private/reserved webhook
+// targets (e.g. a tailnet in 100.64.0.0/10). It implements cleanenv.Setter by parsing a
+// comma-separated list of prefixes.
+type CIDRSet []netip.Prefix
+
+// SetValue implements cleanenv.Setter.
+//
+// Unlike parseBlacklist, an unparseable entry is a hard error rather than a skipped one: this list
+// widens what the SSRF classifier permits, so a typo must fail startup instead of silently leaving
+// a range blocked (or, worse, being read as a different range than intended).
+func (c *CIDRSet) SetValue(s string) error {
+	out, err := parseCIDRSet(s)
+	if err != nil {
+		return err
+	}
+
+	*c = out
+
+	return nil
+}
+
+func parseCIDRSet(s string) (CIDRSet, error) {
+	var out CIDRSet
+
+	for part := range strings.SplitSeq(s, ",") {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
+			continue
+		}
+
+		prefix, err := netip.ParsePrefix(entry)
+		if err != nil {
+			return nil, fmt.Errorf("parse webhook allowed CIDR %q: %w", entry, err)
+		}
+
+		out = append(out, prefix.Masked())
+	}
+
+	return out, nil
 }
 
 // BlacklistSet is a set of normalized hostnames (e.g. for SSRF mitigation).
@@ -405,7 +472,6 @@ func applyDefaults(cfg *Config) {
 	// or, worse, flow into InsertOpts where River substitutes its default of 25 attempts — 25
 	// LLM calls per failing job instead of the intended 3.
 	for _, tunables := range []struct{ maxConcurrent, maxAttempts *int }{
-		{&cfg.Embedding.MaxConcurrent, &cfg.Embedding.MaxAttempts},
 		{&cfg.Translation.MaxConcurrent, &cfg.Translation.MaxAttempts},
 		{&cfg.Sentiment.MaxConcurrent, &cfg.Sentiment.MaxAttempts},
 		{&cfg.Emotions.MaxConcurrent, &cfg.Emotions.MaxAttempts},
@@ -419,6 +485,18 @@ func applyDefaults(cfg *Config) {
 		}
 	}
 
+	if cfg.Embedding.MaxConcurrent <= 0 {
+		cfg.Embedding.MaxConcurrent = 5
+	}
+
+	if cfg.Embedding.MaxAttempts <= 0 {
+		cfg.Embedding.MaxAttempts = 5
+	}
+
+	if cfg.Embedding.JobTimeout.Duration() <= 0 {
+		cfg.Embedding.JobTimeout = DurationSec(defaultEmbeddingJobTimeout)
+	}
+
 	if cfg.Embedding.BatchSize <= 0 {
 		cfg.Embedding.BatchSize = 1
 	}
@@ -429,6 +507,22 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Embedding.BatchMaxInFlight <= 0 {
 		cfg.Embedding.BatchMaxInFlight = 1
+	}
+
+	if cfg.Embedding.ReconcileInterval.Duration() <= 0 {
+		cfg.Embedding.ReconcileInterval = DurationSec(defaultEmbeddingReconcileInterval)
+	}
+
+	if cfg.Embedding.ReconcileRetryAfter.Duration() <= 0 {
+		cfg.Embedding.ReconcileRetryAfter = DurationSec(defaultEmbeddingReconcileRetryAfter)
+	}
+
+	if cfg.Embedding.ReconcileTargetDepth <= 0 {
+		cfg.Embedding.ReconcileTargetDepth = 100
+	}
+
+	if cfg.Embedding.ReconcileMaxConcurrent <= 0 {
+		cfg.Embedding.ReconcileMaxConcurrent = 1
 	}
 
 	// Default the cache size only when the operator did not set it. An explicit 0 (or
@@ -595,4 +689,59 @@ func normalizeHTTPBaseURL(raw string, sentinel error) (string, error) {
 	}
 
 	return parsed.String(), nil
+}
+
+// EnrichmentReconcileConfig governs the level-triggered sweep that keeps enrichment coverage
+// complete: every eligible record ends up enriched, or classified as something the provider will
+// never accept. The event path stays the fast route; this is the guarantee.
+type EnrichmentReconcileConfig struct {
+	// Enabled is a kill switch, on by default. Off stops the sweep entirely — the event path is
+	// unaffected, so enrichment keeps working and simply stops being self-healing.
+	Enabled bool `env:"ENRICHMENT_RECONCILE_ENABLED" env-default:"true"`
+	// IntervalSeconds is how often a sweep runs. It does not bound throughput — TargetDepth and
+	// the backfill queues' own MaxWorkers do that — so this only decides how quickly stranded work
+	// is noticed.
+	IntervalSeconds int `env:"ENRICHMENT_RECONCILE_INTERVAL_SECONDS" env-default:"300"`
+	// TargetDepth is how many jobs each backfill queue is topped up TO, not how many are added.
+	//
+	// Topping up to a depth rather than enqueueing at a rate is what makes this self-regulating: a
+	// sweep can only add what the workers have already drained, so river_job stays bounded whether
+	// the backlog is a thousand records or fifty million, and no rate has to be guessed to match
+	// drain speed. Guessing that rate too low is indistinguishable from the reconciler not running.
+	TargetDepth int `env:"ENRICHMENT_RECONCILE_TARGET_DEPTH" env-default:"1000"`
+}
+
+// Interval returns the sweep interval, falling back to the default when misconfigured. A
+// non-positive interval would make River's periodic scheduler reject the job outright, taking the
+// reconciler silently offline — the failure this feature exists to prevent, caused by a typo.
+func (c EnrichmentReconcileConfig) Interval() time.Duration {
+	const defaultInterval = 300 * time.Second
+
+	if c.IntervalSeconds <= 0 {
+		return defaultInterval
+	}
+
+	return time.Duration(c.IntervalSeconds) * time.Second
+}
+
+// Depth returns the per-queue target depth, clamped on both sides. Zero or negative falls back to
+// the default — a sweep that enqueues nothing looks identical to a broken reconciler. The ceiling
+// bounds a fat-fingered value: the depth flows straight into one LIMIT query and one InsertMany
+// batch per enrichment per tick, so an unclamped 5,000,000 would be a five-million-row insert in a
+// single statement.
+func (c EnrichmentReconcileConfig) Depth() int {
+	const (
+		defaultDepth = 1000
+		maxDepth     = 100_000
+	)
+
+	if c.TargetDepth <= 0 {
+		return defaultDepth
+	}
+
+	if c.TargetDepth > maxDepth {
+		return maxDepth
+	}
+
+	return c.TargetDepth
 }

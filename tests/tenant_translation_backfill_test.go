@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/internal/service"
@@ -287,4 +288,130 @@ func TestTenantTranslationBackfillWorker_Timeout(t *testing.T) {
 	worker := workers.NewTenantTranslationBackfillWorker(nil, 3)
 
 	assert.Equal(t, 5*time.Minute, worker.Timeout(nil), "per-tenant fan-out timeout")
+}
+
+// TestListTranslationBackfillTargetsSkipsTerminalRecords binds the exclusion that keeps a
+// settings change from undoing the reconciler's work.
+//
+// A terminal marker means the provider refused this text structurally and will refuse it again.
+// The reconciler already skips such records; before this exclusion the settings-triggered
+// backfill re-enqueued them anyway, so every target-language change spent one provider call per
+// permanently-failing record — 1517 wasted jobs in a measured 3000-record run. Both the
+// per-tenant and the global query are pinned, because the one-off command shares the predicate
+// and a fix applied to only one of them would leave the other paying the bill.
+//
+// A NON-terminal marker must still be a target: those records failed for reasons a retry can
+// fix, which is the whole distinction the terminal taxonomy exists to draw.
+func TestListTranslationBackfillTargetsSkipsTerminalRecords(t *testing.T) {
+	ctx := context.Background()
+	db, repo, tenantA, _ := backfillTestEnv(t)
+
+	makeText := func(valueText string) *models.FeedbackRecord {
+		rec, err := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+			SourceType:   "formbricks",
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			ValueText:    &valueText,
+			TenantID:     tenantA,
+			SubmissionID: testTenantID("sub"),
+		})
+		require.NoError(t, err)
+
+		return rec
+	}
+
+	markFailure := func(recordID uuid.UUID, terminal bool, reason string) {
+		_, err := db.Exec(ctx, `INSERT INTO feedback_record_enrichment_failures
+			(feedback_record_id, enrichment, tenant_id, terminal, reason) VALUES ($1,$2,$3,$4,$5)`,
+			recordID, models.EnrichmentNameTranslation, tenantA, terminal, reason)
+		require.NoError(t, err)
+	}
+
+	plain := makeText("translate me")
+	terminal := makeText("refused forever")
+	transient := makeText("failed but retryable")
+
+	markFailure(terminal.ID, true, string(huberrors.TerminalReasonContentFilter))
+	markFailure(transient.ID, false, models.EnrichmentFailureReasonProviderError)
+
+	// A terminal marker for a DIFFERENT enrichment must not exclude the record from translation:
+	// the join is per (record, enrichment), and a record the sentiment provider refuses is still
+	// perfectly translatable.
+	otherEnrichment := makeText("sentiment refused, translation fine")
+	_, err := db.Exec(ctx, `INSERT INTO feedback_record_enrichment_failures
+		(feedback_record_id, enrichment, tenant_id, terminal, reason) VALUES ($1,'sentiment',$2,true,'content_filter')`,
+		otherEnrichment.ID, tenantA)
+	require.NoError(t, err)
+
+	collect := func(targets []models.TranslationBackfillTarget) map[uuid.UUID]bool {
+		got := map[uuid.UUID]bool{}
+		for _, target := range targets {
+			got[target.FeedbackRecordID] = true
+		}
+
+		return got
+	}
+
+	perTenant, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenantA, uuid.Nil, 100, "")
+	require.NoError(t, err)
+
+	global, err := repo.ListTranslationBackfillTargets(ctx, uuid.Nil, 1000, "")
+	require.NoError(t, err)
+
+	for name, got := range map[string]map[uuid.UUID]bool{
+		"per-tenant": collect(perTenant),
+		"global":     collect(global),
+	} {
+		assert.True(t, got[plain.ID], "%s: an untranslated record with no marker is a target", name)
+		assert.True(t, got[transient.ID],
+			"%s: a non-terminal failure is retryable, so it stays a target", name)
+		assert.True(t, got[otherEnrichment.ID],
+			"%s: another enrichment's terminal marker does not exclude translation", name)
+		assert.False(t, got[terminal.ID],
+			"%s: a terminally-failed record is excluded — re-enqueueing it buys a guaranteed refusal", name)
+	}
+}
+
+// TestTenantTranslationBackfillWorkerUsesTheReconcileLane binds the queue the settings-triggered
+// fan-out enqueues onto. A target-language change can fan out a tenant's whole history, and on
+// the live `translations` queue that backlog sits in front of records arriving right now — the
+// starvation the reconciler's separate lanes exist to prevent. Asserting the queue by name is
+// the only thing that keeps a later refactor from quietly moving it back.
+func TestTenantTranslationBackfillWorkerUsesTheReconcileLane(t *testing.T) {
+	ctx := context.Background()
+	pool, repo, tenantA, _ := backfillTestEnv(t)
+
+	valueText := "translate me"
+	rec, err := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+		SourceType:   "formbricks",
+		FieldID:      "q1",
+		FieldType:    models.FieldTypeText,
+		ValueText:    &valueText,
+		TenantID:     tenantA,
+		SubmissionID: testTenantID("sub"),
+	})
+	require.NoError(t, err)
+
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})
+	require.NoError(t, err)
+
+	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+	worker := workers.NewTenantTranslationBackfillWorker(svc, 3)
+
+	job := &river.Job[service.TenantTranslationBackfillArgs]{
+		JobRow: &rivertype.JobRow{Attempt: 1, MaxAttempts: 1},
+		Args:   service.TenantTranslationBackfillArgs{TenantID: tenantA},
+	}
+	require.NoError(t, worker.Work(rivertest.WorkContext(ctx, riverClient), job))
+
+	var queue string
+
+	err = pool.QueryRow(ctx, `
+		SELECT queue FROM river_job
+		WHERE kind = 'feedback_translation' AND args->>'feedback_record_id' = $1`,
+		rec.ID.String()).Scan(&queue)
+	require.NoError(t, err)
+
+	assert.Equal(t, service.TranslationsReconcileQueueName, queue,
+		"bulk catch-up work belongs in the reconcile lane, not in front of live enrichment")
 }

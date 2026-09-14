@@ -1,0 +1,74 @@
+name: Docs
+
+# Builds the documentation site in docs/. The API reference is generated from
+# openapi.yaml, so a spec change rebuilds the docs too — this is a second
+# consumer of spec correctness alongside code-quality.yml's Spectral lint.
+#
+# The Go workflows (tests.yml, code-quality.yml) are path-filtered to Go and
+# spec files, so a docs-only change does not run them.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'openapi.yaml'
+      - '.github/workflows/docs-build.yml'
+
+concurrency:
+  group: docs-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build docs site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs
+
+    steps:
+      # persist-credentials: false — this job runs PR-controlled code, and
+      # `pnpm install` executes sharp's and esbuild's build scripts, so leaving the
+      # checkout token in .git/config would put it within reach of a lifecycle
+      # script. Nothing here does an authenticated git operation after checkout.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # package_json_file is relative to the repo root, not to
+      # defaults.run.working-directory, and the root has no package.json.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: docs/package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check types and content collections
+        run: pnpm check
+
+      # No STAINLESS_API_KEY, and no secrets of any kind: the build must be
+      # self-contained. This job failing on a missing credential would mean the
+      # vendor coupling we removed in ENG-2369 has crept back in.
+      - name: Build
+        run: pnpm build
+
+      # Resolves every internal href and src against the page it appears on, the
+      # way a browser does. Added after review caught nine relative ./hub-* links
+      # that resolved into the current directory and 404'd — a class my earlier
+      # hand-checks missed twice.
+      - name: Check internal links
+        run: pnpm check:links

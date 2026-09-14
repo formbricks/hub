@@ -21,6 +21,17 @@ import (
 // constraint violations (23505 unique_violation).
 const uniqueViolationSQLState = "23505"
 
+// numericOverflowSQLState (22003 numeric_value_out_of_range) fires when jsonb metadata carries a
+// number that does not fit Postgres numeric — e.g. `{"n":1e1000000}`, fifteen bytes of perfectly
+// valid JSON. The storable_json request validator cannot see this class: it is a range property of
+// the parsed number, not of the bytes. Metadata is the only place it can originate on these
+// queries — value_number is float8, and every Go float64 fits float8 — so the error is mapped to a
+// metadata validation failure rather than surfacing as an unmapped 500 (ENG-2745).
+const numericOverflowSQLState = "22003"
+
+// numericOverflowMessage is the invalid_params reason for the mapping above.
+const numericOverflowMessage = "contains a number outside the storable range"
+
 // FeedbackRecordsRepository handles data access for feedback records.
 type FeedbackRecordsRepository struct {
 	db *pgxpool.Pool
@@ -137,6 +148,10 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
 			return nil, huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
+		}
+
+		if errors.As(err, &pgErr) && pgErr.Code == numericOverflowSQLState {
+			return nil, huberrors.NewValidationError("metadata", numericOverflowMessage)
 		}
 
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -300,7 +315,17 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 				return fmt.Errorf("clear feedback record translation: %w", err)
 			}
 
-			return nil
+			// The record now has no translation and, with empty text, is owed none — so a marker
+			// describing a failed attempt on the old text has nothing left to describe.
+			if err := clearEnrichmentFailure(
+				ctx, dbTx, feedbackRecordID, models.EnrichmentNameTranslation,
+			); err != nil {
+				return err
+			}
+
+			return clearEnrichmentFailure(
+				ctx, dbTx, feedbackRecordID, models.EnrichmentNameTaxonomyEmbedding,
+			)
 		}
 
 		// Setting a translation persists only while langKey still equals the tenant's current
@@ -335,7 +360,18 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 			return huberrors.ErrTranslationSuperseded
 		}
 
-		return nil
+		if err := clearEnrichmentFailure(
+			ctx, dbTx, feedbackRecordID, models.EnrichmentNameTranslation,
+		); err != nil {
+			return err
+		}
+
+		// A new translation changes the taxonomy embedding input. Clear any terminal marker from
+		// the previous content so the new input is eligible for reconciliation if its direct
+		// enqueue is lost.
+		return clearEnrichmentFailure(
+			ctx, dbTx, feedbackRecordID, models.EnrichmentNameTaxonomyEmbedding,
+		)
 	})
 }
 
@@ -396,7 +432,7 @@ func (r *FeedbackRecordsRepository) SetSentiment(
 			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 
-		return nil
+		return clearEnrichmentFailure(ctx, dbTx, feedbackRecordID, models.EnrichmentNameSentiment)
 	})
 }
 
@@ -447,17 +483,28 @@ func (r *FeedbackRecordsRepository) ClearEmotions(
 // fields with non-empty value_text whose EFFECTIVE target language differs from the stored
 // translation_lang_key (never translated, or now stale). The effective target is the tenant's
 // own target_language, falling back to $1 (the configured default) when the tenant has none;
-// an empty $1 disables the fallback, so only tenants with their own target qualify. The LEFT
-// JOIN keeps tenants with no settings row eligible under a non-empty default. Callers append
-// ordering / keyset / limit clauses (params $2+).
+// an empty $1 disables the fallback, so only tenants with their own target qualify. The first
+// LEFT JOIN keeps tenants with no settings row eligible under a non-empty default. Callers
+// append ordering / keyset / limit clauses (params $2+).
+//
+// Terminally-failed records are excluded, exactly as the reconciler's pending set excludes them.
+// A terminal marker means the provider refused this text on structural grounds -- content policy,
+// a refusal, input past the model's limit -- so it will refuse it again, and a target-language
+// change would otherwise spend one provider call per permanently-failing record every time
+// somebody edits the setting. Measured at 1517 wasted jobs in a 3000-record run. "Still needs
+// translating" has to mean the same thing here as it does in the sweep, or the sweep's careful
+// skip is undone by the next settings change. Clearing the marker is the retry endpoint's job.
 const translationBackfillSelectSQL = `
 	SELECT fr.id, COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)
 	FROM feedback_records fr
 	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
+	LEFT JOIN feedback_record_enrichment_failures f
+		ON f.feedback_record_id = fr.id AND f.enrichment = '` + models.EnrichmentNameTranslation + `' AND f.terminal
 	WHERE fr.field_type = 'text'
 		AND fr.value_text IS NOT NULL AND btrim(fr.value_text) <> ''
 		AND COALESCE(NULLIF(ts.settings->>'target_language', ''), $1) <> ''
-		AND fr.translation_lang_key IS DISTINCT FROM COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)`
+		AND fr.translation_lang_key IS DISTINCT FROM COALESCE(NULLIF(ts.settings->>'target_language', ''), $1)
+		AND f.feedback_record_id IS NULL`
 
 // ListTranslationBackfillTargets returns one keyset page (fr.id > afterID, ordered by id, at
 // most limit rows) of feedback records across all tenants that need (re)translation. Used by
@@ -945,6 +992,11 @@ func (r *FeedbackRecordsRepository) Update(
 				return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 			}
 
+			var pgErr *pgconn.PgError
+			if errors.As(scanErr, &pgErr) && pgErr.Code == numericOverflowSQLState {
+				return huberrors.NewValidationError("metadata", numericOverflowMessage)
+			}
+
 			return fmt.Errorf("failed to update feedback record: %w", scanErr)
 		}
 
@@ -1204,6 +1256,41 @@ func (r *FeedbackRecordsRepository) writeEmotions(
 			return huberrors.NewNotFoundError("feedback record", "feedback record not found")
 		}
 
-		return nil
+		return clearEnrichmentFailure(ctx, dbTx, feedbackRecordID, models.EnrichmentNameEmotions)
 	})
+}
+
+// clearEnrichmentFailure removes the failure marker for one (record, enrichment) as part of the
+// successful write that resolved it.
+//
+// The markers were designed as advisory — write-free on success, on the reasoning that "a stale
+// row stops counting the moment the record is done". That has a hole: done is not permanent.
+// Editing value_text nulls the translation columns, and changing a tenant's target_language shifts
+// the effective target so an already-translated record stops matching it. Either revives a marker
+// from a failure resolved long ago, and the endpoint then reports `failed` for work that is merely
+// re-queued — the wrong-progress symptom the whole feature exists to remove.
+//
+// So success cleans up after itself. One indexed delete against the primary key, inside a
+// transaction the write already opens, and a no-op probe when there is no marker — the
+// overwhelmingly common case, since most records never fail.
+//
+// A timestamp comparison was tried first and is the wrong shape: updated_at is RECORD-level while
+// markers are per (record, enrichment), so a successful sentiment write would invalidate the
+// emotions and translation markers too. On a real run that silently dropped 7% of records out of
+// the accounted set.
+//
+// This does NOT run on the failure paths, which upsert: the newest outcome for a (record,
+// enrichment) is the one worth keeping.
+func clearEnrichmentFailure(
+	ctx context.Context, dbTx tenantWriteTx, feedbackRecordID uuid.UUID, enrichment string,
+) error {
+	if _, err := dbTx.Exec(ctx, `
+		DELETE FROM feedback_record_enrichment_failures
+		WHERE feedback_record_id = $1 AND enrichment = $2`,
+		feedbackRecordID, enrichment,
+	); err != nil {
+		return fmt.Errorf("clear enrichment failure marker: %w", err)
+	}
+
+	return nil
 }

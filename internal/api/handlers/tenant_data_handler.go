@@ -40,6 +40,7 @@ func (h *TenantDataHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		DeletedEmbeddings:                 result.DeletedEmbeddings,
 		DeletedWebhooks:                   result.DeletedWebhooks,
 		DeletedTaxonomyRuns:               result.DeletedTaxonomyRuns,
+		DeletedTaxonomyRunInputRecords:    result.DeletedTaxonomyRunInputRecords,
 		DeletedTaxonomyClusters:           result.DeletedTaxonomyClusters,
 		DeletedTaxonomyClusterMemberships: result.DeletedTaxonomyClusterMemberships,
 		DeletedTaxonomyNodes:              result.DeletedTaxonomyNodes,

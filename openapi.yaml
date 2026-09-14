@@ -1259,6 +1259,7 @@ paths:
                                         deleted_embeddings: 17
                                         deleted_webhooks: 3
                                         deleted_taxonomy_runs: 4
+                                        deleted_taxonomy_run_input_records: 1200
                                         deleted_taxonomy_clusters: 28
                                         deleted_taxonomy_cluster_memberships: 1200
                                         deleted_taxonomy_nodes: 36
@@ -1587,6 +1588,85 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+    /v1/tenants/{tenant_id}/enrichments/retry:
+        post:
+            tags:
+                - Enrichment Status
+            summary: Retry permanently-failed enrichments for a tenant
+            description: |
+                Clears the terminal failure markers for a tenant so the reconciler will attempt those
+                records again.
+
+                The automatic sweep deliberately never revives a terminal record: a terminal failure is a
+                property of the record's own text — a content-policy block, a refusal, an input past the
+                model's limit — so re-running it costs a provider call and fails identically. This endpoint
+                is the override for when that premise has changed: the text was edited, or the provider
+                changed its policy.
+
+                Because of that, it is **rate limited per (tenant, enrichment)**. Clearing is a request to
+                spend a provider call on every record already known to fail, so an unbounded clear would be
+                a cost-amplification loop. A refused call returns `cooling_down` with the remaining wait
+                rather than silently doing nothing.
+
+                Every requested enrichment gets its own outcome — a tenant can have one cleared, one cooling
+                down and one switched off in the same call. Responds 202: clearing is synchronous, but the
+                retrying is not.
+            operationId: retry-tenant-enrichments
+            parameters:
+                - name: tenant_id
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                  description: The tenant whose terminal failures should be cleared.
+            requestBody:
+                required: false
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/EnrichmentRetryInputBody'
+            responses:
+                '202':
+                    description: Accepted; see each enrichment's outcome.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/EnrichmentRetryOutputBody'
+                '400':
+                    description: |
+                        Bad Request. Returned for an unknown enrichment name, a body that is not a JSON
+                        object, or a missing tenant id.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                '401':
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                '409':
+                    description: |
+                        Conflict. Returned when the reconciler is disabled on this deployment
+                        (clearing failures would have no effect until it is re-enabled), or when a
+                        tenant data purge currently holds the tenant's write lock.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                '413':
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
     /v1/enrichment-status:
         get:
             tags:
@@ -1598,7 +1678,11 @@ paths:
                 is active for the tenant (deployment-configured and switched on / with a resolvable
                 target language), and `eligible`/`done` are directory-level counts of feedback records
                 that qualify and that have been enriched — the UI derives "in progress" as
-                `eligible - done`. When an enrichment is not enabled its counts are zero. The response
+                `eligible - done`, of which `failed` is retryable and `failed_terminal` never will be.
+                When an enrichment is not enabled its counts are zero and
+                `disabled_reason` names the gate that closed it, so the UI can explain *why* rather than
+                silently hiding the enrichment. `as_of` is when the counts were computed, which lets a
+                polling client derive throughput and an ETA without the Hub computing either. The response
                 contains counts only (no record identifiers or content).
             operationId: get-enrichment-status
             parameters:
@@ -2785,6 +2869,10 @@ components:
                     type: integer
                     description: Number of taxonomy runs deleted
                     format: int64
+                deleted_taxonomy_run_input_records:
+                    type: integer
+                    description: Number of immutable taxonomy run-input snapshot rows deleted
+                    format: int64
                 deleted_taxonomy_clusters:
                     type: integer
                     description: Number of taxonomy clusters deleted
@@ -2814,6 +2902,7 @@ components:
                 - deleted_embeddings
                 - deleted_webhooks
                 - deleted_taxonomy_runs
+                - deleted_taxonomy_run_input_records
                 - deleted_taxonomy_clusters
                 - deleted_taxonomy_cluster_memberships
                 - deleted_taxonomy_nodes
@@ -3036,8 +3125,33 @@ components:
                     maxLength: 10
                     pattern: '^[^\x00]*$'
                 metadata:
-                    type: object
-                    description: User agent, device, location, referrer, tags, etc. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
+                    type: [object, "null"]
+                    description: >-
+                        Arbitrary context for this record, stored as JSON and returned with
+                        equivalent values (key order and number formatting are normalized): the
+                        dimensions you want to slice a dashboard by, such as channel, device, browser,
+                        OS, country, referrer, campaign, plan or tags. Values may be strings, numbers,
+                        booleans, null, or nested objects and arrays.
+
+                        Use snake_case keys and keep them stable across records, since a key is what a
+                        dashboard groups by: `customer_tier`, not a mix of `customerTier` and `tier`.
+                        Numbers keep full precision in storage (unlike `value_number`, which is a
+                        float64), so a large integer id round-trips exactly through this API — though
+                        a JavaScript client will still lose precision above 2^53 when it parses the
+                        response.
+
+                        Nothing here is redacted. Metadata is **not** sent to the LLM or embedding
+                        enrichment providers, unlike `value_text` — but it **is** included in the
+                        `feedback_record.created` and `feedback_record.updated` webhook payloads, so
+                        it reaches whatever URL a tenant has configured. Erasure covers metadata,
+                        with one precondition worth knowing:
+                        `DELETE /v1/feedback-records` matches on `user_id` and hard-deletes the whole
+                        row, metadata included — so a record written **without** a `user_id` cannot
+                        be reached that way. Set `user_id` on anything you may later have to erase.
+
+                        Three kinds of content are rejected with 400, because none of them can be
+                        stored: invalid UTF-8; NULL bytes or unpaired UTF-16 surrogates, in keys or
+                        values; and numbers outside the storable numeric range.
                     additionalProperties: {}
                 source_id:
                     type: [string, "null"]
@@ -3253,9 +3367,20 @@ components:
                     description: ISO language code. NULL bytes not allowed.
                     pattern: '^[^\x00]*$'
                 metadata:
-                    type: object
-                    description: Additional context
-                    additionalProperties: {}
+                    type: [object, array, string, number, boolean, "null"]
+                    # Required alongside `array` in the union; any element is valid, since the union
+                    # exists to describe legacy rows rather than to constrain new writes.
+                    items: {}
+                    description: >-
+                        Arbitrary context stored with this record, returned with equivalent values
+                        (key order is normalized, and so are number exponents — `1e2` reads back as
+                        `100`). Omitted when the record has no metadata; a record explicitly stored
+                        with a JSON `null` returns `null`.
+
+                        An object is the supported shape and the only one the request schemas accept.
+                        The wider union is for reading: the column stores whatever JSON was written,
+                        so a record created before that convention can return an array or a scalar,
+                        and an object-only response schema would make a generated client reject it.
                 sentiment:
                     $ref: '#/components/schemas/SentimentValue'
                     description: Sentiment polarity inferred from value_text (sentiment enrichment). Read-only; absent until the record is enriched.
@@ -3622,8 +3747,13 @@ components:
                     maxLength: 10
                     pattern: '^[^\x00]*$'
                 metadata:
-                    type: object
-                    description: Update metadata. NULL bytes (\x00 or \u0000) are not allowed in JSON keys or values.
+                    type: [object, "null"]
+                    description: >-
+                        Replaces the stored metadata object **wholesale** — it is not merged, so send
+                        every key you want to keep or the omitted ones are lost. See the create
+                        operation for the value rules and key conventions, including the same 400
+                        rejections (invalid UTF-8, NULL bytes, unpaired surrogates, out-of-range
+                        numbers).
                     additionalProperties: {}
                 user_id:
                     type: string
@@ -3893,6 +4023,14 @@ components:
                     type: integer
                     format: int64
                     description: Number of those records that have an embedding.
+                embedding_failed_count:
+                    type: integer
+                    format: int64
+                    description: Number of missing taxonomy embeddings whose latest bounded attempts failed transiently and can be retried.
+                embedding_failed_terminal_count:
+                    type: integer
+                    format: int64
+                    description: Number of missing taxonomy embeddings rejected permanently for the current model and record revision.
             required:
                 - tenant_id
                 - source_type
@@ -3900,6 +4038,8 @@ components:
                 - field_id
                 - record_count
                 - embedding_count
+                - embedding_failed_count
+                - embedding_failed_terminal_count
         TaxonomyFieldsOutputBody:
             type: object
             additionalProperties: false
@@ -3926,10 +4066,113 @@ components:
                     type: integer
                     format: int64
                     description: Eligible records that have been enriched.
+                failed:
+                    type: integer
+                    format: int64
+                    description: |
+                        Eligible records whose last enrichment attempt gave up but which a retry could still
+                        rescue — a provider outage, a timeout. Counted only while the record is still
+                        un-enriched, so a later success removes it without any cleanup.
+                failed_terminal:
+                    type: integer
+                    format: int64
+                    description: |
+                        Eligible records the provider will never accept, because the outcome is a property of
+                        the record's own text — a content-policy block, a refusal, an input past the model's
+                        limit. Retrying these cannot help; they resolve only if the text changes.
+                disabled_reason:
+                    type: string
+                    enum:
+                        - not_configured
+                        - switched_off
+                        - no_target_language
+                    description: |
+                        Which gate switched the enrichment off. Present exactly when `enabled` is false, and
+                        absent otherwise. `not_configured` — the deployment has no provider/model for this
+                        enrichment, so it is off for every tenant and only an operator can fix it.
+                        `switched_off` — the tenant turned it off (sentiment and emotions only).
+                        `no_target_language` — translation is configured but neither the tenant's
+                        `target_language` nor the deployment default resolves (translation only; it has no
+                        on/off switch, so an absent target is its off state).
             required:
                 - enabled
                 - eligible
                 - done
+                - failed
+                - failed_terminal
+        EnrichmentRetryInputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                enrichments:
+                    type: array
+                    items:
+                        type: string
+                        enum:
+                            - translation
+                            - sentiment
+                            - emotions
+                    description: |
+                        Which enrichments to clear. Omit or leave empty for all of them, which is the usual
+                        call. An unknown name is rejected rather than ignored, so a typo cannot come back as
+                        a successful no-op.
+        EnrichmentRetryResult:
+            type: object
+            additionalProperties: false
+            properties:
+                enrichment:
+                    type: string
+                    enum:
+                        - translation
+                        - sentiment
+                        - emotions
+                outcome:
+                    type: string
+                    enum:
+                        - cleared
+                        - cooling_down
+                        - disabled
+                    description: |
+                        `cleared` — the markers were removed and the records will be picked up by the next
+                        reconcile sweep. `cooling_down` — this enrichment was cleared too recently; see
+                        `retry_after_seconds`. `disabled` — the enrichment is not running for this tenant,
+                        so clearing would queue work the worker skips; see `disabled_reason`.
+                cleared:
+                    type: integer
+                    format: int64
+                    description: |
+                        How many records had a terminal marker removed. Zero with outcome `cleared` is a real
+                        answer: nothing was permanently failed.
+                retry_after_seconds:
+                    type: integer
+                    format: int64
+                    description: Present only for `cooling_down`. How long until this enrichment may be cleared again.
+                disabled_reason:
+                    type: string
+                    enum:
+                        - not_configured
+                        - switched_off
+                        - no_target_language
+                    description: |
+                        Present only for `disabled`. Same values the enrichment-status endpoint uses, so a
+                        consumer needs one vocabulary rather than two.
+            required:
+                - enrichment
+                - outcome
+                - cleared
+        EnrichmentRetryOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                tenant_id:
+                    type: string
+                results:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/EnrichmentRetryResult'
+            required:
+                - tenant_id
+                - results
         EnrichmentStatusOutputBody:
             type: object
             additionalProperties: false
@@ -3937,6 +4180,14 @@ components:
             properties:
                 tenant_id:
                     type: string
+                as_of:
+                    type: string
+                    format: date-time
+                    description: |
+                        When the counts were computed (UTC), not when the response was serialized. The
+                        endpoint is polled, so two responses are enough to derive throughput and an ETA
+                        client-side from the change in `done` over the change in `as_of` — the Hub computes
+                        neither.
                 translation:
                     $ref: '#/components/schemas/EnrichmentTypeStatus'
                 sentiment:
@@ -3945,6 +4196,7 @@ components:
                     $ref: '#/components/schemas/EnrichmentTypeStatus'
             required:
                 - tenant_id
+                - as_of
                 - translation
                 - sentiment
                 - emotions

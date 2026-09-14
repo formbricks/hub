@@ -242,6 +242,11 @@ func seedTaxonomyGraph(ctx context.Context, t *testing.T, db *pgxpool.Pool, scop
 	).Scan(&ids.RunID)
 	require.NoError(t, err)
 
+	_, err = db.Exec(ctx, `
+		INSERT INTO taxonomy_run_input_records (run_id, tenant_id, feedback_record_id, sort_order)
+		VALUES ($1, $2, $3, 0)`, ids.RunID, scope.TenantID, ids.FeedbackRecordID)
+	require.NoError(t, err)
+
 	err = db.QueryRow(ctx, `
 		INSERT INTO taxonomy_clusters (run_id, cluster_key, label, llm_label, keywords, size)
 		VALUES ($1, 1, 'login', 'Login issues', '["login"]'::jsonb, 1)

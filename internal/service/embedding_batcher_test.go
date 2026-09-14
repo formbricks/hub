@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -291,6 +292,54 @@ func TestBatchingEmbeddingClientShutdownFlushesAndCloses(t *testing.T) {
 	}
 }
 
+type concurrencyTrackingEmbeddingClient struct {
+	active  atomic.Int32
+	maximum atomic.Int32
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (c *concurrencyTrackingEmbeddingClient) CreateEmbedding(context.Context, string) ([]float32, error) {
+	return []float32{1}, nil
+}
+
+func (c *concurrencyTrackingEmbeddingClient) CreateEmbeddingForQuery(context.Context, string) ([]float32, error) {
+	return []float32{1}, nil
+}
+
+func (c *concurrencyTrackingEmbeddingClient) CreateEmbeddings(
+	ctx context.Context,
+	inputs []string,
+) ([][]float32, error) {
+	active := c.active.Add(1)
+	defer c.active.Add(-1)
+
+	for {
+		maximum := c.maximum.Load()
+		if active <= maximum || c.maximum.CompareAndSwap(maximum, active) {
+			break
+		}
+	}
+
+	select {
+	case c.started <- struct{}{}:
+	default:
+	}
+
+	select {
+	case <-c.release:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("test provider: %w", ctx.Err())
+	}
+
+	vectors := make([][]float32, len(inputs))
+	for i := range inputs {
+		vectors[i] = []float32{1}
+	}
+
+	return vectors, nil
+}
+
 type singleOnlyEmbeddingClient struct{}
 
 func (singleOnlyEmbeddingClient) CreateEmbedding(context.Context, string) ([]float32, error) {
@@ -308,5 +357,58 @@ func TestNewBatchingEmbeddingClientFallback(t *testing.T) {
 
 	if _, ok := NewBatchingEmbeddingClient(&batcherTestClient{}, EmbeddingBatchConfig{BatchSize: 1}, nil); ok {
 		t.Fatal("batch size 1 must disable batching")
+	}
+}
+
+func TestBatchingEmbeddingClientLimitsConcurrentProviderRequests(t *testing.T) {
+	const maxInFlight = 12
+
+	started := make(chan struct{}, maxInFlight+1)
+	release := make(chan struct{})
+	provider := &concurrencyTrackingEmbeddingClient{started: started, release: release}
+
+	batcher, ok := NewBatchingEmbeddingClient(provider, EmbeddingBatchConfig{
+		BatchSize: 2, MaxWait: time.Second, MaxInFlight: maxInFlight,
+	}, nil)
+	if !ok {
+		t.Fatal("batch client was not enabled")
+	}
+
+	const requestCount = maxInFlight * 4
+
+	var waitGroup sync.WaitGroup
+	for i := range requestCount {
+		waitGroup.Go(func() {
+			if _, err := batcher.CreateEmbedding(context.Background(), fmt.Sprintf("input-%d", i)); err != nil {
+				t.Errorf("CreateEmbedding() error = %v", err)
+			}
+		})
+	}
+
+	deadline := time.After(2 * time.Second)
+
+	for range maxInFlight {
+		select {
+		case <-started:
+		case <-deadline:
+			close(release)
+			waitGroup.Wait()
+			t.Fatal("provider requests did not reach the configured concurrency")
+		}
+	}
+
+	select {
+	case <-started:
+		close(release)
+		waitGroup.Wait()
+		t.Fatalf("provider exceeded MaxInFlight=%d", maxInFlight)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	waitGroup.Wait()
+
+	if got := provider.maximum.Load(); got != maxInFlight {
+		t.Fatalf("maximum concurrent provider requests = %d, want %d", got, maxInFlight)
 	}
 }

@@ -27,8 +27,6 @@ var (
 	decoder  *form.Decoder
 )
 
-const tagSplitParts = 2
-
 // ErrValidationFailed is returned when struct validation fails (err113).
 var ErrValidationFailed = errors.New("validation failed")
 
@@ -104,6 +102,10 @@ func init() {
 		slog.Error("Failed to register no_null_bytes validator", "error", err)
 	}
 
+	if err := validate.RegisterValidation(storableJSONTag, validateStorableJSON); err != nil {
+		slog.Error("Failed to register storable_json validator", "error", err)
+	}
+
 	// Element validators for the repeatable enum filters, applied via `dive`. They are a second
 	// gate behind registerEnumSliceTypes, not a replacement: see the comment there for why the
 	// decoder alone cannot be trusted to have run.
@@ -163,7 +165,7 @@ const rangeBoundsTag = "range_bounds"
 // An inverted range matches zero rows, so without this a swapped pair returns an empty page that
 // the caller reads as "there is no such feedback" rather than "your filter is backwards".
 func validateListFeedbackRecordsFilters(structLevel validator.StructLevel) {
-	filters, ok := structLevel.Current().Interface().(models.ListFeedbackRecordsFilters)
+	filters, ok := reflect.TypeAssert[models.ListFeedbackRecordsFilters](structLevel.Current())
 	if !ok {
 		return
 	}
@@ -219,8 +221,7 @@ func ValidateStruct(s any) error {
 // joined message (for logs) and the underlying validator.ValidationErrors, which
 // the response layer extracts to build RFC 9457 invalid_params.
 func formatValidationErrors(err error) error {
-	var validationErrors validator.ValidationErrors
-	if errors.As(err, &validationErrors) {
+	if validationErrors, ok := errors.AsType[validator.ValidationErrors](err); ok {
 		messages := make([]string, 0, len(validationErrors))
 		for _, fieldError := range validationErrors {
 			messages = append(messages, fieldError.Field()+" "+FormatFieldError(fieldError))
@@ -316,18 +317,15 @@ func invalidParamsFromQueryDecodeError(err error) []InvalidParam {
 // TestValidateAndDecodeQueryParamsReturnsInvalidParams cover each branch and
 // will catch a regression on upgrade.
 func queryDecodeReason(err error) string {
-	var invalidFieldType *models.InvalidFieldTypeError
-	if errors.As(err, &invalidFieldType) {
+	if _, ok := errors.AsType[*models.InvalidFieldTypeError](err); ok {
 		return "must be one of: " + models.ValidFieldTypeValuesString()
 	}
 
-	var invalidSentiment *models.InvalidSentimentValueError
-	if errors.As(err, &invalidSentiment) {
+	if _, ok := errors.AsType[*models.InvalidSentimentValueError](err); ok {
 		return "must be one of: " + models.ValidSentimentValuesString()
 	}
 
-	var invalidEmotion *models.InvalidEmotionValueError
-	if errors.As(err, &invalidEmotion) {
+	if _, ok := errors.AsType[*models.InvalidEmotionValueError](err); ok {
 		return "must be one of: " + models.ValidEmotionValuesString()
 	}
 
@@ -390,6 +388,8 @@ func FormatFieldError(fieldErr validator.FieldError) string {
 		return "must be in RFC3339 (ISO 8601) format"
 	case "no_null_bytes":
 		return "must not contain NULL bytes"
+	case storableJSONTag:
+		return "must contain valid UTF-8 and no NULL bytes or unpaired UTF-16 surrogates"
 	case "http_url":
 		return "must be a valid HTTP or HTTPS URL"
 	case "url":
@@ -453,7 +453,7 @@ func validateNoNullBytes(fl validator.FieldLevel) bool {
 	field := fl.Field()
 
 	// Handle pointer types
-	if field.Kind() == reflect.Ptr {
+	if field.Kind() == reflect.Pointer {
 		if field.IsNil() {
 			return true // nil pointer is valid (handled by omitempty)
 		}
@@ -472,7 +472,7 @@ func validateNoNullBytes(fl validator.FieldLevel) bool {
 }
 
 func tagName(field reflect.StructField, key string) string {
-	name := strings.SplitN(field.Tag.Get(key), ",", tagSplitParts)[0]
+	name, _, _ := strings.Cut(field.Tag.Get(key), ",")
 	if name == "-" {
 		return ""
 	}

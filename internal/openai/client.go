@@ -44,44 +44,25 @@ var (
 
 // Client calls the OpenAI embeddings API via the official SDK.
 type Client struct {
-	sdk        openaisdk.Client
-	baseURL    string
-	dimensions int
-	model      string
-	normalize  bool
+	sdk               openaisdk.Client
+	baseURL           string
+	dimensions        int
+	model             string
+	normalize         bool
+	disableKeepAlives bool
 	// temperatureUnsupported latches once the configured model rejects the temperature
 	// parameter (reasoning models do), so later calls omit it instead of failing.
 	temperatureUnsupported atomic.Bool
+	// usage receives one record per provider call. nil disables recording entirely, which is how
+	// the backfill commands and the unit tests opt out.
+	usage llm.UsageRecorder
 }
 
-// ClientOption configures the Client.
-type ClientOption func(*Client)
-
-// WithDimensions sets the requested embedding dimension (must match DB column).
-func WithDimensions(dim int) ClientOption {
+// WithUsageRecorder attaches a recorder that receives each call's token counts and duration. The
+// provider returns those numbers on every response; without this they are decoded and dropped.
+func WithUsageRecorder(recorder llm.UsageRecorder) ClientOption {
 	return func(c *Client) {
-		c.dimensions = dim
-	}
-}
-
-// WithModel sets the embedding model name. Empty uses default.
-func WithModel(model string) ClientOption {
-	return func(c *Client) {
-		c.model = model
-	}
-}
-
-// WithBaseURL sets a custom OpenAI-compatible base URL (for example a self-hosted embeddings runtime).
-func WithBaseURL(baseURL string) ClientOption {
-	return func(c *Client) {
-		c.baseURL = baseURL
-	}
-}
-
-// WithNormalize enables L2 normalization of the embedding vector before returning (e.g. before storing or caching).
-func WithNormalize(normalize bool) ClientOption {
-	return func(c *Client) {
-		c.normalize = normalize
+		c.usage = recorder
 	}
 }
 
@@ -109,6 +90,12 @@ func NewClient(apiKey string, opts ...ClientOption) *Client {
 		sdkOpts = append(sdkOpts, option.WithBaseURL(client.baseURL))
 	}
 
+	if client.disableKeepAlives {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DisableKeepAlives = true
+		sdkOpts = append(sdkOpts, option.WithHTTPClient(&http.Client{Transport: transport}))
+	}
+
 	client.sdk = openaisdk.NewClient(sdkOpts...)
 
 	return client
@@ -128,6 +115,8 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 
 	model := c.model
 
+	started := time.Now()
+
 	resp, err := c.sdk.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
 		Input: openaisdk.EmbeddingNewParamsInputUnion{
 			OfString: param.NewOpt(input),
@@ -135,6 +124,15 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		Model:      model,
 		Dimensions: param.NewOpt(int64(c.dimensions)),
 	})
+
+	var promptTokens int64
+
+	if resp != nil {
+		promptTokens = resp.Usage.PromptTokens
+	}
+
+	c.recordUsage(ctx, llm.OperationEmbeddings, started, promptTokens, 0, err)
+
 	if err != nil {
 		return nil, wrapOpenAIError("openai embedding", err)
 	}
@@ -167,6 +165,8 @@ func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]flo
 		return nil, ErrInvalidDims
 	}
 
+	started := time.Now()
+
 	resp, err := c.sdk.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
 		Input: openaisdk.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: trimmed,
@@ -174,6 +174,15 @@ func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]flo
 		Model:      c.model,
 		Dimensions: param.NewOpt(int64(c.dimensions)),
 	})
+
+	var promptTokens int64
+
+	if resp != nil {
+		promptTokens = resp.Usage.PromptTokens
+	}
+
+	c.recordUsage(ctx, llm.OperationEmbeddings, started, promptTokens, 0, err)
+
 	if err != nil {
 		return nil, wrapOpenAIError("openai embeddings batch", err)
 	}
@@ -303,6 +312,30 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 func (c *Client) createChatCompletion(
 	ctx context.Context, params openaisdk.ChatCompletionNewParams,
 ) (*openaisdk.ChatCompletion, error) {
+	started := time.Now()
+
+	resp, err := c.chatCompletionCall(ctx, params)
+
+	var inputTokens, outputTokens int64
+
+	if resp != nil {
+		inputTokens, outputTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
+	}
+
+	c.recordUsage(ctx, llm.OperationChat, started, inputTokens, outputTokens, err)
+
+	return resp, err
+}
+
+// chatCompletionCall is the original body, kept intact so the temperature-retry logic below is
+// unchanged; createChatCompletion wraps it purely to time and record the call.
+//
+// One record covers the whole sequence, including the reasoning-model temperature retry inside:
+// the token counts come from the successful request, but the duration spans both. That inflates a
+// single call's latency at most once per client per process, since the rejection latches.
+func (c *Client) chatCompletionCall(
+	ctx context.Context, params openaisdk.ChatCompletionNewParams,
+) (*openaisdk.ChatCompletion, error) {
 	if !c.temperatureUnsupported.Load() {
 		params.Temperature = param.NewOpt(0.0)
 	}
@@ -349,14 +382,36 @@ func completionText(resp *openaisdk.ChatCompletion) (string, error) {
 
 	choice := resp.Choices[0]
 
+	// Checked BEFORE the content, because a length-capped response usually carries partial text
+	// rather than none. Returning that would hand back a half-finished translation to be stored as
+	// complete, or a truncated JSON object that fails to parse and looks like a transient provider
+	// glitch — retried to exhaustion and recorded as transient, when it is permanent for this text
+	// at this model. A truncated result is not a result.
+	if choice.FinishReason == "length" {
+		return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength,
+			fmt.Errorf("%w: finish reason %q", ErrNoCompletionInResponse, choice.FinishReason))
+	}
+
 	out := strings.TrimSpace(choice.Message.Content)
 	if out == "" {
 		if refusal := strings.TrimSpace(choice.Message.Refusal); refusal != "" {
-			return "", fmt.Errorf("%w: model refused: %.256s", ErrNoCompletionInResponse, refusal)
+			return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonRefusal,
+				fmt.Errorf("%w: model refused: %.256s", ErrNoCompletionInResponse, refusal))
 		}
 
 		if choice.FinishReason != "" && choice.FinishReason != "stop" {
-			return "", fmt.Errorf("%w: finish reason %q", ErrNoCompletionInResponse, choice.FinishReason)
+			err := fmt.Errorf("%w: finish reason %q", ErrNoCompletionInResponse, choice.FinishReason)
+
+			// content_filter is the only terminal reason reachable here: length returns above,
+			// before the content is read, because it usually truncates rather than blanks the
+			// output. Everything else — including the tool finishes we never request — stays
+			// retryable, since a false terminal abandons a record while a false transient only
+			// costs a few calls.
+			if choice.FinishReason == "content_filter" {
+				return "", huberrors.NewTerminalProviderError(huberrors.TerminalReasonContentFilter, err)
+			}
+
+			return "", err
 		}
 
 		return "", ErrNoCompletionInResponse
@@ -382,7 +437,41 @@ func wrapOpenAIError(op string, err error) error {
 		return huberrors.NewRateLimitError(openaiRetryAfter(apiErr), wrapped)
 	}
 
+	if isOpenAIInputLengthError(apiErr) {
+		return huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength, wrapped)
+	}
+
 	return wrapped
+}
+
+// isOpenAIInputLengthError recognizes only explicit per-request input/context limit failures.
+// Other 4xx responses (auth, model configuration, dimensions, malformed requests) remain
+// retryable at the record layer because classifying them as terminal would permanently suppress
+// every record after an operator fixes the deployment.
+func isOpenAIInputLengthError(apiErr *openaisdk.Error) bool {
+	if apiErr == nil || (apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusRequestEntityTooLarge) {
+		return false
+	}
+
+	code := strings.ToLower(strings.TrimSpace(apiErr.Code))
+	if code == "context_length_exceeded" || code == "input_too_long" || code == "max_tokens_exceeded" {
+		return true
+	}
+
+	message := strings.ToLower(apiErr.Message)
+	for _, marker := range []string{
+		"maximum context length",
+		"context length exceeded",
+		"input token count exceeds",
+		"input is too long",
+		"too many tokens",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // openaiRetryAfter reads the retry hint from a 429 response: retry-after-ms
@@ -419,4 +508,66 @@ func openaiRetryAfter(apiErr *openaisdk.Error) time.Duration {
 	}
 
 	return 0
+}
+
+// recordUsage reports one call. Split out so every provider entry point records the same shape,
+// and so a nil recorder is checked in exactly one place.
+func (c *Client) recordUsage(
+	ctx context.Context, operation llm.Operation, started time.Time, inputTokens, outputTokens int64, err error,
+) {
+	llm.Record(ctx, c.usage, operation, llm.ProviderOpenAI, c.model,
+		started, inputTokens, outputTokens, errorTypeOf(err))
+}
+
+// errorTypeOf maps an error to the BOUNDED error.type attribute. Only the status extraction is
+// OpenAI-specific; the rest of the classification is shared so the two clients cannot disagree on
+// what "timeout" means.
+func errorTypeOf(err error) string {
+	return llm.ClassifyError(err, func(err error) (int, bool) {
+		if apiErr, ok := errors.AsType[*openaisdk.Error](err); ok {
+			return apiErr.StatusCode, true
+		}
+
+		return 0, false
+	})
+}
+
+// ClientOption configures the Client.
+type ClientOption func(*Client)
+
+// WithDimensions sets the requested embedding dimension (must match DB column).
+func WithDimensions(dim int) ClientOption {
+	return func(c *Client) {
+		c.dimensions = dim
+	}
+}
+
+// WithModel sets the embedding model name. Empty uses default.
+func WithModel(model string) ClientOption {
+	return func(c *Client) {
+		c.model = model
+	}
+}
+
+// WithBaseURL sets a custom OpenAI-compatible base URL (for example a self-hosted embeddings runtime).
+func WithBaseURL(baseURL string) ClientOption {
+	return func(c *Client) {
+		c.baseURL = baseURL
+	}
+}
+
+// WithDisableKeepAlives creates a new HTTP connection for every provider request. This lets
+// Kubernetes balance background embedding batches across all endpoints instead of pinning a
+// long-lived worker connection to one pod.
+func WithDisableKeepAlives(disable bool) ClientOption {
+	return func(c *Client) {
+		c.disableKeepAlives = disable
+	}
+}
+
+// WithNormalize enables L2 normalization of the embedding vector before returning (e.g. before storing or caching).
+func WithNormalize(normalize bool) ClientOption {
+	return func(c *Client) {
+		c.normalize = normalize
+	}
 }

@@ -1,0 +1,289 @@
+---
+title: Connecting Hub to Airbyte
+description: Use Airbyte to sync Formbricks Hub's feedback data into Snowflake, Databricks, BigQuery, Redshift, or any other supported warehouse - one Postgres source, many destinations.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Hub stores all data in a single PostgreSQL database. **Airbyte** is an open-source, self-hostable data integration platform with a ready-made [PostgreSQL source connector](https://docs.airbyte.com/integrations/sources/postgres) and [dozens of warehouse destinations](https://docs.airbyte.com/integrations/destinations). Point Airbyte at Hub's `feedback_records` table and it will replicate the data on a schedule into Snowflake, Databricks, BigQuery, Redshift, or any other supported destination.
+
+## Summary
+
+| Step | Action                                                                                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1    | Run Hub, worker, and Postgres ([Quick Start](/quickstart))                                                                                                   |
+| 2    | Install Airbyte OSS with [`abctl`](https://docs.airbyte.com/platform/deploying-airbyte/abctl) and open the UI on http://localhost:8000                       |
+| 3    | Add a **Postgres source** pointing at Hub's database; replicate `public.feedback_records` with **Standard** incremental sync using `updated_at` as cursor    |
+| 4    | Add a **destination** (Snowflake, Databricks, BigQuery, Redshift, etc.) with its account/warehouse/credentials                                               |
+| 5    | Create a connection from source -> destination, pick **Incremental \| Append + Deduped**, choose a schedule (cron or hourly+), and trigger the first sync   |
+
+## Why Hub + Airbyte?
+
+- **One source, many destinations** - Hub's data is a standard PostgreSQL table. Airbyte's Postgres source connector reads it, and any of Airbyte's [warehouse destinations](https://docs.airbyte.com/integrations/destinations) (Snowflake, Databricks, BigQuery, Redshift, ClickHouse, ...) can receive it.
+- **Open source and self-hostable** - [Airbyte OSS](https://docs.airbyte.com/) runs on your own infrastructure; no third-party SaaS is involved.
+- **Incremental sync out of the box** - Hub's `updated_at` column is a perfect cursor for incremental replication; you only move new and changed rows after the initial backfill.
+- **Schema-aware** - Airbyte maps Hub's columns to native warehouse types (including `metadata` JSONB to Snowflake `VARIANT`, BigQuery `JSON`, Redshift `SUPER`, etc.).
+
+<Aside type="note">
+  For ad-hoc reporting directly on Hub's Postgres without ETL, see
+  [Connecting Hub to Superset](/guides/hub-superset),
+  [Connecting Hub to Power BI](/guides/hub-powerbi), or
+  [Connecting Hub to Databricks](/guides/hub-databricks). Use Airbyte when you
+  want a copy of the data inside your warehouse for joins with other datasets
+  or to keep production traffic off Hub's Postgres.
+</Aside>
+
+### Why not webhooks?
+
+Hub's [Webhooks](/core-concepts/webhooks) are designed for event-driven workflows - alerting, routing a low NPS to a Slack channel, triggering automations. For analytics warehouse use cases, a scheduled Postgres pull via Airbyte is simpler and more reliable:
+
+- **Historical backfill** - Airbyte replays the full table on first run; webhooks only fire for new events.
+- **At-least-once with deduplication** - Incremental + Deduped lands one row per `id` regardless of retries.
+- **Schema evolution** - Airbyte adds new columns to the destination automatically.
+- **One pipeline, many warehouses** - Switch or add destinations without changing Hub.
+
+## Step 1: Get Hub running
+
+If Formbricks Hub is not running yet, follow the [Quick Start Guide](/quickstart) to start Postgres, apply migrations automatically, and start the Hub API and worker.
+
+Note the **database connection details** you use for Hub. You will need them when configuring Airbyte's Postgres source.
+
+| Setting       | Example value                                                                                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host          | `host.docker.internal` (Airbyte runs in containers and reaches Hub's Postgres on the host), or Hub's Postgres host on your network          |
+| Port          | `5432`                                                                                                                                      |
+| Database name | `hub`                                                                                                                                       |
+| Username      | `formbricks`                                                                                                                                |
+| Password      | Your Postgres password (in the [Quick Start](/quickstart) compose setup this is `POSTGRES_PASSWORD` in `.env`; default is `formbricks_dev`) |
+
+<Aside type="note">
+  Airbyte's containers do not resolve `localhost` to the host machine. When
+  Hub's Postgres runs on the same host as Airbyte, use
+  `host.docker.internal` (Docker Desktop on macOS/Windows) or the host's LAN
+  IP (Linux). For production, point Airbyte at the real Postgres host or
+  Private Link endpoint.
+</Aside>
+
+## Step 2: Install Airbyte
+
+Airbyte OSS ships with `abctl`, a small CLI that provisions a local Kubernetes-in-Docker cluster and installs Airbyte via Helm. The legacy `docker-compose.yml` install method is deprecated.
+
+### Prerequisites
+
+- Docker running locally
+- At least **4 CPUs and 8 GB RAM** available (add `--low-resource-mode` for smaller machines)
+
+### Install
+
+```bash
+# Install abctl
+curl -LsfS https://get.airbyte.com | bash -
+
+# Provision the cluster and install Airbyte (can take up to 30 minutes the first time)
+abctl local install
+```
+
+### Open the UI
+
+```bash
+# Print the generated admin credentials
+abctl local credentials
+```
+
+Browse to **http://localhost:8000** and log in. To set a custom password:
+
+```bash
+abctl local credentials --password <your-password>
+```
+
+<Aside type="note">
+  See the [Airbyte OSS Quickstart](https://docs.airbyte.com/platform/using-airbyte/getting-started/oss-quickstart)
+  for installation on Linux, Windows, and headless servers, and for production
+  Helm-based deployments.
+</Aside>
+
+## Step 3: Configure Hub's Postgres as a source
+
+1. In the Airbyte UI, go to **Sources -> + New source** and select **Postgres**.
+2. Fill in the connection fields from the [Step 1 table](#step-1-get-hub-running):
+   - **Host** - `host.docker.internal` (or Hub's Postgres host)
+   - **Port** - `5432`
+   - **Database Name** - `hub`
+   - **Schemas** - `public`
+   - **Username** - `formbricks`
+   - **Password** - Your Postgres password
+   - **SSL Mode** - `disable` for local, `require` for production
+3. Under **Update Method**, choose **Standard** (Airbyte's Postgres source offers **Standard**, **Xmin**, and **CDC**; Standard means cursor-based incremental with a user-defined cursor).
+4. Click **Set up source**. Airbyte will run a connection check and discover the schema. You will pick `updated_at` as the cursor field per stream in [Step 5](#step-5-create-the-connection).
+
+<Aside type="note">
+  Standard cursor-based replication does not require any Postgres-side
+  configuration (no publication, no replication slot, no `wal_level=logical`).
+  Airbyte just needs a user with `SELECT` on `feedback_records`. Use **CDC**
+  if you need delete tracking or are working with very large tables (500 GB+);
+  the Postgres source docs cover the extra setup.
+</Aside>
+
+### Optional: a read-only user for Airbyte
+
+For production, create a dedicated read-only user instead of reusing the `formbricks` superuser.
+
+<Aside type="note">
+  The grant below gives Airbyte access to **all rows in `feedback_records`,
+  across every tenant**. This is the right default for an internal analytics
+  warehouse where you want cross-tenant reporting on your own Hub. If you are
+  building a per-tenant pipeline (for example, replicating a single customer's
+  data into their own warehouse), grant on a tenant-scoped view instead - see
+  the next subsection.
+</Aside>
+
+```sql
+-- All-tenant replication (default)
+CREATE USER airbyte WITH PASSWORD '<strong-password>';
+GRANT CONNECT ON DATABASE hub TO airbyte;
+GRANT USAGE ON SCHEMA public TO airbyte;
+GRANT SELECT ON public.feedback_records TO airbyte;
+```
+
+#### Tenant-scoped replication
+
+To restrict Airbyte to a single tenant, create a view that filters by `tenant_id` and grant on the view only:
+
+```sql
+CREATE USER airbyte_acme WITH PASSWORD '<strong-password>';
+GRANT CONNECT ON DATABASE hub TO airbyte_acme;
+GRANT USAGE ON SCHEMA public TO airbyte_acme;
+
+CREATE VIEW public.feedback_records_acme AS
+  SELECT * FROM public.feedback_records WHERE tenant_id = 'acme';
+
+GRANT SELECT ON public.feedback_records_acme TO airbyte_acme;
+```
+
+Then in Step 3, set **Schemas** to `public`, and in Step 5 enable only the `feedback_records_acme` stream. Use Standard cursor-based replication exactly as before - Postgres views work transparently with Airbyte's Postgres source.
+
+## Step 4: Configure a destination
+
+Go to **Destinations -> + New destination** and pick the warehouse you want to load Hub data into. The fields below are the minimum you need; consult the linked Airbyte docs for the full reference.
+
+### Snowflake
+
+[Snowflake destination docs](https://docs.airbyte.com/integrations/destinations/snowflake)
+
+- **Account name** - For example, `xy12345.us-east-1`
+- **Warehouse**, **Database**, **Default Schema**, **Role**
+- **Auth** - Username + password or key-pair authentication
+
+Airbyte ships a SQL script in the destination docs that creates the warehouse, database, role, and user with the right grants.
+
+### Databricks
+
+[Databricks destination docs](https://docs.airbyte.com/integrations/destinations/databricks)
+
+- **Server Hostname** and **HTTP Path** for a Databricks SQL warehouse
+- **Personal Access Token**
+- **Catalog** and **Schema** (Unity Catalog)
+- A staging location (Unity Catalog volume or cloud bucket)
+
+### BigQuery
+
+[BigQuery destination docs](https://docs.airbyte.com/integrations/destinations/bigquery)
+
+- **Project ID**, **Dataset Location**, **Default Dataset ID**
+- **Service Account Key (JSON)**
+- **Loading Method** - **GCS Staging** recommended for larger loads
+
+### Redshift
+
+[Redshift destination docs](https://docs.airbyte.com/integrations/destinations/redshift)
+
+- **Host**, **Port**, **Database**, **Username**, **Password**, **Schema**
+- **S3 staging bucket** and IAM credentials
+
+Other supported destinations include **Postgres**, **ClickHouse**, **S3** (raw files), **DuckDB**, and many more - see the [full list](https://docs.airbyte.com/integrations/destinations).
+
+## Step 5: Create the connection
+
+1. Go to **Connections -> + New connection**.
+2. Select the Hub Postgres source and your destination.
+3. In the **Streams** list, enable only `public.feedback_records` (leave any internal tables disabled). For that stream:
+   - **Sync mode** - **Incremental \| Append + Deduped**
+   - **Cursor field** - `updated_at`
+   - **Primary key** - `id`
+4. Configure the destination namespace and stream name to taste (for example, schema `hub_raw`, stream `feedback_records`).
+5. Pick a **schedule**:
+   - **Manual** - Trigger from the UI or an orchestrator (Airflow, Dagster, Kestra).
+   - **Scheduled** - Every 1, 2, 3, 6, 8, 12, or 24 hours (hourly is the maximum frequency).
+   - **Cron** - Quartz cron expression with timezone, for fine-grained scheduling.
+6. Click **Set up connection**. Airbyte will run an initial full snapshot, then only pick up rows where `updated_at` has advanced.
+
+<Aside type="note">
+  **Incremental \| Append + Deduped** uses Hub's `id` (UUIDv7) primary key plus
+  `updated_at` to land exactly one row per record in the destination, with the
+  latest version winning. This matches Hub's [Data Model](/core-concepts/data-model)
+  where each feedback record is mutable and time-ordered.
+</Aside>
+
+## Query in the destination
+
+After the first sync completes, you can query `feedback_records` in the destination warehouse using the same dimensions and metrics as everywhere else in Hub. The `metadata` JSONB column is preserved as a native semi-structured type in the destination:
+
+- **Snowflake** - `VARIANT` (use `metadata:campaign_id::string`)
+- **BigQuery** - `JSON` (use `JSON_VALUE(metadata, '$.campaign_id')`)
+- **Redshift** - `SUPER` (use `metadata.campaign_id`)
+- **Databricks** - `STRING` (parse with `from_json(metadata, 'map<string,string>')` as needed)
+
+**NPS trend over time (any warehouse, SQL is portable):**
+
+```sql
+SELECT
+  date_trunc('week', collected_at) AS week,
+  AVG(value_number)                AS avg_nps,
+  COUNT(*)                         AS responses
+FROM hub_raw.feedback_records
+WHERE field_type = 'nps' AND value_number IS NOT NULL
+GROUP BY 1
+ORDER BY 1;
+```
+
+**Feedback count by source:**
+
+```sql
+SELECT source_type, COUNT(*) AS count
+FROM hub_raw.feedback_records
+GROUP BY source_type
+ORDER BY count DESC;
+```
+
+### Quick reference: dimensions and metrics
+
+For the complete list of columns and field types, see the [Data Model](/core-concepts/data-model).
+
+| Use case              | Dimension / filter                          | Metric                            |
+| --------------------- | ------------------------------------------- | --------------------------------- |
+| NPS/CSAT over time    | `collected_at`; filter `field_type = nps`   | AVG(value_number) or custom NPS % |
+| Count by source       | `source_type`                               | COUNT(\*)                         |
+| Score by question     | `field_id` or `field_label`                 | AVG(value_number)                 |
+| Categorical breakdown | `value_text` (for example, device, segment) | COUNT(\*)                         |
+| Multi-tenant          | Filter `tenant_id`                          | any                               |
+
+Once Airbyte has a working source + destination + connection, Hub feedback data flows into your warehouse on the schedule you choose - no custom ETL to maintain.
+
+## References
+
+**Hub**
+
+- [Quick Start](/quickstart) - Run Hub, worker, and Postgres
+- [Data Model](/core-concepts/data-model) - Table schema, columns, and field types for `feedback_records`
+- [Webhooks](/core-concepts/webhooks) - Event-driven push (use this for alerts and automation; use Airbyte for analytics replication)
+- [Connecting Hub to Databricks](/guides/hub-databricks/) - Direct JDBC or Lakehouse Federation when you do not need ETL
+- [Connecting Hub to Superset](/guides/hub-superset/) - Direct dashboards on Hub's Postgres
+- [Connecting Hub to Power BI](/guides/hub-powerbi/) - Direct reports on Hub's Postgres
+
+**Airbyte**
+
+- [OSS Quickstart](https://docs.airbyte.com/platform/using-airbyte/getting-started/oss-quickstart) - Install with `abctl`
+- [Postgres source connector](https://docs.airbyte.com/integrations/sources/postgres) - All connection options, CDC vs cursor-based
+- [Destinations catalog](https://docs.airbyte.com/integrations/destinations) - Snowflake, Databricks, BigQuery, Redshift, and more
+- [Sync schedules](https://docs.airbyte.com/platform/using-airbyte/core-concepts/sync-schedules) - Manual, scheduled, and cron
+- [Supported data types](https://docs.airbyte.com/platform/understanding-airbyte/supported-data-types) - How JSONB and other types map to destinations

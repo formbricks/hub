@@ -17,12 +17,23 @@ const (
 	MetricNameEnrichmentOutputsCleared  = "hub_enrichment_outputs_cleared_total"
 	MetricNameEnrichmentPendingRecords  = "hub_enrichment_pending_records"
 	MetricNameEnrichmentBacklogPollErrs = "hub_enrichment_backlog_poll_errors_total"
-	MetricNameWebhookJobsEnqueued       = "hub_webhook_jobs_enqueued_total"
-	MetricNameWebhookProviderErrors     = "hub_webhook_provider_errors_total"
-	MetricNameWebhookDeliveries         = "hub_webhook_deliveries_total"
-	MetricNameWebhookDisabled           = "hub_webhook_disabled_total"
-	MetricNameWebhookDispatchErrors     = "hub_webhook_dispatch_errors_total"
-	MetricNameWebhookDeliveryDuration   = "hub_webhook_delivery_duration_seconds"
+	// MetricNameEnrichmentTerminalTotal and MetricNameEnrichmentFailedRecords carry the enrichment
+	// as a LABEL rather than in the name, unlike the four per-type families below — already the
+	// shape a consolidation would move those to.
+	MetricNameEnrichmentTerminalTotal = "hub_enrichment_terminal_total"
+	MetricNameEnrichmentFailedRecords = "hub_enrichment_failed_records"
+	// MetricNameEnrichmentReconcileSweeps and the three below are the reconciler's own signals.
+	// Same label-not-name convention as the two above.
+	MetricNameEnrichmentReconcileSweeps   = "hub_enrichment_reconcile_sweeps_total"
+	MetricNameEnrichmentReconcileDuration = "hub_enrichment_reconcile_duration_seconds"
+	MetricNameEnrichmentReconcileEnqueued = "hub_enrichment_reconcile_enqueued_total"
+	MetricNameEnrichmentRetryRequests     = "hub_enrichment_retry_requests_total"
+	MetricNameWebhookJobsEnqueued         = "hub_webhook_jobs_enqueued_total"
+	MetricNameWebhookProviderErrors       = "hub_webhook_provider_errors_total"
+	MetricNameWebhookDeliveries           = "hub_webhook_deliveries_total"
+	MetricNameWebhookDisabled             = "hub_webhook_disabled_total"
+	MetricNameWebhookDispatchErrors       = "hub_webhook_dispatch_errors_total"
+	MetricNameWebhookDeliveryDuration     = "hub_webhook_delivery_duration_seconds"
 
 	// MetricNameEmbeddingJobsEnqueued and related embedding pipeline metrics.
 	MetricNameEmbeddingJobsEnqueued   = "hub_embedding_jobs_enqueued_total"
@@ -133,12 +144,14 @@ var allowedEmbeddingOutcomeStatuses = map[string]bool{
 
 // allowedEmbeddingWorkerReasons for hub_embedding_worker_errors_total.
 var allowedEmbeddingWorkerReasons = map[string]bool{
-	"embedding_api_failed":  true,
-	"get_record_failed":     true,
-	"update_failed":         true,
-	"tenant_write_conflict": true,
-	"rate_limited":          true,
-	"superseded":            true,
+	"embedding_api_failed":        true,
+	"get_record_failed":           true,
+	"update_failed":               true,
+	"tenant_write_conflict":       true,
+	"rate_limited":                true,
+	"reconcile_failed":            true,
+	"failure_marker_write_failed": true,
+	"superseded":                  true,
 }
 
 // AllowedEmbeddingProviderReason returns true if reason is allowed for embedding provider errors.

@@ -46,8 +46,7 @@ func problemFromError(err error) ProblemDetails {
 		return problem
 	}
 
-	var requestJSONErr *RequestJSONDecodeError
-	if errors.As(err, &requestJSONErr) {
+	if requestJSONErr, ok := errors.AsType[*RequestJSONDecodeError](err); ok {
 		if problem, ok := problemFromJSONDecodeError(requestJSONErr.Unwrap()); ok {
 			return problem
 		}
@@ -55,32 +54,28 @@ func problemFromError(err error) ProblemDetails {
 		return newProblem(http.StatusBadRequest, "Invalid request body")
 	}
 
-	var validationErrs validator.ValidationErrors
-	if errors.As(err, &validationErrs) {
+	if validationErrs, ok := errors.AsType[validator.ValidationErrors](err); ok {
 		problem := newValidationProblem()
 		problem.InvalidParams = invalidParamsFromValidator(validationErrs)
 
 		return problem
 	}
 
-	var queryDecodeErr *validation.QueryDecodeError
-	if errors.As(err, &queryDecodeErr) {
+	if queryDecodeErr, ok := errors.AsType[*validation.QueryDecodeError](err); ok {
 		problem := newValidationProblem()
 		problem.InvalidParams = invalidParamsFromValidationParams(queryDecodeErr.InvalidParams())
 
 		return problem
 	}
 
-	var validationErr *huberrors.ValidationError
-	if errors.As(err, &validationErr) {
+	if validationErr, ok := errors.AsType[*huberrors.ValidationError](err); ok {
 		problem := newValidationProblem()
 		problem.InvalidParams = []InvalidParam{validationErrorParam(validationErr)}
 
 		return problem
 	}
 
-	var notFoundErr *huberrors.NotFoundError
-	if errors.As(err, &notFoundErr) {
+	if notFoundErr, ok := errors.AsType[*huberrors.NotFoundError](err); ok {
 		problem := newProblem(http.StatusNotFound, notFoundErr.Error())
 		if notFoundErr.Resource != "" {
 			problem.Details = map[string]any{"resource_type": notFoundErr.Resource}
@@ -89,8 +84,7 @@ func problemFromError(err error) ProblemDetails {
 		return problem
 	}
 
-	var tenantWriteConflictErr *huberrors.TenantWriteConflictError
-	if errors.As(err, &tenantWriteConflictErr) {
+	if tenantWriteConflictErr, ok := errors.AsType[*huberrors.TenantWriteConflictError](err); ok {
 		problem := newProblem(http.StatusConflict, tenantWriteConflictErr.Error())
 		problem.Type = ProblemTypeTenantWriteConflict
 		problem.Code = CodeTenantWriteConflict
@@ -98,13 +92,11 @@ func problemFromError(err error) ProblemDetails {
 		return problem
 	}
 
-	var conflictErr *huberrors.ConflictError
-	if errors.As(err, &conflictErr) {
+	if conflictErr, ok := errors.AsType[*huberrors.ConflictError](err); ok {
 		return newProblem(http.StatusConflict, conflictErr.Error())
 	}
 
-	var limitErr *huberrors.LimitExceededError
-	if errors.As(err, &limitErr) {
+	if limitErr, ok := errors.AsType[*huberrors.LimitExceededError](err); ok {
 		return newProblem(http.StatusForbidden, limitErr.Error())
 	}
 
@@ -175,8 +167,7 @@ func problemFromJSONDecodeError(err error) (ProblemDetails, bool) {
 		return newProblem(http.StatusBadRequest, "Invalid request body"), true
 	}
 
-	var typeErr *json.UnmarshalTypeError
-	if errors.As(err, &typeErr) {
+	if typeErr, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		field := fieldNameForAPI(typeErr.Field)
 		problem := newValidationProblem()
 		problem.InvalidParams = []InvalidParam{{Name: field, Reason: "must be " + typeErr.Type.String()}}

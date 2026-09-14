@@ -44,13 +44,15 @@ func openAIEmotionsFactory(_ context.Context, cfg EmotionsClientConfig) (Emotion
 	raw := openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
 		openai.WithBaseURL(cfg.BaseURL),
+		openai.WithUsageRecorder(cfg.UsageRecorder),
 	)
 
 	return promptEmotionsClient{raw: raw}, nil
 }
 
 func googleEmotionsFactory(ctx context.Context, cfg EmotionsClientConfig) (EmotionsClient, error) {
-	raw, err := googleai.NewClient(ctx, cfg.ProviderAPIKey, googleai.WithModel(cfg.Model))
+	raw, err := googleai.NewClient(ctx, cfg.ProviderAPIKey,
+		googleai.WithModel(cfg.Model), googleai.WithUsageRecorder(cfg.UsageRecorder))
 	if err != nil {
 		return nil, fmt.Errorf("create google emotions client: %w", err)
 	}
@@ -60,7 +62,7 @@ func googleEmotionsFactory(ctx context.Context, cfg EmotionsClientConfig) (Emoti
 
 func googleGeminiEmotionsFactory(ctx context.Context, cfg EmotionsClientConfig) (EmotionsClient, error) {
 	raw, err := googleai.NewGoogleGeminiClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
-		googleai.WithModel(cfg.Model))
+		googleai.WithModel(cfg.Model), googleai.WithUsageRecorder(cfg.UsageRecorder))
 	if err != nil {
 		return nil, fmt.Errorf("create google-gemini emotions client: %w", err)
 	}

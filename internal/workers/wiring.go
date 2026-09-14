@@ -25,6 +25,8 @@ type RiverDeps struct {
 	EmbeddingClient    service.EmbeddingClient
 	EmbeddingDocPrefix string
 	EmbeddingMetrics   observability.EmbeddingMetrics
+	// EmbeddingReconcileSweeper is non-nil only when automatic taxonomy embedding repair is enabled.
+	EmbeddingReconcileSweeper EmbeddingReconcileSweeper
 
 	// Translation worker (optional; if TranslationClient is nil, translation worker is not registered)
 	TranslationService translationWorkerService
@@ -49,6 +51,21 @@ type RiverDeps struct {
 	// Feedback-records purge worker (always registered; the purge is a core tenant operation, not
 	// an enrichment, so it has no client to gate on).
 	FeedbackRecordsPurgeService feedbackRecordsPurgeService
+
+	// ReconcileSweeper runs the level-triggered enrichment sweep. nil leaves the reconciler out
+	// entirely — the kill switch, and the shape a deployment with no enrichment provider takes.
+	ReconcileSweeper ReconcileSweeper
+
+	// Failures records the durable marker a classify worker writes when it gives up on a record.
+	// Shared by the three classify pipelines; nil disables recording, which leaves the API
+	// under-reporting failures but changes no enrichment behaviour.
+	Failures FailureRecorder
+	// ReconcileMetrics reports the sweep's own outcome, duration and enqueue counts. nil disables
+	// them; the sweep still runs.
+	ReconcileMetrics observability.EnrichmentReconcileMetrics
+	// FailureMetrics counts permanent give-ups by cause, for whoever watches the deployment
+	// rather than a single tenant. nil disables it.
+	FailureMetrics observability.EnrichmentFailureMetrics
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps. Each optional
@@ -68,6 +85,17 @@ func NewRiverWorkersAndQueues(
 
 	maxDefault := cfg.Webhook.DeliveryMaxConcurrent
 	maxEmbedding := cfg.Embedding.MaxConcurrent
+	// The backfill lanes get their own, smaller budget. Reconciled work is by definition not urgent
+	// — nobody is watching a record that has been stranded for a week — so it drains in the
+	// background at a rate that cannot crowd out a record submitted a moment ago.
+	reconcileWorkers := func(configured int) int {
+		if configured <= 0 {
+			return 1
+		}
+
+		return configured
+	}
+
 	maxTranslation := cfg.Translation.MaxConcurrent
 	maxSentiment := cfg.Sentiment.MaxConcurrent
 	maxEmotions := cfg.Emotions.MaxConcurrent
@@ -86,17 +114,39 @@ func NewRiverWorkersAndQueues(
 	}
 
 	if deps.EmbeddingClient != nil {
-		embeddingWorker := NewFeedbackEmbeddingWorker(deps.EmbeddingService, deps.EmbeddingClient, deps.EmbeddingDocPrefix, deps.EmbeddingMetrics)
+		embeddingWorker := NewFeedbackEmbeddingWorkerWithOptions(
+			deps.EmbeddingService,
+			deps.EmbeddingClient,
+			deps.EmbeddingDocPrefix,
+			deps.EmbeddingMetrics,
+			cfg.Embedding.JobTimeout.Duration(),
+			deps.Failures,
+			deps.FailureMetrics,
+		)
 		river.AddWorker(workers, embeddingWorker)
 
 		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: maxEmbedding}
+		// Keep draining repairs already queued by an earlier configuration even when the
+		// periodic reconciler is later disabled. Both queues use the same embedding worker.
+		queues[service.EmbeddingsReconcileQueueName] = river.QueueConfig{
+			MaxWorkers: cfg.Embedding.ReconcileMaxConcurrent,
+		}
+
+		if deps.EmbeddingReconcileSweeper != nil {
+			river.AddWorker(workers, NewEmbeddingReconcileWorker(
+				deps.EmbeddingReconcileSweeper, deps.EmbeddingMetrics))
+
+			queues[service.EmbeddingReconcileQueueName] = river.QueueConfig{MaxWorkers: 1}
+		}
 	}
 
 	if deps.TranslationClient != nil {
-		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient, deps.TranslationMetrics)
+		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient, deps.TranslationMetrics,
+			deps.Failures, deps.FailureMetrics)
 		river.AddWorker(workers, translationWorker)
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
+		queues[service.TranslationsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Translation.ReconcileMaxConcurrent)}
 
 		backfillWorker := NewTenantTranslationBackfillWorker(deps.TranslationBackfillService, deps.TranslationMaxAttempts)
 		river.AddWorker(workers, backfillWorker)
@@ -104,20 +154,33 @@ func NewRiverWorkersAndQueues(
 		queues[service.TranslationBackfillsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
 	}
 
+	if deps.ReconcileSweeper != nil {
+		river.AddWorker(workers, NewEnrichmentReconcileWorker(deps.ReconcileSweeper, deps.ReconcileMetrics))
+
+		// MaxWorkers 1: one sweep at a time, structurally. The job's uniqueness already collapses
+		// overlapping ticks, but a queue that cannot run two makes that true even if the unique
+		// options are ever loosened.
+		queues[service.EnrichmentReconcileQueueName] = river.QueueConfig{MaxWorkers: 1}
+	}
+
 	if deps.SentimentClient != nil {
 		sentimentWorker := NewFeedbackSentimentWorker(
-			deps.SentimentService, deps.SentimentResolver, deps.SentimentClient, deps.SentimentMetrics)
+			deps.SentimentService, deps.SentimentResolver, deps.SentimentClient, deps.SentimentMetrics,
+			deps.Failures, deps.FailureMetrics)
 		river.AddWorker(workers, sentimentWorker)
 
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: maxSentiment}
+		queues[service.SentimentsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Sentiment.ReconcileMaxConcurrent)}
 	}
 
 	if deps.EmotionsClient != nil {
 		emotionsWorker := NewFeedbackEmotionsWorker(
-			deps.EmotionsService, deps.EmotionsResolver, deps.EmotionsClient, deps.EmotionsMetrics)
+			deps.EmotionsService, deps.EmotionsResolver, deps.EmotionsClient, deps.EmotionsMetrics,
+			deps.Failures, deps.FailureMetrics)
 		river.AddWorker(workers, emotionsWorker)
 
 		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: maxEmotions}
+		queues[service.EmotionsReconcileQueueName] = river.QueueConfig{MaxWorkers: reconcileWorkers(cfg.Emotions.ReconcileMaxConcurrent)}
 	}
 
 	return workers, queues

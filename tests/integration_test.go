@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"sync"
@@ -94,7 +95,16 @@ func setupTestServerWithEventProviders(
 
 	// Webhooks
 	webhooksRepo := repository.NewWebhooksRepository(db)
-	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, cfg.Webhook.URLBlacklist)
+	// Webhook fixtures target 192.0.2.0/24 (TEST-NET-1), which the SSRF classifier rejects as a
+	// reserved range. Allowlisting just that range keeps the fixtures hermetic — literal IPs need
+	// no DNS — and exercises the WEBHOOK_ALLOWED_CIDRS path end to end. Every other reserved range
+	// stays blocked here; the classifier itself is covered in internal/service/webhook_ssrf_test.go.
+	ssrfPolicy := service.NewSSRFPolicy(
+		cfg.Webhook.URLBlacklist,
+		append(cfg.Webhook.AllowedCIDRs, netip.MustParsePrefix("192.0.2.0/24")),
+	)
+
+	webhooksService := service.NewWebhooksService(webhooksRepo, messageManager, cfg.Webhook.MaxCount, ssrfPolicy)
 	webhooksHandler := handlers.NewWebhooksHandler(webhooksService)
 
 	// Initialize repository, service, and handler layers
@@ -127,6 +137,24 @@ func setupTestServerWithEventProviders(
 	tenantSettingsRepo := repository.NewTenantSettingsRepository(db)
 	tenantSettingsService := service.NewTenantSettingsService(tenantSettingsRepo)
 	tenantSettingsHandler := handlers.NewTenantSettingsHandler(tenantSettingsService)
+
+	// All three enrichments reported as deployment-configured, so the gate under test is the
+	// TENANT switch rather than the deployment one. A test server that left them unconfigured
+	// would answer every retry with "not_configured" and prove nothing.
+	enrichmentRetryHandler := handlers.NewEnrichmentRetryHandler(
+		service.NewEnrichmentRetryService(service.NewEnrichmentRetryServiceParams{
+			Repo:                  repository.NewEnrichmentRetryRepository(db),
+			Settings:              tenantSettingsService,
+			DefaultLang:           "en-US",
+			TranslationConfigured: true,
+			SentimentConfigured:   true,
+			EmotionsConfigured:    true,
+			ReconcileEnabled:      true,
+			// Short, so a test can prove the cooldown refuses AND that it expires, without
+			// sleeping for an hour.
+			Cooldown: 2 * time.Second,
+		}),
+	)
 	healthHandler := handlers.NewHealthHandler()
 
 	// Set up public endpoints
@@ -145,6 +173,7 @@ func setupTestServerWithEventProviders(
 	protectedMux.HandleFunc("DELETE /v1/feedback-records/{id}", feedbackRecordsHandler.Delete)
 	protectedMux.HandleFunc("DELETE /v1/feedback-records", feedbackRecordsHandler.DeleteByUser)
 	protectedMux.HandleFunc("DELETE /v1/tenants/{tenant_id}/feedback-records", feedbackRecordsPurgeHandler.Purge)
+	protectedMux.HandleFunc("POST /v1/tenants/{tenant_id}/enrichments/retry", enrichmentRetryHandler.Retry)
 	protectedMux.HandleFunc("POST /v1/webhooks", webhooksHandler.Create)
 	protectedMux.HandleFunc("GET /v1/webhooks", webhooksHandler.List)
 	protectedMux.HandleFunc("GET /v1/webhooks/{id}", webhooksHandler.Get)
@@ -1100,6 +1129,7 @@ func TestDeleteTenantData(t *testing.T) {
 	// createTenantDataTaxonomyGraph builds one run with one cluster, one
 	// membership, three nodes (root/branch/leaf), one active run, and one event.
 	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyRuns)
+	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyRunInputRecords)
 	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyClusters)
 	assert.Equal(t, int64(1), deleteResp.DeletedTaxonomyClusterMemberships)
 	assert.Equal(t, int64(3), deleteResp.DeletedTaxonomyNodes)
@@ -1133,6 +1163,7 @@ func TestDeleteTenantData(t *testing.T) {
 	assert.Equal(t, int64(0), repeatedResp.DeletedEmbeddings)
 	assert.Equal(t, int64(0), repeatedResp.DeletedWebhooks)
 	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyRuns)
+	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyRunInputRecords)
 	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyClusters)
 	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyClusterMemberships)
 	assert.Equal(t, int64(0), repeatedResp.DeletedTaxonomyNodes)
@@ -1277,6 +1308,11 @@ func createTenantDataTaxonomyGraph(
 		RETURNING id`,
 		tenantID, sourceID, fieldID,
 	).Scan(&runID)
+	require.NoError(t, err)
+
+	_, err = db.Exec(ctx, `
+		INSERT INTO taxonomy_run_input_records (run_id, tenant_id, feedback_record_id, sort_order)
+		VALUES ($1, $2, $3, 0)`, runID, tenantID, feedbackRecordID)
 	require.NoError(t, err)
 
 	var clusterID uuid.UUID

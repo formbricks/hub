@@ -36,6 +36,12 @@ func (stubFeedbackRecordsPurgeService) Purge(
 	return &models.FeedbackRecordsPurgeCounts{}, nil
 }
 
+type stubEmbeddingReconcileSweeper struct{}
+
+func (stubEmbeddingReconcileSweeper) Sweep(context.Context) (service.EmbeddingReconcileResult, error) {
+	return service.EmbeddingReconcileResult{}, nil
+}
+
 // kindProbe re-registers a job kind to observe whether it is already registered.
 // river.AddWorkerSafely errors only on a duplicate kind, and *river.Workers exposes no way to
 // enumerate its kinds (workersMap is unexported with no accessor), so this is the only way to assert
@@ -68,9 +74,10 @@ func fullRiverDeps() RiverDeps {
 		WebhookSender:  &mockSender{},
 		WebhookMetrics: newCountingWebhookMetrics(),
 
-		EmbeddingService: &mockEmbeddingService{},
-		EmbeddingClient:  &mockEmbeddingClient{},
-		EmbeddingMetrics: &countingEmbeddingMetrics{},
+		EmbeddingService:          &mockEmbeddingService{},
+		EmbeddingClient:           &mockEmbeddingClient{},
+		EmbeddingMetrics:          &countingEmbeddingMetrics{},
+		EmbeddingReconcileSweeper: stubEmbeddingReconcileSweeper{},
 
 		TranslationService:         &mockTranslationWorkerService{},
 		TranslationClient:          &stubTranslationClient{},
@@ -88,7 +95,16 @@ func fullRiverDeps() RiverDeps {
 		EmotionsMetrics:  &countingEmotionsMetrics{},
 
 		FeedbackRecordsPurgeService: stubFeedbackRecordsPurgeService{},
+		ReconcileSweeper:            stubReconcileSweeper{},
 	}
+}
+
+// stubReconcileSweeper stands in for the reconcile service in wiring tests, which are about
+// registration rather than about what a sweep does.
+type stubReconcileSweeper struct{}
+
+func (stubReconcileSweeper) Sweep(context.Context) (service.ReconcileResult, error) {
+	return service.ReconcileResult{}, nil
 }
 
 // TestNewRiverWorkersAndQueuesCoversEveryJobKind locks hub-worker's registration against
@@ -102,6 +118,18 @@ func TestNewRiverWorkersAndQueuesCoversEveryJobKind(t *testing.T) {
 		if _, ok := queues[spec.Queue]; !ok {
 			t.Fatalf("queue %q for kind %q missing from queue config, want declared", spec.Queue, spec.Kind())
 		}
+
+		// The backfill lane too. A kind whose live queue is declared but whose backfill queue is
+		// not would have the reconciler insert onto a queue no worker is assigned to, and those
+		// jobs sit there forever looking enqueued.
+		if spec.ReconcileQueue == "" {
+			continue
+		}
+
+		if _, ok := queues[spec.ReconcileQueue]; !ok {
+			t.Fatalf("backfill queue %q for kind %q missing from queue config, want declared",
+				spec.ReconcileQueue, spec.Kind())
+		}
 	}
 
 	// One probe per kind: AddWorkerSafely is generic over the concrete args type, so these cannot be
@@ -113,8 +141,10 @@ func TestNewRiverWorkersAndQueuesCoversEveryJobKind(t *testing.T) {
 	assertKindRegistered[service.FeedbackSentimentArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackEmotionsArgs](t, workerBundle, true)
 	assertKindRegistered[service.FeedbackRecordsPurgeArgs](t, workerBundle, true)
+	assertKindRegistered[service.EmbeddingReconcileArgs](t, workerBundle, true)
+	assertKindRegistered[service.EnrichmentReconcileArgs](t, workerBundle, true)
 
-	const probedKinds = 7
+	const probedKinds = 9
 	if got := len(service.JobKindSpecs()); got != probedKinds {
 		t.Fatalf("JobKindSpecs has %d kinds but %d are probed above — add a probe for the new kind "+
 			"and register a worker for it in NewRiverWorkersAndQueues", got, probedKinds)
@@ -155,6 +185,30 @@ func TestNewRiverWorkersAndQueuesWithoutOptionalClients(t *testing.T) {
 	assertKindRegistered[service.TenantTranslationBackfillArgs](t, workerBundle, false)
 	assertKindRegistered[service.FeedbackSentimentArgs](t, workerBundle, false)
 	assertKindRegistered[service.FeedbackEmotionsArgs](t, workerBundle, false)
+}
+
+// TestNewRiverWorkersAndQueuesDrainsExistingRepairsWhenSweeperDisabled ensures disabling future
+// sweeps cannot strand repair jobs that were queued by an earlier worker configuration.
+func TestNewRiverWorkersAndQueuesDrainsExistingRepairsWhenSweeperDisabled(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Embedding.MaxConcurrent = 3
+	cfg.Embedding.ReconcileMaxConcurrent = 1
+	deps := fullRiverDeps()
+	deps.EmbeddingReconcileSweeper = nil
+
+	workerBundle, queues := NewRiverWorkersAndQueues(cfg, deps)
+
+	if got := queues[service.EmbeddingsReconcileQueueName].MaxWorkers; got != 1 {
+		t.Fatalf("queue %q MaxWorkers = %d, want 1", service.EmbeddingsReconcileQueueName, got)
+	}
+
+	_, sweepQueueRegistered := queues[service.EmbeddingReconcileQueueName]
+	if sweepQueueRegistered {
+		t.Fatalf("queue %q registered with sweeper disabled, want absent", service.EmbeddingReconcileQueueName)
+	}
+
+	assertKindRegistered[service.FeedbackEmbeddingArgs](t, workerBundle, true)
+	assertKindRegistered[service.EmbeddingReconcileArgs](t, workerBundle, false)
 }
 
 // TestNewRiverWorkersAndQueuesUsesConfiguredConcurrency pins each queue to its own configured

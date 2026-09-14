@@ -1,0 +1,13 @@
+# sharp powers Astro's image optimization and esbuild is part of the build
+# pipeline, so both need their install scripts. core-js's postinstall only
+# prints a funding banner.
+allowBuilds:
+  core-js: false
+  esbuild: true
+  sharp: true
+
+# httpsnippet (via starlight-openapi) pins form-data to exactly 4.0.4, which is
+# vulnerable to GHSA-hmw2-7cc7-3qxx. Upstream has not re-released, so force the
+# patched 4.0.6 here — the same approach the Dockerfile takes for the Go CLIs.
+overrides:
+  form-data: ^4.0.6

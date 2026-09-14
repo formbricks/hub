@@ -41,17 +41,20 @@ type tenantSettingsReader interface {
 // and stores the emotion labels. metrics may be nil when metrics are disabled.
 func NewFeedbackEmotionsWorker(
 	svc emotionsWorkerService, resolver tenantSettingsReader,
-	client service.EmotionsClient, metrics observability.EmotionsMetrics,
+	client service.EmotionsClient, metrics observability.EmotionsMetrics, failures FailureRecorder,
+	failureMetrics observability.EnrichmentFailureMetrics,
 ) *FeedbackEmotionsWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackEmotionsArgs, service.EmotionsResult]{
-		name:         "emotions",
-		timeout:      enrichmentJobTimeout,
-		recordID:     func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.FeedbackRecordID },
-		eventID:      func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.EventID },
-		getRecord:    svc.GetFeedbackRecord,
-		eligible:     (*models.FeedbackRecord).IsTextField,
-		hasContent:   (*models.FeedbackRecord).HasOpenText,
-		checkEnabled: settingsGate(resolver, models.EnrichmentSettings.EmotionsEnrichmentEnabled),
+		name:           "emotions",
+		failures:       failures,
+		failureMetrics: failureMetrics,
+		timeout:        enrichmentJobTimeout,
+		recordID:       func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.FeedbackRecordID },
+		eventID:        func(args service.FeedbackEmotionsArgs) uuid.UUID { return args.EventID },
+		getRecord:      svc.GetFeedbackRecord,
+		eligible:       (*models.FeedbackRecord).IsTextField,
+		hasContent:     (*models.FeedbackRecord).HasOpenText,
+		checkEnabled:   settingsGate(resolver, models.EnrichmentSettings.EmotionsEnrichmentEnabled),
 		classify: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackEmotionsArgs) (service.EmotionsResult, error) {
 			sourceLang := ""
 			if record.Language != nil {

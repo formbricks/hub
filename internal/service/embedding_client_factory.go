@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/formbricks/hub/internal/googleai"
+	"github.com/formbricks/hub/internal/llm"
 	"github.com/formbricks/hub/internal/openai"
 )
 
@@ -30,13 +31,16 @@ var (
 
 // EmbeddingClientConfig holds configuration for creating an embedding client.
 type EmbeddingClientConfig struct {
-	Provider            string
-	ProviderAPIKey      string // API key for openai/google providers; not logged or serialized
-	Model               string
-	BaseURL             string
-	Normalize           bool
-	GoogleCloudProject  string
-	GoogleCloudLocation string
+	Provider              string
+	ProviderAPIKey        string // API key for openai/google providers; not logged or serialized
+	Model                 string
+	BaseURL               string
+	HTTPDisableKeepAlives bool
+	Normalize             bool
+	GoogleCloudProject    string
+	GoogleCloudLocation   string
+	// UsageRecorder receives each provider call's token counts and duration. nil disables it.
+	UsageRecorder llm.UsageRecorder
 }
 
 func (c EmbeddingClientConfig) clientProvider() string            { return c.Provider }
@@ -71,6 +75,8 @@ func openAIEmbeddingFactory(_ context.Context, cfg EmbeddingClientConfig) (Embed
 	return openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
 		openai.WithBaseURL(cfg.BaseURL),
+		openai.WithUsageRecorder(cfg.UsageRecorder),
+		openai.WithDisableKeepAlives(cfg.HTTPDisableKeepAlives),
 		openai.WithNormalize(cfg.Normalize),
 	), nil
 }
@@ -79,6 +85,7 @@ func googleEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig) (Emb
 	client, err := googleai.NewClient(ctx, cfg.ProviderAPIKey,
 		googleai.WithModel(cfg.Model),
 		googleai.WithNormalize(cfg.Normalize),
+		googleai.WithUsageRecorder(cfg.UsageRecorder),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create google embedding client: %w", err)
@@ -91,6 +98,7 @@ func googleGeminiEmbeddingFactory(ctx context.Context, cfg EmbeddingClientConfig
 	client, err := googleai.NewGoogleGeminiClient(ctx, cfg.GoogleCloudProject, cfg.GoogleCloudLocation,
 		googleai.WithModel(cfg.Model),
 		googleai.WithNormalize(cfg.Normalize),
+		googleai.WithUsageRecorder(cfg.UsageRecorder),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create google-gemini embedding client: %w", err)

@@ -59,12 +59,12 @@ jobs:
       TAGS: ${{ steps.tags.outputs.tags }}
     steps:
       - name: Harden the runner
-        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve image version
         id: resolve_version
@@ -140,20 +140,20 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Set up Depot CLI
-        uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1
+        uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1.7.2
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ secrets.AWS_ECR_PUSH_ROLE_ARN }}
           aws-region: ${{ env.ECR_REGION }}
 
       - name: Log in to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@fa648b43de3d4d023bcb3f89ed6940096949c419 # v2.1.5
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       - name: Build and push Docker image
         id: build
-        uses: depot/build-push-action@5f3b3c2e5a00f0093de47f657aeaefcedff27d18 # v1.17.0
+        uses: depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287 # v1.18.0
         with:
           project: ${{ vars.DEPOT_PROJECT_ID }}
           token: ${{ secrets.DEPOT_PROJECT_TOKEN }}
