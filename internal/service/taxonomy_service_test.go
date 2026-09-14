@@ -246,10 +246,8 @@ func TestTaxonomyService_StartManualRunUsesDirectoryFallbackLabel(t *testing.T) 
 	})
 
 	_, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
-		TaxonomyScope: models.TaxonomyScope{
-			ScopeType: models.TaxonomyScopeTypeDirectory,
-			TenantID:  "tenant-1",
-		},
+		ScopeType:  models.TaxonomyScopeTypeDirectory,
+		TenantID:   "tenant-1",
 		FieldLabel: &blankLabel,
 	})
 	if err != nil {
@@ -276,12 +274,10 @@ func TestTaxonomyService_StartManualRunMarksServiceUnavailableFailure(t *testing
 	})
 
 	result, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
-		TaxonomyScope: models.TaxonomyScope{
-			TenantID:   "tenant-1",
-			SourceType: "survey",
-			SourceID:   "survey-1",
-			FieldID:    "question-1",
-		},
+		TenantID:   "tenant-1",
+		SourceType: "survey",
+		SourceID:   "survey-1",
+		FieldID:    "question-1",
 	})
 	if !errors.Is(err, ErrTaxonomyServiceStartFailed) {
 		t.Fatalf("StartManualRun() error = %v, want taxonomy service start failure", err)
@@ -317,11 +313,9 @@ func TestTaxonomyService_StartManualRunRequiresNinetyPercentEmbeddingCoverage(t 
 	})
 
 	result, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
-		TaxonomyScope: models.TaxonomyScope{
-			TenantID:   "tenant-1",
-			SourceType: "survey",
-			FieldID:    "question-1",
-		},
+		TenantID:   "tenant-1",
+		SourceType: "survey",
+		FieldID:    "question-1",
 	})
 	if err == nil {
 		t.Fatal("StartManualRun() error = nil, want embedding coverage validation error")
@@ -351,11 +345,9 @@ func TestTaxonomyService_StartManualRunMeasuresCoverageAgainstTheSelectedCap(t *
 	})
 
 	_, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
-		TaxonomyScope: models.TaxonomyScope{
-			TenantID:   "tenant-1",
-			SourceType: "survey",
-			FieldID:    "question-1",
-		},
+		TenantID:   "tenant-1",
+		SourceType: "survey",
+		FieldID:    "question-1",
 	})
 	if err != nil {
 		t.Fatalf("StartManualRun() error = %v", err)
@@ -377,11 +369,9 @@ func TestTaxonomyService_StartManualRunStoresBoundedSelectionContract(t *testing
 	})
 
 	_, err := svc.StartManualRun(context.Background(), models.CreateTaxonomyRunRequest{
-		TaxonomyScope: models.TaxonomyScope{
-			TenantID:   "tenant-1",
-			SourceType: "survey",
-			FieldID:    "question-1",
-		},
+		TenantID:   "tenant-1",
+		SourceType: "survey",
+		FieldID:    "question-1",
 	})
 	if err != nil {
 		t.Fatalf("StartManualRun() error = %v", err)

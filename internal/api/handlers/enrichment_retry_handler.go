@@ -91,8 +91,7 @@ func decodeRetryBody(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 			return nil, true // no body at all — every enrichment
 		}
 
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
 
 			return nil, false

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -191,9 +192,9 @@ func TestCreateEmbeddingsMapsOutOfOrderResponseAndMatchesSingle(t *testing.T) {
 		}
 
 		data := make([]map[string]any, 0, len(inputs))
-		for i := len(inputs) - 1; i >= 0; i-- {
+		for i, input := range slices.Backward(inputs) {
 			data = append(data, map[string]any{
-				"object": "embedding", "index": i, "embedding": []float64{float64(len(inputs[i])), float64(i + 1)},
+				"object": "embedding", "index": i, "embedding": []float64{float64(len(input)), float64(i + 1)},
 			})
 		}
 

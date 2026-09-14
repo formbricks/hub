@@ -55,8 +55,7 @@ func decodeRecordBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(dst); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
 
 			return false

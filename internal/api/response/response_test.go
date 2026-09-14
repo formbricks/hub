@@ -671,7 +671,7 @@ func attrValue(r slog.Record, key string) string {
 }
 
 func jsonTagName(field reflect.StructField) string {
-	name := strings.SplitN(field.Tag.Get("json"), ",", 2)[0]
+	name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 	if name == "-" {
 		return ""
 	}

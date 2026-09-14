@@ -162,12 +162,10 @@ func TestTaxonomyListRunsSourceIDTriState(t *testing.T) {
 	// One run with no source ("") and one with a concrete source.
 	for _, sourceID := range []string{"", sourcedID} {
 		_, created, err := repo.CreateRunIfAvailable(ctx, repository.CreateTaxonomyRunParams{
-			TaxonomyScope: models.TaxonomyScope{
-				TenantID:   tenantID,
-				SourceType: sourceType,
-				SourceID:   sourceID,
-				FieldID:    fieldID,
-			},
+			TenantID:   tenantID,
+			SourceType: sourceType,
+			SourceID:   sourceID,
+			FieldID:    fieldID,
 		})
 		require.NoError(t, err)
 		require.True(t, created)

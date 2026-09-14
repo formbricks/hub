@@ -37,19 +37,17 @@ func TestTenantDataHandler_Delete(t *testing.T) {
 				assert.Equal(t, "org-123", tenantID)
 
 				return &models.TenantDataDeleteResult{
-					TenantID: "org-123",
-					TenantDataDeleteCounts: models.TenantDataDeleteCounts{
-						DeletedFeedbackRecords:            3,
-						DeletedEmbeddings:                 2,
-						DeletedWebhooks:                   1,
-						DeletedTaxonomyRuns:               4,
-						DeletedTaxonomyRunInputRecords:    10,
-						DeletedTaxonomyClusters:           5,
-						DeletedTaxonomyClusterMemberships: 6,
-						DeletedTaxonomyNodes:              7,
-						DeletedTaxonomyActiveRuns:         8,
-						DeletedTaxonomyNodeEvents:         9,
-					},
+					TenantID:                          "org-123",
+					DeletedFeedbackRecords:            3,
+					DeletedEmbeddings:                 2,
+					DeletedWebhooks:                   1,
+					DeletedTaxonomyRuns:               4,
+					DeletedTaxonomyRunInputRecords:    10,
+					DeletedTaxonomyClusters:           5,
+					DeletedTaxonomyClusterMemberships: 6,
+					DeletedTaxonomyNodes:              7,
+					DeletedTaxonomyActiveRuns:         8,
+					DeletedTaxonomyNodeEvents:         9,
 				}, nil
 			},
 		}
