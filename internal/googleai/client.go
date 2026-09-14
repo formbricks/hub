@@ -335,6 +335,7 @@ func terminalEmptyReason(resp *genai.GenerateContentResponse) (huberrors.Termina
 	case genai.FinishReasonUnspecified, genai.FinishReasonStop,
 		genai.FinishReasonLanguage, genai.FinishReasonOther,
 		genai.FinishReasonMalformedFunctionCall, genai.FinishReasonUnexpectedToolCall,
+		genai.FinishReasonTooManyToolCalls,
 		genai.FinishReasonNoImage, genai.FinishReasonImageOther:
 		// Deliberately retryable, listed rather than defaulted so the choice is reviewable.
 		// LANGUAGE is arguably permanent, but it is rare and abandoning a record wrongly is the
@@ -525,8 +526,7 @@ func (c *Client) recordUsage(
 // what "timeout" means.
 func errorTypeOf(err error) string {
 	return llm.ClassifyError(err, func(err error) (int, bool) {
-		var apiErr genai.APIError
-		if errors.As(err, &apiErr) {
+		if apiErr, ok := errors.AsType[genai.APIError](err); ok {
 			return apiErr.Code, true
 		}
 
