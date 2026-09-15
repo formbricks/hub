@@ -1,0 +1,419 @@
+name: Publish TypeScript SDK
+
+# Generates @formbricks/hub from openapi.yaml and publishes it to npm on a stable
+# Hub release. The SDK is a build artifact — nothing generated is committed — so
+# this workflow is the only place it is produced.
+#
+# SECURITY: this file's name is part of npm's trusted-publisher binding
+# (formbricks/hub + publish-sdk.yml + the npm-publish environment). Do not rename
+# it without updating the npm configuration, and do not add a pull_request-family
+# trigger here: PR-time generation lives in sdk-preview.yml, which holds no
+# credentials. See AGENTS.md -> TypeScript SDK.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and compare, but do not publish"
+        type: boolean
+        default: true
+
+# Least privilege by default; the publish job opts into id-token explicitly.
+permissions:
+  contents: read
+
+concurrency:
+  # One package-wide group, not per-release: the compare step reads npm's
+  # "latest", so two concurrent releases could both diff against the same
+  # version and race to publish the same target version.
+  group: publish-sdk
+  cancel-in-progress: false
+
+jobs:
+  # Runs third-party code (the generator, its dependencies, the build) and so
+  # deliberately holds NO publishing credential. Everything it produces is handed
+  # to the publish job as an artifact.
+  build:
+    name: Generate, test and pack
+    # Prereleases are skipped, matching hub-release.yml's Docker builds. Gated on
+    # the job so the run is genuinely skipped — a step that exited non-zero would
+    # mark every prerelease as a failed workflow.
+    if: github.event_name != 'release' || github.event.release.prerelease == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    outputs:
+      should_publish: ${{ steps.compare.outputs.should_publish }}
+      version: ${{ steps.version.outputs.version }}
+      # The identity of the tarball this job packed and compared. The publish job
+      # re-packs the artifact and refuses to publish anything else.
+      pack_integrity: ${{ steps.pack.outputs.integrity }}
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        with:
+          egress-policy: audit
+
+      # persist-credentials: false — this job runs the generator and its
+      # dependencies, so leaving the checkout token in .git/config would put it
+      # within reach of that code. Nothing here does an authenticated git
+      # operation after checkout, and the publish job holds no checkout at all.
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          # Relative to the repo root, not to defaults.run.working-directory.
+          package_json_file: sdks/typescript/package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
+
+      # --ignore-scripts: nothing here needs a native build step, and lifecycle
+      # scripts are the entry point for install-time supply-chain attacks.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Read the target version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Target version: $VERSION"
+
+      - name: Generate and build
+        run: pnpm build
+
+      - name: Type check
+        run: ./node_modules/.bin/tsc --noEmit
+
+      # Pins the regression that motivated leaving the previous generator:
+      # array filters must go out as repeated query parameters.
+      - name: Wire tests
+        run: node --test 'tests/*.test.mjs'
+
+      # Same npm as the publish job, on purpose: the packed-tarball integrity
+      # recorded here is compared against a re-pack over there, and two npm
+      # versions can pack one tree into two different tarballs.
+      - name: Pin npm
+        run: npm install -g --ignore-scripts npm@11.6.2
+
+      # Packs this package and fetches the one on npm. Shared with sdk-preview.yml
+      # so the release decision and the preview a reviewer reads are measured the
+      # same way. See scripts/prepare-comparison.mjs for the npm behaviour it
+      # absorbs — notably that `npm view` failing does not mean "not published".
+      - name: Pack and fetch the package on npm
+        id: pack
+        run: |
+          set -euo pipefail
+          PREP="$(node scripts/prepare-comparison.mjs .compare)"
+          echo "$PREP"
+          {
+            echo "integrity=$(PREP="$PREP" node -p 'JSON.parse(process.env.PREP).integrity')"
+            echo "on_npm=$(PREP="$PREP" node -p 'JSON.parse(process.env.PREP).publishedVersion ?? ""')"
+          } >> "$GITHUB_OUTPUT"
+
+      # The core of the artifact model. With nothing committed there is no diff to
+      # read, so the tarball on npm IS the baseline: if the packed package is
+      # unchanged, a Hub release that only touched Go must not burn an SDK
+      # version. The comparison covers everything the package ships — build
+      # output, sources, manifest and documentation — because a change to any of
+      # them changes what a consumer installs.
+      - name: Compare against the package on npm
+        id: compare
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ON_NPM: ${{ steps.pack.outputs.on_npm }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ON_NPM" ]; then
+            echo "::notice::@formbricks/hub is not on npm yet — publishing $VERSION."
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "On npm: $ON_NPM / building: $VERSION"
+
+          STATUS=0
+          node scripts/compare-packed.mjs .compare/published .compare/generated \
+            > .compare/packed-diff.txt || STATUS=$?
+
+          if [ "$STATUS" -eq 2 ]; then
+            echo "::error::compare-packed.mjs could not compare the two packages — see the log above."
+            exit 1
+          fi
+
+          if [ "$STATUS" -eq 0 ]; then
+            echo "::notice::Packed contents are identical to @formbricks/hub@$ON_NPM — skipping publish."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PATHS="$(wc -l < .compare/packed-diff.txt | tr -d ' ')"
+          echo "Packed contents differ from @formbricks/hub@$ON_NPM ($PATHS paths):"
+          {
+            echo '```'
+            head -100 .compare/packed-diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # A changed package with a version that already exists is a forgotten
+          # bump. Fail loudly rather than skipping silently or overwriting. A
+          # registry error here reads as "version available", which is safe: the
+          # registry refuses an overwrite, so the worst case is a failed run.
+          if npm view "@formbricks/hub@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::The SDK package changed but version $VERSION is already on npm. Bump the version in sdks/typescript/package.json."
+            exit 1
+          fi
+
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+
+      # Hands over the publishable directory rather than the .tgz: `npm publish`
+      # from a package directory is the documented provenance path, and npm's docs
+      # do not commit either way on whether provenance is generated when
+      # publishing a pre-packed tarball. Not the place to find out.
+      - name: Upload the publishable package
+        if: steps.compare.outputs.should_publish == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package
+          path: |
+            sdks/typescript/dist
+            sdks/typescript/src
+            sdks/typescript/package.json
+            sdks/typescript/README.md
+            sdks/typescript/LICENSE
+          retention-days: 7
+          if-no-files-found: error
+
+  # Holds the publish credential and nothing else: it downloads the packed
+  # package and runs npm publish with lifecycle scripts disabled, so none of the
+  # code the build job produced runs alongside the credential. No checkout, no
+  # install, no repo or dependency code — a compromised dev dependency in the
+  # build job cannot reach npm.
+  publish:
+    name: Publish to npm
+    needs: build
+    if: needs.build.outputs.should_publish == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Gates the OIDC token behind branch/tag protection rules. npm's
+    # trusted-publisher binding does not include a ref, so this environment is
+    # what stops any branch from publishing.
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        with:
+          egress-policy: audit
+
+      - name: Download the publishable package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package
+          path: package
+
+      # Trusted publishing requires npm >= 11.5.1 and Node >= 22.14.0; the
+      # runner's bundled npm can be older, so pin one explicitly. Node first:
+      # both the validation below and that install need it.
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Before the checks below, because the integrity one has to run under the
+      # same npm the build job packed with. --ignore-scripts: nothing here needs
+      # an install hook either.
+      - name: Pin an OIDC-capable npm
+        run: npm install -g --ignore-scripts npm@11.6.2
+
+      # The artifact is produced by the build job, which runs third-party code,
+      # so it is treated as untrusted input here: `npm publish` would otherwise
+      # execute whatever lifecycle hooks its manifest defines, in this job, with
+      # the OIDC token in scope. --ignore-scripts on the publish command is the
+      # enforcement; this step is what makes the difference visible, and what
+      # pins the identity of the package being sent to the registry.
+      - name: Validate the package before it is sent to the registry
+        working-directory: package
+        env:
+          EXPECTED_NAME: '@formbricks/hub'
+          EXPECTED_VERSION: '${{ needs.build.outputs.version }}'
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs - <<'NODE'
+          const { readFileSync } = require("node:fs");
+
+          const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+
+          function assert(condition, message) {
+            if (condition) return;
+            console.error(`::error::${message}`);
+            process.exit(1);
+          }
+
+          assert(
+            manifest.name === process.env.EXPECTED_NAME,
+            `The package is named ${manifest.name}, expected ${process.env.EXPECTED_NAME}.`,
+          );
+          assert(
+            manifest.version === process.env.EXPECTED_VERSION,
+            `The package is at version ${manifest.version} but the build job reported ${process.env.EXPECTED_VERSION}.`,
+          );
+
+          // npm runs these out of the manifest while packing and while publishing.
+          // --ignore-scripts skips them; rejecting them here means a manifest that
+          // tries is reported rather than silently ignored.
+          const HOOKS = [
+            "prepublish",
+            "prepare",
+            "prepublishOnly",
+            "prepack",
+            "postpack",
+            "publish",
+            "postpublish",
+          ];
+          const hooks = Object.keys(manifest.scripts ?? {}).filter((name) =>
+            HOOKS.includes(name),
+          );
+          assert(
+            hooks.length === 0,
+            `The package defines lifecycle scripts that would run during a publish: ${hooks.join(", ")}.`,
+          );
+
+          // npm reads publishConfig during a publish, and it is where a manifest
+          // could redirect the registry, retag the release or switch provenance
+          // off. Allowing only the one key this package legitimately sets closes
+          // the whole field, rather than the handful of keys that came to mind:
+          // registry, tag, access and provenance all come from the command line.
+          const ALLOWED_PUBLISH_CONFIG = ["access"];
+          const unexpected = Object.keys(manifest.publishConfig ?? {}).filter(
+            (key) => !ALLOWED_PUBLISH_CONFIG.includes(key),
+          );
+          assert(
+            unexpected.length === 0,
+            `The package sets publishConfig keys that could steer the publish: ${unexpected.join(", ")}. Only ${ALLOWED_PUBLISH_CONFIG.join(", ")} is expected here.`,
+          );
+
+          console.log(
+            `Validated ${manifest.name}@${manifest.version}: no publish lifecycle scripts, no publishConfig override.`,
+          );
+          NODE
+
+      # The build job compared a packed tarball against npm to decide that this
+      # release should publish, and tested the tree it came from. This re-packs
+      # the downloaded artifact and requires the same integrity hash, so what
+      # reaches the registry is the package that was compared and tested — not
+      # merely something with a plausible manifest. It closes the gap between the
+      # two jobs: a tampered or truncated artifact fails here rather than
+      # shipping. `npm pack` is reproducible for a given tree and npm version,
+      # which is why both jobs pin the same npm.
+      #
+      # This is an integrity check, not a trust check: the build job produces both
+      # the artifact and the expected hash, so a compromise *inside* that job
+      # would match. Keeping code out of this job is what the validation above and
+      # --ignore-scripts below are for.
+      - name: Verify the artifact is the package the build job compared
+        working-directory: package
+        env:
+          EXPECTED_INTEGRITY: ${{ needs.build.outputs.pack_integrity }}
+        run: |
+          set -euo pipefail
+          if [ -z "$EXPECTED_INTEGRITY" ]; then
+            echo "::error::The build job recorded no packed integrity; refusing to publish unverified contents."
+            exit 1
+          fi
+          ACTUAL="$(npm pack --ignore-scripts --dry-run --json \
+            | node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8"))[0].integrity')"
+          echo "expected: $EXPECTED_INTEGRITY"
+          echo "actual:   $ACTUAL"
+          if [ "$ACTUAL" != "$EXPECTED_INTEGRITY" ]; then
+            echo "::error::The downloaded package does not match what the build job packed and compared. Not publishing."
+            exit 1
+          fi
+          echo "Artifact matches the tarball the build job compared."
+
+      # No NPM_TOKEN anywhere: authentication is OIDC via the trusted publisher.
+      # A missing credential must fail, never fall back to a token.
+      #
+      # --ignore-scripts: the manifest was checked in the step above, and this is
+      # what keeps pack and publish lifecycle hooks from the artifact out of this
+      # credential-bearing job.
+      #
+      # --registry: named explicitly so the target of the publish, and therefore
+      # who the OIDC token is presented to, does not come from the artifact.
+      #
+      # --provenance is passed explicitly even though trusted publishing is
+      # documented as generating attestations automatically: the two npm docs
+      # pages disagree on whether the flag is needed, and passing it when it is
+      # already implied is harmless while omitting it when it is not is silent.
+      - name: Publish
+        working-directory: package
+        run: |
+          set -euo pipefail
+          echo "Publishing $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
+          npm publish \
+            --access public \
+            --tag latest \
+            --provenance \
+            --ignore-scripts \
+            --registry https://registry.npmjs.org/
+
+      # `npm view` exits 0 and prints nothing when the field is absent, so a bare
+      # `if npm view …; then` succeeds on the first pass with no attestation at
+      # all. The output is captured and parsed instead, and the step fails if no
+      # verifiable attestation shows up: provenance is the reason the package is
+      # published by this workflow rather than from a laptop.
+      - name: Confirm the provenance attestation landed
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            # stderr is kept: a registry that cannot be read and an attestation that
+            # was never created look identical from here, and the failure below is
+            # easier to read with npm's own error above it.
+            ATTESTATIONS="$(npm view "@formbricks/hub@$VERSION" dist.attestations --json 2>npm-view.err || true)"
+            if ATTESTATIONS="$ATTESTATIONS" node -e '
+              let attestations;
+              try {
+                attestations = JSON.parse(process.env.ATTESTATIONS);
+              } catch {
+                process.exit(1);
+              }
+              const url = attestations?.url;
+              const predicateType = attestations?.provenance?.predicateType;
+              process.exit(
+                typeof url === "string" &&
+                  url.startsWith("https://registry.npmjs.org/-/npm/v1/attestations/") &&
+                  predicateType === "https://slsa.dev/provenance/v1"
+                  ? 0
+                  : 1,
+              );
+            '; then
+              echo "Provenance attestation present for $VERSION: $ATTESTATIONS"
+              exit 0
+            fi
+            sleep 10
+          done
+          tail -3 npm-view.err 2>/dev/null || true
+          echo "::error::No verifiable provenance attestation for @formbricks/hub@$VERSION after 100s. Check npmjs.com, and do not describe this release as provenance-signed until it is there."
+          exit 1
