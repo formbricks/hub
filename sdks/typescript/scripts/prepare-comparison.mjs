@@ -96,14 +96,17 @@ function extract(tarball, into) {
   });
 }
 
-// Start from a clean tree so nothing from an earlier run is counted as content.
-rmSync(workdir, { recursive: true, force: true });
+// Start from a clean tree so nothing from an earlier run is counted as content —
+// but only the directories this script owns. `workdir` is a caller-supplied path,
+// and removing it wholesale would delete the package itself if anyone ever ran
+// this with `.`.
 for (const dir of [
   publishedDir,
   generatedDir,
   localTarballDir,
   publishedTarballDir,
 ]) {
+  rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
 }
 

@@ -59,8 +59,14 @@ jobs:
         with:
           egress-policy: audit
 
+      # persist-credentials: false — this job runs the generator and its
+      # dependencies, so leaving the checkout token in .git/config would put it
+      # within reach of that code. Nothing here does an authenticated git
+      # operation after checkout, and the publish job holds no checkout at all.
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0

@@ -141,6 +141,84 @@ test("compares the export map, not just names", () => {
   assert.match(report, /Removed entry points: `\.\/schemas`/);
 });
 
+test("a removal from one export condition is not hidden by another", () => {
+  // A consumer resolves exactly one condition, so unioning the names across all
+  // of them lets an ESM-only removal disappear: `require` still exports it, the
+  // union still contains it, and a change that breaks every `import` consumer
+  // reports as no change at all.
+  const dual = (extra = {}) => ({
+    name: "@formbricks/hub",
+    version: "1.0.0",
+    exports: {
+      ".": {
+        import: { default: "./index.mjs" },
+        require: { default: "./index.cjs" },
+      },
+    },
+    ...extra,
+  });
+
+  const published = {
+    manifest: dual(),
+    files: {
+      "index.mjs": "export const a = 1;\nexport const b = 2;\n",
+      "index.cjs": "exports.a = 1;\nexports.b = 2;\n",
+    },
+  };
+  const generated = {
+    manifest: dual(),
+    files: {
+      // b is gone from ESM only.
+      "index.mjs": "export const a = 1;\n",
+      "index.cjs": "exports.a = 1;\nexports.b = 2;\n",
+    },
+  };
+
+  const { exitCode, report } = run(published, generated);
+  assert.equal(exitCode, 0);
+
+  const removed = report.slice(report.indexOf("### Removed or renamed"));
+  assert.match(removed, /`b`/, "the ESM-only removal must be reported");
+  assert.match(
+    removed,
+    /`import\.default`/,
+    "and attributed to the condition it happened in",
+  );
+  assert.doesNotMatch(
+    removed,
+    /`require\.default`/,
+    "require still exports it, so it must not be blamed",
+  );
+});
+
+test("says so when the export map moved the entry to a different condition", () => {
+  // 0.13.0 puts the ESM entry at the top level (`default`) while ours is under
+  // `import.default`. Those cannot be name-compared — the entry moved rather
+  // than changed — and an empty section would read as "nothing changed here".
+  const published = {
+    manifest: {
+      name: "@formbricks/hub",
+      version: "1.0.0",
+      exports: { ".": { default: "./index.mjs" } },
+    },
+    files: { "index.mjs": "export const a = 1;\n" },
+  };
+  const generated = {
+    manifest: {
+      name: "@formbricks/hub",
+      version: "1.0.0",
+      exports: { ".": { import: { default: "./index.mjs" } } },
+    },
+    files: { "index.mjs": "export const a = 1;\n" },
+  };
+
+  const { exitCode, report } = run(published, generated);
+  assert.equal(exitCode, 0);
+  assert.match(report, /resolves through different conditions/);
+  assert.match(report, /only on npm: `default`/);
+  assert.match(report, /only generated: `import\.default`/);
+});
+
 test("a long list of removals stays readable in full", () => {
   // The breaking side is the one a reviewer must be able to read to the end;
   // truncating it at 30 with no way to expand hides the damage.

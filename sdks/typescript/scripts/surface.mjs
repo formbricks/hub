@@ -72,9 +72,16 @@ function readManifest(dir) {
 }
 
 function entryFiles(manifest) {
+  // subpath -> condition path ("import.default", "require.types", …) -> file.
+  //
+  // The conditions are kept apart rather than flattened into one set per
+  // subpath. A consumer only ever resolves one of them, so unioning their
+  // exports hides the case where a name disappears from `import` but survives
+  // in `require`: the union still contains it, and a change that breaks every
+  // ESM consumer reports as no change at all.
   const entries = new Map();
 
-  function visit(subpath, target) {
+  function visit(subpath, target, condition) {
     if (typeof target === "string") {
       // A wildcard subpath (`./core/*`) names a family of files rather than
       // one: its members are whatever the package ships, so there is no single
@@ -82,19 +89,24 @@ function entryFiles(manifest) {
       if (target.includes("*")) return;
 
       if (DECLARATION_FILE.test(target) || RUNTIME_FILE.test(target)) {
-        if (!entries.has(subpath)) entries.set(subpath, []);
-        entries.get(subpath).push(target.replace(/^\.\//, ""));
+        if (!entries.has(subpath)) entries.set(subpath, new Map());
+        entries.get(subpath).set(condition, target.replace(/^\.\//, ""));
       }
       return;
     }
 
     if (Array.isArray(target)) {
-      for (const item of target) visit(subpath, item);
+      // A fallback array: each element is a separate resolution candidate.
+      target.forEach((item, index) =>
+        visit(subpath, item, `${condition}[${index}]`),
+      );
       return;
     }
 
     if (target !== null && typeof target === "object") {
-      for (const item of Object.values(target)) visit(subpath, item);
+      for (const [key, item] of Object.entries(target)) {
+        visit(subpath, item, condition ? `${condition}.${key}` : key);
+      }
     }
   }
 
@@ -105,16 +117,18 @@ function entryFiles(manifest) {
     !Array.isArray(exports)
   ) {
     for (const [subpath, target] of Object.entries(exports)) {
-      visit(subpath, target);
+      visit(subpath, target, "");
     }
   } else if (typeof exports === "string") {
-    visit(".", exports);
+    visit(".", exports, "default");
   } else {
     // Nothing to read the entry points from, so fall back to the legacy
     // fields. Without this, a package that predates `exports` would look like
     // it exported nothing at all.
     for (const field of ["types", "main", "module"]) {
-      if (typeof manifest[field] === "string") visit(".", manifest[field]);
+      if (typeof manifest[field] === "string") {
+        visit(".", manifest[field], field);
+      }
     }
   }
 
@@ -126,7 +140,11 @@ const warnings = [];
 function buildSurface(dir, { label, fatalOnMissingTargets }) {
   const manifest = readManifest(dir);
   const entries = entryFiles(manifest);
-  const files = [...new Set([...entries.values()].flat())];
+  const files = [
+    ...new Set(
+      [...entries.values()].flatMap((conditions) => [...conditions.values()]),
+    ),
+  ];
 
   const missing = files.filter((file) => !existsSync(path.join(dir, file)));
   if (missing.length > 0) {
@@ -150,11 +168,10 @@ function buildSurface(dir, { label, fatalOnMissingTargets }) {
   const checker = program.getTypeChecker();
 
   const surface = new Map();
-  for (const [subpath, entryFilesForSubpath] of entries) {
-    const runtime = new Set();
-    const types = new Set();
+  for (const [subpath, conditions] of entries) {
+    const perCondition = new Map();
 
-    for (const relativePath of entryFilesForSubpath) {
+    for (const [condition, relativePath] of conditions) {
       const absolutePath = path.join(dir, relativePath);
       const sourceFile = program.getSourceFile(absolutePath);
       if (!sourceFile) continue;
@@ -162,18 +179,21 @@ function buildSurface(dir, { label, fatalOnMissingTargets }) {
       const symbol = checker.getSymbolAtLocation(sourceFile);
       if (!symbol) continue;
 
+      const names = new Set();
       for (const exported of checker.getExportsOfModule(symbol)) {
         const name = exported.getName();
         // Interop marker emitted by transpiled CommonJS, not part of the API.
         if (name === "__esModule") continue;
-        (DECLARATION_FILE.test(relativePath) ? types : runtime).add(name);
+        names.add(name);
       }
+
+      perCondition.set(condition, {
+        kind: DECLARATION_FILE.test(relativePath) ? "types" : "runtime",
+        names: [...names].sort(),
+      });
     }
 
-    surface.set(subpath, {
-      runtime: [...runtime].sort(),
-      types: [...types].sort(),
-    });
+    surface.set(subpath, perCondition);
   }
 
   return { exports: manifest.exports ?? {}, surface };
@@ -200,6 +220,10 @@ function listMarkdown(items) {
     .join(", ");
   if (items.length <= 30) return shown;
   return `${shown}, … and ${items.length - 30} more`;
+}
+
+function label(subpath, conditions) {
+  return `\`${subpath}\` via ${conditions.map((c) => `\`${c}\``).join(", ")}`;
 }
 
 function namesBlock(label, names) {
@@ -284,26 +308,78 @@ if (
 const removedNames = [];
 const addedNames = [];
 
-for (const subpath of comparableSubpaths) {
-  const publishedSurface = published.surface.get(subpath);
-  const generatedSurface = generated.surface.get(subpath);
+// Conditions that report the same names are merged into one line: a package
+// whose `import` and `require` builds agree — the normal case — reads as one
+// entry rather than four near-identical ones, and a divergence stands out
+// precisely because it fails to merge.
+function collect(into, subpath, byCondition) {
+  for (const [condition, names] of byCondition) {
+    const existing = into.find(
+      (entry) =>
+        entry.subpath === subpath &&
+        entry.names.length === names.length &&
+        entry.names.every((name, index) => name === names[index]),
+    );
+    if (existing) existing.conditions.push(condition);
+    else into.push({ subpath, conditions: [condition], names });
+  }
+}
 
-  for (const kind of ["runtime", "types"]) {
-    const before = publishedSurface[kind];
-    const after = generatedSurface[kind];
+// Conditions present on only one side cannot be name-compared: the entry moved
+// rather than changed, and there is no counterpart to diff against. That is a
+// real answer, but a silent one, so it is stated rather than left as an empty
+// section a reviewer would read as "nothing changed here".
+const unmatchedConditions = [];
+
+for (const subpath of comparableSubpaths) {
+  const publishedConditions = published.surface.get(subpath);
+  const generatedConditions = generated.surface.get(subpath);
+
+  const onlyPublished = [...publishedConditions.keys()].filter(
+    (condition) => !generatedConditions.has(condition),
+  );
+  const onlyGenerated = [...generatedConditions.keys()].filter(
+    (condition) => !publishedConditions.has(condition),
+  );
+  if (onlyPublished.length > 0 || onlyGenerated.length > 0) {
+    unmatchedConditions.push({ subpath, onlyPublished, onlyGenerated });
+  }
+
+  const removedByCondition = new Map();
+  const addedByCondition = new Map();
+
+  for (const [condition, { names: after }] of generatedConditions) {
+    // A condition only one side defines is an export-map change, reported as
+    // such above; there is no like-for-like name comparison to make.
+    const before = publishedConditions.get(condition)?.names;
+    if (!before) continue;
+
     const removed = before.filter((name) => !after.includes(name));
     const added = after.filter((name) => !before.includes(name));
-    if (removed.length > 0) {
-      removedNames.push({ subpath, kind, names: removed });
-    }
-    if (added.length > 0) {
-      addedNames.push({ subpath, kind, names: added });
-    }
+    if (removed.length > 0) removedByCondition.set(condition, removed);
+    if (added.length > 0) addedByCondition.set(condition, added);
   }
+
+  collect(removedNames, subpath, removedByCondition);
+  collect(addedNames, subpath, addedByCondition);
 }
 
 lines.push("### Removed or renamed — breaking for consumers");
 lines.push("");
+for (const { subpath, onlyPublished, onlyGenerated } of unmatchedConditions) {
+  const sides = [];
+  if (onlyPublished.length > 0) {
+    sides.push(`only on npm: ${listMarkdown(onlyPublished)}`);
+  }
+  if (onlyGenerated.length > 0) {
+    sides.push(`only generated: ${listMarkdown(onlyGenerated)}`);
+  }
+  lines.push(
+    `> [!NOTE]`,
+    `> \`${subpath}\` resolves through different conditions in the two packages (${sides.join("; ")}), so the names under those were not compared. Read the export maps above.`,
+    "",
+  );
+}
 if (exportDiff.removed.length > 0) {
   lines.push(`- Removed entry points: ${listMarkdown(exportDiff.removed)}`);
 }
@@ -312,8 +388,8 @@ if (removedNames.length === 0) {
     "- No exported names removed from the entry points present in both packages.",
   );
 } else {
-  for (const { subpath, kind, names } of removedNames) {
-    lines.push(namesBlock(`\`${subpath}\` (${kind})`, names).trimEnd());
+  for (const { subpath, conditions, names } of removedNames) {
+    lines.push(namesBlock(label(subpath, conditions), names).trimEnd());
   }
 }
 lines.push("");
@@ -326,8 +402,8 @@ if (exportDiff.added.length > 0) {
 if (addedNames.length === 0) {
   lines.push("- No exported names added.");
 } else {
-  for (const { subpath, kind, names } of addedNames) {
-    lines.push(namesBlock(`\`${subpath}\` (${kind})`, names).trimEnd());
+  for (const { subpath, conditions, names } of addedNames) {
+    lines.push(namesBlock(label(subpath, conditions), names).trimEnd());
   }
 }
 lines.push("");
