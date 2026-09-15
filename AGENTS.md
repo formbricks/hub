@@ -40,17 +40,18 @@ The published [`@formbricks/hub`](https://www.npmjs.com/package/@formbricks/hub)
 - `openapi-ts.config.ts` — the generator config. Reads `../../openapi.yaml`.
 - `src/index.ts` — the hand-written entry point, and the place for anything that cannot be generated (it exports `createHubClient` on top of the generated client).
 - `src/schemas.ts` — re-exports the generated zod validators behind the `@formbricks/hub/schemas` entry, so importing the client itself pulls in no dependencies and `zod` stays an optional peer.
-- `tests/wire.test.mjs` — runs against the **built** package, so it covers the exports map too.
+- `scripts/` — the CI-only helpers, not in `files`, so not shipped: `prepare-comparison.mjs` packs this package and fetches the one on npm (shared by both workflows, so the release decision and the preview measure the same things), `compare-packed.mjs` diffs the packed contents for the release, and `surface.mjs` diffs the public surface for the preview.
+- `tests/` — `wire.test.mjs` runs against the **built** package, so it covers the exports map too; `compare-packed.test.mjs` and `surface.test.mjs` cover the two CI helpers, since a comparison that quietly stops comparing is the failure mode that matters for both.
 
 Commands, from `sdks/typescript/`: `pnpm install`, `pnpm generate`, `pnpm build`, `pnpm check`, `pnpm test`.
 
 **To change the API surface, change `openapi.yaml`.** Never patch the SDK to paper over a spec problem — the next generation run erases it.
 
-**Bump `version` in `sdks/typescript/package.json` by hand** when a release should ship a new SDK. The publish workflow compares the generated output against what is on npm: identical output skips the publish, and changed output with an already-published version fails the build rather than overwriting it. The SDK version line is deliberately independent of the Hub's release version — they have never matched.
+**Bump `version` in `sdks/typescript/package.json` by hand** when a release should ship a new SDK. The publish workflow compares the packed package — build output, sources, manifest, docs — against what is on npm: identical contents skip the publish, and changed contents with an already-published version fails the build rather than overwriting it. The SDK version line is deliberately independent of the Hub's release version — they have never matched.
 
-The generator version is pinned exactly. Bumping it is a deliberate change: regenerate, run `pnpm test`, and read the surface diff the `sdk-preview` workflow prints on the PR.
+The generator version is pinned exactly. Bumping it is a deliberate change: regenerate, run `pnpm test`, and read the surface diff the `sdk-preview` workflow writes to the job summary.
 
-**Publishing is credential-free by design.** Authentication is npm trusted publishing (OIDC), bound to this repository, the `publish-sdk.yml` filename and the `npm-publish` environment. There is no npm token, and none should be introduced. Consequences: renaming that workflow file breaks publishing until the npm configuration is updated, and the job that runs the generator deliberately holds no publishing permission — only the separate publish job does.
+**Publishing is credential-free by design.** Authentication is npm trusted publishing (OIDC), bound to this repository, the `publish-sdk.yml` filename and the `npm-publish` environment. There is no npm token, and none should be introduced. Consequences: renaming that workflow file breaks publishing until the npm configuration is updated, and the job that runs the generator deliberately holds no publishing permission — only the separate publish job does. That job validates the artifact's manifest, re-packs it and requires the same integrity hash the build job recorded, and runs `npm publish --ignore-scripts` — so what reaches npm is the package that was compared and tested, and no code the build job produced runs next to the credential. Both jobs pin the same npm, because the integrity check compares a pack across them.
 
 **Keep `example:` values in `openapi.yaml` synthetic.** They now ship twice — into the published SDK's docblocks and onto the docs site — so a real tenant id, key or customer name in an example is published, not merely committed.
 

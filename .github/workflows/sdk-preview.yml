@@ -67,48 +67,28 @@ jobs:
       - name: Wire tests
         run: node --test 'tests/*.test.mjs'
 
-      # Compares the exported names against what is on npm today. A rename or a
-      # removal here is a breaking change for consumers and should be visible in
-      # review, not discovered after publish.
-      - name: Diff the public surface against the published package
+      # Compares the public surface against what is on npm today: the export map
+      # subpath by subpath, and the exported names of each entry point read from
+      # the built declarations and runtime files. A rename or a removal here is a
+      # breaking change for consumers and should be visible in review, not
+      # discovered after the release.
+      #
+      # Both sides are packed the way npm packs them, so `files` applies to the
+      # generated side too and what is compared is what would actually ship. The
+      # packing, fetching and npm error handling are shared with publish-sdk.yml
+      # via scripts/prepare-comparison.mjs, so the preview a reviewer reads and
+      # the release decision measure the same two packages the same way.
+      - name: Diff the public surface against the package on npm
         run: |
           set -euo pipefail
-          mkdir -p .compare && cd .compare
+          PREP="$(node scripts/prepare-comparison.mjs .compare)"
+          echo "$PREP"
 
-          if ! npm view @formbricks/hub version >/dev/null 2>&1; then
-            echo "Package not published yet; nothing to compare." >> "$GITHUB_STEP_SUMMARY"
+          ON_NPM="$(PREP="$PREP" node -p 'JSON.parse(process.env.PREP).publishedVersion ?? ""')"
+          if [ -z "$ON_NPM" ]; then
+            echo "\`@formbricks/hub\` is not on npm yet; nothing to compare." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          PUBLISHED="$(npm view @formbricks/hub version)"
-          npm pack "@formbricks/hub@$PUBLISHED" --pack-destination . >/dev/null
-          tar -xzf ./*.tgz          # extraction only: never installed or executed
-
-          exports_of() {
-            grep -rhoE '^export (const|function|type|interface) [A-Za-z0-9_]+' "$1" 2>/dev/null \
-              | awk '{print $3}' | sort -u
-          }
-          exports_of package/src > published.txt || true
-          exports_of ../src > generated.txt || true
-
-          {
-            echo "## SDK surface vs \`@formbricks/hub@$PUBLISHED\`"
-            echo
-            REMOVED="$(comm -23 published.txt generated.txt || true)"
-            ADDED="$(comm -13 published.txt generated.txt || true)"
-
-            if [ -z "$REMOVED" ] && [ -z "$ADDED" ]; then
-              echo "No change to the exported surface."
-            else
-              if [ -n "$REMOVED" ]; then
-                echo "### Removed or renamed — breaking for consumers"
-                echo '```'; echo "$REMOVED"; echo '```'
-              fi
-              if [ -n "$ADDED" ]; then
-                echo "### Added"
-                echo '```'; echo "$ADDED"; echo '```'
-              fi
-              echo
-              echo "If anything is listed as removed, bump the version in \`sdks/typescript/package.json\` accordingly."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          node scripts/surface.mjs .compare/published .compare/generated "$ON_NPM" \
+            >> "$GITHUB_STEP_SUMMARY"

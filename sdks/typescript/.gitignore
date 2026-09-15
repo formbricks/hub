@@ -6,6 +6,6 @@ dist/
 node_modules/
 *.tgz
 
-# Scratch from the publish workflow's compare-against-npm step
+# Scratch from scripts/prepare-comparison.mjs: the packed tarballs and both
+# extracted packages the release and preview workflows compare.
 .compare/
-.pack/
