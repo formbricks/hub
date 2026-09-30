@@ -23,7 +23,6 @@ type TaxonomyService interface {
 	GetRun(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyRun, error)
 	GetActiveTree(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyTreeResponse, error)
 	GetTree(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyTreeResponse, error)
-	GetFeedbackRecordTaxonomy(ctx context.Context, recordID uuid.UUID, tenantID string) (*models.FeedbackRecordTaxonomyResponse, error)
 	RenameNode(ctx context.Context, nodeID uuid.UUID, req models.RenameTaxonomyNodeRequest) (*models.TaxonomyNode, error)
 	RemoveNode(ctx context.Context, nodeID uuid.UUID, filters models.RemoveTaxonomyNodeFilters) (*models.TaxonomyNode, error)
 	ListNodeRecords(
@@ -38,14 +37,27 @@ type TaxonomyService interface {
 	) (*models.TaxonomyRecordCountsResponse, error)
 }
 
+// FeedbackRecordTaxonomyService resolves the active directory assignment for one record.
+type FeedbackRecordTaxonomyService interface {
+	GetFeedbackRecordTaxonomy(
+		ctx context.Context, recordID uuid.UUID, tenantID string,
+	) (*models.FeedbackRecordTaxonomyResponse, error)
+}
+
 // TaxonomyHandler hosts public taxonomy API endpoints.
 type TaxonomyHandler struct {
-	service TaxonomyService
+	service        TaxonomyService
+	recordTaxonomy FeedbackRecordTaxonomyService
 }
 
 // NewTaxonomyHandler creates a public taxonomy handler.
-func NewTaxonomyHandler(service TaxonomyService) *TaxonomyHandler {
-	return &TaxonomyHandler{service: service}
+func NewTaxonomyHandler(service TaxonomyService, recordTaxonomy ...FeedbackRecordTaxonomyService) *TaxonomyHandler {
+	handler := &TaxonomyHandler{service: service}
+	if len(recordTaxonomy) > 0 {
+		handler.recordTaxonomy = recordTaxonomy[0]
+	}
+
+	return handler
 }
 
 // ListFields returns taxonomy-capable feedback fields.
@@ -188,7 +200,13 @@ func (h *TaxonomyHandler) GetFeedbackRecordTaxonomy(w http.ResponseWriter, r *ht
 		return
 	}
 
-	result, err := h.service.GetFeedbackRecordTaxonomy(r.Context(), recordID, filters.TenantID)
+	if h.recordTaxonomy == nil {
+		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
+
+		return
+	}
+
+	result, err := h.recordTaxonomy.GetFeedbackRecordTaxonomy(r.Context(), recordID, filters.TenantID)
 	if err != nil {
 		respondTaxonomyError(w, r, err)
 

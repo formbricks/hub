@@ -22,12 +22,15 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 
 	insertRecord := func() uuid.UUID {
 		t.Helper()
+
 		var id uuid.UUID
+
 		err := harness.db.QueryRow(ctx, `
 			INSERT INTO feedback_records (source_type, field_id, field_type, value_text, tenant_id, submission_id)
 			VALUES ('survey', 'q1', 'text'::field_type_enum, 'Login was confusing', $1, $2)
 			RETURNING id`, tenantID, uuid.NewString()).Scan(&id)
 		require.NoError(t, err)
+
 		return id
 	}
 
@@ -38,9 +41,11 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 	}
 	get := func(id uuid.UUID) models.FeedbackRecordTaxonomyResponse {
 		t.Helper()
+
 		var result models.FeedbackRecordTaxonomyResponse
 		requestTaxonomyJSON(ctx, t, http.MethodGet, assignmentURL(id, tenantID), harness.apiKey,
 			nil, http.StatusOK, &result)
+
 		return result
 	}
 
@@ -60,13 +65,14 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 			"", nil, http.StatusUnauthorized, response.CodeUnauthorized, response.ProblemTypeUnauthorized)
 		requestTaxonomyProblem(ctx, t, http.MethodGet,
 			harness.server.URL+"/v1/feedback-records/not-a-uuid/taxonomy?tenant_id="+tenantID,
-			harness.apiKey, nil, http.StatusBadRequest, response.CodeBadRequest, response.ProblemTypeBadRequest)
+			harness.apiKey, nil, http.StatusBadRequest, response.CodeValidation, response.ProblemTypeValidation)
 		requestTaxonomyProblem(ctx, t, http.MethodGet,
 			harness.server.URL+"/v1/feedback-records/"+recordID.String()+"/taxonomy",
-			harness.apiKey, nil, http.StatusBadRequest, response.CodeBadRequest, response.ProblemTypeBadRequest)
+			harness.apiKey, nil, http.StatusBadRequest, response.CodeValidation, response.ProblemTypeValidation)
 	})
 
 	var runID, clusterID, rootID, topicID, subtopicID, detailID, leafID uuid.UUID
+
 	err := harness.db.QueryRow(ctx, `
 		INSERT INTO taxonomy_runs (tenant_id, scope_type, source_type, source_id, field_id, status)
 		VALUES ($1, 'directory', '', '', '', 'succeeded') RETURNING id`, tenantID).Scan(&runID)
@@ -83,6 +89,7 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 		INSERT INTO taxonomy_nodes (run_id, node_type, label, level)
 		VALUES ($1, 'root', 'Feedback', 0) RETURNING id`, runID).Scan(&rootID)
 	require.NoError(t, err)
+
 	for _, node := range []struct {
 		label  string
 		level  int
@@ -94,17 +101,20 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 		{"Login", 3, uuid.Nil, &detailID},
 	} {
 		parent := node.parent
-		if node.level == 2 {
+		switch node.level {
+		case 2:
 			parent = topicID
-		} else if node.level == 3 {
+		case 3:
 			parent = subtopicID
 		}
+
 		err = harness.db.QueryRow(ctx, `
 			INSERT INTO taxonomy_nodes (run_id, parent_id, node_type, label, level)
 			VALUES ($1, $2, 'branch', $3, $4) RETURNING id`,
 			runID, parent, node.label, node.level).Scan(node.id)
 		require.NoError(t, err)
 	}
+
 	err = harness.db.QueryRow(ctx, `
 		INSERT INTO taxonomy_nodes (run_id, parent_id, cluster_id, node_type, label, level)
 		VALUES ($1, $2, $3, 'leaf', 'Password reset', 4) RETURNING id`,
@@ -139,7 +149,9 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 
 	t.Run("outlier leaf is a visible classification", func(t *testing.T) {
 		outlierRecordID := insertRecord()
+
 		var outlierClusterID uuid.UUID
+
 		err := harness.db.QueryRow(ctx, `
 			INSERT INTO taxonomy_clusters (run_id, cluster_key, size, is_outlier)
 			VALUES ($1, -1, 1, true) RETURNING id`, runID).Scan(&outlierClusterID)
@@ -152,6 +164,7 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 			INSERT INTO taxonomy_nodes (run_id, parent_id, cluster_id, node_type, label, level)
 			VALUES ($1, $2, $3, 'leaf', 'Uncategorized Feedback', 4)`, runID, detailID, outlierClusterID)
 		require.NoError(t, err)
+
 		result := get(outlierRecordID)
 		assert.Equal(t, models.FeedbackRecordTaxonomyClassified, result.Status)
 		assert.Equal(t, "Uncategorized Feedback", result.Path[3].Label)
@@ -160,6 +173,7 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 	t.Run("rename reflects current label", func(t *testing.T) {
 		_, err := harness.db.Exec(ctx, `UPDATE taxonomy_nodes SET label = 'Account access' WHERE id = $1`, subtopicID)
 		require.NoError(t, err)
+
 		result := get(recordID)
 		assert.Equal(t, "Account access", result.Path[1].Label)
 	})
@@ -167,6 +181,7 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 	t.Run("removed ancestor hides the entire path", func(t *testing.T) {
 		_, err := harness.db.Exec(ctx, `UPDATE taxonomy_nodes SET removed_at = NOW() WHERE id = $1`, topicID)
 		require.NoError(t, err)
+
 		result := get(recordID)
 		assert.Equal(t, models.FeedbackRecordTaxonomyUnclassified, result.Status)
 		assert.Empty(t, result.Path)
@@ -174,6 +189,7 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 
 	t.Run("new active run replaces historical membership", func(t *testing.T) {
 		var nextRunID uuid.UUID
+
 		err := harness.db.QueryRow(ctx, `
 			INSERT INTO taxonomy_runs (tenant_id, scope_type, source_type, source_id, field_id, status)
 			VALUES ($1, 'directory', '', '', '', 'succeeded') RETURNING id`, tenantID).Scan(&nextRunID)
@@ -181,6 +197,7 @@ func TestFeedbackRecordTaxonomyAPI(t *testing.T) {
 		_, err = harness.db.Exec(ctx, `UPDATE taxonomy_active_runs SET run_id = $1 WHERE tenant_id = $2 AND scope_type = 'directory'`,
 			nextRunID, tenantID)
 		require.NoError(t, err)
+
 		result := get(recordID)
 		assert.Equal(t, models.FeedbackRecordTaxonomyUnclassified, result.Status)
 		require.NotNil(t, result.RunID)

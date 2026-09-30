@@ -624,8 +624,10 @@ func (r *TaxonomyRepository) GetFeedbackRecordTaxonomy(
 	recordID uuid.UUID,
 	tenantID string,
 ) (*models.FeedbackRecordTaxonomyResponse, error) {
-	var runID *uuid.UUID
-	var pathJSON []byte
+	var (
+		runID    *uuid.UUID
+		pathJSON []byte
+	)
 
 	err := r.db.QueryRow(ctx, `
 		WITH RECURSIVE owned_record AS (

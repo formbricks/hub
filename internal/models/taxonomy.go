@@ -205,6 +205,7 @@ type TaxonomyTreeResponse struct {
 // FeedbackRecordTaxonomyStatus describes a record's assignment in the active directory taxonomy.
 type FeedbackRecordTaxonomyStatus string
 
+// Feedback record taxonomy statuses describe the active-run assignment state.
 const (
 	FeedbackRecordTaxonomyClassified       FeedbackRecordTaxonomyStatus = "classified"
 	FeedbackRecordTaxonomyUnclassified     FeedbackRecordTaxonomyStatus = "unclassified"

@@ -33,11 +33,6 @@ type FeedbackRecordsHandler struct {
 	taxonomy FeedbackRecordTaxonomyService
 }
 
-// FeedbackRecordTaxonomyService resolves the active directory assignment for a record.
-type FeedbackRecordTaxonomyService interface {
-	GetFeedbackRecordTaxonomy(context.Context, uuid.UUID, string) (*models.FeedbackRecordTaxonomyResponse, error)
-}
-
 // NewFeedbackRecordsHandler creates a new feedback records handler.
 func NewFeedbackRecordsHandler(service FeedbackRecordsService, taxonomy ...FeedbackRecordTaxonomyService) *FeedbackRecordsHandler {
 	handler := &FeedbackRecordsHandler{service: service}
@@ -140,6 +135,7 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	response.RespondJSON(w, http.StatusOK, struct {
 		*models.FeedbackRecord
+
 		Taxonomy *models.FeedbackRecordTaxonomyResponse `json:"taxonomy"`
 	}{FeedbackRecord: record, Taxonomy: assignment})
 }

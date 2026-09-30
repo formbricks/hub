@@ -100,19 +100,25 @@ func TestFeedbackRecordsHandler_GetIncludesTaxonomyOnlyOnDetail(t *testing.T) {
 	}
 	service := &mockFeedbackRecordsService{getFunc: func(_ context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
 		assert.Equal(t, recordID, id)
+
 		return record, nil
 	}}
-	taxonomy := &mockFeedbackRecordTaxonomyService{getFunc: func(_ context.Context, id uuid.UUID, tenantID string) (*models.FeedbackRecordTaxonomyResponse, error) {
+	taxonomy := &mockFeedbackRecordTaxonomyService{getFunc: func(
+		_ context.Context, id uuid.UUID, tenantID string,
+	) (*models.FeedbackRecordTaxonomyResponse, error) {
 		assert.Equal(t, recordID, id)
 		assert.Equal(t, "tenant-1", tenantID)
+
 		return assignment, nil
 	}}
 	handler := NewFeedbackRecordsHandler(service, taxonomy)
 	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/feedback-records/"+recordID.String(), http.NoBody)
 	request.SetPathValue("id", recordID.String())
+
 	recorder := httptest.NewRecorder()
 	handler.Get(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
+
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
 	assert.Equal(t, "unclassified", body["taxonomy"].(map[string]any)["status"])
