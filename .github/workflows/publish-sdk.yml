@@ -8,7 +8,8 @@ name: Publish TypeScript SDK
 # (formbricks/hub + publish-sdk.yml + the npm-publish environment). Do not rename
 # it without updating the npm configuration, and do not add a pull_request-family
 # trigger here: PR-time generation lives in sdk-preview.yml, which holds no
-# credentials. See AGENTS.md -> TypeScript SDK.
+# credentials. Only a release tag publishes — a manual run can dry-run from any
+# ref, but publishes only from a tag. See AGENTS.md -> TypeScript SDK.
 
 on:
   release:
@@ -200,6 +201,65 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # Checks, before the publish job can so much as request the npm-publish
+  # environment, that this is a release tag, that its commit is on the default
+  # branch, and that the environment exists and is protected. The last is the
+  # one that matters most: a job that references a missing environment creates
+  # it with no protection rules and carries on, so without this the first
+  # release would publish through an unprotected environment and look like a
+  # success. See scripts/verify-publish-guards.mjs for the checks themselves,
+  # and for what they deliberately cannot do.
+  #
+  # Its own job, so the checks run with first-party code only: the build job
+  # runs the generator's dependencies and should not hold `actions: read`, and
+  # the publish job must not start at all if a check fails. It runs alongside
+  # the build rather than after it, so a misconfigured release path surfaces
+  # even on a release whose SDK did not change.
+  #
+  # A dry run from a tag runs it too, which makes that a full rehearsal of the
+  # release path — environment and token permissions included — that publishes
+  # nothing. A dry run from a branch skips it, since the ref check would fail
+  # for a run that was never going to publish.
+  guards:
+    name: Verify publish guards
+    if: >-
+      (github.event_name == 'release' && github.event.release.prerelease == false) ||
+      (github.event_name == 'workflow_dispatch' &&
+        (!inputs.dry_run || startsWith(github.ref, 'refs/tags/')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # the compare API: is the tagged commit on the default branch?
+      actions: read # the environments API
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        with:
+          egress-policy: audit
+
+      # persist-credentials: false — nothing here does a git operation, and the
+      # token the check needs is passed to it explicitly below.
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24'
+
+      # GITHUB_REF, GITHUB_SHA and GITHUB_REPOSITORY come from the runner, so
+      # nothing ref-derived is interpolated into this script.
+      - name: Verify the publish guards
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Must match the publish job's `environment:` and the environment named
+          # in npm's trusted-publisher configuration.
+          PUBLISH_ENVIRONMENT: npm-publish
+        run: node sdks/typescript/scripts/verify-publish-guards.mjs
+
   # Holds the publish credential and nothing else: it downloads the packed
   # package and runs npm publish with lifecycle scripts disabled, so none of the
   # code the build job produced runs alongside the credential. No checkout, no
@@ -207,13 +267,21 @@ jobs:
   # build job cannot reach npm.
   publish:
     name: Publish to npm
-    needs: build
-    if: needs.build.outputs.should_publish == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    needs: [build, guards]
+    # Tags only, matching the guards job's own check: a release is a tag, and a
+    # manual run from a branch must not reach the environment at all. `needs`
+    # also means a failed or skipped guards job skips this one.
+    if: >-
+      needs.build.outputs.should_publish == 'true' &&
+      startsWith(github.ref, 'refs/tags/') &&
+      !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Gates the OIDC token behind branch/tag protection rules. npm's
-    # trusted-publisher binding does not include a ref, so this environment is
-    # what stops any branch from publishing.
+    # Gates the OIDC token behind the environment's protection rules. npm's
+    # trusted-publisher binding covers this repository, this workflow file and
+    # this environment's name, but not the ref, so the environment's rules are
+    # what decide which runs can publish. The guards job has already confirmed
+    # they exist; AGENTS.md has the configuration they should have.
     environment: npm-publish
     permissions:
       contents: read
