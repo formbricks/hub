@@ -79,10 +79,22 @@ function npm(argv, { allowFailure = false } = {}) {
   }
 }
 
+// `npm pack --json` changed shape in npm 12: an array of entries before, an
+// object keyed by package name since. Both workflows pin npm, but the pin can
+// move, and this has to keep working across the bump rather than turn it into a
+// failed release.
+function firstPackEntry(json) {
+  if (Array.isArray(json)) return json[0];
+  if (json && typeof json === "object") {
+    return json.filename ? json : Object.values(json)[0];
+  }
+  return undefined;
+}
+
 function packed(argv) {
   const { stdout } = npm([...argv, "--json"]);
   try {
-    const [entry] = JSON.parse(stdout);
+    const entry = firstPackEntry(JSON.parse(stdout));
     if (!entry?.filename) throw new Error("no filename in npm pack output");
     return entry;
   } catch (error) {

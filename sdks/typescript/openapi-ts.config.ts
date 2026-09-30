@@ -13,8 +13,9 @@ export default defineConfig({
   output: {
     path: "./src/generated",
     // Keep formatting out of generation so the output is a pure function of
-    // (spec, generator version) — the publish pipeline's skip-if-unchanged
-    // check compares generated trees byte for byte.
+    // (spec, generator version). The publish pipeline's skip-if-unchanged check
+    // compares the packed package byte for byte, so anything nondeterministic
+    // here would make every release look changed.
     postProcess: [],
   },
   plugins: [
