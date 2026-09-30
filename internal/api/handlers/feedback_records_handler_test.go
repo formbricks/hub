@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ type mockFeedbackRecordsService struct {
 	countFunc        func(ctx context.Context, filters *models.ListFeedbackRecordsFilters) (int, error)
 	createFunc       func(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
 	deleteByUserFunc func(ctx context.Context, filters *models.DeleteFeedbackRecordsByUserFilters) (int, error)
+	getFunc          func(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 }
 
 func (m *mockFeedbackRecordsService) CreateFeedbackRecord(
@@ -35,8 +37,22 @@ func (m *mockFeedbackRecordsService) CreateFeedbackRecord(
 	return nil, nil
 }
 
-func (m *mockFeedbackRecordsService) GetFeedbackRecord(context.Context, uuid.UUID) (*models.FeedbackRecord, error) {
+func (m *mockFeedbackRecordsService) GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, id)
+	}
+
 	return nil, nil
+}
+
+type mockFeedbackRecordTaxonomyService struct {
+	getFunc func(ctx context.Context, id uuid.UUID, tenantID string) (*models.FeedbackRecordTaxonomyResponse, error)
+}
+
+func (m *mockFeedbackRecordTaxonomyService) GetFeedbackRecordTaxonomy(
+	ctx context.Context, id uuid.UUID, tenantID string,
+) (*models.FeedbackRecordTaxonomyResponse, error) {
+	return m.getFunc(ctx, id, tenantID)
 }
 
 func (m *mockFeedbackRecordsService) ListFeedbackRecords(
@@ -73,6 +89,43 @@ func (m *mockFeedbackRecordsService) DeleteFeedbackRecordsByUser(
 	}
 
 	return 0, nil
+}
+
+func TestFeedbackRecordsHandler_GetIncludesTaxonomyOnlyOnDetail(t *testing.T) {
+	recordID := uuid.New()
+	record := &models.FeedbackRecord{ID: recordID, TenantID: "tenant-1"}
+	assignment := &models.FeedbackRecordTaxonomyResponse{
+		Status: models.FeedbackRecordTaxonomyUnclassified,
+		Path:   []models.FeedbackRecordTaxonomyPathNode{},
+	}
+	service := &mockFeedbackRecordsService{getFunc: func(_ context.Context, id uuid.UUID) (*models.FeedbackRecord, error) {
+		assert.Equal(t, recordID, id)
+		return record, nil
+	}}
+	taxonomy := &mockFeedbackRecordTaxonomyService{getFunc: func(_ context.Context, id uuid.UUID, tenantID string) (*models.FeedbackRecordTaxonomyResponse, error) {
+		assert.Equal(t, recordID, id)
+		assert.Equal(t, "tenant-1", tenantID)
+		return assignment, nil
+	}}
+	handler := NewFeedbackRecordsHandler(service, taxonomy)
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/feedback-records/"+recordID.String(), http.NoBody)
+	request.SetPathValue("id", recordID.String())
+	recorder := httptest.NewRecorder()
+	handler.Get(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	assert.Equal(t, "unclassified", body["taxonomy"].(map[string]any)["status"])
+
+	taxonomy.getFunc = func(context.Context, uuid.UUID, string) (*models.FeedbackRecordTaxonomyResponse, error) {
+		return nil, errors.New("taxonomy unavailable")
+	}
+	recorder = httptest.NewRecorder()
+	handler.Get(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	assert.Contains(t, body, "taxonomy")
+	assert.Nil(t, body["taxonomy"])
 }
 
 func TestFeedbackRecordsHandler_List(t *testing.T) {

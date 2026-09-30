@@ -617,6 +617,80 @@ func (r *TaxonomyRepository) GetActiveRun(ctx context.Context, scope models.Taxo
 	return run, nil
 }
 
+// GetFeedbackRecordTaxonomy resolves one tenant-owned record against the active directory run.
+// A single statement keeps the active-run pointer, membership, and visible labels in one snapshot.
+func (r *TaxonomyRepository) GetFeedbackRecordTaxonomy(
+	ctx context.Context,
+	recordID uuid.UUID,
+	tenantID string,
+) (*models.FeedbackRecordTaxonomyResponse, error) {
+	var runID *uuid.UUID
+	var pathJSON []byte
+
+	err := r.db.QueryRow(ctx, `
+		WITH RECURSIVE owned_record AS (
+			SELECT id, tenant_id FROM feedback_records WHERE id = $1 AND tenant_id = $2
+		), active_run AS (
+			SELECT ar.run_id
+			FROM taxonomy_active_runs ar
+			INNER JOIN owned_record fr ON fr.tenant_id = ar.tenant_id
+			WHERE ar.scope_type = 'directory'
+			  AND ar.source_type = '' AND ar.source_id = '' AND ar.field_id = ''
+		), lineage AS (
+			SELECT node.id, node.parent_id, node.label, node.level, node.node_type, node.run_id
+			FROM active_run ar
+			INNER JOIN taxonomy_cluster_memberships membership
+			  ON membership.run_id = ar.run_id
+			 AND membership.tenant_id = $2 AND membership.feedback_record_id = $1
+			INNER JOIN taxonomy_nodes node
+			  ON node.run_id = ar.run_id AND node.cluster_id = membership.cluster_id
+			WHERE node.node_type = 'leaf' AND node.removed_at IS NULL
+			UNION ALL
+			SELECT parent.id, parent.parent_id, parent.label, parent.level, parent.node_type, parent.run_id
+			FROM lineage child
+			INNER JOIN taxonomy_nodes parent
+			  ON parent.id = child.parent_id AND parent.run_id = child.run_id
+			WHERE parent.removed_at IS NULL
+		)
+		SELECT ar.run_id, COALESCE((
+			SELECT jsonb_agg(jsonb_build_object(
+				'id', id, 'label', label, 'level', level, 'node_type', node_type
+			) ORDER BY level)
+			FROM lineage
+			WHERE node_type <> 'root'
+			  AND EXISTS (SELECT 1 FROM lineage WHERE node_type = 'root')
+		), '[]'::jsonb)
+		FROM owned_record fr
+		LEFT JOIN active_run ar ON TRUE`, recordID, tenantID).Scan(&runID, &pathJSON)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, huberrors.NewNotFoundError("feedback_record", "feedback record not found")
+		}
+
+		return nil, fmt.Errorf("query feedback record taxonomy: %w", err)
+	}
+
+	result := &models.FeedbackRecordTaxonomyResponse{
+		Status: models.FeedbackRecordTaxonomyNoActiveTaxonomy,
+		RunID:  runID,
+		Path:   []models.FeedbackRecordTaxonomyPathNode{},
+	}
+	if runID == nil {
+		return result, nil
+	}
+
+	if err := json.Unmarshal(pathJSON, &result.Path); err != nil {
+		return nil, fmt.Errorf("decode feedback record taxonomy path: %w", err)
+	}
+
+	result.Status = models.FeedbackRecordTaxonomyUnclassified
+	if len(result.Path) > 0 {
+		result.Status = models.FeedbackRecordTaxonomyClassified
+	}
+
+	return result, nil
+}
+
 // ListRuns returns taxonomy run history for a tenant and optional scope filters.
 func (r *TaxonomyRepository) ListRuns(
 	ctx context.Context,

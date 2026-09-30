@@ -24,6 +24,13 @@ type internalTaxonomyRoute struct {
 var publicTaxonomyRoutes = []publicTaxonomyRoute{
 	{
 		method:           http.MethodGet,
+		path:             "/v1/feedback-records/{id}/taxonomy",
+		operationID:      "get-feedback-record-taxonomy",
+		responseStatuses: []string{"200", "400", "401", "404", "default"},
+		handler:          (*handlers.TaxonomyHandler).GetFeedbackRecordTaxonomy,
+	},
+	{
+		method:           http.MethodGet,
 		path:             "/v1/taxonomy/fields",
 		operationID:      "list-taxonomy-fields",
 		responseStatuses: []string{"200", "400", "401", "503", "default"},

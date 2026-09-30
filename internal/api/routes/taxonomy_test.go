@@ -55,7 +55,7 @@ func TestPublicTaxonomyRoutesMatchOpenAPI(t *testing.T) {
 	openAPIRoutes := make(map[string]struct{})
 
 	for path, pathItem := range document.Paths {
-		if !strings.HasPrefix(path, "/v1/taxonomy") {
+		if !strings.HasPrefix(path, "/v1/taxonomy") && path != "/v1/feedback-records/{id}/taxonomy" {
 			continue
 		}
 

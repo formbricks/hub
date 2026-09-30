@@ -23,6 +23,7 @@ type TaxonomyService interface {
 	GetRun(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyRun, error)
 	GetActiveTree(ctx context.Context, scope models.TaxonomyScope) (*models.TaxonomyTreeResponse, error)
 	GetTree(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyTreeResponse, error)
+	GetFeedbackRecordTaxonomy(ctx context.Context, recordID uuid.UUID, tenantID string) (*models.FeedbackRecordTaxonomyResponse, error)
 	RenameNode(ctx context.Context, nodeID uuid.UUID, req models.RenameTaxonomyNodeRequest) (*models.TaxonomyNode, error)
 	RemoveNode(ctx context.Context, nodeID uuid.UUID, filters models.RemoveTaxonomyNodeFilters) (*models.TaxonomyNode, error)
 	ListNodeRecords(
@@ -164,6 +165,30 @@ func (h *TaxonomyHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.service.GetTree(r.Context(), runID, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		respondTaxonomyError(w, r, err)
+
+		return
+	}
+
+	response.RespondJSON(w, http.StatusOK, result)
+}
+
+// GetFeedbackRecordTaxonomy returns a record's active directory taxonomy path.
+func (h *TaxonomyHandler) GetFeedbackRecordTaxonomy(w http.ResponseWriter, r *http.Request) {
+	recordID, ok := parseUUIDPathValue(w, r, "id")
+	if !ok {
+		return
+	}
+
+	filters := models.FeedbackRecordTaxonomyFilters{}
+	if err := validation.ValidateAndDecodeQueryParams(r, &filters); err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
+	result, err := h.service.GetFeedbackRecordTaxonomy(r.Context(), recordID, filters.TenantID)
 	if err != nil {
 		respondTaxonomyError(w, r, err)
 
