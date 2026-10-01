@@ -47,12 +47,12 @@ Calls return `{ data, error, response }` rather than throwing on an error status
 
 Requests are retried and timed out by default: up to **2 retries**, **60 seconds per attempt**, exponential backoff with jitter, and a server's `Retry-After` honoured. A request is only sent again when that cannot write anything twice:
 
-| Retried                                        | On                                                                               |
-| ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| Any request                                    | `408`, `429`, `503`, and a `409` whose problem `code` is `tenant_write_conflict` |
-| `GET`, `HEAD`, `OPTIONS`, `PUT`, `DELETE` also | `500`, `502`, `504`, network errors, timed-out attempts                          |
+| Retried                                        | On                                                                                                    |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Any request                                    | `408`, `429`, a `503` with `Retry-After`, and a `409` whose problem `code` is `tenant_write_conflict` |
+| `GET`, `HEAD`, `OPTIONS`, `PUT`, `DELETE` also | `500`, `502`, `504`, any other `503`, network errors, timed-out attempts                              |
 
-`POST` and `PATCH` are not retried after a `500`, `502` or `504`, a network error or a timeout, because the Hub may already have applied them — retry those deliberately if your call is safe to repeat. Other `4xx` responses are never retried, nor is a request you abort.
+`POST` and `PATCH` are not retried after a `500`, `502` or `504`, a `503` without `Retry-After`, a network error or a timeout, because the Hub may already have applied them — a proxy such as Envoy or Istio answers `503` when the connection to the Hub drops, which can be after the write committed. Retry those deliberately if your call is safe to repeat. Other `4xx` responses are never retried, nor is a request you abort.
 
 ```ts
 const client = createHubClient({

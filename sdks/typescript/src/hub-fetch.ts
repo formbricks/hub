@@ -16,11 +16,15 @@
  * cannot happen:
  *
  *   - any method, on a status meaning the server did not act on it — 408,
- *     429, 503 — or on a 409 whose problem body carries the code the API
- *     documents as retryable, `tenant_write_conflict`;
+ *     429, a 503 that carries `Retry-After` — or on a 409 whose problem body
+ *     carries the code the API documents as retryable, `tenant_write_conflict`;
  *   - idempotent methods only, additionally on statuses and failures after
- *     which the request may already have taken effect — 500, 502, 504, a
- *     network error, an attempt that timed out.
+ *     which the request may already have taken effect — 500, 502, 504, a 503
+ *     without `Retry-After`, a network error, an attempt that timed out.
+ *
+ * Idempotency keys would make every retry safe, as they do for Stripe's SDK,
+ * but the Hub has none; until it does, an ambiguous failure is the caller's
+ * to retry, as gRPC advises for UNAVAILABLE on non-idempotent calls.
  *
  * Every other response is returned as it is, and a request the caller aborted
  * is never retried.
@@ -38,8 +42,8 @@ const MAX_RETRY_DELAY = 8_000;
 const MAX_RETRY_AFTER = 60_000;
 
 const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS", "PUT", "DELETE"]);
-const RETRY_ANY_METHOD = new Set([408, 429, 503]);
-const RETRY_IDEMPOTENT_ONLY = new Set([500, 502, 504]);
+const RETRY_ANY_METHOD = new Set([408, 429]);
+const RETRY_IDEMPOTENT_ONLY = new Set([500, 502, 503, 504]);
 const RETRYABLE_CONFLICT_CODE = "tenant_write_conflict";
 
 export interface HubFetchOptions {
@@ -121,6 +125,11 @@ async function isRetryable(
 ): Promise<boolean> {
   const { status } = response;
   if (RETRY_ANY_METHOD.has(status)) return true;
+  // A 503 alone is ambiguous. The Hub sends one before doing any work, but a
+  // proxy in front of it — Envoy, and so Istio — sends one when the upstream
+  // connection resets, which can be after a write committed. Retry-After marks
+  // a deliberate refusal, which any method may retry.
+  if (status === 503 && retryAfterHeader(response)) return true;
   if (RETRY_IDEMPOTENT_ONLY.has(status)) return idempotent;
   // A 409 is retryable only when the API says so: a duplicate-row conflict is
   // final, a serialization conflict with a running purge is not.
@@ -144,8 +153,7 @@ async function problemCode(response: Response): Promise<string | undefined> {
 
 /** Milliseconds requested by a `Retry-After` header, if usable. */
 function retryAfter(response: Response): number | undefined {
-  const header = response.headers.get("retry-after")?.trim();
-  // Blank is absent, not zero — Number("") is 0 and would mean "retry now".
+  const header = retryAfterHeader(response);
   if (!header) return undefined;
 
   const seconds = Number(header);
@@ -155,6 +163,11 @@ function retryAfter(response: Response): number | undefined {
   return Number.isFinite(ms) && ms >= 0 && ms <= MAX_RETRY_AFTER
     ? ms
     : undefined;
+}
+
+/** The `Retry-After` header, if set. Blank is absent, not zero — Number("") is 0 and would mean "retry now". */
+function retryAfterHeader(response: Response): string | undefined {
+  return response.headers.get("retry-after")?.trim() || undefined;
 }
 
 /** Exponential backoff with up to 25% jitter, as in the SDK this replaced. */

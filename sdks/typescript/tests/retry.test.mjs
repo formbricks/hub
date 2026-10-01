@@ -127,6 +127,18 @@ describe("retries: statuses the server did not act on, any method", () => {
       assert.equal(requests.length, 2);
     },
   );
+  it(
+    "retries a POST on a 503 that carries Retry-After",
+    { timeout: 10_000 },
+    async () => {
+      // Retry-After marks the 503 as a deliberate refusal, not a proxy's
+      // report that the upstream connection reset mid-request.
+      script = [problem(503, "unavailable", NOW), ok()];
+      await createFeedbackRecord({ client: hub(), body: record });
+      assert.equal(requests.length, 2);
+      assert.equal(requests[1].body, requests[0].body);
+    },
+  );
 });
 
 describe("request bodies across attempts", () => {
@@ -176,6 +188,25 @@ describe("no retries where a write may already have happened", () => {
       assert.equal(requests.length, 1);
       assert.equal(response.status, 500);
       assert.equal(error.code, "internal");
+    },
+  );
+
+  it(
+    "does not retry a POST on a 503 without Retry-After",
+    { timeout: 10_000 },
+    async () => {
+      // Envoy, and so Istio, answers 503 when the upstream connection resets,
+      // which can be after the Hub committed the write. Blank counts as absent.
+      for (const headers of [{}, { "retry-after": " " }]) {
+        requests.length = 0;
+        script = [problem(503, "unavailable", headers), ok()];
+        const { response } = await createFeedbackRecord({
+          client: hub(),
+          body: record,
+        });
+        assert.equal(requests.length, 1);
+        assert.equal(response.status, 503);
+      }
     },
   );
 
