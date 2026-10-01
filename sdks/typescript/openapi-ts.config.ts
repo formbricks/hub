@@ -19,7 +19,13 @@ export default defineConfig({
     postProcess: [],
   },
   plugins: [
-    "@hey-api/client-fetch",
+    {
+      name: "@hey-api/client-fetch",
+      // The generated client has no retries or timeout of its own; this hook
+      // gives its default client the ones in src/hub-fetch.ts. Extensionless,
+      // to match every other import the generator writes.
+      runtimeConfigPath: "./src/client-config",
+    },
     "@hey-api/typescript",
     // Default emits one exported function per operation (not a class), which
     // keeps tree-shaking useful and matches how the spec reads.
