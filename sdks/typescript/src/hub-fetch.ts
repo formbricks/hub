@@ -8,26 +8,37 @@
  * overwritten on each run.
  *
  * The defaults match the Stainless-generated SDK this replaced — 2 retries,
- * 60s per attempt, exponential backoff from 0.5s to 8s with jitter — so moving
- * to it changes nothing a caller would notice. What gets retried does change,
- * on purpose. Stainless re-sent any request that failed with a 5xx, POSTs
- * included, and the Hub has no idempotency keys, so a retried create could
- * write the same record twice. Here a request is only re-sent when that
- * cannot happen:
+ * 60s per attempt, exponential backoff from 0.5s to 8s with jitter. What gets
+ * retried does not, on purpose. Stainless re-sent any request that failed with
+ * a 5xx, POSTs included, and the Hub has no idempotency keys: a create the Hub
+ * had already applied would come back as a 409 conflict, or — for a webhook,
+ * which has no natural key — be created twice. Here a request is only re-sent
+ * when that cannot happen:
  *
- *   - any method, on a status meaning the server did not act on it — 408,
- *     429, a 503 that carries `Retry-After` — or on a 409 whose problem body
- *     carries the code the API documents as retryable, `tenant_write_conflict`;
- *   - idempotent methods only, additionally on statuses and failures after
- *     which the request may already have taken effect — 500, 502, 504, a 503
- *     without `Retry-After`, a network error, an attempt that timed out.
+ *   - any method, on a response that says the server refused it — 429, a 408
+ *     or 503 that carries `Retry-After` — or on a 409 whose problem body
+ *     carries the code the API documents as safe to retry,
+ *     `tenant_write_conflict`;
+ *   - idempotent methods only, additionally after failures that leave open
+ *     whether the request took effect — 500, 502, 504, a 408 or 503 without
+ *     `Retry-After`, a network error, an attempt that timed out.
  *
- * Idempotency keys would make every retry safe, as they do for Stripe's SDK,
- * but the Hub has none; until it does, an ambiguous failure is the caller's
- * to retry, as gRPC advises for UNAVAILABLE on non-idempotent calls.
+ * A bare 408 or 503 is ambiguous because proxies send them after forwarding
+ * the request: Envoy, and so Istio, answers 503 when the upstream connection
+ * resets and 408 when its stream idle timeout fires, either of which can be
+ * after the Hub committed a write. The Hub itself sends neither with
+ * `Retry-After`.
  *
- * Every other response is returned as it is, and a request the caller aborted
- * is never retried.
+ * An attempt includes reading a JSON body, so a connection that drops or
+ * stalls mid-body is retried like one that fails before the response — the
+ * Hub's responses are always JSON. Any other body is left to the caller to
+ * read as a stream, and the attempt's timeout stops when its headers arrive.
+ *
+ * Every other response is returned as it is, so is a response whose
+ * `Retry-After` asks for longer than this will wait, and a request the caller
+ * aborted is never retried. Idempotency keys would make every retry safe, as
+ * they do for Stripe's SDK; until the Hub has them, an ambiguous failure is the
+ * caller's to retry, as gRPC advises for UNAVAILABLE on non-idempotent calls.
  */
 
 /** Retries after the first attempt, unless overridden. */
@@ -37,22 +48,29 @@ export const DEFAULT_TIMEOUT = 60_000;
 
 const INITIAL_RETRY_DELAY = 500;
 const MAX_RETRY_DELAY = 8_000;
-// A Retry-After longer than this is not waited out: the default backoff
-// applies instead, so one response cannot stall a caller for minutes.
+// A response asking for a longer wait than this is returned, not retried
+// early: the server said when, and sooner would only be refused again.
 const MAX_RETRY_AFTER = 60_000;
+// The largest delay setTimeout honours; past it, Node fires after 1ms.
+const MAX_TIMEOUT = 2_147_483_647;
+// A problem body is a few hundred bytes. A larger 409 body is not one, and is
+// not parsed just to look for a code.
+const MAX_PROBLEM_BYTES = 64 * 1024;
 
 const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS", "PUT", "DELETE"]);
-const RETRY_ANY_METHOD = new Set([408, 429]);
-const RETRY_IDEMPOTENT_ONLY = new Set([500, 502, 503, 504]);
+const RETRY_ANY_METHOD = new Set([429]);
+const RETRY_ANY_METHOD_WITH_RETRY_AFTER = new Set([408, 503]);
+const RETRY_IDEMPOTENT_ONLY = new Set([408, 500, 502, 503, 504]);
 const RETRYABLE_CONFLICT_CODE = "tenant_write_conflict";
 
 export interface HubFetchOptions {
   /** Retries after the first attempt; `0` turns retries off. Defaults to 2. */
   maxRetries?: number;
   /**
-   * Milliseconds each attempt may take, including reading the response body,
-   * applied to every retry independently; `0` turns the timeout off. Defaults
-   * to 60 000. To bound a call as a whole, pass your own `signal`.
+   * Milliseconds each attempt may take — sending the request, waiting for the
+   * response and reading a JSON body — applied to every retry independently;
+   * `0` turns the timeout off. Defaults to 60 000, at most 2 147 483 647. To
+   * bound a call as a whole, pass your own `signal`.
    */
   timeout?: number;
   /** The `fetch` to wrap. Defaults to the global `fetch`, looked up per call. */
@@ -69,9 +87,9 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
       `maxRetries must be a non-negative integer, got ${maxRetries}`,
     );
   }
-  if (!Number.isFinite(timeout) || timeout < 0) {
+  if (!(timeout >= 0 && timeout <= MAX_TIMEOUT)) {
     throw new RangeError(
-      `timeout must be a non-negative number of milliseconds, got ${timeout}`,
+      `timeout must be between 0 and ${MAX_TIMEOUT} milliseconds, got ${timeout}`,
     );
   }
 
@@ -88,92 +106,153 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
 
     for (let attempt = 0; ; attempt++) {
       const canRetry = attempt < maxRetries;
-      const signal =
-        timeout > 0
-          ? AbortSignal.any([callerSignal, AbortSignal.timeout(timeout)])
-          : callerSignal;
+      const deadline = startDeadline(callerSignal, timeout);
 
-      let response: Response;
+      const request = new Request(canRetry ? original.clone() : original, {
+        signal: deadline.signal,
+      });
+      let result: AttemptResult;
       try {
-        const request = canRetry ? original.clone() : original;
-        response = await baseFetch(new Request(request, { signal }));
+        result = await read(await baseFetch(request));
       } catch (error) {
-        // The caller's own cancellation is final. Otherwise this was a network
-        // failure or the attempt timed out, and the request may have reached
-        // the server — only an idempotent one can safely be sent again.
+        deadline.clear();
+        // The caller's own cancellation is final. Otherwise the connection
+        // failed or the attempt timed out, before the response or while its
+        // body was read, and the request may have reached the server — only
+        // an idempotent one can safely be sent again.
         if (callerSignal.aborted || !canRetry || !idempotent) throw error;
         await sleep(backoff(attempt), callerSignal);
         continue;
       }
+      // Cleared once the attempt is over, so a finished request does not keep
+      // its timer and signals alive for the rest of the timeout.
+      deadline.clear();
 
-      if (!canRetry || !(await isRetryable(response, idempotent)))
+      const { response, body } = result;
+      // Node's fetch links a Request's signal to the fetch it started only
+      // through weak references, so these Requests have to outlive the
+      // response. Collected mid-flight, they take the timeout and the
+      // caller's abort with them, and a hung attempt waits forever.
+      retained.set(response, [original, request]);
+      if (!canRetry) return response;
+      const wait = retryAfter(response);
+      if (!isRetryable(response, body, idempotent, wait !== undefined))
         return response;
+      if (wait !== undefined && wait > MAX_RETRY_AFTER) return response;
 
-      const delay = retryAfter(response) ?? backoff(attempt);
-      // Release the connection rather than leave it to garbage collection. A
-      // body that has already errored rejects here; that is clean-up failing,
-      // not the request, so it must not stop the retry.
-      await response.body?.cancel().catch(() => {});
-      await sleep(delay, callerSignal);
+      // Release the connection of a body that was not read. One that has
+      // already errored rejects here; that is clean-up failing, not the
+      // request, so it must not stop the retry.
+      if (!body) await response.body?.cancel().catch(() => {});
+      await sleep(wait ?? backoff(attempt), callerSignal);
     }
   };
 }
 
-async function isRetryable(
+const retained = new WeakMap<Response, Request[]>();
+
+interface AttemptResult {
+  response: Response;
+  /** The body, when it was JSON and so read as part of the attempt. */
+  body?: Uint8Array;
+}
+
+/**
+ * Reads a JSON body into memory, returning an equivalent response over it.
+ * The generated client reads it whole anyway, so this only moves the read
+ * inside the attempt. Other bodies are left unread for the caller to stream.
+ */
+async function read(response: Response): Promise<AttemptResult> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!response.body || !contentType.includes("json")) return { response };
+
+  const body = new Uint8Array(await response.arrayBuffer());
+  const copy = new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+  // A constructed Response has no URL and was never redirected; report the
+  // ones the request actually had.
+  Object.defineProperties(copy, {
+    url: { value: response.url },
+    redirected: { value: response.redirected },
+  });
+  return { response: copy, body };
+}
+
+function isRetryable(
   response: Response,
+  body: Uint8Array | undefined,
   idempotent: boolean,
-): Promise<boolean> {
+  hasRetryAfter: boolean,
+): boolean {
   const { status } = response;
   if (RETRY_ANY_METHOD.has(status)) return true;
-  // A 503 alone is ambiguous. The Hub sends one before doing any work, but a
-  // proxy in front of it — Envoy, and so Istio — sends one when the upstream
-  // connection resets, which can be after a write committed. Retry-After marks
-  // a deliberate refusal, which any method may retry.
-  if (status === 503 && retryAfterHeader(response)) return true;
+  if (RETRY_ANY_METHOD_WITH_RETRY_AFTER.has(status) && hasRetryAfter)
+    return true;
   if (RETRY_IDEMPOTENT_ONLY.has(status)) return idempotent;
   // A 409 is retryable only when the API says so: a duplicate-row conflict is
   // final, a serialization conflict with a running purge is not.
-  if (status === 409)
-    return (await problemCode(response)) === RETRYABLE_CONFLICT_CODE;
+  if (status === 409) return problemCode(body) === RETRYABLE_CONFLICT_CODE;
   return false;
 }
 
-/** The problem body's `code`, read from a clone so the caller can still read the body. */
-async function problemCode(response: Response): Promise<string | undefined> {
+/** The problem body's `code`, if the body is a problem body. */
+function problemCode(body: Uint8Array | undefined): string | undefined {
+  if (!body || body.byteLength > MAX_PROBLEM_BYTES) return undefined;
   try {
-    const body: unknown = await response.clone().json();
-    if (body !== null && typeof body === "object" && "code" in body) {
-      return typeof body.code === "string" ? body.code : undefined;
+    const problem: unknown = JSON.parse(new TextDecoder().decode(body));
+    if (problem !== null && typeof problem === "object" && "code" in problem) {
+      return typeof problem.code === "string" ? problem.code : undefined;
     }
   } catch {
-    // Not JSON: not a problem body, so not a documented retryable conflict.
+    // Not JSON after all: not a problem body.
   }
   return undefined;
 }
 
-/** Milliseconds requested by a `Retry-After` header, if usable. */
+/**
+ * Milliseconds a `Retry-After` header asks for: delay-seconds, which are
+ * digits only, or an HTTP-date, which starts with a day name. Anything else —
+ * blank, `0x10`, `1e3`, `-1` — is treated as absent rather than guessed at.
+ */
 function retryAfter(response: Response): number | undefined {
-  const header = retryAfterHeader(response);
+  const header = response.headers.get("retry-after")?.trim();
   if (!header) return undefined;
-
-  const seconds = Number(header);
-  const ms = Number.isFinite(seconds)
-    ? seconds * 1000
-    : Date.parse(header) - Date.now();
-  return Number.isFinite(ms) && ms >= 0 && ms <= MAX_RETRY_AFTER
-    ? ms
-    : undefined;
-}
-
-/** The `Retry-After` header, if set. Blank is absent, not zero — Number("") is 0 and would mean "retry now". */
-function retryAfterHeader(response: Response): string | undefined {
-  return response.headers.get("retry-after")?.trim() || undefined;
+  if (/^\d+$/.test(header)) return Number(header) * 1000;
+  if (!/^[A-Za-z]{3}/.test(header)) return undefined;
+  const date = Date.parse(header);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
 }
 
 /** Exponential backoff with up to 25% jitter, as in the SDK this replaced. */
 function backoff(attempt: number): number {
   const delay = Math.min(INITIAL_RETRY_DELAY * 2 ** attempt, MAX_RETRY_DELAY);
   return delay * (1 - Math.random() * 0.25);
+}
+
+/** The caller's signal, plus this attempt's timeout unless that is off. */
+function startDeadline(
+  callerSignal: AbortSignal,
+  timeout: number,
+): { signal: AbortSignal; clear(): void } {
+  if (timeout === 0) return { signal: callerSignal, clear() {} };
+
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException("The operation timed out.", "TimeoutError"),
+      ),
+    timeout,
+  );
+  // Like AbortSignal.timeout, do not keep a Node process alive on its own.
+  (timer as { unref?: () => void }).unref?.();
+  return {
+    signal: AbortSignal.any([callerSignal, controller.signal]),
+    clear: () => clearTimeout(timer),
+  };
 }
 
 /** Waits, unless the caller aborts first. */

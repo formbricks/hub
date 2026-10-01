@@ -5,11 +5,18 @@
 // generated client hands fetch a Request whose body can be read only once.
 //
 // Retryable responses carry `Retry-After: 0` so these run without the default
-// backoff; the cases that cannot (network errors, timeouts) use one retry.
+// backoff; the cases that cannot (network errors, timeouts, bare 408/503s) use
+// one retry.
 
 import assert from "node:assert/strict";
 import http from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
+import v8 from "node:v8";
+import vm from "node:vm";
+
+// Garbage collection on demand, for the cases where it decides the outcome.
+v8.setFlagsFromString("--expose-gc");
+const gc = vm.runInNewContext("gc");
 
 const {
   createHubClient,
@@ -18,6 +25,7 @@ const {
   deleteFeedbackRecord,
   getFeedbackRecord,
   listFeedbackRecords,
+  updateFeedbackRecord,
 } = await import("../dist/index.mjs");
 
 const NOW = { "retry-after": "0" };
@@ -30,6 +38,14 @@ const ok = (body = { ok: true }) => ({ status: 200, body });
 const HANG = Symbol("hang");
 // Sends a 503's headers and half its body, then drops the connection.
 const BROKEN_503 = Symbol("broken 503");
+// Sends a 200's headers and half its JSON body, then drops the connection.
+const BROKEN_200 = Symbol("broken 200");
+// Drops the connection without answering at all.
+const RESET = Symbol("reset");
+// Sends a 200's headers at once and its JSON body a second later.
+const SLOW_JSON = Symbol("slow json");
+// Streams a plain-text body for 600ms, longer than the tests' short timeouts.
+const SLOW_STREAM = Symbol("slow stream");
 
 // Each test queues the responses it wants, in order; requests past the end of
 // the queue get a 200. Every request is recorded with its body, so a test can
@@ -48,6 +64,33 @@ const server = http.createServer((req, res) => {
     });
     const next = script.shift() ?? ok();
     if (next === HANG) return; // never answers; closed in `after`
+    if (next === RESET) return res.destroy();
+    if (next === BROKEN_200) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"partial":');
+      setTimeout(() => res.destroy(), 20);
+      return;
+    }
+    if (next === SLOW_JSON) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write("{");
+      const timer = setTimeout(() => res.end('"slow":true}'), 1_000);
+      res.on("close", () => clearTimeout(timer));
+      return;
+    }
+    if (next === SLOW_STREAM) {
+      res.writeHead(200, { "content-type": "text/plain" });
+      let sent = 0;
+      const timer = setInterval(() => {
+        res.write(`chunk ${sent}\n`);
+        if (++sent === 6) {
+          clearInterval(timer);
+          res.end();
+        }
+      }, 100);
+      res.on("close", () => clearInterval(timer));
+      return;
+    }
     if (next === BROKEN_503) {
       res.writeHead(503, {
         "content-type": "application/json",
@@ -141,6 +184,47 @@ describe("retries: statuses the server did not act on, any method", () => {
   );
 });
 
+describe("retries: refusals that carry Retry-After, any method", () => {
+  it(
+    "retries a POST on a 408 with Retry-After",
+    { timeout: 10_000 },
+    async () => {
+      script = [problem(408, "timeout", NOW), ok()];
+      await createFeedbackRecord({ client: hub(), body: record });
+      assert.equal(requests.length, 2);
+    },
+  );
+
+  it(
+    "waits out a Retry-After given in seconds",
+    { timeout: 10_000 },
+    async () => {
+      // Read as milliseconds, or ignored for the default backoff, this would
+      // retry within half a second.
+      script = [problem(503, "unavailable", { "retry-after": "1" }), ok()];
+      const started = Date.now();
+      await createFeedbackRecord({ client: hub(), body: record });
+      assert.equal(requests.length, 2);
+      assert.ok(Date.now() - started >= 950, "did not wait the second out");
+    },
+  );
+
+  it(
+    "waits out a Retry-After given as an HTTP-date",
+    { timeout: 10_000 },
+    async () => {
+      // HTTP-dates have whole seconds: two ahead means a wait of one to two.
+      const at = new Date(Date.now() + 2_000).toUTCString();
+      script = [problem(429, "rate_limited", { "retry-after": at }), ok()];
+      const started = Date.now();
+      await createFeedbackRecord({ client: hub(), body: record });
+      const waited = Date.now() - started;
+      assert.equal(requests.length, 2);
+      assert.ok(waited >= 900 && waited < 3_000, `waited ${waited}ms`);
+    },
+  );
+});
+
 describe("request bodies across attempts", () => {
   it(
     "the final attempt sends the original body intact",
@@ -211,6 +295,86 @@ describe("no retries where a write may already have happened", () => {
   );
 
   it(
+    "does not retry a POST on a 408 without Retry-After",
+    { timeout: 10_000 },
+    async () => {
+      // Envoy answers 408 when its stream idle timeout fires, which can be
+      // after the Hub received the whole request.
+      script = [problem(408, "timeout"), ok()];
+      const { response } = await createFeedbackRecord({
+        client: hub(),
+        body: record,
+      });
+      assert.equal(requests.length, 1);
+      assert.equal(response.status, 408);
+    },
+  );
+
+  it(
+    "does not treat a malformed Retry-After as a refusal",
+    { timeout: 10_000 },
+    async () => {
+      // Only digits or an HTTP-date count; Number() would read "0x2" as 2.
+      for (const value of ["0x2", "garbage", "1e1", "-1"]) {
+        requests.length = 0;
+        script = [problem(503, "unavailable", { "retry-after": value }), ok()];
+        const { response } = await createFeedbackRecord({
+          client: hub(),
+          body: record,
+        });
+        assert.equal(requests.length, 1, `retried on Retry-After: ${value}`);
+        assert.equal(response.status, 503);
+      }
+    },
+  );
+
+  it(
+    "does not retry a PATCH on 500 or after a timeout",
+    { timeout: 10_000 },
+    async () => {
+      script = [problem(500, "internal", NOW)];
+      const failed = await updateFeedbackRecord({
+        client: hub(),
+        path: { id: "r1" },
+        body: { value_text: "x" },
+      });
+      assert.equal(requests.length, 1);
+      assert.equal(failed.response.status, 500);
+
+      requests.length = 0;
+      script = [HANG, ok()];
+      const timedOut = await updateFeedbackRecord({
+        client: hub({ timeout: 200 }),
+        path: { id: "r1" },
+        body: { value_text: "x" },
+      });
+      assert.equal(requests.length, 1);
+      assert.equal(timedOut.error.name, "TimeoutError");
+    },
+  );
+
+  it(
+    "does not read a 409 larger than a problem body for its code",
+    { timeout: 10_000 },
+    async () => {
+      script = [
+        {
+          status: 409,
+          headers: { "content-type": "application/problem+json" },
+          body: { code: "tenant_write_conflict", pad: "x".repeat(70_000) },
+        },
+        ok(),
+      ];
+      const { response } = await createFeedbackRecord({
+        client: hub(),
+        body: record,
+      });
+      assert.equal(requests.length, 1);
+      assert.equal(response.status, 409);
+    },
+  );
+
+  it(
     "does not retry a POST on any other 409, and leaves the body readable",
     { timeout: 10_000 },
     async () => {
@@ -233,6 +397,23 @@ describe("no retries where a write may already have happened", () => {
       script = [problem(404, "not_found", NOW)];
       await getFeedbackRecord({ client: hub(), path: { id: "x" } });
       assert.equal(requests.length, 1);
+    },
+  );
+
+  it(
+    "retries a GET on 408, 502, 503 and 504 without Retry-After",
+    { timeout: 10_000 },
+    async () => {
+      for (const status of [408, 502, 503, 504]) {
+        requests.length = 0;
+        script = [problem(status, "unavailable"), ok()];
+        const { response } = await listFeedbackRecords({
+          client: hub({ maxRetries: 1 }),
+          query: { tenant_id: "org-1" },
+        });
+        assert.equal(requests.length, 2, `${status} was not retried`);
+        assert.equal(response.status, 200);
+      }
     },
   );
 
@@ -273,22 +454,21 @@ describe("limits", () => {
   });
 
   it(
-    "does not wait out a Retry-After longer than its cap",
+    "returns a response whose Retry-After is longer than its cap",
     { timeout: 10_000 },
     async () => {
-      // The server asks for two minutes; the retry happens on the default
-      // backoff instead, well inside the test's own timeout.
+      // The server asks for two minutes. Retrying sooner would only be refused
+      // again, and waiting would stall the caller, so its answer is returned.
       script = [problem(503, "unavailable", { "retry-after": "120" }), ok()];
       const started = Date.now();
-      await listFeedbackRecords({
-        client: hub({ maxRetries: 1 }),
+      const { response } = await listFeedbackRecords({
+        client: hub(),
         query: { tenant_id: "org-1" },
       });
-      assert.equal(requests.length, 2);
-      assert.ok(
-        Date.now() - started < 5_000,
-        "waited out the 120s Retry-After",
-      );
+      assert.equal(requests.length, 1);
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("retry-after"), "120");
+      assert.ok(Date.now() - started < 1_000, "waited before returning");
     },
   );
 });
@@ -323,6 +503,58 @@ describe("unreliable responses", () => {
       });
       assert.equal(requests.length, 2);
       assert.deepEqual(data, { recovered: true });
+    },
+  );
+
+  it(
+    "retries a GET whose connection drops before any response, not a POST",
+    { timeout: 10_000 },
+    async () => {
+      script = [RESET, ok({ recovered: true })];
+      const { data } = await listFeedbackRecords({
+        client: hub({ maxRetries: 1 }),
+        query: { tenant_id: "org-1" },
+      });
+      assert.equal(requests.length, 2);
+      assert.deepEqual(data, { recovered: true });
+
+      requests.length = 0;
+      script = [RESET, ok()];
+      const { error } = await createFeedbackRecord({
+        client: hub({ maxRetries: 1 }),
+        body: record,
+      });
+      assert.equal(requests.length, 1);
+      assert.ok(error, "a dropped POST must surface, not be re-sent");
+    },
+  );
+
+  it(
+    "retries a GET whose success drops mid-body, not a POST",
+    { timeout: 10_000 },
+    async () => {
+      // The body is read as part of the attempt, so a 200 that never finishes
+      // arriving is a failed attempt like any other.
+      script = [BROKEN_200, ok({ recovered: true })];
+      const { data, response } = await listFeedbackRecords({
+        client: hub({ maxRetries: 1 }),
+        query: { tenant_id: "org-1" },
+      });
+      assert.equal(requests.length, 2);
+      assert.deepEqual(data, { recovered: true });
+      assert.equal(
+        response.url,
+        `${baseUrl}/v1/feedback-records?tenant_id=org-1`,
+      );
+
+      requests.length = 0;
+      script = [BROKEN_200, ok()];
+      const { error } = await createFeedbackRecord({
+        client: hub({ maxRetries: 1 }),
+        body: record,
+      });
+      assert.equal(requests.length, 1);
+      assert.ok(error, "a POST whose response broke must surface");
     },
   );
 
@@ -378,12 +610,41 @@ describe("timeouts", () => {
   it("retries a timed-out GET", { timeout: 10_000 }, async () => {
     script = [HANG, ok({ second: true })];
     const { data } = await listFeedbackRecords({
-      client: hub({ timeout: 200, maxRetries: 1 }),
+      client: hub({ timeout: 500, maxRetries: 1 }),
       query: { tenant_id: "org-1" },
     });
     assert.equal(requests.length, 2);
     assert.deepEqual(data, { second: true });
   });
+
+  it(
+    "times out and retries a GET whose JSON body stalls",
+    { timeout: 10_000 },
+    async () => {
+      script = [SLOW_JSON, ok({ second: true })];
+      const { data } = await listFeedbackRecords({
+        client: hub({ timeout: 300, maxRetries: 1 }),
+        query: { tenant_id: "org-1" },
+      });
+      assert.equal(requests.length, 2);
+      assert.deepEqual(data, { second: true });
+    },
+  );
+
+  it(
+    "leaves a non-JSON body to stream past the timeout",
+    { timeout: 10_000 },
+    async () => {
+      // The timeout covers an attempt up to its headers, then only bodies it
+      // reads itself: a stream the caller reads is the caller's to bound.
+      script = [SLOW_STREAM];
+      const response = await createHubFetch({ timeout: 200 })(
+        `${baseUrl}/stream`,
+      );
+      const text = await response.text();
+      assert.equal(text.split("\n").filter(Boolean).length, 6);
+    },
+  );
 
   it(
     "does not retry a timed-out POST — the server may still apply it",
@@ -426,7 +687,88 @@ describe("timeouts", () => {
       // A retried abort would also send nothing — an aborted fetch rejects before
       // it connects — but it would sit through the backoff first. Promptness is
       // what tells "gave up" from "kept trying".
-      assert.ok(Date.now() - abortedAt < 250, "kept going after the abort");
+      // The shortest backoff is 375ms.
+      assert.ok(Date.now() - abortedAt < 350, "kept going after the abort");
+    },
+  );
+
+  it(
+    "stops waiting out a backoff as soon as the caller aborts",
+    { timeout: 10_000 },
+    async () => {
+      script = [problem(503, "unavailable", { "retry-after": "5" }), ok()];
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 200);
+      const started = Date.now();
+      await assert.rejects(
+        listFeedbackRecords({
+          client: hub(),
+          query: { tenant_id: "org-1" },
+          signal: controller.signal,
+          throwOnError: true,
+        }),
+        (error) => error.name === "AbortError",
+      );
+      assert.ok(Date.now() - started < 1_500, "sat through the 5s wait");
+      assert.equal(requests.length, 1);
+    },
+  );
+});
+
+describe("garbage collection mid-flight", () => {
+  // Node's fetch links a Request's signal to the fetch it started only through
+  // weak references. If the wrapper let go of its Requests, a collection while
+  // a request is in flight would cut both links, and these would hang.
+  const underGc = async (run) => {
+    const timer = setInterval(gc, 5);
+    try {
+      for (let i = 0; i < 5; i++) await run();
+    } finally {
+      clearInterval(timer);
+    }
+  };
+
+  it("still times out a hung attempt", { timeout: 10_000 }, async () => {
+    await underGc(async () => {
+      script = [HANG];
+      await assert.rejects(
+        createHubFetch({ timeout: 100, maxRetries: 0 })(`${baseUrl}/hang`),
+        (error) => error.name === "TimeoutError",
+      );
+    });
+  });
+
+  it("still honours the caller's abort", { timeout: 10_000 }, async () => {
+    await underGc(async () => {
+      script = [HANG];
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 100);
+      await assert.rejects(
+        createHubFetch({ timeout: 0 })(`${baseUrl}/hang`, {
+          signal: controller.signal,
+        }),
+        (error) => error.name === "AbortError",
+      );
+    });
+  });
+
+  it(
+    "still lets the caller abort a stream it is reading",
+    { timeout: 10_000 },
+    async () => {
+      await underGc(async () => {
+        script = [SLOW_STREAM];
+        const controller = new AbortController();
+        const response = await createHubFetch({ timeout: 0 })(
+          `${baseUrl}/stream`,
+          { signal: controller.signal },
+        );
+        setTimeout(() => controller.abort(), 150);
+        await assert.rejects(
+          response.text(),
+          (error) => error.name === "AbortError",
+        );
+      });
     },
   );
 });
@@ -449,5 +791,16 @@ describe("wiring", () => {
     assert.throws(() => createHubFetch({ maxRetries: 1.5 }), RangeError);
     assert.throws(() => createHubFetch({ timeout: -1 }), RangeError);
     assert.throws(() => createHubFetch({ timeout: Infinity }), RangeError);
+    // Past setTimeout's limit Node would fire after 1ms, aborting every attempt.
+    assert.throws(() => createHubFetch({ timeout: 2 ** 31 }), RangeError);
+  });
+
+  it("accepts a fractional timeout", { timeout: 10_000 }, async () => {
+    // 1.1 * 1000 is 1100.0000000000002; AbortSignal.timeout would reject it.
+    const { response } = await listFeedbackRecords({
+      client: hub({ timeout: 1.1 * 1000 }),
+      query: { tenant_id: "org-1" },
+    });
+    assert.equal(response.status, 200);
   });
 });

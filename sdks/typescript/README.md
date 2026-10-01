@@ -45,14 +45,16 @@ Calls return `{ data, error, response }` rather than throwing on an error status
 
 ## Retries and timeouts
 
-Requests are retried and timed out by default: up to **2 retries**, **60 seconds per attempt**, exponential backoff with jitter, and a server's `Retry-After` honoured. A request is only sent again when that cannot write anything twice:
+Requests are retried and timed out by default: up to **2 retries**, **60 seconds per attempt**, exponential backoff with jitter, and a server's `Retry-After` honoured. A request is only sent again when that cannot apply it twice:
 
-| Retried                                        | On                                                                                                    |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Any request                                    | `408`, `429`, a `503` with `Retry-After`, and a `409` whose problem `code` is `tenant_write_conflict` |
-| `GET`, `HEAD`, `OPTIONS`, `PUT`, `DELETE` also | `500`, `502`, `504`, any other `503`, network errors, timed-out attempts                              |
+| Retried                                        | On                                                                                                  |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Any request                                    | `429`; a `408` or `503` with `Retry-After`; a `409` whose problem `code` is `tenant_write_conflict` |
+| `GET`, `HEAD`, `OPTIONS`, `PUT`, `DELETE` also | `500`, `502`, `504`, any other `408` or `503`, network errors, timed-out attempts                   |
 
-`POST` and `PATCH` are not retried after a `500`, `502` or `504`, a `503` without `Retry-After`, a network error or a timeout, because the Hub may already have applied them — a proxy such as Envoy or Istio answers `503` when the connection to the Hub drops, which can be after the write committed. Retry those deliberately if your call is safe to repeat. Other `4xx` responses are never retried, nor is a request you abort.
+`POST` and `PATCH` are not retried after a `500`, `502` or `504`, a `408` or `503` without `Retry-After`, a network error or a timeout, because the Hub may already have applied them. A proxy such as Envoy or Istio answers `503` when its connection to the Hub drops and `408` when its idle timeout fires, either of which can follow a committed write. A create the Hub already applied would come back as a `409` conflict, or — for a webhook — be created twice. Retry those deliberately if your call is safe to repeat, such as a semantic search. Other `4xx` responses are never retried, nor is a request you abort, nor a response whose `Retry-After` asks for more than 60 seconds: that response is returned for you to act on.
+
+If you run the Hub behind your own proxy, don't have it turn upstream errors into `503` with `Retry-After` — that marks a request the Hub never saw, so `POST`s would be re-sent.
 
 ```ts
 const client = createHubClient({
@@ -63,7 +65,9 @@ const client = createHubClient({
 });
 ```
 
-The timeout applies to each attempt separately; to bound a call as a whole, pass a `signal`, e.g. `AbortSignal.timeout(30_000)`.
+An attempt includes reading the JSON body, so a connection that drops or stalls mid-response is retried like any other failure. The timeout applies to each attempt separately; to bound a call as a whole, pass a `signal`, e.g. `AbortSignal.timeout(30_000)`.
+
+Retries live in the client's `fetch`. A `fetch` passed per call, or set later with `client.setConfig({ fetch })`, replaces them unless it is a `createHubFetch()` itself.
 
 ## Runtime validation
 
