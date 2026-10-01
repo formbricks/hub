@@ -28,6 +28,8 @@ const problem = (status, code, headers = {}) => ({
 });
 const ok = (body = { ok: true }) => ({ status: 200, body });
 const HANG = Symbol("hang");
+// Sends a 503's headers and half its body, then drops the connection.
+const BROKEN_503 = Symbol("broken 503");
 
 // Each test queues the responses it wants, in order; requests past the end of
 // the queue get a 200. Every request is recorded with its body, so a test can
@@ -46,6 +48,15 @@ const server = http.createServer((req, res) => {
     });
     const next = script.shift() ?? ok();
     if (next === HANG) return; // never answers; closed in `after`
+    if (next === BROKEN_503) {
+      res.writeHead(503, {
+        "content-type": "application/json",
+        "content-length": "1000",
+      });
+      res.write('{"partial":');
+      setTimeout(() => res.destroy(), 20);
+      return;
+    }
     res.writeHead(next.status, {
       "content-type": "application/json",
       ...next.headers,
@@ -114,6 +125,40 @@ describe("retries: statuses the server did not act on, any method", () => {
       script = [problem(409, "tenant_write_conflict", NOW), ok()];
       await createFeedbackRecord({ client: hub(), body: record });
       assert.equal(requests.length, 2);
+    },
+  );
+});
+
+describe("request bodies across attempts", () => {
+  it(
+    "the final attempt sends the original body intact",
+    { timeout: 10_000 },
+    async () => {
+      // Attempts before the last send clones; the last sends the original
+      // itself. Succeeding only on the third attempt covers both.
+      script = [
+        problem(429, "rate_limited", NOW),
+        problem(429, "rate_limited", NOW),
+        ok(),
+      ];
+      await createFeedbackRecord({ client: hub(), body: record });
+      assert.equal(requests.length, 3);
+      assert.deepEqual(JSON.parse(requests[2].body), record);
+      assert.equal(requests[1].body, requests[0].body);
+      assert.equal(requests[2].body, requests[0].body);
+    },
+  );
+
+  it(
+    "sends the body intact with retries off",
+    { timeout: 10_000 },
+    async () => {
+      await createFeedbackRecord({
+        client: hub({ maxRetries: 0 }),
+        body: record,
+      });
+      assert.equal(requests.length, 1);
+      assert.deepEqual(JSON.parse(requests[0].body), record);
     },
   );
 });
@@ -213,6 +258,69 @@ describe("limits", () => {
         Date.now() - started < 5_000,
         "waited out the 120s Retry-After",
       );
+    },
+  );
+});
+
+describe("unreliable responses", () => {
+  it(
+    'treats a blank Retry-After as absent, not as "retry now"',
+    { timeout: 10_000 },
+    async () => {
+      // Number("") is 0. Read naively, a blank header would mean an immediate
+      // retry; it should mean the default backoff, which starts at 375ms.
+      script = [problem(503, "unavailable", { "retry-after": " " }), ok()];
+      const started = Date.now();
+      await listFeedbackRecords({
+        client: hub({ maxRetries: 1 }),
+        query: { tenant_id: "org-1" },
+      });
+      assert.equal(requests.length, 2);
+      assert.ok(Date.now() - started >= 350, "retried without backing off");
+    },
+  );
+
+  it(
+    "retries a 503 whose connection drops mid-body",
+    { timeout: 10_000 },
+    async () => {
+      // The realistic version: the response arrives, then the socket goes.
+      script = [BROKEN_503, ok({ recovered: true })];
+      const { data } = await listFeedbackRecords({
+        client: hub({ maxRetries: 1 }),
+        query: { tenant_id: "org-1" },
+      });
+      assert.equal(requests.length, 2);
+      assert.deepEqual(data, { recovered: true });
+    },
+  );
+
+  it(
+    "still retries when cancelling the discarded body rejects",
+    { timeout: 10_000 },
+    async () => {
+      // The socket version above cannot pin this: the body is cancelled as soon
+      // as the headers arrive, before the drop errors it. A real Response over a
+      // stream that has already errored makes cancel() reject every time —
+      // clean-up failing, which must not turn a retryable 503 into a throw.
+      let calls = 0;
+      const brokenThenFine = async () => {
+        calls += 1;
+        if (calls === 1) {
+          const body = new ReadableStream({
+            start: (controller) =>
+              controller.error(new Error("connection reset")),
+          });
+          return new Response(body, { status: 503 });
+        }
+        return Response.json({ recovered: true });
+      };
+      const response = await createHubFetch({
+        fetch: brokenThenFine,
+        maxRetries: 1,
+      })("http://hub.invalid/v1/feedback-records");
+      assert.equal(calls, 2);
+      assert.equal(response.status, 200);
     },
   );
 });

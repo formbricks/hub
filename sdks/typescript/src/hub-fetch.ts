@@ -74,8 +74,10 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
   return async function hubFetch(input, init) {
     const baseFetch = options.fetch ?? globalThis.fetch;
 
-    // Never sent itself: each attempt sends a clone, because a request body can
-    // be read only once and a retry has to send it again.
+    // Kept unsent while another attempt may follow: those attempts send a
+    // clone, because a request body can be read only once and a retry has to
+    // send it again. The last attempt sends the original, so with retries off
+    // the body is never copied.
     const original = new Request(input, init);
     const callerSignal = original.signal;
     const idempotent = IDEMPOTENT_METHODS.has(original.method.toUpperCase());
@@ -89,7 +91,8 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
 
       let response: Response;
       try {
-        response = await baseFetch(new Request(original.clone(), { signal }));
+        const request = canRetry ? original.clone() : original;
+        response = await baseFetch(new Request(request, { signal }));
       } catch (error) {
         // The caller's own cancellation is final. Otherwise this was a network
         // failure or the attempt timed out, and the request may have reached
@@ -103,8 +106,10 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
         return response;
 
       const delay = retryAfter(response) ?? backoff(attempt);
-      // Release the connection rather than leave it to garbage collection.
-      await response.body?.cancel();
+      // Release the connection rather than leave it to garbage collection. A
+      // body that has already errored rejects here; that is clean-up failing,
+      // not the request, so it must not stop the retry.
+      await response.body?.cancel().catch(() => {});
       await sleep(delay, callerSignal);
     }
   };
@@ -139,8 +144,9 @@ async function problemCode(response: Response): Promise<string | undefined> {
 
 /** Milliseconds requested by a `Retry-After` header, if usable. */
 function retryAfter(response: Response): number | undefined {
-  const header = response.headers.get("retry-after");
-  if (header === null) return undefined;
+  const header = response.headers.get("retry-after")?.trim();
+  // Blank is absent, not zero — Number("") is 0 and would mean "retry now".
+  if (!header) return undefined;
 
   const seconds = Number(header);
   const ms = Number.isFinite(seconds)
