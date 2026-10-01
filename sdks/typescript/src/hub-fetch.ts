@@ -31,10 +31,13 @@
  *
  * Whether to retry is decided from the status and headers; the body of a
  * response that is retried is discarded unread, except a 409's, of which at
- * most 64 KB is read for its code. The timeout runs until the returned
- * response's body has been read, whatever its type. An idempotent request
- * reads a JSON body before it is returned, so a connection that drops or
- * stalls mid-body is retried like one that fails before the response.
+ * most 64 KB is read for its code — so a 409 that stalls is returned only
+ * when the attempt times out. The timeout runs until the returned response's
+ * body has been read, whatever its type, and a body dropped unread is
+ * cancelled once collected, as fetch's own would be. While a retry is still
+ * possible, an idempotent request reads a JSON body before it is returned, so
+ * a connection that drops or stalls mid-body is retried like one that fails
+ * before the response.
  *
  * Every other response is returned as it is, so is a response whose
  * `Retry-After` asks for longer than this will wait, and a request the caller
@@ -140,6 +143,9 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
           } else if (
             idempotent &&
             original.method !== "HEAD" &&
+            // A response that asked for a longer wait is the caller's: a
+            // retry after its body broke off would come sooner than asked.
+            !(wait !== undefined && wait > MAX_RETRY_AFTER) &&
             isJson(response) &&
             canRebuild(response)
           ) {
@@ -207,6 +213,17 @@ function startDeadline(callerSignal: AbortSignal, timeout: number): Deadline {
 // or its body is — a caller may keep only the body, as a stream.
 const retained = new WeakMap<object, Request[]>();
 
+// A body dropped unread: cancelled once collected, as fetch cancels its own.
+// The wrapper below locks the original body, which turns that off for it, and
+// takes the attempt's Requests with it, so its timeout could no longer land.
+const abandoned = new FinalizationRegistry<{
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  deadline: Deadline;
+}>(({ reader, deadline }) => {
+  deadline.clear();
+  void reader.cancel().catch(() => {});
+});
+
 /**
  * The response, with its attempt's deadline running until its body has been
  * read, cancelled or has failed.
@@ -237,7 +254,11 @@ function withDeadline(
   const done = () => {
     deadline.clear();
     requests.length = 0;
+    abandoned.unregister(token);
   };
+  const token = {};
+  // Not a byte stream: enqueuing into one transfers each chunk's buffer, and
+  // fetch's chunks can be slices of a shared one. So BYOB readers are out.
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -258,6 +279,7 @@ function withDeadline(
       return reader.cancel(reason);
     },
   });
+  abandoned.register(body, { reader, deadline }, token);
   return rebuild(response, body);
 }
 
@@ -283,7 +305,8 @@ function canRebuild(response: Response): boolean {
 
 /**
  * An equivalent response over another body. What still differs from one fetch
- * returns: `type` is "default", and its headers are mutable.
+ * returns: `type` is "default", its headers are mutable, and its body is not
+ * a byte stream.
  */
 function rebuild(response: Response, body: ReadableStream<Uint8Array>) {
   const copy = new Response(body, {

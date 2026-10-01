@@ -52,6 +52,11 @@ const NDJSON_STREAM = Symbol("ndjson stream");
 const STALLED_502 = Symbol("stalled 502");
 // A retryable 503 whose JSON body never finishes arriving.
 const STALLED_503 = Symbol("stalled 503");
+// The same, asking for a two-minute wait.
+const STALLED_503_LONG_WAIT = Symbol("stalled 503, long wait");
+// A binary body streamed for 5s; `streamClosed` records when the client let go.
+const LONG_STREAM = Symbol("long stream");
+let streamClosed = false;
 
 // Each test queues the responses it wants, in order; requests past the end of
 // the queue get a 200. Every request is recorded with its body, so a test can
@@ -84,11 +89,26 @@ const server = http.createServer((req, res) => {
       res.on("close", () => clearTimeout(timer));
       return;
     }
-    if (next === STALLED_502 || next === STALLED_503) {
+    if (next === LONG_STREAM) {
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      const timer = setInterval(() => res.write(Buffer.alloc(64 * 1024)), 20);
+      const end = setTimeout(() => res.end(), 5_000);
+      res.on("close", () => {
+        clearInterval(timer);
+        clearTimeout(end);
+        streamClosed = true;
+      });
+      return;
+    }
+    if (
+      next === STALLED_502 ||
+      next === STALLED_503 ||
+      next === STALLED_503_LONG_WAIT
+    ) {
       const html = next === STALLED_502;
       res.writeHead(html ? 502 : 503, {
         "content-type": html ? "text/html" : "application/problem+json",
-        ...(html ? {} : NOW),
+        ...(html ? {} : next === STALLED_503 ? NOW : { "retry-after": "120" }),
       });
       res.write(html ? "<html><body>Bad gateway" : '{"code":');
       return;
@@ -792,6 +812,22 @@ describe("timeouts", () => {
   );
 
   it(
+    "does not retry early a long-wait response whose body stalls",
+    { timeout: 10_000 },
+    async () => {
+      // Returned, not retried, for asking more than 60s — and so not read in
+      // the attempt, where its stall would end in a retry after 0.5s.
+      script = [STALLED_503_LONG_WAIT, ok()];
+      const { error } = await listFeedbackRecords({
+        client: hub({ timeout: 300 }),
+        query: { tenant_id: "org-1" },
+      });
+      assert.equal(error.name, "TimeoutError");
+      assert.equal(requests.length, 1);
+    },
+  );
+
+  it(
     "retries a stalled retryable response without reading its body",
     { timeout: 10_000 },
     async () => {
@@ -932,6 +968,28 @@ describe("garbage collection mid-flight", () => {
       });
     },
   );
+  it(
+    "cancels a body the caller dropped unread, as fetch would",
+    { timeout: 15_000 },
+    async () => {
+      // Wrapping the body locks fetch's own, which turns off fetch's clean-up
+      // of a collected response; without a replacement the connection stays
+      // open, and with the Requests gone the timeout can no longer close it.
+      for (const timeout of [0, 60_000]) {
+        streamClosed = false;
+        script = [LONG_STREAM];
+        let response = await createHubFetch({ timeout })(`${baseUrl}/blob`);
+        assert.equal(response.status, 200);
+        response = undefined;
+        for (let i = 0; i < 50 && !streamClosed; i++) {
+          gc();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.ok(streamClosed, `connection left open (timeout ${timeout})`);
+      }
+    },
+  );
+
   it(
     "keeps a response's Requests until its body is read, then lets them go",
     { timeout: 10_000 },
