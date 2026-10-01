@@ -130,10 +130,12 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
 
       const { response, body } = result;
       // Node's fetch links a Request's signal to the fetch it started only
-      // through weak references, so these Requests have to outlive the
-      // response. Collected mid-flight, they take the timeout and the
-      // caller's abort with them, and a hung attempt waits forever.
-      retained.set(response, [original, request]);
+      // through weak references, so these Requests have to outlive a body
+      // still to be read: collected mid-flight, they take the timeout and the
+      // caller's abort with them, and a hung read waits forever. A body read
+      // here has nothing left in flight, so its Requests — credentials and
+      // all — are not kept.
+      if (!body) retained.set(response, [original, request]);
       if (!canRetry) return response;
       const wait = retryAfter(response);
       if (!isRetryable(response, body, idempotent, wait !== undefined))
@@ -151,6 +153,10 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
 
 const retained = new WeakMap<Response, Request[]>();
 
+// Statuses a Response may not be constructed with a body for, even an empty
+// one; a runtime can still hand them over with an empty body stream.
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+
 interface AttemptResult {
   response: Response;
   /** The body, when it was JSON and so read as part of the attempt. */
@@ -164,7 +170,12 @@ interface AttemptResult {
  */
 async function read(response: Response): Promise<AttemptResult> {
   const contentType = response.headers.get("content-type") ?? "";
-  if (!response.body || !contentType.includes("json")) return { response };
+  if (
+    !response.body ||
+    NULL_BODY_STATUSES.has(response.status) ||
+    !contentType.includes("json")
+  )
+    return { response };
 
   const body = new Uint8Array(await response.arrayBuffer());
   const copy = new Response(body, {

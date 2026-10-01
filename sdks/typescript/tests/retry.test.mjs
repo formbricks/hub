@@ -559,6 +559,33 @@ describe("unreliable responses", () => {
   );
 
   it(
+    "returns a JSON-typed 204 with a body stream as it is",
+    { timeout: 10_000 },
+    async () => {
+      // A runtime may hand over a 204 with an empty body stream. Rebuilding it
+      // with a body would throw, and a DELETE that worked would be retried.
+      let calls = 0;
+      const emptyNoContent = async () => {
+        calls += 1;
+        const response = new Response(
+          new ReadableStream({ start: (c) => c.close() }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        );
+        Object.defineProperty(response, "status", { value: 204 });
+        return response;
+      };
+      const response = await createHubFetch({ fetch: emptyNoContent })(
+        "http://hub.invalid/v1/feedback-records/r1",
+        { method: "DELETE" },
+      );
+      assert.equal(calls, 1);
+      assert.equal(response.status, 204);
+    },
+  );
+
+  it(
     "still retries when cancelling the discarded body rejects",
     { timeout: 10_000 },
     async () => {
@@ -769,6 +796,41 @@ describe("garbage collection mid-flight", () => {
           (error) => error.name === "AbortError",
         );
       });
+    },
+  );
+  it(
+    "keeps a streamed response's Requests, and lets a read one's go",
+    { timeout: 10_000 },
+    async () => {
+      // Requests carry the API key and body. Once a JSON body is read nothing
+      // is in flight, so they must not live as long as the response does.
+      const seen = async (path) => {
+        let sent;
+        const response = await createHubFetch({
+          maxRetries: 0,
+          fetch: (request) => {
+            sent = new WeakRef(request);
+            return fetch(request);
+          },
+        })(`${baseUrl}${path}`);
+        return { response, sent };
+      };
+      script = [ok()];
+      const json = await seen("/json");
+      script = [SLOW_STREAM];
+      const stream = await seen("/stream");
+      for (let i = 0; i < 5; i++) {
+        gc();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(
+        json.sent.deref(),
+        undefined,
+        "read response kept its Request",
+      );
+      assert.ok(stream.sent.deref(), "streamed response lost its Request");
+      await stream.response.text();
+      assert.equal(json.response.status, 200);
     },
   );
 });
