@@ -65,7 +65,7 @@ const client = createHubClient({
 });
 ```
 
-An attempt includes reading the JSON body, so a connection that drops or stalls mid-response is retried like any other failure. The timeout applies to each attempt separately; to bound a call as a whole, pass a `signal`, e.g. `AbortSignal.timeout(30_000)`.
+The timeout covers each attempt until its body has been read, so a response that stalls mid-body can't hang a call; set `timeout: 0` for a long-lived stream. For `GET`, `HEAD`, `OPTIONS`, `PUT` and `DELETE`, a JSON body is read inside the attempt, so one that drops or stalls mid-response is retried like any other failure. A retried response's body is discarded unread. The timeout applies to each attempt separately; to bound a call as a whole, pass a `signal`, e.g. `AbortSignal.timeout(30_000)`.
 
 Retries live in the client's `fetch`. A `fetch` passed per call, or set later with `client.setConfig({ fetch })`, replaces them unless it is a `createHubFetch()` itself.
 

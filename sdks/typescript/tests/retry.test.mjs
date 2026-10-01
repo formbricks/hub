@@ -46,6 +46,12 @@ const RESET = Symbol("reset");
 const SLOW_JSON = Symbol("slow json");
 // Streams a plain-text body for 600ms, longer than the tests' short timeouts.
 const SLOW_STREAM = Symbol("slow stream");
+// The same, as newline-delimited JSON: a stream, not a JSON document.
+const NDJSON_STREAM = Symbol("ndjson stream");
+// A proxy's HTML error page whose body never finishes arriving.
+const STALLED_502 = Symbol("stalled 502");
+// A retryable 503 whose JSON body never finishes arriving.
+const STALLED_503 = Symbol("stalled 503");
 
 // Each test queues the responses it wants, in order; requests past the end of
 // the queue get a 200. Every request is recorded with its body, so a test can
@@ -78,8 +84,20 @@ const server = http.createServer((req, res) => {
       res.on("close", () => clearTimeout(timer));
       return;
     }
-    if (next === SLOW_STREAM) {
-      res.writeHead(200, { "content-type": "text/plain" });
+    if (next === STALLED_502 || next === STALLED_503) {
+      const html = next === STALLED_502;
+      res.writeHead(html ? 502 : 503, {
+        "content-type": html ? "text/html" : "application/problem+json",
+        ...(html ? {} : NOW),
+      });
+      res.write(html ? "<html><body>Bad gateway" : '{"code":');
+      return;
+    }
+    if (next === SLOW_STREAM || next === NDJSON_STREAM) {
+      res.writeHead(200, {
+        "content-type":
+          next === SLOW_STREAM ? "text/plain" : "application/x-ndjson",
+      });
       let sent = 0;
       const timer = setInterval(() => {
         res.write(`chunk ${sent}\n`);
@@ -315,7 +333,16 @@ describe("no retries where a write may already have happened", () => {
     { timeout: 10_000 },
     async () => {
       // Only digits or an HTTP-date count; Number() would read "0x2" as 2.
-      for (const value of ["0x2", "garbage", "1e1", "-1"]) {
+      // Date.parse alone accepts "Monkey 5" (May 2001) and dates with no zone.
+      for (const value of [
+        "0x2",
+        "garbage",
+        "1e1",
+        "-1",
+        "Monkey 5",
+        "Tue 99",
+        "Thu, 01 Oct 2026 23:59:59",
+      ]) {
         requests.length = 0;
         script = [problem(503, "unavailable", { "retry-after": value }), ok()];
         const { response } = await createFeedbackRecord({
@@ -365,12 +392,32 @@ describe("no retries where a write may already have happened", () => {
         },
         ok(),
       ];
-      const { response } = await createFeedbackRecord({
+      const { response, error } = await createFeedbackRecord({
         client: hub(),
         body: record,
       });
       assert.equal(requests.length, 1);
       assert.equal(response.status, 409);
+      assert.equal(error.pad.length, 70_000, "the caller lost the body");
+    },
+  );
+
+  it(
+    "matches a JSON content type as media types match, case-insensitively",
+    { timeout: 10_000 },
+    async () => {
+      script = [
+        {
+          status: 409,
+          headers: {
+            "content-type": "Application/Problem+JSON; charset=utf-8",
+          },
+          body: { code: "tenant_write_conflict" },
+        },
+        ok(),
+      ];
+      await createFeedbackRecord({ client: hub(), body: record });
+      assert.equal(requests.length, 2);
     },
   );
 
@@ -586,6 +633,53 @@ describe("unreliable responses", () => {
   );
 
   it(
+    "returns a status line Response cannot be rebuilt with as it is",
+    { timeout: 10_000 },
+    async () => {
+      // Native fetch accepts a status past 599 and control bytes in a reason
+      // phrase; the Response constructor does not. A rebuild would throw, and
+      // a POST that was applied would be reported as a network error.
+      for (const [status, statusText] of [
+        [600, "OK"],
+        [200, "O\x01K"],
+      ]) {
+        let calls = 0;
+        const quirky = async () => {
+          calls += 1;
+          const response = Response.json({ ok: true });
+          Object.defineProperties(response, {
+            status: { value: status },
+            statusText: { value: statusText },
+          });
+          return response;
+        };
+        const response = await createHubFetch({ fetch: quirky })(
+          "http://hub.invalid/v1/feedback-records",
+          { method: "POST", body: "{}" },
+        );
+        assert.equal(calls, 1);
+        assert.equal(response.status, status);
+        assert.deepEqual(await response.json(), { ok: true });
+      }
+    },
+  );
+
+  it(
+    "keeps the URL on a rebuilt response and on its clones",
+    { timeout: 10_000 },
+    async () => {
+      // A GET with a retry left has its JSON body read in the attempt, so it
+      // comes back rebuilt; a constructed Response would report url "".
+      const url = `${baseUrl}/v1/feedback-records`;
+      const response = await createHubFetch()(url);
+      assert.equal(response.url, url);
+      assert.equal(response.clone().url, url);
+      assert.equal(response.clone().clone().url, url);
+      assert.deepEqual(await response.json(), { ok: true });
+    },
+  );
+
+  it(
     "still retries when cancelling the discarded body rejects",
     { timeout: 10_000 },
     async () => {
@@ -659,17 +753,57 @@ describe("timeouts", () => {
   );
 
   it(
-    "leaves a non-JSON body to stream past the timeout",
+    "times out a POST whose error page stalls mid-body",
     { timeout: 10_000 },
     async () => {
-      // The timeout covers an attempt up to its headers, then only bodies it
-      // reads itself: a stream the caller reads is the caller's to bound.
-      script = [SLOW_STREAM];
-      const response = await createHubFetch({ timeout: 200 })(
-        `${baseUrl}/stream`,
+      // The generated client reads every error body whole. A proxy's page
+      // that never finishes would otherwise hang the call, whatever its type.
+      script = [STALLED_502];
+      const started = Date.now();
+      const { error } = await createFeedbackRecord({
+        client: hub({ timeout: 300 }),
+        body: record,
+      });
+      assert.equal(error.name, "TimeoutError");
+      assert.ok(Date.now() - started < 2_000);
+      assert.equal(requests.length, 1);
+    },
+  );
+
+  it(
+    "times out a stream past the timeout, and lets it run with none",
+    { timeout: 10_000 },
+    async () => {
+      // Newline-delimited JSON is a stream, not a document: it is not read in
+      // the attempt (that would retry it), but its read is still bounded.
+      script = [NDJSON_STREAM];
+      const cut = await createHubFetch({ timeout: 200 })(`${baseUrl}/ndjson`);
+      await assert.rejects(
+        cut.text(),
+        (error) => error.name === "TimeoutError",
       );
-      const text = await response.text();
-      assert.equal(text.split("\n").filter(Boolean).length, 6);
+      assert.equal(requests.length, 1, "the stream was read as a document");
+
+      script = [SLOW_STREAM];
+      const whole = await createHubFetch({ timeout: 0 })(`${baseUrl}/stream`);
+      const lines = (await whole.text()).split("\n").filter(Boolean);
+      assert.equal(lines.length, 6, "a stream with no timeout was cut short");
+    },
+  );
+
+  it(
+    "retries a stalled retryable response without reading its body",
+    { timeout: 10_000 },
+    async () => {
+      // Read first, it would wait out the 5s timeout before retrying.
+      script = [STALLED_503, ok({ second: true })];
+      const started = Date.now();
+      const { data } = await listFeedbackRecords({
+        client: hub({ timeout: 5_000 }),
+        query: { tenant_id: "org-1" },
+      });
+      assert.deepEqual(data, { second: true });
+      assert.ok(Date.now() - started < 1_000, "read the discarded body");
     },
   );
 
@@ -799,38 +933,62 @@ describe("garbage collection mid-flight", () => {
     },
   );
   it(
-    "keeps a streamed response's Requests, and lets a read one's go",
+    "keeps a response's Requests until its body is read, then lets them go",
     { timeout: 10_000 },
     async () => {
-      // Requests carry the API key and body. Once a JSON body is read nothing
-      // is in flight, so they must not live as long as the response does.
-      const seen = async (path) => {
-        let sent;
-        const response = await createHubFetch({
-          maxRetries: 0,
-          fetch: (request) => {
-            sent = new WeakRef(request);
-            return fetch(request);
-          },
-        })(`${baseUrl}${path}`);
-        return { response, sent };
+      // Requests carry the API key and body: needed while the body is still
+      // arriving, not for as long as the caller holds the response.
+      const collect = async () => {
+        for (let i = 0; i < 5; i++) {
+          gc();
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
       };
-      script = [ok()];
-      const json = await seen("/json");
+      let sent;
       script = [SLOW_STREAM];
-      const stream = await seen("/stream");
-      for (let i = 0; i < 5; i++) {
-        gc();
-        await new Promise((resolve) => setTimeout(resolve, 10));
+      const response = await createHubFetch({
+        maxRetries: 0,
+        fetch: (request) => {
+          sent = new WeakRef(request);
+          return fetch(request);
+        },
+      })(`${baseUrl}/stream`);
+      await collect();
+      assert.ok(sent.deref(), "lost the Request while the body streamed");
+      await response.text();
+      await collect();
+      assert.equal(sent.deref(), undefined, "kept the Request after the body");
+      assert.equal(response.status, 200);
+    },
+  );
+
+  it(
+    "still lets a caller who kept only the stream abort it",
+    { timeout: 10_000 },
+    async () => {
+      // With parseAs "stream" and responseStyle "data" the caller holds the
+      // body alone; the Response it came from is gone.
+      const timer = setInterval(gc, 5);
+      try {
+        for (let i = 0; i < 5; i++) {
+          script = [SLOW_STREAM];
+          const controller = new AbortController();
+          const stream = await listFeedbackRecords({
+            client: hub({ timeout: 0 }),
+            query: { tenant_id: "org-1" },
+            parseAs: "stream",
+            responseStyle: "data",
+            signal: controller.signal,
+          });
+          setTimeout(() => controller.abort(), 150);
+          await assert.rejects(
+            new Response(stream).text(),
+            (error) => error.name === "AbortError",
+          );
+        }
+      } finally {
+        clearInterval(timer);
       }
-      assert.equal(
-        json.sent.deref(),
-        undefined,
-        "read response kept its Request",
-      );
-      assert.ok(stream.sent.deref(), "streamed response lost its Request");
-      await stream.response.text();
-      assert.equal(json.response.status, 200);
     },
   );
 });
