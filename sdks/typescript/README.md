@@ -6,7 +6,7 @@ The official TypeScript client for the [Formbricks Hub](https://hub.formbricks.c
 npm install @formbricks/hub
 ```
 
-On Node.js, 22 or later. The client is built on the standard `fetch`, so it also runs in browsers, Deno and Bun.
+On Node.js, 22 or later. The client is built on the standard `fetch`, so it also runs in browsers and Bun. Deno is not supported yet: the generated client passes its `client` option through to `new Request()`, which Deno rejects.
 
 ## Usage
 
