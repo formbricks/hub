@@ -6,6 +6,7 @@
 - `cmd/backfill-*/` are one-off enqueue commands that (re)enrich an existing backlog: `backfill-embeddings`, `backfill-translations`, and `backfill-classify -type sentiment|emotions`. hub-worker processes the jobs they enqueue.
 - `internal/` contains the application layers: `api/handlers`, `api/middleware`, `service`, `repository`, `models`, `config`, `workers`, `observability` (OTel metrics/tracing), the LLM seam (`llm`, `openai`, `googleai`), `datatypes`, and `huberrors`.
 - `pkg/` provides shared utilities: `database`, `cursor` (keyset pagination), and `embeddings`.
+- `sdks/typescript/` holds the generator config for the published `@formbricks/hub` npm package. The generated client is **not committed** — see TypeScript SDK below.
 - `migrations/` stores SQL migration files (goose); use `-- +goose up` / `-- +goose down` annotations.
 - `tests/` contains integration tests (they require a pgvector database — see Testing Guidelines).
 - `docs/` holds the documentation site for hub.formbricks.com (Astro + Starlight) — the only non-Go part of the repo. See Documentation Site below.
@@ -20,6 +21,7 @@
 - `make tests-coverage`: generate `coverage.html`.
 - `make check-coverage`: run all tests with coverage and fail if below COVERAGE_THRESHOLD (excludes cmd/api and cmd/worker main packages).
 - `make init-db`: run goose migrations up using `DATABASE_URL`. `make migrate-status` and `make migrate-validate` for status and validation. New migrations go in `migrations/` with goose annotations (`-- +goose up` / `-- +goose down`). Name files with a sequential number and short description (e.g. `002_add_webhooks_table.sql`); goose orders by the numeric prefix. For webhook delivery, run `make river-migrate` after `init-db` to apply River job queue migrations.
+- SDK commands run from `sdks/typescript/` and use pnpm, not make — see TypeScript SDK below.
 - `make fmt`: format code (runs `golangci-lint run --fix`; uses gofumpt/gci from config).
 - `make lint`: run `golangci-lint` (includes format checks; requires `make install-tools`).
 - Docs commands run from `docs/` and use pnpm, not make — see Documentation Site below.
@@ -28,6 +30,53 @@
 - Language: Go; format with `make fmt` (golangci-lint applies gofumpt/gci).
 - Prefer Go naming conventions (CamelCase for exported, lowerCamel for unexported).
 - Keep package names short and domain-focused (e.g., `repository`, `service`).
+
+## TypeScript SDK (`sdks/typescript/`)
+
+The published [`@formbricks/hub`](https://www.npmjs.com/package/@formbricks/hub) client, generated from `openapi.yaml` by [`@hey-api/openapi-ts`](https://heyapi.dev/).
+
+**The SDK is a build artifact. The config is committed; the output is not.** `src/generated/` and `dist/` are gitignored, produced in CI, and published to npm by `.github/workflows/publish-sdk.yml` on a stable Hub release. Do not commit generated files, and do not hand-edit them — they are overwritten on every run.
+
+- `openapi-ts.config.ts` — the generator config. Reads `../../openapi.yaml`.
+- `src/index.ts` — the hand-written entry point, and the place for anything that cannot be generated (it exports `createHubClient` on top of the generated client).
+- `src/schemas.ts` — re-exports the generated zod validators behind the `@formbricks/hub/schemas` entry, so importing the client itself pulls in no dependencies and `zod` stays an optional peer.
+- `scripts/` — the CI-only helpers, not in `files`, so not shipped: `prepare-comparison.mjs` packs this package and fetches the one on npm (shared by both workflows, so the release decision and the preview measure the same things), `compare-packed.mjs` diffs the packed contents for the release, `surface.mjs` diffs the public surface for the preview, and `verify-publish-guards.mjs` is the release's last check before the publish job (below).
+- `tests/` — `wire.test.mjs` runs against the **built** package, so it covers the exports map too; `compare-packed.test.mjs`, `surface.test.mjs` and `verify-publish-guards.test.mjs` cover the CI helpers, since a check that quietly stops checking is the failure mode that matters for all three.
+
+Commands, from `sdks/typescript/`: `pnpm install`, `pnpm generate`, `pnpm build`, `pnpm check`, `pnpm test`.
+
+**To change the API surface, change `openapi.yaml`.** Never patch the SDK to paper over a spec problem — the next generation run erases it.
+
+**Bump `version` in `sdks/typescript/package.json` by hand** when a release should ship a new SDK. The publish workflow compares the packed package — build output, sources, manifest, docs — against what is on npm: identical contents skip the publish, and changed contents with an already-published version fails the build rather than overwriting it. The SDK version line is deliberately independent of the Hub's release version — they have never matched.
+
+The generator version is pinned exactly. Bumping it is a deliberate change: regenerate, run `pnpm test`, and read the surface diff the `sdk-preview` workflow writes to the job summary.
+
+**Publishing is credential-free by design.** Authentication is npm trusted publishing (OIDC), bound to this repository, the `publish-sdk.yml` filename and the `npm-publish` environment. There is no npm token, and none should be introduced. Consequences: renaming that workflow file breaks publishing until the npm configuration is updated, and the job that runs the generator deliberately holds no publishing permission — only the separate publish job does. That job validates the artifact's manifest, re-packs it and requires the same integrity hash the build job recorded, and runs `npm publish --ignore-scripts` — so what reaches npm is the package that was compared and tested, and no code the build job produced runs next to the credential. Three details there are deliberate and easy to undo by accident:
+
+- **Both jobs pin the same npm**, via one `NPM_VERSION` in `publish-sdk.yml` (and `sdk-preview.yml` pins the same, so pull requests exercise the release's npm). The integrity check compares a pack across the two jobs, and npm's `--json` output changes shape between majors — npm 12 made `npm pack --json` an object keyed by package name and wraps every `npm view --json` result in an array — so the scripts accept both, and bumping the pin should be tested rather than assumed.
+- **No `--tag` on the publish.** `latest` is the default anyway, and leaving it implicit keeps npm's own refusal to apply `latest` to a prerelease or to a version lower than the current one. `--tag latest` switches that off.
+- **No dependency cache in the release build.** Its output is what gets published and its hash is computed there too, so a poisoned cache would go unnoticed; setup-node's guidance is to disable caching in publishing workflows.
+
+**Only a release tag publishes, and only through a protected `npm-publish` environment.** npm's trusted-publisher binding covers the repository, the workflow file and the environment name — not the ref — so the environment's rules decide which runs can obtain the publishing identity. A job that references a missing environment creates it on the spot with *no* protection rules, so the release path refuses to run without one: the `guards` job in `publish-sdk.yml` runs `scripts/verify-publish-guards.mjs`, which fails the release unless the run is for a tag, the tagged commit is on `main`, and `npm-publish` exists with rules that restrict it and still admit a release. It warns — without failing — when the rules work but a committer acting alone could still publish.
+
+The configuration it expects (repo settings → Environments → `npm-publish`; needs admin):
+
+- **Deployment branches and tags: "Selected branches and tags"**, with one **tag** rule, `[0-9]*.[0-9]*.[0-9]*`. Hub release tags are bare semver (`0.8.7`), so the usual `v*` would reject every release. No branch rule is needed, since only tags publish. Not "Protected branches only": that admits no tags at all.
+- **Required reviewers**, with **Prevent self-review**. This is what makes the environment resist a committer rather than just a mistake: anyone who can push can also cut a release tag, and edit this workflow at that tag. A ruleset limiting who may create release tags does the same job, but would change who can cut a release.
+- **"Allow administrators to bypass configured protection rules" unticked.** This one is settings-UI-only; the REST API can read it but not set it.
+- No secrets or variables — the publish authenticates over OIDC.
+
+To check a configuration without cutting a release, either run `publish-sdk.yml` manually **from the latest release tag with `dry_run` ticked** — that runs every check a real release would, with the CI token's real permissions, and publishes nothing — or run the guard locally, which needs only read access:
+
+```bash
+GITHUB_TOKEN="$(gh auth token)" GITHUB_REPOSITORY=formbricks/hub \
+  GITHUB_REF=refs/tags/<latest release> GITHUB_SHA="$(gh api repos/formbricks/hub/commits/<latest release> --jq .sha)" \
+  PUBLISH_ENVIRONMENT=npm-publish node sdks/typescript/scripts/verify-publish-guards.mjs
+```
+
+**The npm side can be read back, not validated.** npm does not check a trusted-publisher configuration when it is saved; a wrong one surfaces only as `Unable to authenticate` on the first publish, which fails safely — the build job holds no credentials and nothing is published. But a package maintainer can confirm what is saved with `npm trust list @formbricks/hub` (npm ≥ 11.15, logged in, 2FA on). The field to check hardest is **environment = `npm-publish`**: it is optional on npm's side, and if it is blank, npm accepts a publish from a workflow that never enters the environment at all, which sidesteps every protection above.
+
+**Keep `example:` values in `openapi.yaml` synthetic.** They now ship twice — into the published SDK's docblocks and onto the docs site — so a real tenant id, key or customer name in an example is published, not merely committed.
 
 ## Enrichment Framework
 
