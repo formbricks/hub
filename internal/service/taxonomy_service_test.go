@@ -34,10 +34,14 @@ type mockTaxonomyRepo struct {
 	selectedRecordIDs    []uuid.UUID
 	selectedRecordIDsErr error
 
-	countNodeRecords       []models.TaxonomyNodeRecordCount
-	countNodeRecordsErr    error
-	countNodeRecordsRunID  uuid.UUID
-	countNodeRecordsTenant string
+	countNodeRecords             []models.TaxonomyNodeRecordCount
+	countNodeRecordsErr          error
+	countNodeRecordsRunID        uuid.UUID
+	countNodeRecordsTenant       string
+	feedbackRecordTaxonomy       *models.FeedbackRecordTaxonomyResponse
+	feedbackRecordTaxonomyErr    error
+	feedbackRecordTaxonomyID     uuid.UUID
+	feedbackRecordTaxonomyTenant string
 }
 
 func (m *mockTaxonomyRepo) ListFieldOptions(
@@ -173,6 +177,17 @@ func (m *mockTaxonomyRepo) GetTree(
 	_ string,
 ) (*models.TaxonomyTreeResponse, error) {
 	return nil, nil
+}
+
+func (m *mockTaxonomyRepo) GetFeedbackRecordTaxonomy(
+	_ context.Context,
+	recordID uuid.UUID,
+	tenantID string,
+) (*models.FeedbackRecordTaxonomyResponse, error) {
+	m.feedbackRecordTaxonomyID = recordID
+	m.feedbackRecordTaxonomyTenant = tenantID
+
+	return m.feedbackRecordTaxonomy, m.feedbackRecordTaxonomyErr
 }
 
 func (m *mockTaxonomyRepo) RenameNode(
@@ -722,6 +737,44 @@ func TestTaxonomyService_GetNodeRecordCounts(t *testing.T) {
 			t.Fatal("GetNodeRecordCounts() = nil error, want propagated repo error")
 		}
 	})
+}
+
+func TestTaxonomyService_GetFeedbackRecordTaxonomy(t *testing.T) {
+	t.Parallel()
+
+	recordID := uuid.New()
+	runID := uuid.New()
+	want := &models.FeedbackRecordTaxonomyResponse{
+		Status: models.FeedbackRecordTaxonomyClassified,
+		RunID:  &runID,
+		Path:   []models.FeedbackRecordTaxonomyPathNode{{ID: uuid.New(), Label: "Login", Level: 1}},
+	}
+	repo := &mockTaxonomyRepo{feedbackRecordTaxonomy: want}
+	svc := NewTaxonomyService(NewTaxonomyServiceParams{Repo: repo})
+
+	got, err := svc.GetFeedbackRecordTaxonomy(context.Background(), recordID, " tenant-1 ")
+	if err != nil {
+		t.Fatalf("GetFeedbackRecordTaxonomy() error = %v", err)
+	}
+
+	if got != want || repo.feedbackRecordTaxonomyID != recordID || repo.feedbackRecordTaxonomyTenant != "tenant-1" {
+		t.Fatalf("GetFeedbackRecordTaxonomy() = %#v; repo received %s/%q", got,
+			repo.feedbackRecordTaxonomyID, repo.feedbackRecordTaxonomyTenant)
+	}
+
+	if _, err := svc.GetFeedbackRecordTaxonomy(context.Background(), recordID, "  "); err == nil {
+		t.Fatal("GetFeedbackRecordTaxonomy() = nil error for empty tenant")
+	}
+
+	if repo.feedbackRecordTaxonomyTenant != "tenant-1" {
+		t.Fatal("invalid tenant should not reach repository")
+	}
+
+	repo.feedbackRecordTaxonomyErr = errors.New("database unavailable")
+
+	if _, err := svc.GetFeedbackRecordTaxonomy(context.Background(), recordID, "tenant-1"); err == nil {
+		t.Fatal("GetFeedbackRecordTaxonomy() = nil error for repository failure")
+	}
 }
 
 func validTaxonomyServiceResult(feedbackRecordID uuid.UUID) models.TaxonomyRunResultRequest {

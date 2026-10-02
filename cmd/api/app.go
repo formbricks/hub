@@ -484,8 +484,8 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		MinimumEmbeddingCount: cfg.Taxonomy.MinimumEmbeddedRecords,
 		Metrics:               taxonomyMetrics,
 	})
-	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService)
-	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService)
+	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService, taxonomyService)
+	feedbackRecordsHandler := handlers.NewFeedbackRecordsHandler(feedbackRecordsService, taxonomyService)
 	taxonomyInternalHandler := handlers.NewTaxonomyInternalHandler(taxonomyService)
 
 	enrichmentStatusService := service.NewEnrichmentStatusService(service.NewEnrichmentStatusServiceParams{

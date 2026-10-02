@@ -164,7 +164,7 @@ func setupTaxonomyAPIServer(t *testing.T, options ...taxonomyAPIServerOption) *t
 		EmbeddingModel:        serverConfig.embeddingModel,
 		MinimumEmbeddingCount: taxonomyMinEmbeddedRecords,
 	})
-	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService)
+	taxonomyHandler := handlers.NewTaxonomyHandler(taxonomyService, taxonomyService)
 	taxonomyInternalHandler := handlers.NewTaxonomyInternalHandler(taxonomyService)
 
 	// Public taxonomy routes (Hub API key auth), using the same registry as cmd/api/app.go.

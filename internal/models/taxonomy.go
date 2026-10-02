@@ -202,6 +202,36 @@ type TaxonomyTreeResponse struct {
 	Root *TaxonomyNode `json:"root"`
 }
 
+// FeedbackRecordTaxonomyStatus describes a record's assignment in the active directory taxonomy.
+type FeedbackRecordTaxonomyStatus string
+
+// Feedback record taxonomy statuses describe the active-run assignment state.
+const (
+	FeedbackRecordTaxonomyClassified       FeedbackRecordTaxonomyStatus = "classified"
+	FeedbackRecordTaxonomyUnclassified     FeedbackRecordTaxonomyStatus = "unclassified"
+	FeedbackRecordTaxonomyNoActiveTaxonomy FeedbackRecordTaxonomyStatus = "no_active_taxonomy"
+)
+
+// FeedbackRecordTaxonomyPathNode is one currently visible, non-root node in root-to-leaf order.
+type FeedbackRecordTaxonomyPathNode struct {
+	ID       uuid.UUID        `json:"id"`
+	Label    string           `json:"label"`
+	Level    int              `json:"level"`
+	NodeType TaxonomyNodeType `json:"node_type"`
+}
+
+// FeedbackRecordTaxonomyResponse is the read-time assignment for one feedback record.
+type FeedbackRecordTaxonomyResponse struct {
+	Status FeedbackRecordTaxonomyStatus     `json:"status"`
+	RunID  *uuid.UUID                       `json:"run_id"`
+	Path   []FeedbackRecordTaxonomyPathNode `json:"path"`
+}
+
+// FeedbackRecordTaxonomyFilters requires the tenant that owns the feedback record.
+type FeedbackRecordTaxonomyFilters struct {
+	TenantID string `form:"tenant_id" validate:"required,no_null_bytes,min=1,max=255"`
+}
+
 // TaxonomyRunInputRecord is a feedback record and embedding used by the taxonomy service.
 type TaxonomyRunInputRecord struct {
 	FeedbackRecordID uuid.UUID `json:"feedback_record_id"`

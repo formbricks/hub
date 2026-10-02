@@ -37,14 +37,27 @@ type TaxonomyService interface {
 	) (*models.TaxonomyRecordCountsResponse, error)
 }
 
+// FeedbackRecordTaxonomyService resolves the active directory assignment for one record.
+type FeedbackRecordTaxonomyService interface {
+	GetFeedbackRecordTaxonomy(
+		ctx context.Context, recordID uuid.UUID, tenantID string,
+	) (*models.FeedbackRecordTaxonomyResponse, error)
+}
+
 // TaxonomyHandler hosts public taxonomy API endpoints.
 type TaxonomyHandler struct {
-	service TaxonomyService
+	service        TaxonomyService
+	recordTaxonomy FeedbackRecordTaxonomyService
 }
 
 // NewTaxonomyHandler creates a public taxonomy handler.
-func NewTaxonomyHandler(service TaxonomyService) *TaxonomyHandler {
-	return &TaxonomyHandler{service: service}
+func NewTaxonomyHandler(service TaxonomyService, recordTaxonomy ...FeedbackRecordTaxonomyService) *TaxonomyHandler {
+	handler := &TaxonomyHandler{service: service}
+	if len(recordTaxonomy) > 0 {
+		handler.recordTaxonomy = recordTaxonomy[0]
+	}
+
+	return handler
 }
 
 // ListFields returns taxonomy-capable feedback fields.
@@ -164,6 +177,36 @@ func (h *TaxonomyHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.service.GetTree(r.Context(), runID, r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		respondTaxonomyError(w, r, err)
+
+		return
+	}
+
+	response.RespondJSON(w, http.StatusOK, result)
+}
+
+// GetFeedbackRecordTaxonomy returns a record's active directory taxonomy path.
+func (h *TaxonomyHandler) GetFeedbackRecordTaxonomy(w http.ResponseWriter, r *http.Request) {
+	recordID, ok := parseUUIDPathValue(w, r, "id")
+	if !ok {
+		return
+	}
+
+	filters := models.FeedbackRecordTaxonomyFilters{}
+	if err := validation.ValidateAndDecodeQueryParams(r, &filters); err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
+	if h.recordTaxonomy == nil {
+		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
+
+		return
+	}
+
+	result, err := h.recordTaxonomy.GetFeedbackRecordTaxonomy(r.Context(), recordID, filters.TenantID)
 	if err != nil {
 		respondTaxonomyError(w, r, err)
 

@@ -77,6 +77,7 @@ type TaxonomyRepository interface { //nolint:interfacebloat // taxonomy service 
 		req models.TaxonomyRunResultRequest,
 	) (*models.TaxonomyRun, error)
 	GetTree(ctx context.Context, runID uuid.UUID, tenantID string) (*models.TaxonomyTreeResponse, error)
+	GetFeedbackRecordTaxonomy(ctx context.Context, recordID uuid.UUID, tenantID string) (*models.FeedbackRecordTaxonomyResponse, error)
 	RenameNode(ctx context.Context, nodeID uuid.UUID, tenantID, actorID, label string) (*models.TaxonomyNode, error)
 	RemoveNode(ctx context.Context, nodeID uuid.UUID, tenantID, actorID string) (*models.TaxonomyNode, error)
 	ListNodeRecords(ctx context.Context, nodeID uuid.UUID, tenantID string, limit int) ([]models.FeedbackRecord, int, error)
@@ -340,6 +341,25 @@ func (s *TaxonomyService) GetTree(
 	}
 
 	return tree, nil
+}
+
+// GetFeedbackRecordTaxonomy returns a record's assignment in its tenant's active directory taxonomy.
+func (s *TaxonomyService) GetFeedbackRecordTaxonomy(
+	ctx context.Context,
+	recordID uuid.UUID,
+	tenantID string,
+) (*models.FeedbackRecordTaxonomyResponse, error) {
+	normalizedTenantID, err := normalizeRequiredTenantIDValue(tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	assignment, err := s.repo.GetFeedbackRecordTaxonomy(ctx, recordID, normalizedTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("get feedback record taxonomy: %w", err)
+	}
+
+	return assignment, nil
 }
 
 // GetNodeRecordCounts returns the feedback-record count for every visible node in a run, as

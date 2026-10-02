@@ -569,7 +569,7 @@ paths:
             tags:
                 - Feedback Records
             summary: Get a feedback record by ID
-            description: Retrieves a single feedback record data point by its UUID
+            description: Retrieves a single feedback record data point by its UUID, including its read-time assignment in the active directory taxonomy. The taxonomy field is null if the lookup is temporarily unavailable.
             operationId: get-feedback-record
             parameters:
                 - name: id
@@ -586,7 +586,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/FeedbackRecordData'
+                                $ref: '#/components/schemas/FeedbackRecordDetailData'
                 "400":
                     description: Bad Request (e.g. invalid UUID)
                     content:
@@ -1719,6 +1719,87 @@ paths:
                     description: |
                         Service Unavailable – the enrichment status service is not available
                         (code `service_unavailable`).
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                default:
+                    description: Error
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+    /v1/feedback-records/{id}/taxonomy:
+        get:
+            tags:
+                - Taxonomy
+            summary: Get a feedback record's active taxonomy assignment
+            description: |
+                Resolves a tenant-owned feedback record against the active directory taxonomy. The ordered path
+                contains current visible non-root nodes, not labels copied onto the feedback record. A removed
+                node or ancestor makes the record unclassified in the current visible tree. Records outside the
+                active run are also unclassified; a missing active run has its own status.
+            operationId: get-feedback-record-taxonomy
+            parameters:
+                - name: id
+                  in: path
+                  required: true
+                  description: Feedback record ID.
+                  schema:
+                    type: string
+                    format: uuid
+                - name: tenant_id
+                  in: query
+                  required: true
+                  description: Tenant that owns the feedback record.
+                  schema:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                    pattern: '^[^\x00]*$'
+            responses:
+                "200":
+                    description: The record's assignment in the active directory taxonomy.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/FeedbackRecordTaxonomyOutputBody'
+                            examples:
+                                classified:
+                                    value:
+                                        status: classified
+                                        run_id: "019f177f-9aa3-705e-8195-cea2aa187268"
+                                        path:
+                                            - id: "019f177f-9abe-78cd-8008-f40b58e3147d"
+                                              label: "Authentication"
+                                              level: 1
+                                              node_type: branch
+                                            - id: "019f177f-9abe-78cd-8008-f40b58e3147e"
+                                              label: "Login problems"
+                                              level: 2
+                                              node_type: branch
+                                            - id: "019f177f-9abe-78cd-8008-f40b58e3147f"
+                                              label: "Password reset"
+                                              level: 3
+                                              node_type: branch
+                                            - id: "019f177f-9abe-78cd-8008-f40b58e31480"
+                                              label: "Reset link expired"
+                                              level: 4
+                                              node_type: leaf
+                "400":
+                    description: Bad Request (invalid record ID or missing/invalid tenant_id)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "401":
+                    description: Unauthorized (missing or invalid API key)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "404":
+                    description: Not Found – the record does not exist for this tenant.
                     content:
                         application/problem+json:
                             schema:
@@ -3331,6 +3412,12 @@ components:
                     format: uri
                     examples:
                         - https://hub.formbricks.com/problems/bad-request
+        FeedbackRecordDetailData:
+            allOf:
+                - $ref: '#/components/schemas/FeedbackRecordData'
+                - type: object
+                  required:
+                      - taxonomy
         FeedbackRecordData:
             type: object
             additionalProperties: false
@@ -3390,6 +3477,11 @@ components:
                     format: double
                     minimum: -1.0
                     maximum: 1.0
+                taxonomy:
+                    description: Read-time assignment in the active directory taxonomy. Present only on the single-record GET; null when the lookup is unavailable.
+                    anyOf:
+                        - $ref: '#/components/schemas/FeedbackRecordTaxonomyOutputBody'
+                        - type: 'null'
                 emotions:
                     type: array
                     description: Emotions inferred from value_text (emotion enrichment); multi-label from a fixed set. Read-only; absent until the record is enriched, and never an empty array.
@@ -4280,6 +4372,48 @@ components:
             required:
                 - run
                 - root
+        FeedbackRecordTaxonomyPathNode:
+            type: object
+            additionalProperties: false
+            properties:
+                id:
+                    type: string
+                    format: uuid
+                label:
+                    type: string
+                level:
+                    type: integer
+                    format: int64
+                node_type:
+                    type: string
+                    enum: [branch, leaf]
+            required:
+                - id
+                - label
+                - level
+                - node_type
+        FeedbackRecordTaxonomyOutputBody:
+            type: object
+            additionalProperties: false
+            properties:
+                status:
+                    type: string
+                    enum: [classified, unclassified, no_active_taxonomy]
+                run_id:
+                    description: Active directory taxonomy run ID, or null if none exists.
+                    oneOf:
+                        - type: string
+                          format: uuid
+                        - type: "null"
+                path:
+                    type: array
+                    description: Current visible non-root nodes in root-to-leaf order; empty unless classified.
+                    items:
+                        $ref: '#/components/schemas/FeedbackRecordTaxonomyPathNode'
+            required:
+                - status
+                - run_id
+                - path
         RenameTaxonomyNodeInputBody:
             type: object
             additionalProperties: false

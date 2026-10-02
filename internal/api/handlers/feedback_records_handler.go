@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -28,12 +29,18 @@ type FeedbackRecordsService interface {
 
 // FeedbackRecordsHandler handles HTTP requests for feedback records.
 type FeedbackRecordsHandler struct {
-	service FeedbackRecordsService
+	service  FeedbackRecordsService
+	taxonomy FeedbackRecordTaxonomyService
 }
 
 // NewFeedbackRecordsHandler creates a new feedback records handler.
-func NewFeedbackRecordsHandler(service FeedbackRecordsService) *FeedbackRecordsHandler {
-	return &FeedbackRecordsHandler{service: service}
+func NewFeedbackRecordsHandler(service FeedbackRecordsService, taxonomy ...FeedbackRecordTaxonomyService) *FeedbackRecordsHandler {
+	handler := &FeedbackRecordsHandler{service: service}
+	if len(taxonomy) > 0 {
+		handler.taxonomy = taxonomy[0]
+	}
+
+	return handler
 }
 
 // maxFeedbackRecordBodyBytes caps the create and update request bodies. Nothing else bounds
@@ -116,7 +123,21 @@ func (h *FeedbackRecordsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.RespondJSON(w, http.StatusOK, record)
+	// Only the single-record response includes the read-time taxonomy view. Keep the
+	// record available when the taxonomy lookup itself is temporarily unavailable.
+	var assignment *models.FeedbackRecordTaxonomyResponse
+	if h.taxonomy != nil {
+		assignment, err = h.taxonomy.GetFeedbackRecordTaxonomy(r.Context(), id, record.TenantID)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "feedback record taxonomy lookup failed", "record_id", id, "error", err)
+		}
+	}
+
+	response.RespondJSON(w, http.StatusOK, struct {
+		*models.FeedbackRecord
+
+		Taxonomy *models.FeedbackRecordTaxonomyResponse `json:"taxonomy"`
+	}{FeedbackRecord: record, Taxonomy: assignment})
 }
 
 // List handles GET /v1/feedback-records.
