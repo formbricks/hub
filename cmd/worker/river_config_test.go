@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/observability"
 )
 
 // River must log through the handler observability.SetupLogging installs (ENG-2485). With no
@@ -25,7 +26,7 @@ func TestNewRiverConfigLogsThroughProcessHandlerWithSampling(t *testing.T) {
 	handler := &countingHandler{}
 	setDefaultLogger(t, slog.New(handler))
 
-	riverCfg := newRiverConfig(&config.Config{}, river.NewWorkers(), nil, nil)
+	riverCfg, riverLogs := newRiverConfig(&config.Config{}, river.NewWorkers(), nil, nil)
 	require.NotNil(t, riverCfg.Logger, "a nil Logger makes River fall back to its own WARN-level logger")
 
 	riverCfg.Logger.Info("JobExecutor: Job errored; retrying", "job_kind", "feedback_embedding")
@@ -44,6 +45,21 @@ func TestNewRiverConfigLogsThroughProcessHandlerWithSampling(t *testing.T) {
 	// Another job kind has its own budget, so one failing kind cannot hide another's failures.
 	riverCfg.Logger.Info("JobExecutor: Job errored; retrying", "job_kind", "webhook_dispatch")
 	assert.Equal(t, want+1, handler.count())
+
+	// River names the kind "kind", not "job_kind", on its unhandled-kind, panic and stuck-job lines.
+	// Those need a budget per kind too.
+	for range storm {
+		riverCfg.Logger.Error("JobExecutor: Unhandled job kind", "kind", "kind_a")
+	}
+
+	afterStorm := handler.count()
+
+	riverCfg.Logger.Error("JobExecutor: Unhandled job kind", "kind", "kind_b")
+	assert.Equal(t, afterStorm+1, handler.count(), "a storm from one kind must not hide another kind's errors")
+
+	// Shutdown flushes the returned handler: one summary for each storm's dropped lines.
+	require.NoError(t, riverLogs.Flush(context.Background()))
+	assert.Equal(t, afterStorm+3, handler.count())
 }
 
 // newRiverConfig was extracted from NewWorkerApp; these pin the settings it carried over unchanged.
@@ -62,7 +78,7 @@ func TestNewRiverConfigMapsRiverSettings(t *testing.T) {
 		cfg.River.CompletedJobRetentionSec = 3600
 		cfg.River.ClientID = "worker-a"
 
-		riverCfg := newRiverConfig(cfg, riverWorkers, queues, periodic)
+		riverCfg, _ := newRiverConfig(cfg, riverWorkers, queues, periodic)
 
 		assert.Same(t, riverWorkers, riverCfg.Workers)
 		assert.Equal(t, queues, riverCfg.Queues)
@@ -74,7 +90,7 @@ func TestNewRiverConfigMapsRiverSettings(t *testing.T) {
 	})
 
 	t.Run("zero values leave River's defaults in place", func(t *testing.T) {
-		riverCfg := newRiverConfig(&config.Config{}, riverWorkers, queues, nil)
+		riverCfg, _ := newRiverConfig(&config.Config{}, riverWorkers, queues, nil)
 
 		assert.Zero(t, riverCfg.JobTimeout)
 		assert.Zero(t, riverCfg.RescueStuckJobsAfter)
@@ -87,8 +103,13 @@ func TestNewRiverConfigMapsRiverSettings(t *testing.T) {
 		cfg := &config.Config{}
 		cfg.River.CompletedJobRetentionSec = -1
 
-		assert.Equal(t, time.Duration(-1), newRiverConfig(cfg, riverWorkers, queues, nil).CompletedJobRetentionPeriod)
+		assert.Equal(t, time.Duration(-1), riverConfigOnly(newRiverConfig(cfg, riverWorkers, queues, nil)).CompletedJobRetentionPeriod)
 	})
+}
+
+// riverConfigOnly drops newRiverConfig's sampling handler, for tests that only read the config.
+func riverConfigOnly(riverCfg *river.Config, _ *observability.SamplingHandler) *river.Config {
+	return riverCfg
 }
 
 // countingHandler counts the records that reach it.

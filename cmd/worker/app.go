@@ -27,6 +27,7 @@ type WorkerApp struct {
 	cfg            *config.Config
 	db             *pgxpool.Pool
 	river          *river.Client[pgx.Tx]
+	riverLogs      *observability.SamplingHandler
 	embeddingBatch *service.BatchingEmbeddingClient
 	meterProvider  *sdkmetric.MeterProvider
 	tracerProvider *sdktrace.TracerProvider
@@ -345,7 +346,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps)
 
-	riverCfg := newRiverConfig(cfg, riverWorkers, queues,
+	riverCfg, riverLogs := newRiverConfig(cfg, riverWorkers, queues,
 		reconcilePeriodicJobs(cfg, reconcileService != nil, embeddingReconcileService != nil))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), riverCfg)
@@ -371,6 +372,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		cfg:            cfg,
 		db:             db,
 		river:          riverClient,
+		riverLogs:      riverLogs,
 		embeddingBatch: embeddingBatch,
 		meterProvider:  meterProvider,
 		tracerProvider: tracerProvider,
@@ -412,12 +414,15 @@ const (
 //
 // River's lines are sampled (riverLogSampling), because that per-attempt line scales with
 // throughput when a dependency is down: every attempt fails as fast as the workers can pick jobs up.
-// The Hub's own lines are not sampled.
+// The Hub's own lines are not sampled. The sampling handler is returned so Shutdown can flush the
+// counts of lines it dropped last.
 func newRiverConfig(
 	cfg *config.Config, riverWorkers *river.Workers, queues map[string]river.QueueConfig, periodicJobs []*river.PeriodicJob,
-) *river.Config {
+) (*river.Config, *observability.SamplingHandler) {
+	riverLogs := observability.NewSamplingHandler(slog.Default().Handler(), riverLogSampling)
+
 	riverCfg := &river.Config{
-		Logger:       slog.New(observability.NewSamplingHandler(slog.Default().Handler(), riverLogSampling)),
+		Logger:       slog.New(riverLogs),
 		Queues:       queues,
 		Workers:      riverWorkers,
 		PeriodicJobs: periodicJobs,
@@ -441,7 +446,7 @@ func newRiverConfig(
 		riverCfg.ID = cfg.River.ClientID
 	}
 
-	return riverCfg
+	return riverCfg, riverLogs
 }
 
 // embeddingReconcileConfigured keeps automatic repair aligned with the taxonomy embedding
@@ -542,6 +547,12 @@ func shutdownObservability(ctx context.Context, meter *sdkmetric.MeterProvider, 
 func (a *WorkerApp) Shutdown(ctx context.Context) (err error) {
 	if stopErr := a.river.Stop(ctx); stopErr != nil {
 		err = fmt.Errorf("river stop: %w", stopErr)
+	}
+
+	// After River has stopped, so nothing logs through the sampler any more: report the lines it
+	// dropped in each key's last window, which no later line would otherwise trigger.
+	if flushErr := a.riverLogs.Flush(ctx); flushErr != nil {
+		slog.Error("flush River log sampling summaries", "error", flushErr)
 	}
 
 	if a.embeddingBatch != nil {
