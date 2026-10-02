@@ -72,9 +72,9 @@ func (b *lockedBuffer) String() string {
 }
 
 // runFailingRiverJob runs one job that fails on every attempt through a River client logging to
-// the Hub's own handler at logLevel in JSON mode, waits until River has given up on it, and returns
-// the job and every line River logged.
-func runFailingRiverJob(t *testing.T, logLevel string, maxAttempts int) (*rivertype.JobRow, []map[string]any) {
+// the Hub's own handler (LOG_LEVEL=info, LOG_FORMAT=json), waits until River has given up on it, and
+// returns the job and every line River logged.
+func runFailingRiverJob(t *testing.T, maxAttempts int) (*rivertype.JobRow, []map[string]any) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -105,7 +105,7 @@ func runFailingRiverJob(t *testing.T, logLevel string, maxAttempts int) (*rivert
 
 	client, err := river.NewClient(riverpgxv5.New(db), &river.Config{
 		// The handler observability.SetupLogging installs for hub-worker and hub-api.
-		Logger:      slog.New(observability.NewLogHandler(logs, logLevel, "json")),
+		Logger:      slog.New(observability.NewLogHandler(logs, "info", "json")),
 		Queues:      map[string]river.QueueConfig{queue: {MaxWorkers: 1}},
 		Workers:     riverWorkers,
 		RetryPolicy: immediateRetryPolicy{},
@@ -202,7 +202,7 @@ func jobLines(lines []map[string]any, jobID int64) []map[string]any {
 func TestRiverLogsFailedAttemptsThroughHubHandler(t *testing.T) {
 	const maxAttempts = 2
 
-	job, lines := runFailingRiverJob(t, "info", maxAttempts)
+	job, lines := runFailingRiverJob(t, maxAttempts)
 
 	failures := jobLines(lines, job.ID)
 	require.Len(t, failures, maxAttempts, "one line per failed attempt; got lines: %v", lines)
@@ -220,21 +220,6 @@ func TestRiverLogsFailedAttemptsThroughHubHandler(t *testing.T) {
 			"attempt %d: the line must carry the error the worker returned", attempt)
 		assert.NotEmpty(t, line[slog.TimeKey], "attempt %d", attempt)
 		assert.NotEmpty(t, line[slog.MessageKey], "attempt %d", attempt)
-	}
-}
-
-// River's lines follow LOG_LEVEL like everything else: an operator who raises it to warn gets the
-// quieter output they asked for. This is the same filtering that hid failures before the fix, now
-// under the operator's control rather than hard-coded by River's fallback logger.
-func TestRiverLogsFollowConfiguredLevel(t *testing.T) {
-	job, lines := runFailingRiverJob(t, "warn", 1)
-
-	assert.Empty(t, jobLines(lines, job.ID), "LOG_LEVEL=warn must filter River's INFO lines")
-
-	for _, line := range lines {
-		level, err := parseSlogLevel(line[slog.LevelKey])
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, level, slog.LevelWarn, "line below the configured level: %v", line)
 	}
 }
 

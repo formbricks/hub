@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -183,13 +184,9 @@ func TestRiverClientIsInsertOnly(t *testing.T) {
 // writes to a private text logger on stdout instead, which ignores LOG_LEVEL and puts plain-text
 // lines into a LOG_FORMAT=json stream (ENG-2485).
 func TestInsertOnlyRiverConfigUsesProcessLogger(t *testing.T) {
-	previous := slog.Default()
-
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
 	// A pointer, so the identity check below can only match this exact handler.
 	handler := &markerHandler{Handler: slog.DiscardHandler}
-	slog.SetDefault(slog.New(handler))
+	setDefaultLogger(t, slog.New(handler))
 
 	riverCfg := newInsertOnlyRiverConfig()
 
@@ -654,4 +651,22 @@ func newTestOpenAPIHandler(t *testing.T, publicBaseURL string) *handlers.OpenAPI
 // markerHandler is a distinct handler instance for asserting which handler River was given.
 type markerHandler struct {
 	slog.Handler
+}
+
+// setDefaultLogger installs logger as the slog default for the rest of the test. slog.SetDefault
+// also points the standard log package at the new handler, and putting the old slog default back
+// does not undo that, so log's output and flags are restored as well; otherwise every later log
+// line in this test binary would go to the discarded handler.
+func setDefaultLogger(t *testing.T, logger *slog.Logger) {
+	t.Helper()
+
+	previous, writer, flags := slog.Default(), log.Writer(), log.Flags()
+
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		log.SetOutput(writer)
+		log.SetFlags(flags)
+	})
+
+	slog.SetDefault(logger)
 }
