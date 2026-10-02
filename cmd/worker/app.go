@@ -549,12 +549,6 @@ func (a *WorkerApp) Shutdown(ctx context.Context) (err error) {
 		err = fmt.Errorf("river stop: %w", stopErr)
 	}
 
-	// After River has stopped, so nothing logs through the sampler any more: report the lines it
-	// dropped in each key's last window, which no later line would otherwise trigger.
-	if flushErr := a.riverLogs.Flush(ctx); flushErr != nil {
-		slog.Error("flush River log sampling summaries", "error", flushErr)
-	}
-
 	if a.embeddingBatch != nil {
 		if batchErr := a.embeddingBatch.Shutdown(ctx); batchErr != nil {
 			if err == nil {
@@ -583,6 +577,13 @@ func (a *WorkerApp) Shutdown(ctx context.Context) (err error) {
 				slog.Error("shutdown meter provider", "error", obsErr)
 			}
 		}
+	}
+
+	// Last, so River has stopped logging: report the lines the sampler dropped in each key's last
+	// window, which no later line would otherwise trigger. Best effort if River's stop timed out with
+	// jobs still running, since a job failing after this flush is not reported.
+	if flushErr := a.riverLogs.Flush(ctx); flushErr != nil {
+		slog.Error("flush River log sampling summaries", "error", flushErr)
 	}
 
 	return err

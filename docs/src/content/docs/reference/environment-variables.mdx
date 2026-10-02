@@ -35,8 +35,9 @@ So that an outage cannot flood the logs, `hub-worker` samples repeated job-queue
 lines. Once one job kind logs the same line more than 10 times in a second, it
 keeps 1 in 100 for the rest of that second. Job-queue lines that carry no job
 kind are sampled the same way, per message. The dropped lines are counted: the
-next time that line is logged, a `similar log lines suppressed by sampling` line
-comes first, with the count and the window (`since`, `until`) it covers.
+next time that line is logged, or when `hub-worker` shuts down, a
+`similar log lines suppressed by sampling` line reports the count and the window
+(`since`, `until`) it covers.
 `hub-worker`'s other lines are never sampled.
 
 The Quick Start Docker Compose file also supports `HUB_PORT`, `POSTGRES_PORT`,

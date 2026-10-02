@@ -226,7 +226,8 @@ func (s *logSampler) observe(level slog.Level, message string, keyAttrs []slog.A
 	return pass, summaries
 }
 
-// flush returns a summary for every key with pending drops and clears those counts.
+// flush returns a summary for every key with pending drops and starts those keys on a fresh window,
+// so a later summary for the same key never covers the flushed one's window again.
 func (s *logSampler) flush() []slog.Record {
 	now := s.now()
 
@@ -238,7 +239,7 @@ func (s *logSampler) flush() []slog.Record {
 	for _, counter := range s.counters {
 		if counter.dropped > 0 {
 			summaries = append(summaries, s.summary(counter, now))
-			counter.dropped = 0
+			counter.windowStart, counter.seen, counter.dropped = now, 0, 0
 		}
 	}
 
