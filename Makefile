@@ -56,7 +56,7 @@ tests:
 # Run unit tests (fast, no database required)
 test-unit:
 	@echo "Running unit tests..."
-	go test ./cmd/api ./internal/... -v
+	go test ./cmd/api ./cmd/worker ./internal/... -v
 
 # Run all tests (unit + integration)
 test-all: test-unit tests

@@ -144,7 +144,7 @@ Validating a docs change: `pnpm check` and `pnpm build` must both pass, then
 landing page needs checking in light *and* dark mode.
 
 ## Testing Guidelines
-- Unit tests live beside the code in `internal/**` and need no database: `make test-unit`.
+- Unit tests live beside the code in `internal/**`, `cmd/api` and `cmd/worker` and need no database: `make test-unit`.
 - Integration tests live under `tests/` and require a pgvector-enabled Postgres (`DATABASE_URL` pointing at a `test_db` with migrations applied): `make tests`. `make test-all` runs both.
 - Name test files `*_test.go` and test functions `TestXxx`.
 - Use `make tests-coverage` / `make check-coverage` when adding meaningful logic (the threshold excludes the `cmd/*` main packages).
