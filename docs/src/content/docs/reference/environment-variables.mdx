@@ -25,7 +25,8 @@ default.
 `LOG_LEVEL` also applies to the job-queue lines `hub-worker` logs for its
 background jobs. A failed job attempt is logged at `info`, with the job id,
 kind, and error, so `warn` or `error` hides failures that a job does not report
-itself.
+itself. `debug` adds the job queue's internal tracing (fetches, completions,
+notifications), whose volume grows with job throughput.
 
 The Quick Start Docker Compose file also supports `HUB_PORT`, `POSTGRES_PORT`,
 and `HUB_IMAGE_TAG` as Compose conveniences. They are compose variables, not Hub
