@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { after, before, describe, it } from "node:test";
 
-// Deliberately imports the BUILT package, not src/: this exercises what actually
-// ships, including the exports map, rather than the pre-bundle sources.
+// Deliberately imports the BUILT package by its own name, not src/ or a dist
+// path: the import resolves through package.json `exports`, as a consumer's
+// would, so this exercises what actually ships.
 const { createHubClient, listFeedbackRecords, getTaxonomyRunTree } =
-  await import("../dist/index.mjs");
+  await import("@formbricks/hub");
 
 /** Echoes the request line back so a test can assert the exact wire format. */
 function startEchoServer() {
@@ -87,5 +88,18 @@ describe("@formbricks/hub wire format", () => {
       data.url.startsWith("/v1/taxonomy/runs/run_123/tree"),
       `unexpected path: ${data.url}`,
     );
+  });
+});
+
+describe("@formbricks/hub exports map", () => {
+  it("serves the same API to require as to import", async () => {
+    // Both resolve through `exports`: `import` to dist/index.mjs, `require`
+    // to dist/index.cjs. A missing or stale CJS build fails here.
+    const { createRequire } = await import("node:module");
+    const cjs = createRequire(import.meta.url)("@formbricks/hub");
+    const esm = await import("@formbricks/hub");
+    assert.deepEqual(Object.keys(cjs).sort(), Object.keys(esm).sort());
+    assert.equal(typeof cjs.createHubFetch, "function");
+    assert.equal(cjs.DEFAULT_TIMEOUT, 60_000);
   });
 });

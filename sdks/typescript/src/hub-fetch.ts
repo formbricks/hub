@@ -138,7 +138,12 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
         response = await baseFetch(request);
         if (canRetry) {
           const wait = retryAfter(response);
-          if (await isRetryable(response, idempotent, wait)) {
+          const retryable = await isRetryable(response, idempotent, wait);
+          // Reading a 409's code from a clone, the deadline errors the clone;
+          // some runtimes (Node 22) then end the original cleanly, and the
+          // caller would get an empty 409 instead of the timeout.
+          deadline.signal.throwIfAborted();
+          if (retryable) {
             retryIn = wait ?? backoff(attempt);
           } else if (
             idempotent &&
@@ -167,10 +172,23 @@ export function createHubFetch(options: HubFetchOptions = {}): typeof fetch {
       }
 
       if (retryIn !== undefined) {
-        deadline.clear();
-        // Released unread. A body that has already errored rejects here; that
-        // is clean-up failing, not the request, so it must not stop the retry.
-        await response.body?.cancel().catch(() => {});
+        // Released unread, and not waited for: a fetch that tees the body (as
+        // Next.js's server fetch does, caching the other branch) settles this
+        // cancel only once that branch is read or cancelled too, so awaiting
+        // it could hang the retry. The deadline stays armed until it settles,
+        // so a cancel that never does is still cut off with the request — held
+        // until then for the reason withDeadline holds it. A body that has
+        // already errored rejects; that is clean-up failing.
+        const released = response.body?.cancel().catch(() => {});
+        if (released) {
+          const held = request;
+          void released.finally(() => {
+            deadline.clear();
+            void held;
+          });
+        } else {
+          deadline.clear();
+        }
         await sleep(retryIn, callerSignal);
         continue;
       }
@@ -380,8 +398,12 @@ async function isRetryable(
  * the body — and only if the body is JSON and no larger than a problem body.
  */
 async function problemCode(response: Response): Promise<string | undefined> {
-  if (!response.body || !isJson(response)) return undefined;
-  const reader = response.clone().body!.getReader();
+  if (!isJson(response)) return undefined;
+  // Cloned before the body is touched: on Bun, reading `body` first leaves the
+  // original reading empty once the clone has been read.
+  const body = response.clone().body;
+  if (!body) return undefined;
+  const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
@@ -416,15 +438,21 @@ async function problemCode(response: Response): Promise<string | undefined> {
 /**
  * Milliseconds a `Retry-After` header asks for: delay-seconds, which are
  * digits only, or an IMF-fixdate. Anything else — blank, `0x10`, `1e3`, `-1`,
- * an obsolete date form — is treated as absent rather than guessed at.
+ * an obsolete date form, an impossible date — is treated as absent rather than
+ * guessed at.
  */
 function retryAfter(response: Response): number | undefined {
   const header = response.headers.get("retry-after")?.trim();
   if (!header) return undefined;
   if (/^\d+$/.test(header)) return Number(header) * 1000;
   if (!IMF_FIXDATE.test(header)) return undefined;
+  // Date.parse rolls impossible dates over (31 Feb is 3 Mar, 24:00 the next
+  // day) and ignores the weekday: only a date that formats back to the same
+  // string — IMF-fixdate is exactly toUTCString's form — is a date.
   const date = Date.parse(header);
-  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+  if (Number.isNaN(date) || new Date(date).toUTCString() !== header)
+    return undefined;
+  return Math.max(0, date - Date.now());
 }
 
 /** Exponential backoff with up to 25% jitter, as in the SDK this replaced. */

@@ -26,7 +26,7 @@ const {
   getFeedbackRecord,
   listFeedbackRecords,
   updateFeedbackRecord,
-} = await import("../dist/index.mjs");
+} = await import("@formbricks/hub");
 
 const NOW = { "retry-after": "0" };
 const problem = (status, code, headers = {}) => ({
@@ -54,6 +54,8 @@ const STALLED_502 = Symbol("stalled 502");
 const STALLED_503 = Symbol("stalled 503");
 // The same, asking for a two-minute wait.
 const STALLED_503_LONG_WAIT = Symbol("stalled 503, long wait");
+// A 409 problem body that never finishes arriving.
+const STALLED_409 = Symbol("stalled 409");
 // A binary body streamed for 5s; `streamClosed` records when the client let go.
 const LONG_STREAM = Symbol("long stream");
 let streamClosed = false;
@@ -98,6 +100,11 @@ const server = http.createServer((req, res) => {
         clearTimeout(end);
         streamClosed = true;
       });
+      return;
+    }
+    if (next === STALLED_409) {
+      res.writeHead(409, { "content-type": "application/problem+json" });
+      res.write('{"code":');
       return;
     }
     if (
@@ -362,6 +369,12 @@ describe("no retries where a write may already have happened", () => {
         "Monkey 5",
         "Tue 99",
         "Thu, 01 Oct 2026 23:59:59",
+        // RFC 850 and impossible or mismatched dates Date.parse rolls over.
+        "Sunday, 06-Nov-94 08:49:37 GMT",
+        "Mon, 32 Jan 2026 00:00:00 GMT",
+        "Sat, 31 Feb 2026 00:00:00 GMT",
+        "Thu, 01 Oct 2026 24:00:00 GMT",
+        "Fri, 01 Oct 2026 00:00:00 GMT",
       ]) {
         requests.length = 0;
         script = [problem(503, "unavailable", { "retry-after": value }), ok()];
@@ -442,18 +455,59 @@ describe("no retries where a write may already have happened", () => {
   );
 
   it(
+    "does not retry a POST on 500, 502 or 504, with or without Retry-After",
+    { timeout: 10_000 },
+    async () => {
+      // Retry-After makes only a 408 or 503 a refusal; on these the write may
+      // have happened whatever the header says.
+      for (const status of [500, 502, 504]) {
+        for (const headers of [{}, NOW]) {
+          requests.length = 0;
+          script = [problem(status, "upstream", headers), ok()];
+          const { response } = await createFeedbackRecord({
+            client: hub(),
+            body: record,
+          });
+          const label = `${status}${headers["retry-after"] ? " + Retry-After" : ""}`;
+          assert.equal(requests.length, 1, `re-sent a POST on ${label}`);
+          assert.equal(response.status, status);
+        }
+      }
+    },
+  );
+
+  it(
+    "reports a 409 whose body stalls as a timeout, not an empty 409",
+    { timeout: 10_000 },
+    async () => {
+      // Reading the code from a clone, the deadline errors the clone; some
+      // runtimes (Node 22) then end the original cleanly, which would hand
+      // the caller a 409 with an empty body instead of the timeout.
+      script = [STALLED_409];
+      const { error, response } = await createFeedbackRecord({
+        client: hub({ timeout: 300 }),
+        body: record,
+      });
+      assert.equal(error?.name, "TimeoutError", `got ${response?.status}`);
+      assert.equal(requests.length, 1);
+    },
+  );
+
+  it(
     "does not retry a POST on any other 409, and leaves the body readable",
     { timeout: 10_000 },
     async () => {
       // A duplicate-row conflict is final. The policy reads the problem code from
       // a clone, so the caller must still get the original body intact.
-      script = [problem(409, "duplicate", NOW)];
+      // `conflict` is the code the Hub sends for one (problem.go), so a
+      // matcher loose enough to take it for `tenant_write_conflict` fails here.
+      script = [problem(409, "conflict", NOW)];
       const { error } = await createFeedbackRecord({
         client: hub(),
         body: record,
       });
       assert.equal(requests.length, 1);
-      assert.equal(error.code, "duplicate");
+      assert.equal(error.code, "conflict");
     },
   );
 
@@ -1047,6 +1101,90 @@ describe("garbage collection mid-flight", () => {
       } finally {
         clearInterval(timer);
       }
+    },
+  );
+});
+
+describe("defaults and fetches that tee", () => {
+  // Records the delays the SDK hands setTimeout, without changing them. Only
+  // timers set from its bundle count: fetch keeps its own (a 499ms tick).
+  const recordingDelays = async (run) => {
+    const real = globalThis.setTimeout;
+    const delays = [];
+    globalThis.setTimeout = (fn, ms, ...args) => {
+      const caller = new Error().stack.split("\n")[2] ?? "";
+      if (caller.includes("/dist/index.")) delays.push(ms);
+      return real(fn, ms, ...args);
+    };
+    try {
+      await run();
+    } finally {
+      globalThis.setTimeout = real;
+    }
+    return delays;
+  };
+
+  it(
+    "times out each attempt at 60s by default",
+    { timeout: 10_000 },
+    async () => {
+      const delays = await recordingDelays(() =>
+        listFeedbackRecords({ client: hub(), query: { tenant_id: "org-1" } }),
+      );
+      assert.ok(delays.includes(60_000), `scheduled ${delays.join(", ")}`);
+    },
+  );
+
+  it(
+    "backs off 500ms, 1s, 2s after network errors",
+    { timeout: 15_000 },
+    async () => {
+      // No jitter: the delay is the full step.
+      const random = Math.random;
+      Math.random = () => 0;
+      try {
+        script = [RESET, RESET, RESET, ok()];
+        const delays = await recordingDelays(() =>
+          listFeedbackRecords({
+            client: hub({ maxRetries: 3 }),
+            query: { tenant_id: "org-1" },
+          }),
+        );
+        assert.equal(requests.length, 4);
+        assert.deepEqual(
+          delays.filter((ms) => ms !== 60_000),
+          [500, 1_000, 2_000],
+        );
+      } finally {
+        Math.random = random;
+      }
+    },
+  );
+
+  it(
+    "retries through a fetch that tees the response, as Next.js does",
+    { timeout: 10_000 },
+    async () => {
+      // Next.js's server fetch tees a GET's body and caches one branch. A
+      // branch's cancel settles only once the other is read or cancelled, so
+      // awaiting the discarded response's cancel would hang the retry.
+      const cached = [];
+      const teeing = async (request) => {
+        const response = await fetch(request);
+        if (!response.body) return response;
+        const [mine, theirs] = response.body.tee();
+        cached.push(theirs);
+        return new Response(mine, response);
+      };
+      script = [problem(503, "unavailable", NOW), ok({ second: true })];
+      const started = Date.now();
+      const response = await createHubFetch({ fetch: teeing, timeout: 5_000 })(
+        `${baseUrl}/v1/feedback-records`,
+      );
+      assert.deepEqual(await response.json(), { second: true });
+      assert.equal(requests.length, 2);
+      assert.ok(Date.now() - started < 2_000, "waited on the cached branch");
+      await Promise.all(cached.map((branch) => branch.cancel()));
     },
   );
 });
