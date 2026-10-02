@@ -22,6 +22,11 @@ default.
 | `LOG_LEVEL`                | `info`  | Log level, such as `debug`, `info`, `warn`, or `error`.                                                |
 | `SHUTDOWN_TIMEOUT_SECONDS` | `30`    | Graceful shutdown timeout in seconds.                                                                  |
 
+`LOG_LEVEL` also applies to the job-queue lines `hub-worker` logs for its
+background jobs. A failed job attempt is logged at `info`, with the job id,
+kind, and error, so `warn` or `error` hides failures that a job does not report
+itself.
+
 The Quick Start Docker Compose file also supports `HUB_PORT`, `POSTGRES_PORT`,
 and `HUB_IMAGE_TAG` as Compose conveniences. They are compose variables, not Hub
 runtime settings.
