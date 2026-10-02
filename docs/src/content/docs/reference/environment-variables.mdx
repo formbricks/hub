@@ -31,6 +31,12 @@ cleaning up finished jobs) did something. `debug` adds the job queue's internal
 tracing (fetches, completions, notifications), whose volume grows with job
 throughput.
 
+So that an outage cannot flood the logs, `hub-worker` samples repeated job-queue
+lines. Once one job kind logs the same line more than 10 times in a second, it
+keeps 1 in 100 for the rest of that second, then logs a
+`similar log lines suppressed by sampling` line with the count it dropped.
+`hub-worker`'s other lines are never sampled.
+
 The Quick Start Docker Compose file also supports `HUB_PORT`, `POSTGRES_PORT`,
 and `HUB_IMAGE_TAG` as Compose conveniences. They are compose variables, not Hub
 runtime settings.
