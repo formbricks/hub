@@ -51,11 +51,12 @@ func (w *FeedbackRecordsPurgeWorker) Timeout(*river.Job[service.FeedbackRecordsP
 // Work purges the tenant's feedback records. The service re-scopes the work to the tenant in the
 // job args rather than trusting enqueue-time validation.
 //
-// A failure is logged here rather than left to River. River reports retries and final discards at
-// INFO, and hub-worker does not set river.Config.Logger, so its fallback logger sits at WARN and
-// filters both — a failing purge would otherwise leave no trace outside the river_job.errors column
-// while the dataset sits partly emptied. Matches webhook_dispatch and feedback_embedding in
-// separating a retryable attempt from the last one.
+// A failure is logged here as well as by River. River's own line (INFO, through the logger
+// hub-worker passes it) records that the attempt failed, but it cannot carry what matters for a
+// purge: the tenant and how much the attempt committed before failing, since the dataset is left
+// partly emptied. It also leaves severity to the application, so this line is the one that marks a
+// retryable attempt as WARN and the last one as ERROR, matching webhook_dispatch and
+// feedback_embedding.
 func (w *FeedbackRecordsPurgeWorker) Work(
 	ctx context.Context, job *river.Job[service.FeedbackRecordsPurgeArgs],
 ) error {

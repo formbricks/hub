@@ -71,6 +71,16 @@ const (
 	enrichmentBacklogFailuresBeforeError = 3
 )
 
+// newInsertOnlyRiverConfig is the River client configuration for hub-api: insert-only, so no
+// Workers and no Queues (see NewApp for why).
+//
+// Logger is the process logger installed by observability.SetupLogging, so whatever River logs here
+// follows LOG_LEVEL and LOG_FORMAT. Left nil, River writes to a private text logger on stdout, which
+// puts plain-text lines into a JSON log stream.
+func newInsertOnlyRiverConfig() *river.Config {
+	return &river.Config{Logger: slog.Default()}
+}
+
 // embeddingProviderAndModel returns (provider, model) when embeddings are enabled: both EMBEDDING_PROVIDER
 // and EMBEDDING_MODEL must be set and the provider must be supported. Otherwise returns ("", "") so no
 // embedding provider or jobs run. No default for model; embeddings are disabled if either is unset.
@@ -333,7 +343,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	// This is what keeps the API independent of enrichment credentials: sentiment, emotions, and
 	// translation clients are only ever needed by the process that runs their workers, so a missing
 	// or unreadable credential takes down hub-worker (loudly, on purpose) instead of the whole API.
-	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{})
+	riverClient, err := river.NewClient(riverpgxv5.New(db), newInsertOnlyRiverConfig())
 	if err != nil {
 		cleanupNewAppStartupFailure(context.Background(), messageManager, nil, tracerProvider, meterProvider)
 

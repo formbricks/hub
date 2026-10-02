@@ -345,31 +345,8 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps)
 
-	riverCfg := &river.Config{
-		Queues:  queues,
-		Workers: riverWorkers,
-	}
-
-	riverCfg.PeriodicJobs = append(riverCfg.PeriodicJobs,
-		reconcilePeriodicJobs(cfg, reconcileService != nil, embeddingReconcileService != nil)...)
-
-	if cfg.River.JobTimeoutSec.Duration() > 0 {
-		riverCfg.JobTimeout = cfg.River.JobTimeoutSec.Duration()
-	}
-
-	if cfg.River.RescueStuckJobsAfterSec.Duration() > 0 {
-		riverCfg.RescueStuckJobsAfter = cfg.River.RescueStuckJobsAfterSec.Duration()
-	}
-
-	if cfg.River.CompletedJobRetentionSec >= 0 {
-		riverCfg.CompletedJobRetentionPeriod = time.Duration(cfg.River.CompletedJobRetentionSec) * time.Second
-	} else {
-		riverCfg.CompletedJobRetentionPeriod = -1
-	}
-
-	if cfg.River.ClientID != "" {
-		riverCfg.ID = cfg.River.ClientID
-	}
+	riverCfg := newRiverConfig(cfg, riverWorkers, queues,
+		reconcilePeriodicJobs(cfg, reconcileService != nil, embeddingReconcileService != nil))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), riverCfg)
 	if err != nil {
@@ -398,6 +375,51 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		meterProvider:  meterProvider,
 		tracerProvider: tracerProvider,
 	}, nil
+}
+
+// newRiverConfig assembles the River client configuration for hub-worker.
+//
+// Logger must be the process logger installed by observability.SetupLogging, so River's own lines
+// go through the same handler, level and format (LOG_LEVEL, LOG_FORMAT) as the rest of hub-worker.
+// Left nil, River falls back to a private text logger at WARN on stdout. That filters out the INFO
+// lines River writes for every failed attempt ("Job errored; retrying", "Job errored"), so a failing
+// job left no trace outside river_job.errors, and River's WARN/ERROR lines came out as plain text in
+// a JSON log stream.
+//
+// River's levels are passed through unchanged. River logs a job error at INFO on purpose: it treats
+// a failed attempt as routine and leaves severity to the application. Here severity belongs to the
+// workers, which log their own failures at WARN/ERROR with domain context and record failed_final
+// metrics. River's line is the uniform record that every failure gets, including those of workers
+// that do not log.
+func newRiverConfig(
+	cfg *config.Config, riverWorkers *river.Workers, queues map[string]river.QueueConfig, periodicJobs []*river.PeriodicJob,
+) *river.Config {
+	riverCfg := &river.Config{
+		Logger:       slog.Default(),
+		Queues:       queues,
+		Workers:      riverWorkers,
+		PeriodicJobs: periodicJobs,
+	}
+
+	if cfg.River.JobTimeoutSec.Duration() > 0 {
+		riverCfg.JobTimeout = cfg.River.JobTimeoutSec.Duration()
+	}
+
+	if cfg.River.RescueStuckJobsAfterSec.Duration() > 0 {
+		riverCfg.RescueStuckJobsAfter = cfg.River.RescueStuckJobsAfterSec.Duration()
+	}
+
+	if cfg.River.CompletedJobRetentionSec >= 0 {
+		riverCfg.CompletedJobRetentionPeriod = time.Duration(cfg.River.CompletedJobRetentionSec) * time.Second
+	} else {
+		riverCfg.CompletedJobRetentionPeriod = -1
+	}
+
+	if cfg.River.ClientID != "" {
+		riverCfg.ID = cfg.River.ClientID
+	}
+
+	return riverCfg
 }
 
 // embeddingReconcileConfigured keeps automatic repair aligned with the taxonomy embedding
