@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,18 +18,32 @@ import (
 // River must log through the handler observability.SetupLogging installs (ENG-2485). With no
 // Logger, River falls back to a private text logger at WARN, which filters out the INFO lines it
 // writes for every failed attempt, so a failing job left no trace outside river_job.errors. That
-// River really emits those lines through this logger is pinned against a real database in
-// tests/river_logging_test.go; this pins that hub-worker hands River the logger at all.
-func TestNewRiverConfigUsesProcessLogger(t *testing.T) {
-	// A pointer, so the identity check below can only match this exact handler.
-	handler := &markerHandler{Handler: slog.DiscardHandler}
+// River really emits those lines through its logger is pinned against a real database in
+// tests/river_logging_test.go; this pins that hub-worker hands River a logger that reaches the
+// process handler, and that the logger caps a storm of identical lines.
+func TestNewRiverConfigLogsThroughProcessHandlerWithSampling(t *testing.T) {
+	handler := &countingHandler{}
 	setDefaultLogger(t, slog.New(handler))
 
 	riverCfg := newRiverConfig(&config.Config{}, river.NewWorkers(), nil, nil)
-
 	require.NotNil(t, riverCfg.Logger, "a nil Logger makes River fall back to its own WARN-level logger")
-	assert.Same(t, handler, riverCfg.Logger.Handler(),
-		"River must write through the handler installed by observability.SetupLogging")
+
+	riverCfg.Logger.Info("JobExecutor: Job errored; retrying", "job_kind", "feedback_embedding")
+	require.Equal(t, 1, handler.count(), "River's lines must reach the handler installed by SetupLogging")
+
+	// A provider outage: every attempt of one job kind fails at once. The loop takes microseconds,
+	// well inside one sampling window.
+	const storm = 1000
+	for range storm - 1 {
+		riverCfg.Logger.Info("JobExecutor: Job errored; retrying", "job_kind", "feedback_embedding")
+	}
+
+	want := riverLogSampling.First + (storm-riverLogSampling.First)/riverLogSampling.Thereafter
+	assert.Equal(t, want, handler.count(), "a storm of identical River lines must be sampled")
+
+	// Another job kind has its own budget, so one failing kind cannot hide another's failures.
+	riverCfg.Logger.Info("JobExecutor: Job errored; retrying", "job_kind", "webhook_dispatch")
+	assert.Equal(t, want+1, handler.count())
 }
 
 // newRiverConfig was extracted from NewWorkerApp; these pin the settings it carried over unchanged.
@@ -75,9 +91,30 @@ func TestNewRiverConfigMapsRiverSettings(t *testing.T) {
 	})
 }
 
-// markerHandler is a distinct handler instance for asserting which handler River was given.
-type markerHandler struct {
-	slog.Handler
+// countingHandler counts the records that reach it.
+type countingHandler struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (h *countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h *countingHandler) WithGroup(string) slog.Handler            { return h }
+
+func (h *countingHandler) Handle(context.Context, slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.n++
+
+	return nil
+}
+
+func (h *countingHandler) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.n
 }
 
 // setDefaultLogger installs logger as the slog default for the rest of the test. slog.SetDefault
