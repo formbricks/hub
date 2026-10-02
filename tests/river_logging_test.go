@@ -192,13 +192,15 @@ func jobLines(lines []map[string]any, jobID int64) []map[string]any {
 }
 
 // TestRiverLogsFailedAttemptsThroughHubHandler pins the River contract ENG-2485 relies on. Given the
-// Hub's handler as river.Config.Logger, every failed attempt must produce a structured line, at a
-// level the default LOG_LEVEL=info lets through, carrying the job id, kind and error. Before the fix
+// Hub's handler as river.Config.Logger, every failed attempt must produce a structured line at INFO,
+// carrying the job id, kind and error. Before the fix
 // hub-worker left Logger nil, River fell back to a private WARN-level logger, and the INFO lines it
 // writes for failed attempts were filtered out, so a failing job left nothing in the logs.
 //
-// If a River upgrade moves these lines below INFO or drops the fields, this fails, and the logging
-// decision in cmd/worker's newRiverConfig needs revisiting.
+// The level is pinned exactly, not as a floor. Below INFO the default LOG_LEVEL hides failures again;
+// above it, the docs (which say info) are wrong and every failure gets two WARN/ERROR lines, River's
+// and the worker's. Either way the logging decision in cmd/worker's newRiverConfig needs revisiting,
+// as it does if a River upgrade drops the fields.
 func TestRiverLogsFailedAttemptsThroughHubHandler(t *testing.T) {
 	const maxAttempts = 2
 
@@ -212,8 +214,8 @@ func TestRiverLogsFailedAttemptsThroughHubHandler(t *testing.T) {
 
 		level, err := parseSlogLevel(line[slog.LevelKey])
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, level, slog.LevelInfo,
-			"attempt %d: below INFO, the default LOG_LEVEL hides it again", attempt)
+		assert.Equal(t, slog.LevelInfo, level,
+			"attempt %d: River's failed-attempt line must stay at INFO, the level the Hub's logging decision assumes", attempt)
 
 		assert.Equal(t, job.Kind, line["job_kind"], "attempt %d", attempt)
 		assert.Equal(t, fmt.Sprintf("simulated failure on attempt %d", attempt), line["error"],
