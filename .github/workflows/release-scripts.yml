@@ -44,3 +44,22 @@ jobs:
 
       - name: Tests
         run: node --test '.github/scripts/*.test.mjs'
+
+      # The tests use a stub API. This asks the real one, with the same read-only GITHUB_TOKEN the
+      # release job gets, about this repository's current latest release: it must come back true,
+      # proving that token can read isLatest and that GraphQL agrees with the release list.
+      - name: Live check against the latest release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          CURRENT_TAG="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName --jq .tagName)"
+          output="$(mktemp)"
+          CURRENT_TAG="${CURRENT_TAG}" GITHUB_OUTPUT="${output}" bash .github/scripts/resolve-latest-release.sh
+
+          if [[ "$(cat "${output}")" != "is_latest=true" ]]; then
+            echo "::error::The resolver did not report the latest release as latest."
+            exit 1
+          fi
