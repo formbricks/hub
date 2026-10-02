@@ -89,6 +89,15 @@ func runFailingRiverJob(t *testing.T, logLevel string, maxAttempts int) (*rivert
 	// A queue of its own, so this client works only the job inserted below.
 	queue := "test_river_logging_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 
+	// Registered before the client exists, so it runs after the client has stopped (cleanups run in
+	// reverse). River keeps a discarded job and records each queue it works; left behind, both pile
+	// up in a local test database, since River only reaps idle queues after a day.
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		_, _ = db.Exec(cleanupCtx, `DELETE FROM river_job WHERE queue = $1`, queue)
+		_, _ = db.Exec(cleanupCtx, `DELETE FROM river_queue WHERE name = $1`, queue)
+	})
+
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, riverLoggingFailWorker{})
 
@@ -131,10 +140,6 @@ func runFailingRiverJob(t *testing.T, logLevel string, maxAttempts int) (*rivert
 		MaxAttempts: maxAttempts,
 	})
 	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		_, _ = db.Exec(context.Background(), `DELETE FROM river_job WHERE id = $1`, inserted.Job.ID)
-	})
 
 	var last *rivertype.JobRow
 
