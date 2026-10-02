@@ -25,10 +25,12 @@ jobs:
 
       - name: Check if stable release
         id: check_stable
+        env:
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           set -euo pipefail
 
-          if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
             echo "Skipping: this is a prerelease"
             echo "is_stable=false" >> $GITHUB_OUTPUT
           else
@@ -36,58 +38,23 @@ jobs:
             echo "is_stable=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Get latest release tag from API
+      # is_latest moves GHCR :latest and ECR :latest/production, so the script grants it only on a
+      # well-formed answer from the API: an API error or a malformed response fails this job (and
+      # skips both image pushes) instead of defaulting either way.
+      - name: Checkout the release scripts
         if: steps.check_stable.outputs.is_stable == 'true'
-        id: get_latest_release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
 
-          echo "Fetching latest release from GitHub API..."
-
-          http_code=$(curl -s -w "%{http_code}" -H "Authorization: token ${GITHUB_TOKEN}" \
-            "https://api.github.com/repos/${REPO}/releases/latest" -o /tmp/latest_release.json)
-
-          if [[ "$http_code" == "404" ]]; then
-            echo "No previous releases found (404). This appears to be the first release."
-            echo "latest_release=" >> $GITHUB_OUTPUT
-          elif [[ "$http_code" == "200" ]]; then
-            latest_release=$(jq -r .tag_name /tmp/latest_release.json)
-            if [[ "$latest_release" == "null" || -z "$latest_release" ]]; then
-              echo "API returned null/empty tag_name. Treating as first release."
-              echo "latest_release=" >> $GITHUB_OUTPUT
-            else
-              echo "Latest release from API: ${latest_release}"
-              echo "latest_release=${latest_release}" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "GitHub API error (HTTP ${http_code}). Treating as first release."
-            echo "latest_release=" >> $GITHUB_OUTPUT
-          fi
-
-          echo "Current release tag: ${{ github.event.release.tag_name }}"
-
-      - name: Compare release tags
+      - name: Check this release against the latest release
         if: steps.check_stable.outputs.is_stable == 'true'
         id: compare_tags
         env:
           CURRENT_TAG: ${{ github.event.release.tag_name }}
-          LATEST_TAG: ${{ steps.get_latest_release.outputs.latest_release }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${LATEST_TAG}" ]]; then
-            echo "This is the first release (${CURRENT_TAG}) - treating as latest"
-            echo "is_latest=true" >> $GITHUB_OUTPUT
-          elif [[ "${CURRENT_TAG}" == "${LATEST_TAG}" ]]; then
-            echo "This release (${CURRENT_TAG}) is marked as the latest release"
-            echo "is_latest=true" >> $GITHUB_OUTPUT
-          else
-            echo "This release (${CURRENT_TAG}) is not the latest release (latest: ${LATEST_TAG})"
-            echo "is_latest=false" >> $GITHUB_OUTPUT
-          fi
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/resolve-latest-release.sh
 
   docker-build-ghcr:
     name: Build & push to GitHub Container Registry
