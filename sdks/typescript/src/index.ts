@@ -15,11 +15,22 @@ export * from "./generated/types.gen";
 export { createClient, createConfig } from "./generated/client";
 export type { Client, ClientOptions, Config } from "./generated/client";
 
+export {
+  createHubFetch,
+  DEFAULT_MAX_RETRIES,
+  DEFAULT_TIMEOUT,
+} from "./hub-fetch";
+export type { HubFetchOptions } from "./hub-fetch";
+
 import { createClient, createConfig } from "./generated/client";
 import type { Client } from "./generated/client";
+import { createHubFetch, type HubFetchOptions } from "./hub-fetch";
 
-/** Options for {@link createHubClient}. */
-export interface HubClientOptions {
+/**
+ * Options for {@link createHubClient}. `maxRetries`, `timeout` and `fetch` are
+ * those of {@link createHubFetch}: by default 2 retries and 60s per attempt.
+ */
+export interface HubClientOptions extends HubFetchOptions {
   /** Hub API key, sent as `Authorization: Bearer <apiKey>`. */
   apiKey: string;
   /**
@@ -31,18 +42,24 @@ export interface HubClientOptions {
 }
 
 /**
- * Builds a configured client for a Hub instance.
+ * Builds a configured client for a Hub instance, with retries and a
+ * per-attempt timeout (see {@link createHubFetch} for what is retried).
  *
- * Thin sugar over `createClient(createConfig(...))` — the generated client is
- * always available directly if you need to pass a custom fetch, interceptors or
- * headers. This exists so the common case is one call and so callers do not
- * hand-assemble auth.
+ * The generated `createClient(createConfig(...))` is always available directly
+ * for interceptors or extra headers; pass `fetch: createHubFetch()` there to
+ * keep the retries. This exists so the common case is one call and so callers
+ * do not hand-assemble auth.
  */
-export function createHubClient({ apiKey, baseUrl }: HubClientOptions): Client {
+export function createHubClient({
+  apiKey,
+  baseUrl,
+  ...fetchOptions
+}: HubClientOptions): Client {
   return createClient(
     createConfig({
       baseUrl,
       auth: () => apiKey,
+      fetch: createHubFetch(fetchOptions),
     }),
   );
 }
