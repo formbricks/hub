@@ -153,20 +153,22 @@ updated.
 Do not use the largest `updated_at` you received. A run that spans several pages reads each page at
 a different moment: a record you paged past early can change while later pages are still being
 read, and its new `updated_at` is then older than the newest one on your last page. A watermark
-taken from the results skips that change. A watermark taken from the run's start does not, because
-anything written after the run began is newer than it.
+taken from the results skips that change. A watermark taken from the run's start, minus the overlap
+below, does not.
 
-- **Take the start time from Hub, not from your own clock.** Every response carries an HTTP `Date`
-  header; the one on the run's first response is the run's start on Hub's side, so drift between
-  your clock and Hub's cannot open a gap.
-- **Keep an overlap of a few minutes, five is a safe default.** `updated_at` is when the writing
-  transaction *started*, so a write that was still committing when your run began carries a
-  slightly earlier timestamp. The overlap has to cover the longest write plus the difference between
-  Hub's and its database's clocks.
-- **The latest fetch wins.** The overlap re-reads some records, so upsert by `id` and let the copy
-  from the most recent run replace the older one. Do not compare `updated_at` to pick a copy: two
-  writes to one record can commit in the opposite order to the one they started in, so a newer state
-  can carry an older timestamp. A later read always sees the later state.
+- **Take the start time from the server, not from your own clock.** Every response carries an HTTP
+  `Date` header; use the one on the run's first response, so drift between your clock and the
+  server's cannot open a gap.
+- **Keep an overlap of a few minutes, five is a safe default.** It has to cover three things: a
+  write that was still committing when the run began (`updated_at` is when the writing transaction
+  *started*), the time the first response took (`Date` is stamped after that page was read), and
+  the clock difference between whatever stamped `Date` (Hub, or a proxy in front of it) and the
+  database.
+- **The latest fetch wins, so never run two syncs at once.** The overlap re-reads some records, so
+  upsert by `id` and let the copy from the most recent run replace the older one. Do not compare
+  `updated_at` to pick a copy: two writes to one record can commit in the opposite order to the one
+  they started in, so a newer state can carry an older timestamp. A later read always sees the later
+  state, which only holds if one run finishes before the next begins.
 
 ### Deleted records
 

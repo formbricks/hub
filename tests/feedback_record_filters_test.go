@@ -424,7 +424,7 @@ func TestFeedbackRecordFilters_UpdatedSinceWatermarkFromRunStart(t *testing.T) {
 	)
 
 	first := env.seed(t)
-	env.seed(t)
+	middle := env.seed(t) // never changes, so the second run must leave it out
 	last := env.seed(t)
 
 	touch := func(id uuid.UUID) {
@@ -502,6 +502,7 @@ func TestFeedbackRecordFilters_UpdatedSinceWatermarkFromRunStart(t *testing.T) {
 	}
 
 	assert.Contains(t, ids, first.ID, "a run-start watermark must return the change made behind the cursor")
+	assert.NotContains(t, ids, middle.ID, "a record unchanged since the run started must not be re-read")
 }
 
 // TestFeedbackRecordFilters_PresencePartitions verifies each presence filter reads the column it
