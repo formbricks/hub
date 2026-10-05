@@ -120,17 +120,16 @@ to answer "what did people tell us in this period".
 ## Incremental extraction
 
 To keep a copy of a tenant's records in sync without re-reading everything, filter on
-`updated_since`. Hub sets `updated_at` when it stores a record and moves it forward whenever the
-record changes, so one filter picks up both new and changed records:
+`updated_since`. Hub stamps `updated_at` on every write to a record, so one filter picks up both
+new and changed records:
 
-| Changes `updated_at` | Does not |
+| Stamps `updated_at` | Does not |
 | --- | --- |
 | creating the record | embeddings (stored apart from the record) |
 | every `PATCH` | taxonomy assignment (not part of the listed record) |
 | every translation, sentiment and emotion result | deleting the record — see below |
 
-Every writer stamps `updated_at` from the database clock, so the values are comparable with each
-other and with the `updated_at` you read back.
+Every writer takes the timestamp from the database clock, at the moment its transaction starts.
 
 ```bash
 # everything created or changed since the last run, oldest first
@@ -146,21 +145,28 @@ curl -G "$HUB/v1/feedback-records" \
 **Sort by `created_at` or `collected_at`, not by `updated_at`.** `updated_at` is not a sort option,
 on purpose: it changes under you, so a record could jump past the cursor and be skipped. The sort
 columns never change, so every page stays stable even while records in the result are being
-updated. A record that changes after you have paged past it now has a newer `updated_at`, and the
-next run picks it up.
+updated.
 
 ### Choosing the next `updated_since`
 
-Take the **largest `updated_at` you received, minus an overlap**, and store it as the next run's
-`updated_since`. If a run returns nothing, keep the previous value.
+**Note when the run starts, and use that time minus an overlap as the next run's `updated_since`.**
+Do not use the largest `updated_at` you received. A run that spans several pages reads each page at
+a different moment: a record you paged past early can change while later pages are still being
+read, and its new `updated_at` is then older than the newest one on your last page. A watermark
+taken from the results skips that change. A watermark taken from the run's start does not, because
+anything written after the run began is newer than it.
 
-- Use a value Hub gave you, not your own clock. It is the same clock Hub compares against, so clock
-  drift between your system and Hub cannot open a gap.
-- Keep an overlap of a few minutes. `updated_at` is the moment the writing transaction *started*,
-  so a write that commits a moment after your read can carry a slightly earlier timestamp than
-  records you already saw. The overlap re-reads that window.
-- The overlap means you will see some records twice. Upsert by `id`, and keep whichever copy has the
-  later `updated_at`.
+- **Take the start time from Hub, not from your own clock.** Every response carries an HTTP `Date`
+  header; the one on the run's first response is the run's start on Hub's side, so drift between
+  your clock and Hub's cannot open a gap.
+- **Keep an overlap of a few minutes, five is a safe default.** `updated_at` is when the writing
+  transaction *started*, so a write that was still committing when your run began carries a
+  slightly earlier timestamp. The overlap has to cover the longest write plus the difference between
+  Hub's and its database's clocks.
+- **The latest fetch wins.** The overlap re-reads some records, so upsert by `id` and let the copy
+  from the most recent run replace the older one. Do not compare `updated_at` to pick a copy: two
+  writes to one record can commit in the opposite order to the one they started in, so a newer state
+  can carry an older timestamp. A later read always sees the later state.
 
 ### Deleted records
 
@@ -170,11 +176,16 @@ Take the **largest `updated_at` you received, minus an overlap**, and store it a
   that Hub has since deleted.
 </Aside>
 
-To reconcile deletions, periodically list **every** record id for the tenant: page through
-`GET /v1/feedback-records` with no `updated_since` and a stable sort, such as `sort=created_at`.
-Then remove any local record whose id was not returned. This catches every way a record can
-disappear, including deletes by user and dataset purges. It reads the whole tenant, so run it less
-often than the incremental sync, for example daily against an hourly sync.
+To reconcile deletions, periodically list **every** record id for the tenant: note the run's start
+from the first response's `Date` header, then page through `GET /v1/feedback-records` with no
+`updated_since` and a stable sort, such as `sort=created_at`. Afterwards, remove the local records
+that were not returned **and whose `created_at` is earlier than that start minus the overlap**.
+That condition matters: a record created after the sweep began may have been stored by your
+incremental sync but never reached by the sweep, and deleting it would lose it for good.
+
+This catches every way a record can disappear, including deletes by user and dataset purges. It
+reads the whole tenant, so run it less often than the incremental sync, for example daily against
+an hourly sync.
 
 ## Enrichment filters
 

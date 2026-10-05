@@ -99,9 +99,11 @@ type ListFeedbackRecordsFilters struct {
 	CreatedSince *time.Time `form:"created_since" validate:"omitempty"`
 	CreatedUntil *time.Time `form:"created_until" validate:"omitempty"`
 
-	// updated_at bounds, for incremental extraction (ENG-3420). Insert sets updated_at, and every
-	// PATCH and enrichment write bumps it, so updated_since selects records created OR changed
-	// since a point. It never surfaces a deleted record: a hard delete leaves no row to match.
+	// updated_at bounds, for incremental extraction (ENG-3420). Insert, PATCH and every enrichment
+	// write stamp updated_at with their transaction's NOW(), so updated_since selects records created
+	// OR changed since a point. Not monotonic per row: two writes queued on one record's lock can
+	// commit in the opposite order to the one they started in. It never surfaces a deleted record:
+	// a hard delete leaves no row to match.
 	UpdatedSince *time.Time `form:"updated_since" validate:"omitempty"`
 	UpdatedUntil *time.Time `form:"updated_until" validate:"omitempty"`
 

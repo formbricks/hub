@@ -2727,13 +2727,14 @@ components:
             name: updated_since
             in: query
             description: |
-                Filter by updated_at >= updated_since (ISO 8601, inclusive). updated_at is set when Hub
-                stores a record and bumped by every update and every enrichment result (translation,
-                sentiment, emotions), so this selects records created OR changed since a point — the
-                parameter for incremental extraction. Permanently deleted records are never returned:
-                reconcile deletions separately by listing record ids. updated_at is not a sort key;
-                keep sorting by collected_at or created_at, which stays stable while matching records
-                change.
+                Filter by updated_at >= updated_since (ISO 8601, inclusive). updated_at is stamped on
+                every write to a record — create, update, and every enrichment result (translation,
+                sentiment, emotions) — so this selects records created OR changed since a point: the
+                parameter for incremental extraction. For the next run, use the time the previous run
+                started (its first response's Date header) minus a few minutes of overlap, not the
+                largest updated_at received. Permanently deleted records are never returned: reconcile
+                deletions separately by listing record ids. updated_at is not a sort key; keep sorting
+                by collected_at or created_at, which stays stable while matching records change.
             schema:
                 type: string
                 format: date-time
