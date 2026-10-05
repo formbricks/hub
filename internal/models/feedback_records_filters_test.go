@@ -204,6 +204,7 @@ func TestInvertedRanges_ReportsEachInvertedPair(t *testing.T) {
 	want := map[string]string{
 		"since":               "until",
 		"created_since":       "created_until",
+		"updated_since":       "updated_until",
 		"value_date_min":      "value_date_max",
 		"value_number_min":    "value_number_max",
 		"sentiment_score_min": "sentiment_score_max",
@@ -280,6 +281,7 @@ func invertedFilters() *ListFeedbackRecordsFilters {
 	return &ListFeedbackRecordsFilters{
 		Since: &late, Until: &early,
 		CreatedSince: &late, CreatedUntil: &early,
+		UpdatedSince: &late, UpdatedUntil: &early,
 		ValueDateMin: &late, ValueDateMax: &early,
 		ValueNumberMin: &high, ValueNumberMax: &low,
 		SentimentScoreMin: &high, SentimentScoreMax: &low,

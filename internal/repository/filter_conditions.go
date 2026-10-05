@@ -32,6 +32,7 @@ const (
 	colLanguage           sqlColumn = "language"
 	colCollectedAt        sqlColumn = "collected_at"
 	colCreatedAt          sqlColumn = "created_at"
+	colUpdatedAt          sqlColumn = "updated_at"
 	colValueDate          sqlColumn = "value_date"
 	colValueNumber        sqlColumn = "value_number"
 	colSentiment          sqlColumn = "sentiment"
@@ -195,10 +196,11 @@ func appendIdentityConditions(conds *filterConditions, filters *models.ListFeedb
 
 // appendTimeConditions adds the inclusive timestamp ranges. collected_at is when the feedback was
 // given; created_at is when Hub stored it. They diverge on a historical re-import, which is why
-// each has its own pair.
+// each has its own pair. updated_at is when Hub last wrote the row, for incremental extraction.
 func appendTimeConditions(conds *filterConditions, filters *models.ListFeedbackRecordsFilters) {
 	addTimeRange(conds, colCollectedAt, filters.Since, filters.Until)
 	addTimeRange(conds, colCreatedAt, filters.CreatedSince, filters.CreatedUntil)
+	addTimeRange(conds, colUpdatedAt, filters.UpdatedSince, filters.UpdatedUntil)
 	addTimeRange(conds, colValueDate, filters.ValueDateMin, filters.ValueDateMax)
 }
 

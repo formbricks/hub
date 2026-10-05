@@ -282,6 +282,121 @@ func TestFeedbackRecordFilters_CreatedAtIsDistinctFromCollectedAt(t *testing.T) 
 		"created_since bounds created_at, which is after the cutoff")
 }
 
+// dbNow reads the database clock, the one every writer stamps updated_at from. A cutoff taken from
+// the test process's clock would make these tests depend on the two clocks agreeing.
+func (e *filterTestEnv) dbNow(t *testing.T) time.Time {
+	t.Helper()
+
+	var now time.Time
+	require.NoError(t, e.db.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&now))
+
+	return now
+}
+
+// TestFeedbackRecordFilters_UpdatedSinceSelectsCreatedAndChanged drives each real write path that
+// should move updated_at — insert, PATCH, an enrichment result — and checks updated_since selects
+// exactly those records, while an untouched older record stays out (ENG-3420).
+func TestFeedbackRecordFilters_UpdatedSinceSelectsCreatedAndChanged(t *testing.T) {
+	env := newFilterTestEnv(t, "updated-since")
+
+	untouched := env.seed(t)
+	patched := env.seed(t)
+	enriched := env.seed(t)
+
+	cutoff := env.dbNow(t)
+
+	updated, _, err := env.repo.Update(t.Context(), patched.ID, &models.UpdateFeedbackRecordRequest{
+		UserID: new("user-after-cutoff"),
+	})
+	require.NoError(t, err)
+	require.False(t, updated.UpdatedAt.Before(cutoff), "PATCH must move updated_at past the cutoff")
+
+	sentiment, score := models.SentimentPositive, 0.5
+	require.NoError(t, env.repo.SetSentiment(t.Context(), enriched.ID, &sentiment, &score, nil))
+
+	created := env.seed(t)
+
+	since := func(f *models.ListFeedbackRecordsFilters) { f.UpdatedSince = &cutoff }
+	assert.ElementsMatch(t, []uuid.UUID{patched.ID, enriched.ID, created.ID}, env.list(t, since),
+		"updated_since selects records created or changed at or after the cutoff")
+	assert.Equal(t, 3, env.count(t, since), "count must describe the same set")
+
+	until := func(f *models.ListFeedbackRecordsFilters) { f.UpdatedUntil = &cutoff }
+	assert.Equal(t, []uuid.UUID{untouched.ID}, env.list(t, until),
+		"updated_until bounds updated_at, so only the record nobody touched is at or before the cutoff")
+}
+
+// TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates is the reason updated_at is a
+// filter and never a sort key. Records keep changing while a sync pages through them; ordering by
+// an immutable column means an update moves a record's updated_at but never its position, so the
+// traversal still returns every record exactly once.
+func TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates(t *testing.T) {
+	env := newFilterTestEnv(t, "updated-since-pages")
+	svc := service.NewFeedbackRecordsService(
+		repository.NewFeedbackRecordsRepository(env.db), nil, "", nil, nil, "", 0, "",
+	)
+
+	cutoff := env.dbNow(t)
+
+	const records, pageLimit = 6, 2
+
+	want := make(map[uuid.UUID]bool, records)
+	ordered := make([]uuid.UUID, 0, records)
+
+	for range records {
+		record := env.seed(t)
+		want[record.ID] = true
+		ordered = append(ordered, record.ID)
+	}
+
+	touch := func(id uuid.UUID) {
+		_, _, err := env.repo.Update(t.Context(), id, &models.UpdateFeedbackRecordRequest{
+			UserID: new("touched-" + uuid.NewString()),
+		})
+		require.NoError(t, err)
+	}
+
+	seen := make(map[uuid.UUID]int, records)
+	nextCursor := ""
+
+	for page := range records {
+		tenant := env.tenant
+		resp, err := svc.ListFeedbackRecords(t.Context(), &models.ListFeedbackRecordsFilters{
+			TenantID:     &tenant,
+			UpdatedSince: &cutoff,
+			Sort:         models.SortFieldCreatedAt,
+			Order:        models.SortOrderAsc,
+			Limit:        pageLimit,
+			Cursor:       nextCursor,
+		})
+		require.NoError(t, err, "page %d", page)
+
+		for _, record := range resp.Data {
+			seen[record.ID]++
+		}
+
+		if page == 0 {
+			// Change one record already returned and one not reached yet. Under sort=updated_at
+			// the second would jump behind the cursor and be skipped.
+			touch(ordered[0])
+			touch(ordered[records-1])
+		}
+
+		nextCursor = resp.NextCursor
+		if nextCursor == "" {
+			break
+		}
+	}
+
+	require.Empty(t, nextCursor, "pagination did not terminate")
+	assert.Len(t, seen, records, "every record must be returned")
+
+	for id, times := range seen {
+		assert.True(t, want[id], "record %s does not belong to this traversal", id)
+		assert.Equal(t, 1, times, "record %s returned %d times", id, times)
+	}
+}
+
 // TestFeedbackRecordFilters_PresencePartitions verifies each presence filter reads the column it
 // is supposed to, and that true/false partition the tenant exactly.
 //
@@ -435,6 +550,7 @@ func TestFeedbackRecordFilters_TenantIsolation(t *testing.T) {
 		{"has_sentiment", func(f *models.ListFeedbackRecordsFilters) { f.HasSentiment = new(true) }},
 		{"collected_at range", func(f *models.ListFeedbackRecordsFilters) { f.Since = &collected }},
 		{"created_at range", func(f *models.ListFeedbackRecordsFilters) { f.CreatedSince = &collected }},
+		{"updated_at range", func(f *models.ListFeedbackRecordsFilters) { f.UpdatedSince = &collected }},
 	}
 
 	for _, tt := range tests {

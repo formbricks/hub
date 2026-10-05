@@ -226,6 +226,8 @@ func TestValidateInvertedRangeFilters(t *testing.T) {
 			Until:        &early,
 			CreatedSince: &late,
 			CreatedUntil: &early,
+			UpdatedSince: &late,
+			UpdatedUntil: &early,
 		}
 
 		err := ValidateStruct(filters)
@@ -239,7 +241,7 @@ func TestValidateInvertedRangeFilters(t *testing.T) {
 			names = append(names, FieldPath(fieldErr))
 		}
 
-		assert.ElementsMatch(t, []string{"since", "created_since"}, names)
+		assert.ElementsMatch(t, []string{"since", "created_since", "updated_since"}, names)
 	})
 
 	// A lower bound with no counterpart is unbounded above, not inverted. Expressing this rule as

@@ -81,13 +81,14 @@ narrow with the filters and post-process.
 
 ## Ranges
 
-`collected_at`, `created_at`, `value_number`, `value_date` and `sentiment_score` take bounds. Every
-bound is **inclusive** — a record sitting exactly on it is included.
+`collected_at`, `created_at`, `updated_at`, `value_number`, `value_date` and `sentiment_score` take
+bounds. Every bound is **inclusive** — a record sitting exactly on it is included.
 
 | Filter | Bounds |
 | --- | --- |
 | `collected_at` — when the feedback was given | `since` / `until` |
 | `created_at` — when Hub stored it | `created_since` / `created_until` |
+| `updated_at` — when Hub last changed it | `updated_since` / `updated_until` |
 | `value_number` | `value_number_min` / `value_number_max` |
 | `value_date` | `value_date_min` / `value_date_max` |
 | `sentiment_score` | `sentiment_score_min` / `sentiment_score_max` |
@@ -115,6 +116,65 @@ Supplying a range backwards — a minimum above its maximum — returns `400`, n
 The two diverge whenever historical data is imported: the feedback was *collected* months ago but
 *created* in Hub today. Use `created_since` to answer "what did this import bring in", and `since`
 to answer "what did people tell us in this period".
+
+## Incremental extraction
+
+To keep a copy of a tenant's records in sync without re-reading everything, filter on
+`updated_since`. Hub sets `updated_at` when it stores a record and moves it forward whenever the
+record changes, so one filter picks up both new and changed records:
+
+| Changes `updated_at` | Does not |
+| --- | --- |
+| creating the record | embeddings (stored apart from the record) |
+| every `PATCH` | taxonomy assignment (not part of the listed record) |
+| every translation, sentiment and emotion result | deleting the record — see below |
+
+Every writer stamps `updated_at` from the database clock, so the values are comparable with each
+other and with the `updated_at` you read back.
+
+```bash
+# everything created or changed since the last run, oldest first
+curl -G "$HUB/v1/feedback-records" \
+  -H "Authorization: Bearer $HUB_API_KEY" \
+  -d tenant_id=org-123 \
+  -d updated_since=2026-10-05T07:55:00Z \
+  -d sort=created_at \
+  -d order=asc \
+  -d limit=1000
+```
+
+**Sort by `created_at` or `collected_at`, not by `updated_at`.** `updated_at` is not a sort option,
+on purpose: it changes under you, so a record could jump past the cursor and be skipped. The sort
+columns never change, so every page stays stable even while records in the result are being
+updated. A record that changes after you have paged past it now has a newer `updated_at`, and the
+next run picks it up.
+
+### Choosing the next `updated_since`
+
+Take the **largest `updated_at` you received, minus an overlap**, and store it as the next run's
+`updated_since`. If a run returns nothing, keep the previous value.
+
+- Use a value Hub gave you, not your own clock. It is the same clock Hub compares against, so clock
+  drift between your system and Hub cannot open a gap.
+- Keep an overlap of a few minutes. `updated_at` is the moment the writing transaction *started*,
+  so a write that commits a moment after your read can carry a slightly earlier timestamp than
+  records you already saw. The overlap re-reads that window.
+- The overlap means you will see some records twice. Upsert by `id`, and keep whichever copy has the
+  later `updated_at`.
+
+### Deleted records
+
+<Aside type="caution">
+  **`updated_since` never returns a deleted record.** Deleting a record removes it, and there is no
+  row left for the filter to match. Without separate handling, a synced copy keeps every record
+  that Hub has since deleted.
+</Aside>
+
+To reconcile deletions, periodically list **every** record id for the tenant: page through
+`GET /v1/feedback-records` with no `updated_since` and a stable sort, such as `sort=created_at`.
+Then remove any local record whose id was not returned. This catches every way a record can
+disappear, including deletes by user and dataset purges. It reads the whole tenant, so run it less
+often than the incremental sync, for example daily against an hourly sync.
 
 ## Enrichment filters
 

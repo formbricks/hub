@@ -72,7 +72,7 @@ func TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			query, _, hasUpdates := buildUpdateQuery(testCase.req, uuid.New(), time.Now())
+			query, _, hasUpdates := buildUpdateQuery(testCase.req, uuid.New())
 			if !hasUpdates {
 				t.Fatal("buildUpdateQuery hasUpdates = false, want true")
 			}
@@ -200,7 +200,7 @@ func TestBuildUpdateQuery_ValueID(t *testing.T) {
 	valueID := "opt_very_satisfied"
 	req := &models.UpdateFeedbackRecordRequest{ValueID: &valueID}
 
-	query, args, hasUpdates := buildUpdateQuery(req, uuid.New(), time.Now())
+	query, args, hasUpdates := buildUpdateQuery(req, uuid.New())
 	if !hasUpdates {
 		t.Fatal("buildUpdateQuery hasUpdates = false, want true")
 	}
@@ -218,6 +218,34 @@ func TestBuildUpdateQuery_ValueID(t *testing.T) {
 	}
 }
 
+// TestBuildUpdateQuery_StampsUpdatedAtFromDatabaseClock pins PATCH to the database clock, the one
+// every enrichment write and the insert default use. updated_since compares updated_at against a
+// caller's watermark (ENG-3420), so a timestamp bound from the pod's clock would let that pod's
+// skew hide an edit from an incremental extraction.
+func TestBuildUpdateQuery_StampsUpdatedAtFromDatabaseClock(t *testing.T) {
+	userID := "u1"
+	id := uuid.New()
+
+	query, args, hasUpdates := buildUpdateQuery(&models.UpdateFeedbackRecordRequest{UserID: &userID}, id)
+	if !hasUpdates {
+		t.Fatal("buildUpdateQuery hasUpdates = false, want true")
+	}
+
+	if !strings.Contains(query, "updated_at = NOW()") {
+		t.Fatalf("query must stamp updated_at from the database clock\nquery: %s", query)
+	}
+
+	for i, arg := range args {
+		if _, isTime := arg.(time.Time); isTime {
+			t.Fatalf("args[%d] binds a time.Time; updated_at must not come from the caller's clock", i)
+		}
+	}
+
+	if !reflect.DeepEqual(args, []any{userID, id}) {
+		t.Fatalf("args = %v, want [user_id, id]", args)
+	}
+}
+
 // TestBuildFilterConditions_PlaceholdersMatchArgs locks that every generated $N placeholder maps to
 // its argument's 1-based position for any combination of filters. The placeholder is derived from
 // len(args)+1 at each append precisely so the order of filters can't desync it — this guards
@@ -230,6 +258,8 @@ func TestBuildFilterConditions_PlaceholdersMatchArgs(t *testing.T) {
 	until := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	createdSince := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	createdUntil := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	updatedSince := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+	updatedUntil := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
 	valueDateMin := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	valueDateMax := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	numberMin, numberMax := 1.5, 9.5
@@ -251,6 +281,7 @@ func TestBuildFilterConditions_PlaceholdersMatchArgs(t *testing.T) {
 
 		Since: &since, Until: &until,
 		CreatedSince: &createdSince, CreatedUntil: &createdUntil,
+		UpdatedSince: &updatedSince, UpdatedUntil: &updatedUntil,
 		ValueDateMin: &valueDateMin, ValueDateMax: &valueDateMax,
 		ValueNumberMin: &numberMin, ValueNumberMax: &numberMax,
 
@@ -284,14 +315,16 @@ func TestBuildFilterConditions_PlaceholdersMatchArgs(t *testing.T) {
 		{"collected_at <= $13", until},
 		{"created_at >= $14", createdSince},
 		{"created_at <= $15", createdUntil},
-		{"value_date >= $16", valueDateMin},
-		{"value_date <= $17", valueDateMax},
-		{"value_number >= $18", numberMin},
-		{"value_number <= $19", numberMax},
-		{"sentiment = ANY($20)", []string{"negative", "very_negative"}},
-		{"sentiment_score >= $21", scoreMin},
-		{"sentiment_score <= $22", scoreMax},
-		{"emotions && $23", []string{"anger"}},
+		{"updated_at >= $16", updatedSince},
+		{"updated_at <= $17", updatedUntil},
+		{"value_date >= $18", valueDateMin},
+		{"value_date <= $19", valueDateMax},
+		{"value_number >= $20", numberMin},
+		{"value_number <= $21", numberMax},
+		{"sentiment = ANY($22)", []string{"negative", "very_negative"}},
+		{"sentiment_score >= $23", scoreMin},
+		{"sentiment_score <= $24", scoreMax},
+		{"emotions && $25", []string{"anger"}},
 	}
 
 	if len(args) != len(expected) {

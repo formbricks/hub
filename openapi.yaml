@@ -98,6 +98,8 @@ paths:
                 - $ref: '#/components/parameters/FeedbackRecordsUntil'
                 - $ref: '#/components/parameters/FeedbackRecordsCreatedSince'
                 - $ref: '#/components/parameters/FeedbackRecordsCreatedUntil'
+                - $ref: '#/components/parameters/FeedbackRecordsUpdatedSince'
+                - $ref: '#/components/parameters/FeedbackRecordsUpdatedUntil'
                 - $ref: '#/components/parameters/FeedbackRecordsValueNumberMin'
                 - $ref: '#/components/parameters/FeedbackRecordsValueNumberMax'
                 - $ref: '#/components/parameters/FeedbackRecordsValueDateMin'
@@ -512,6 +514,8 @@ paths:
                 - $ref: '#/components/parameters/FeedbackRecordsUntil'
                 - $ref: '#/components/parameters/FeedbackRecordsCreatedSince'
                 - $ref: '#/components/parameters/FeedbackRecordsCreatedUntil'
+                - $ref: '#/components/parameters/FeedbackRecordsUpdatedSince'
+                - $ref: '#/components/parameters/FeedbackRecordsUpdatedUntil'
                 - $ref: '#/components/parameters/FeedbackRecordsValueNumberMin'
                 - $ref: '#/components/parameters/FeedbackRecordsValueNumberMax'
                 - $ref: '#/components/parameters/FeedbackRecordsValueDateMin'
@@ -2715,6 +2719,31 @@ components:
             description: |
                 Filter by created_at <= created_until (ISO 8601, inclusive). See created_since for how
                 created_at differs from collected_at. Must be between 1970-01-01 and 2080-12-31.
+            schema:
+                type: string
+                format: date-time
+                example: "2026-12-31T00:00:00Z"
+        FeedbackRecordsUpdatedSince:
+            name: updated_since
+            in: query
+            description: |
+                Filter by updated_at >= updated_since (ISO 8601, inclusive). updated_at is set when Hub
+                stores a record and bumped by every update and every enrichment result (translation,
+                sentiment, emotions), so this selects records created OR changed since a point — the
+                parameter for incremental extraction. Permanently deleted records are never returned:
+                reconcile deletions separately by listing record ids. updated_at is not a sort key;
+                keep sorting by collected_at or created_at, which stays stable while matching records
+                change.
+            schema:
+                type: string
+                format: date-time
+                example: "2026-01-01T00:00:00Z"
+        FeedbackRecordsUpdatedUntil:
+            name: updated_until
+            in: query
+            description: |
+                Filter by updated_at <= updated_until (ISO 8601, inclusive). See updated_since for what
+                updates updated_at.
             schema:
                 type: string
                 format: date-time

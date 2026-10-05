@@ -790,8 +790,13 @@ func (r *FeedbackRecordsRepository) ListAfterCursor(
 
 // buildUpdateQuery builds an UPDATE query with SET clause and arguments.
 // Returns the query string, arguments, and a boolean indicating if any updates were provided.
+//
+// updated_at is stamped from the database clock (NOW()), the same clock every enrichment write and
+// the insert default use. updated_since (ENG-3420) compares that column against a caller's
+// watermark, so one writer on a pod's clock would let that pod's skew hide its edits from an
+// incremental extraction.
 func buildUpdateQuery(
-	req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time,
+	req *models.UpdateFeedbackRecordRequest, id uuid.UUID,
 ) (query string, args []any, hasUpdates bool) {
 	var updates []string
 
@@ -910,9 +915,7 @@ func buildUpdateQuery(
 		return "", nil, false
 	}
 
-	updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
-	args = append(args, updatedAt)
-	argCount++
+	updates = append(updates, "updated_at = NOW()")
 
 	args = append(args, id)
 
@@ -956,7 +959,7 @@ func joinOr(conds ...string) string {
 func (r *FeedbackRecordsRepository) Update(
 	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
 ) (updated, previous *models.FeedbackRecord, err error) {
-	query, args, hasUpdates := buildUpdateQuery(req, id, time.Now())
+	query, args, hasUpdates := buildUpdateQuery(req, id)
 	if !hasUpdates {
 		// No write happens, so no tenant write lock is needed; nothing changed, so the previous
 		// state is the current row.

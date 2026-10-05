@@ -15,8 +15,9 @@ import (
 //   - immutable, because a mutable sort key lets a row move across the cursor between pages and be
 //     silently skipped. This is why updated_at is deliberately absent: the enrichment workers
 //     (SetTranslation, SetSentiment, writeEmotions) and every PATCH bump it, so `sort=updated_at`
-//     would lose rows under ordinary traffic. A change-feed needs an append-only sequence, not a
-//     sort parameter.
+//     would lose rows under ordinary traffic. Incremental extraction FILTERS on it instead
+//     (updated_since, ENG-3420) while ordering by an immutable column, which keeps every page
+//     stable however often the matching rows change.
 //
 // Adding a member requires a case in the repository's resolveListOrdering (token -> SQL column)
 // and in FeedbackRecord.SortValue (token -> record field). Both switches are exhaustive-linted, so
@@ -98,6 +99,12 @@ type ListFeedbackRecordsFilters struct {
 	CreatedSince *time.Time `form:"created_since" validate:"omitempty"`
 	CreatedUntil *time.Time `form:"created_until" validate:"omitempty"`
 
+	// updated_at bounds, for incremental extraction (ENG-3420). Insert sets updated_at, and every
+	// PATCH and enrichment write bumps it, so updated_since selects records created OR changed
+	// since a point. It never surfaces a deleted record: a hard delete leaves no row to match.
+	UpdatedSince *time.Time `form:"updated_since" validate:"omitempty"`
+	UpdatedUntil *time.Time `form:"updated_until" validate:"omitempty"`
+
 	// Inclusive value bounds. Like every range filter here, these exclude rows whose column is
 	// NULL — value_number_min=0 selects only records that carry a number at all.
 	ValueNumberMin *float64   `form:"value_number_min" validate:"omitempty"`
@@ -155,10 +162,11 @@ type InvertedRangeFilter struct {
 // the check, which TestInvertedRanges_CoversEveryRangeFilter guards against by reflecting over the
 // struct's form tags.
 func (f *ListFeedbackRecordsFilters) InvertedRanges() []InvertedRangeFilter {
-	inverted := make([]InvertedRangeFilter, 0, 5) //nolint:mnd // capacity hint: the five pairs below
+	inverted := make([]InvertedRangeFilter, 0, 6) //nolint:mnd // capacity hint: the six pairs below
 
 	appendInvertedTimeRange(&inverted, f.Since, f.Until, "Since", "since", "until")
 	appendInvertedTimeRange(&inverted, f.CreatedSince, f.CreatedUntil, "CreatedSince", "created_since", "created_until")
+	appendInvertedTimeRange(&inverted, f.UpdatedSince, f.UpdatedUntil, "UpdatedSince", "updated_since", "updated_until")
 	appendInvertedTimeRange(&inverted, f.ValueDateMin, f.ValueDateMax, "ValueDateMin", "value_date_min", "value_date_max")
 	appendInvertedFloatRange(
 		&inverted, f.ValueNumberMin, f.ValueNumberMax, "ValueNumberMin", "value_number_min", "value_number_max",
