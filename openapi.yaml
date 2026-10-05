@@ -2733,8 +2733,10 @@ components:
                 parameter for incremental extraction. For the next run, use the time the previous run
                 started (its first response's Date header) minus a few minutes of overlap, not the
                 largest updated_at received. Permanently deleted records are never returned: reconcile
-                deletions separately by listing record ids. updated_at is not a sort key; keep sorting
-                by collected_at or created_at, which stays stable while matching records change.
+                deletions separately by listing every record id, and remove only local records that
+                were not returned and were created before that listing started (its first response's
+                Date header) minus the overlap. updated_at is not a sort key; keep sorting by
+                collected_at or created_at, which stays stable while matching records change.
             schema:
                 type: string
                 format: date-time
