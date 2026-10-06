@@ -40,7 +40,7 @@ var publicTaxonomyRoutes = []publicTaxonomyRoute{
 		method:           http.MethodPost,
 		path:             "/v1/taxonomy/runs",
 		operationID:      "create-taxonomy-run",
-		responseStatuses: []string{"200", "202", "400", "401", "409", "503", "default"},
+		responseStatuses: []string{"200", "202", "400", "401", "409", "413", "503", "default"},
 		handler:          (*handlers.TaxonomyHandler).CreateRun,
 	},
 	{
@@ -82,7 +82,7 @@ var publicTaxonomyRoutes = []publicTaxonomyRoute{
 		method:           http.MethodPatch,
 		path:             "/v1/taxonomy/nodes/{node_id}",
 		operationID:      "rename-taxonomy-node",
-		responseStatuses: []string{"200", "400", "401", "404", "409", "default"},
+		responseStatuses: []string{"200", "400", "401", "404", "409", "413", "default"},
 		handler:          (*handlers.TaxonomyHandler).RenameNode,
 	},
 	{

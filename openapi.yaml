@@ -5,6 +5,9 @@ info:
         Feedback record storage and webhook delivery for the Formbricks ecosystem.
         Store feedback records and subscribe to events via webhooks (Standard Webhooks).
         Webhook payloads are described by WebhookDeliveryPayload; use the signing_key to verify requests.
+        A JSON request body must be a single object whose member names match the documented spelling exactly
+        (they are case-sensitive). A member spelled any other way, a member name repeated within any object
+        (free-form members such as metadata included), or data after the object is rejected with 400.
         Self-hosted Hub servers advertise their deployed base URL from PUBLIC_BASE_URL so generated SDK clients
         can point to the correct Hub instance.
         Full Documentation: https://hub.formbricks.com
@@ -406,6 +409,12 @@ paths:
                                         invalid_params:
                                             - name: "field_type"
                                               reason: "has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "409":
                     description: |
                         Conflict. Either a duplicate tenant_id/submission_id/field_id (code `conflict`, terminal),
@@ -734,6 +743,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "404":
                     description: Not Found
                     content:
@@ -836,6 +851,12 @@ paths:
                                 $ref: '#/components/schemas/SemanticSearchResponse'
                 "400":
                     description: Bad Request (e.g. missing tenant_id, empty query, or invalid cursor)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
                     content:
                         application/problem+json:
                             schema:
@@ -1049,6 +1070,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "403":
                     description: Forbidden (e.g. webhook limit exceeded)
                     content:
@@ -1140,6 +1167,12 @@ paths:
                                 $ref: '#/components/schemas/WebhookPublicData'
                 "400":
                     description: Bad Request (e.g. invalid UUID)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
                     content:
                         application/problem+json:
                             schema:
@@ -1621,6 +1654,7 @@ paths:
                   description: The tenant whose terminal failures should be cleared.
             requestBody:
                 required: false
+                description: Omit the body, or send an empty object, to clear every enrichment.
                 content:
                     application/json:
                         schema:
@@ -2013,6 +2047,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "401":
                     description: Unauthorized (missing or invalid API key)
                     content:
@@ -2336,6 +2376,12 @@ paths:
                                 $ref: '#/components/schemas/TaxonomyNodeData'
                 "400":
                     description: Bad Request (e.g. invalid node_id, missing fields, or empty label)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
                     content:
                         application/problem+json:
                             schema:

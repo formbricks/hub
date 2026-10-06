@@ -88,6 +88,12 @@ curl -X POST http://localhost:8080/v1/webhooks \
 
 If you omit `signing_key`, Hub auto-generates one (`whsec_...`) and returns it in the response.
 
+<Aside type="note">
+  Webhook create and update bodies are capped at **64 KiB** (`413
+  content_too_large`). An unknown or misspelled member — member names are
+  case-sensitive — returns `400` naming it, rather than being ignored.
+</Aside>
+
 ### 4. Verify Signatures in Your Receiver
 
 Use the same signing key from the webhook record:

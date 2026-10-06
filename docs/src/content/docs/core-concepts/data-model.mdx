@@ -118,6 +118,14 @@ This enables:
 </Aside>
 
 <Aside type="note">
+  Every Hub request body is one JSON object whose member names match the
+  documented spelling exactly — they are case-sensitive. A member spelled any
+  other way, a member name repeated within any object (`metadata` included), or
+  data after the object returns `400`, with the offending member named in
+  `invalid_params`.
+</Aside>
+
+<Aside type="note">
   **`value_id` — stable option identity.** For choice questions (`categorical`,
   and ranking/matrix rows), store the source system's stable option id in
   `value_id` alongside the human-readable label in `value_text`. Labels are
