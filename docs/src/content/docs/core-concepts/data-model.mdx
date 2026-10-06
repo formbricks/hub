@@ -118,11 +118,12 @@ This enables:
 </Aside>
 
 <Aside type="note">
-  Every Hub request body is one JSON object whose member names match the
-  documented spelling exactly — they are case-sensitive. A member spelled any
-  other way, a member name repeated within any object (`metadata` included), or
-  data after the object returns `400`, with the offending member named in
-  `invalid_params`.
+  Every Hub request body is one JSON object (a JSON `null` is read as an empty
+  object) whose member names match the documented spelling exactly — they are
+  case-sensitive. A member spelled any other way, or a member name repeated
+  within any object (`metadata` included), returns `400` with the offending
+  member named in `invalid_params`. Data after the object also returns `400`,
+  with the cause in the problem `detail`.
 </Aside>
 
 <Aside type="note">
