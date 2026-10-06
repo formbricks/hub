@@ -6,8 +6,9 @@
 -- updated_since exists for incremental extraction: "every record created or changed since my last
 -- run". That query is narrow by design — a sync that runs hourly matches a sliver of the tenant —
 -- and without an index the planner can only satisfy it by walking
--- idx_feedback_records_tenant_collected_at_id and discarding rows, so every page of every sync
--- reads the whole tenant. That is the degradation migration 021 indexed created_at against, and it
+-- idx_feedback_records_tenant_collected_at_id and discarding rows, or by a sequential scan of the
+-- whole table (what it chose on a local 2M-row table), so every page of every sync reads at least
+-- the whole tenant. That is the degradation migration 021 indexed created_at against, and it
 -- gets worse exactly as a tenant grows large enough to need incremental extraction at all.
 --
 -- (tenant_id, updated_at), with no id and no DESC: unlike created_at, updated_at is never a sort
@@ -15,14 +16,21 @@
 -- listing still orders by collected_at or created_at; a narrow match set is fetched here and
 -- sorted, and a wide one falls back to walking the ordering index, which the planner picks by cost.
 --
--- Write cost, accepted deliberately: updated_at changes on every PATCH and every enrichment write,
--- so each of those updates now maintains this index too. Sentiment, emotions and PATCH writes
--- already touch indexed columns and were not HOT updates anyway; a translation write touched none
--- and could be HOT until now. One extra index entry per enrichment write is the price of an
--- extraction query that does not scan the tenant.
+-- Write cost, accepted deliberately, and larger than "one more index": every writer sets updated_at,
+-- so once it is indexed NO update to this table can be a HOT update, and a non-HOT update writes a
+-- new entry into every index on the table (28 with this one). Sentiment and emotions writes, and
+-- PATCHes touching indexed columns, were already non-HOT. Translation writes and metadata-only
+-- PATCHes were not, and now pay the full index maintenance. Measured on a local 2M-row table,
+-- translation-shaped single-row updates went from ~5.7-7.1k TPS (83-91% HOT) to ~1.1-1.2k TPS
+-- (0% HOT). Accepted because enrichment is bound by LLM latency at tens of writes per second, far
+-- below that ceiling, whereas without the index every updated_since query is a sequential scan of
+-- the whole table, all tenants included (57-105 ms at 2M rows and growing with total data, against
+-- ~0.1 ms with it). Expect more WAL and index bloat on translation-heavy deployments.
 --
--- Runs without a transaction because of CONCURRENTLY, and is re-runnable: DROP-then-CREATE replaces
--- the INVALID index an interrupted CREATE INDEX CONCURRENTLY leaves behind (see 021).
+-- Runs without a transaction because of CONCURRENTLY, so writes continue during the build, and is
+-- re-runnable: DROP-then-CREATE replaces the INVALID index an interrupted CREATE INDEX CONCURRENTLY
+-- leaves behind (see 021). The build itself is a burst of WAL; locally it took ~10 s on 2M rows and
+-- caused a checkpoint stall, so a large deployment should expect a short write-latency spike.
 DROP INDEX CONCURRENTLY IF EXISTS idx_feedback_records_tenant_updated_at;
 CREATE INDEX CONCURRENTLY idx_feedback_records_tenant_updated_at
   ON feedback_records (tenant_id, updated_at);
