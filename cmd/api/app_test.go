@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -156,7 +158,13 @@ func TestSetupMetricsDisabledWithNilConfig(t *testing.T) {
 // That the resulting client may insert kinds it registers no worker for needs a database, so it is
 // covered by the integration suite rather than here.
 func TestRiverClientIsInsertOnly(t *testing.T) {
-	if _, err := river.NewClient(riverpgxv5.New(nil), &river.Config{}); err != nil {
+	riverCfg := newInsertOnlyRiverConfig()
+
+	if riverCfg.Workers != nil || riverCfg.Queues != nil {
+		t.Fatalf("newInsertOnlyRiverConfig() declares workers or queues; hub-api must stay insert-only")
+	}
+
+	if _, err := river.NewClient(riverpgxv5.New(nil), riverCfg); err != nil {
 		t.Fatalf("river.NewClient(insert-only config) error = %v, want nil", err)
 	}
 
@@ -169,6 +177,25 @@ func TestRiverClientIsInsertOnly(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("river.NewClient(queues without workers) error = nil, want a validation error")
+	}
+}
+
+// River must log through the handler observability.SetupLogging installs. With no Logger, River
+// writes to a private text logger on stdout instead, which ignores LOG_LEVEL and puts plain-text
+// lines into a LOG_FORMAT=json stream (ENG-2485).
+func TestInsertOnlyRiverConfigUsesProcessLogger(t *testing.T) {
+	// A pointer, so the identity check below can only match this exact handler.
+	handler := &markerHandler{Handler: slog.DiscardHandler}
+	setDefaultLogger(t, slog.New(handler))
+
+	riverCfg := newInsertOnlyRiverConfig()
+
+	if riverCfg.Logger == nil {
+		t.Fatal("newInsertOnlyRiverConfig().Logger = nil, want the process logger")
+	}
+
+	if riverCfg.Logger.Handler() != slog.Handler(handler) {
+		t.Fatalf("River logger handler = %T, want the handler installed by slog.SetDefault", riverCfg.Logger.Handler())
 	}
 }
 
@@ -619,4 +646,27 @@ func newTestOpenAPIHandler(t *testing.T, publicBaseURL string) *handlers.OpenAPI
 	}
 
 	return handler
+}
+
+// markerHandler is a distinct handler instance for asserting which handler River was given.
+type markerHandler struct {
+	slog.Handler
+}
+
+// setDefaultLogger installs logger as the slog default for the rest of the test. slog.SetDefault
+// also points the standard log package at the new handler, and putting the old slog default back
+// does not undo that, so log's output and flags are restored as well; otherwise every later log
+// line in this test binary would go to the discarded handler.
+func setDefaultLogger(t *testing.T, logger *slog.Logger) {
+	t.Helper()
+
+	previous, writer, flags := slog.Default(), log.Writer(), log.Flags()
+
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		log.SetOutput(writer)
+		log.SetFlags(flags)
+	})
+
+	slog.SetDefault(logger)
 }
