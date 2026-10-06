@@ -159,12 +159,15 @@ below, does not.
 - **Take the start time from the server, not from your own clock.** Every response carries an HTTP
   `Date` header; use the one on the run's first response, so drift between your clock and the
   server's cannot open a gap.
-- **Keep an overlap of a few minutes, five is a safe default.** It has to cover three things: a
-  write that was still committing when the run began (`updated_at` is when the writing transaction
-  *started*), the time the first response took (`Date` is stamped after that page was read), and
-  the clock difference between whatever stamped `Date` (Hub, or a proxy in front of it) and the
-  database.
-- **The latest fetch wins, so never run two syncs at once.** The overlap re-reads some records, so
+- **Keep an overlap longer than any write to a record can take.** `updated_at` is when the
+  writing transaction *started*, so a write that commits after your run began can carry a
+  timestamp from before it; the overlap has to exceed the longest such transaction, plus the time
+  the first response took (`Date` is stamped after that page was read) and the clock difference
+  between whatever stamped `Date` (Hub, or a proxy in front of it) and the database. Hub's writes
+  are short single-record transactions, so five minutes is a comfortable default, but Hub does not
+  enforce a limit on how long one may take. A write stalled for longer than the overlap is missed
+  by the incremental sync, which is one reason to keep the full sweep below.
+- **The latest fetch wins, so never run two syncs at once** (the full sweep below included). The overlap re-reads some records, so
   upsert by `id` and let the copy from the most recent run replace the older one. Do not compare
   `updated_at` to pick a copy: two writes to one record can commit in the opposite order to the one
   they started in, so a newer state can carry an older timestamp. A later read always sees the later
@@ -185,9 +188,10 @@ that were not returned **and whose `created_at` is earlier than that start minus
 That condition matters: a record created after the sweep began may have been stored by your
 incremental sync but never reached by the sweep, and deleting it would lose it for good.
 
-This catches every way a record can disappear, including deletes by user and dataset purges. It
-reads the whole tenant, so run it less often than the incremental sync, for example daily against
-an hourly sync.
+This catches every way a record can disappear, including deletes by user and dataset purges. The
+sweep returns every record in full, so upsert what it returns as well: that also repairs any change
+the incremental sync missed, such as a write that took longer than the overlap. It reads the whole
+tenant, so run it less often than the incremental sync, for example daily against an hourly sync.
 
 ## Enrichment filters
 
