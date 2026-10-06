@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
@@ -76,12 +75,8 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req SemanticSearchRequest
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
+	if err := decodeJSONBody(w, r, &req, maxSmallJSONBodyBytes); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}

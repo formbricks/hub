@@ -3,8 +3,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -51,42 +49,11 @@ func NewFeedbackRecordsHandler(service FeedbackRecordsService, taxonomy ...Feedb
 // while blocking multi-megabyte abuse before it is read into memory.
 const maxFeedbackRecordBodyBytes = 512 << 10
 
-// decodeRecordBody bounds, decodes (rejecting unknown fields), and validates a feedback-record
-// request body. It writes the matching problem response — 413 for an oversized body, 400 for
-// malformed JSON, unknown fields, or invalid values — and returns false when it has already
-// responded, so callers just `return`. Mirrors decodeSettingsBody.
-func decodeRecordBody(w http.ResponseWriter, r *http.Request, dst any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxFeedbackRecordBodyBytes)
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(dst); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
-
-			return false
-		}
-
-		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
-
-		return false
-	}
-
-	if err := validation.ValidateStruct(dst); err != nil {
-		response.RespondError(w, r, err)
-
-		return false
-	}
-
-	return true
-}
-
 // Create handles POST /v1/feedback-records.
 func (h *FeedbackRecordsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateFeedbackRecordRequest
 
-	if !decodeRecordBody(w, r, &req) {
+	if !decodeAndValidateJSONBody(w, r, &req, maxFeedbackRecordBodyBytes) {
 		return
 	}
 
@@ -178,7 +145,7 @@ func (h *FeedbackRecordsHandler) Update(w http.ResponseWriter, r *http.Request) 
 
 	var req models.UpdateFeedbackRecordRequest
 
-	if !decodeRecordBody(w, r, &req) {
+	if !decodeAndValidateJSONBody(w, r, &req, maxFeedbackRecordBodyBytes) {
 		return
 	}
 

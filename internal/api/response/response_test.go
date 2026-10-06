@@ -3,6 +3,7 @@ package response
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -178,93 +179,176 @@ func TestRespondErrorQueryDecodeErrorIsValidationProblem(t *testing.T) {
 	assert.Equal(t, "must be in RFC3339 (ISO 8601) format", problem.InvalidParams[0].Reason)
 }
 
-func TestRespondErrorJSONDecodeFailures(t *testing.T) {
-	t.Run("syntax error is bad request", func(t *testing.T) {
-		var dst struct{}
+// decodeV2 decodes the way handlers.decodeJSONBody does, so these cases see the errors the API
+// actually produces.
+func decodeV2(t *testing.T, body string, dst any) error {
+	t.Helper()
 
-		dec := json.NewDecoder(strings.NewReader("{not json"))
-		err := dec.Decode(&dst)
-		require.Error(t, err)
+	err := jsonv2.Unmarshal([]byte(body), dst, jsonv2.RejectUnknownMembers(true))
+	require.Error(t, err)
+
+	return NewRequestJSONDecodeError(err)
+}
+
+type decodeTarget struct {
+	TenantID    string           `json:"tenant_id"`
+	Count       *int             `json:"count,omitempty"`
+	Diagnostics *decodeTargetSub `json:"diagnostics,omitempty"`
+}
+
+type decodeTargetSub struct {
+	Model string `json:"model,omitempty"`
+}
+
+func TestRespondErrorJSONDecodeFailures(t *testing.T) {
+	respond := func(t *testing.T, err error) ProblemDetails {
+		t.Helper()
 
 		rec := httptest.NewRecorder()
-		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
+		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), err)
 
-		problem := decodeProblem(t, rec)
+		return decodeProblem(t, rec)
+	}
+
+	t.Run("syntax error is bad request", func(t *testing.T) {
+		problem := respond(t, decodeV2(t, "{not json", &decodeTarget{}))
+
 		assert.Equal(t, http.StatusBadRequest, problem.Status)
 		assert.Equal(t, CodeBadRequest, problem.Code)
 		assert.Contains(t, problem.Detail, "Invalid JSON")
 		assert.Empty(t, problem.InvalidParams)
 	})
 
-	t.Run("type mismatch is validation with invalid_params", func(t *testing.T) {
-		var dst struct {
-			TenantID string `json:"tenant_id"`
-		}
+	t.Run("truncated body is bad request", func(t *testing.T) {
+		problem := respond(t, decodeV2(t, `{"tenant_id":`, &decodeTarget{}))
 
-		dec := json.NewDecoder(strings.NewReader(`{"tenant_id": 123}`))
-		err := dec.Decode(&dst)
-		require.Error(t, err)
-
-		rec := httptest.NewRecorder()
-		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
-
-		problem := decodeProblem(t, rec)
 		assert.Equal(t, http.StatusBadRequest, problem.Status)
-		assert.Equal(t, CodeValidation, problem.Code)
-		require.Len(t, problem.InvalidParams, 1)
-		assert.Equal(t, "tenant_id", problem.InvalidParams[0].Name)
-		assert.Contains(t, problem.InvalidParams[0].Reason, "string")
+		assert.Equal(t, "Invalid JSON: unexpected end of input", problem.Detail)
 	})
 
-	t.Run("unknown field is bad request", func(t *testing.T) {
-		var dst struct {
-			Query string `json:"query"`
-		}
+	t.Run("data after the top-level value is bad request", func(t *testing.T) {
+		problem := respond(t, decodeV2(t, `{"tenant_id":"a"}{"tenant_id":"b"}`, &decodeTarget{}))
 
-		dec := json.NewDecoder(strings.NewReader(`{"query":"x","unexpected":"y"}`))
-		dec.DisallowUnknownFields()
+		assert.Equal(t, http.StatusBadRequest, problem.Status)
+		assert.Contains(t, problem.Detail, "Invalid JSON")
+		assert.Contains(t, problem.Detail, "after top-level value")
+	})
 
-		err := dec.Decode(&dst)
-		require.Error(t, err)
+	t.Run("type mismatch is validation with invalid_params", func(t *testing.T) {
+		problem := respond(t, decodeV2(t, `{"tenant_id": 123}`, &decodeTarget{}))
 
-		rec := httptest.NewRecorder()
-		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
-
-		problem := decodeProblem(t, rec)
 		assert.Equal(t, http.StatusBadRequest, problem.Status)
 		assert.Equal(t, CodeValidation, problem.Code)
+		assert.Equal(t, []InvalidParam{{Name: "tenant_id", Reason: "must be string"}}, problem.InvalidParams)
+	})
+
+	t.Run("type mismatch names the pointed-to type and the nested path", func(t *testing.T) {
+		count := respond(t, decodeV2(t, `{"count":"x"}`, &decodeTarget{}))
+		nested := respond(t, decodeV2(t, `{"diagnostics":{"model":1}}`, &decodeTarget{}))
+
+		assert.Equal(t, []InvalidParam{{Name: "count", Reason: "must be int"}}, count.InvalidParams)
+		assert.Equal(t, []InvalidParam{{Name: "diagnostics.model", Reason: "must be string"}}, nested.InvalidParams)
+	})
+
+	t.Run("unknown member is validation naming it", func(t *testing.T) {
+		problem := respond(t, decodeV2(t, `{"tenant_id":"a","TENANT_ID":"b"}`, &decodeTarget{}))
+		nested := respond(t, decodeV2(t, `{"diagnostics":{"Model":"x"}}`, &decodeTarget{}))
+
+		assert.Equal(t, CodeValidation, problem.Code)
+		assert.Equal(t, []InvalidParam{{Name: "TENANT_ID", Reason: ReasonJSONMemberUnknown}}, problem.InvalidParams)
+		assert.Equal(t, []InvalidParam{{Name: "diagnostics.Model", Reason: ReasonJSONMemberUnknown}}, nested.InvalidParams)
+	})
+
+	t.Run("repeated member is validation naming it, at any depth", func(t *testing.T) {
+		top := respond(t, decodeV2(t, `{"tenant_id":"a","tenant_id":"b"}`, &decodeTarget{}))
+		escaped := respond(t, decodeV2(t, `{"tenant_id":"a","tenant\u005fid":"b"}`, &decodeTarget{}))
+		nested := respond(t, decodeV2(t, `{"diagnostics":{"model":"a","model":"b"}}`, &decodeTarget{}))
+
+		assert.Equal(t, []InvalidParam{{Name: "tenant_id", Reason: ReasonJSONMemberRepeated}}, top.InvalidParams)
+		assert.Equal(t, []InvalidParam{{Name: "tenant_id", Reason: ReasonJSONMemberRepeated}}, escaped.InvalidParams)
+		assert.Equal(t, []InvalidParam{{Name: "diagnostics.model", Reason: ReasonJSONMemberRepeated}}, nested.InvalidParams)
+	})
+
+	t.Run("a body that is not an object is bad request", func(t *testing.T) {
+		for _, body := range []string{`[]`, `"x"`, `1`, `true`} {
+			problem := respond(t, decodeV2(t, body, &decodeTarget{}))
+
+			assert.Equal(t, http.StatusBadRequest, problem.Status, body)
+			assert.Equal(t, "Invalid request body: must be a JSON object", problem.Detail, body)
+		}
+	})
+
+	t.Run("a custom decoder's refusal is reported at its position", func(t *testing.T) {
+		err := NewRequestJSONDecodeError(&jsonv2.SemanticError{JSONPointer: "/event_types", Err: errors.New("invalid event type: x")})
+		problem := respond(t, err)
+
+		assert.Equal(t, []InvalidParam{{Name: "event_types", Reason: "invalid event type: x"}}, problem.InvalidParams)
+	})
+
+	t.Run("an over-long member name is truncated", func(t *testing.T) {
+		long := strings.Repeat("X", 200)
+		problem := respond(t, decodeV2(t, `{"`+long+`":1}`, &decodeTarget{}))
+
 		require.Len(t, problem.InvalidParams, 1)
-		assert.Equal(t, "unexpected", problem.InvalidParams[0].Name)
-		assert.Contains(t, problem.InvalidParams[0].Reason, "not a recognized")
+		assert.Equal(t, strings.Repeat("X", 64)+"…", problem.InvalidParams[0].Name)
 	})
 
 	t.Run("empty body is bad request", func(t *testing.T) {
-		var dst struct{}
+		problem := respond(t, NewRequestJSONDecodeError(io.EOF))
 
-		dec := json.NewDecoder(strings.NewReader(""))
-		err := dec.Decode(&dst)
-		require.ErrorIs(t, err, io.EOF)
-
-		rec := httptest.NewRecorder()
-		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
-
-		problem := decodeProblem(t, rec)
 		assert.Equal(t, http.StatusBadRequest, problem.Status)
 		assert.Equal(t, CodeBadRequest, problem.Code)
 		assert.Equal(t, "Invalid request body", problem.Detail)
 	})
 
+	t.Run("oversized body is 413", func(t *testing.T) {
+		problem := respond(t, NewRequestJSONDecodeError(&http.MaxBytesError{Limit: 10}))
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, problem.Status)
+		assert.Equal(t, "request body too large", problem.Detail)
+	})
+
 	t.Run("raw json-like error is not treated as request decode", func(t *testing.T) {
 		err := fmt.Errorf("downstream payload failed: %w", io.ErrUnexpectedEOF)
 
-		rec := httptest.NewRecorder()
-		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), err)
-
-		problem := decodeProblem(t, rec)
+		problem := respond(t, err)
 		assert.Equal(t, http.StatusInternalServerError, problem.Status)
 		assert.Equal(t, CodeInternalServerError, problem.Code)
 		assert.Equal(t, detailInternal, problem.Detail)
 	})
+}
+
+// Member names are caller-controlled: a refusal must report them to the caller without writing
+// them to the log, which carries the problem detail.
+func TestRespondErrorJSONDecodeFailuresDoNotLogMemberNames(t *testing.T) {
+	handler := &capturingHandler{}
+	prev := slog.Default()
+
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	for _, body := range []string{
+		`{"tenant_id":"a","SECRET_MEMBER_NAME":"b"}`,
+		`{"SECRET_MEMBER_NAME":"a","SECRET_MEMBER_NAME":"b"}`,
+		`{"diagnostics":{"SECRET_MEMBER_NAME":1}}`,
+		`{"diagnostics":{"model":"a"},"SECRET_MEMBER_NAME":1} x`,
+	} {
+		rec := httptest.NewRecorder()
+		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), decodeV2(t, body, &decodeTarget{}))
+		require.Equal(t, http.StatusBadRequest, rec.Code, body)
+	}
+
+	records := handler.snapshot()
+	require.NotEmpty(t, records)
+
+	for _, record := range records {
+		record.Attrs(func(a slog.Attr) bool {
+			assert.NotContains(t, a.Value.String(), "SECRET_MEMBER_NAME", "logged attribute %q", a.Key)
+
+			return true
+		})
+		assert.NotContains(t, record.Message, "SECRET_MEMBER_NAME")
+	}
 }
 
 func TestRespondErrorPopulatesRequestIDFromContext(t *testing.T) {
@@ -475,26 +559,6 @@ func TestRespondErrorCursorSortMismatchHasItsOwnReason(t *testing.T) {
 	assert.Equal(t, "cursor", problem.InvalidParams[0].Name)
 	assert.Equal(t, InvalidCursorSortReason, problem.InvalidParams[0].Reason)
 	assert.NotEqual(t, InvalidCursorReason, problem.InvalidParams[0].Reason)
-}
-
-func TestRespondErrorTruncatedJSONIsBadRequest(t *testing.T) {
-	// A truncated body (`{"x":`) returns io.ErrUnexpectedEOF from the decoder,
-	// which is a client mistake, not a server failure.
-	var dst struct {
-		X string `json:"x"`
-	}
-
-	dec := json.NewDecoder(strings.NewReader(`{"x":`))
-	err := dec.Decode(&dst)
-	require.Error(t, err)
-
-	rec := httptest.NewRecorder()
-	RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), NewRequestJSONDecodeError(err))
-
-	problem := decodeProblem(t, rec)
-	assert.Equal(t, http.StatusBadRequest, problem.Status)
-	assert.Equal(t, CodeBadRequest, problem.Code)
-	assert.Contains(t, problem.Detail, "Invalid JSON")
 }
 
 func TestProblemResponseMirrorsRequestIDIntoHeader(t *testing.T) {

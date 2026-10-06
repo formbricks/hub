@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -89,7 +88,7 @@ func (h *TaxonomyHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateTaxonomyRunRequest
-	if err := decodeAndValidateJSON(r, &req); err != nil {
+	if err := decodeAndValidateJSON(w, r, &req, maxSmallJSONBodyBytes); err != nil {
 		response.RespondError(w, r, err)
 
 		return
@@ -241,7 +240,7 @@ func (h *TaxonomyHandler) RenameNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.RenameTaxonomyNodeRequest
-	if err := decodeAndValidateJSON(r, &req); err != nil {
+	if err := decodeAndValidateJSON(w, r, &req, maxSmallJSONBodyBytes); err != nil {
 		response.RespondError(w, r, err)
 
 		return
@@ -305,12 +304,9 @@ func (h *TaxonomyHandler) ListNodeRecords(w http.ResponseWriter, r *http.Request
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
-func decodeAndValidateJSON(r *http.Request, dst any) error {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(dst); err != nil {
-		return fmt.Errorf("decode request JSON: %w", response.NewRequestJSONDecodeError(err))
+func decodeAndValidateJSON(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) error {
+	if err := decodeJSONBody(w, r, dst, maxBytes); err != nil {
+		return fmt.Errorf("decode request JSON: %w", err)
 	}
 
 	if err := validation.ValidateStruct(dst); err != nil {

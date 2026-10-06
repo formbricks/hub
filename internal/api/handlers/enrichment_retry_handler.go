@@ -2,13 +2,11 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 
 	"github.com/formbricks/hub/internal/api/response"
-	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -72,35 +70,25 @@ func (h *EnrichmentRetryHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusAccepted, accepted)
 }
 
-// decodeRetryBody reads the optional body via the same MaxBytesReader idiom every other handler
-// uses (see decodeSettingsBody), so an oversized body is a 413 here like everywhere else rather
-// than this endpoint's own 400. An absent or empty body means "all enrichments" — the common case
-// from a UI button — so it must not be an error.
+// decodeRetryBody reads the optional body through the shared strict decoder, so an oversized body
+// is a 413 here like everywhere else. An absent or empty body means "all enrichments" — the common
+// case from a UI button — so it must not be an error.
 func decodeRetryBody(w http.ResponseWriter, r *http.Request) ([]string, bool) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRetryBodyBytes)
-
-	decoder := json.NewDecoder(r.Body)
-	// Unknown fields are rejected rather than ignored: a caller who misspells the key would
-	// otherwise get a 202 that silently cleared everything instead of the one thing they named.
-	decoder.DisallowUnknownFields()
-
 	var parsed enrichmentRetryRequest
 
-	if err := decoder.Decode(&parsed); err != nil {
-		if errors.Is(err, io.EOF) {
-			return nil, true // no body at all — every enrichment
-		}
-
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
-
-			return nil, false
-		}
-
-		response.RespondError(w, r, huberrors.NewValidationError("body", "request body must be a JSON object"))
-
-		return nil, false
+	err := decodeJSONBody(w, r, &parsed, maxRetryBodyBytes)
+	if err == nil {
+		return parsed.Enrichments, true
 	}
 
-	return parsed.Enrichments, true
+	if errors.Is(err, io.EOF) {
+		return nil, true // no body at all — every enrichment
+	}
+
+	// Anything else is refused with the decoder's own problem — 413, or a 400 naming the unknown,
+	// repeated or misspelled member — rather than ignored: a caller who misspells the key would
+	// otherwise get a 202 that silently cleared everything instead of the one thing they named.
+	response.RespondError(w, r, err)
+
+	return nil, false
 }

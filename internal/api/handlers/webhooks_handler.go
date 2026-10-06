@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -34,19 +33,7 @@ func NewWebhooksHandler(service WebhooksService) *WebhooksHandler {
 // Create handles POST /v1/webhooks.
 func (h *WebhooksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateWebhookRequest
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
-
-		return
-	}
-
-	if err := validation.ValidateStruct(&req); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxSmallJSONBodyBytes) {
 		return
 	}
 
@@ -133,19 +120,7 @@ func (h *WebhooksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.UpdateWebhookRequest
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
-
-		return
-	}
-
-	if err := validation.ValidateStruct(&req); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxSmallJSONBodyBytes) {
 		return
 	}
 
