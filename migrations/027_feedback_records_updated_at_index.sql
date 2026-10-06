@@ -17,15 +17,16 @@
 -- sorted, and a wide one falls back to walking the ordering index, which the planner picks by cost.
 --
 -- Write cost, accepted deliberately, and larger than "one more index": every writer sets updated_at,
--- so once it is indexed NO update to this table can be a HOT update, and a non-HOT update writes a
--- new entry into every index on the table (28 with this one). Sentiment and emotions writes, and
--- PATCHes touching indexed columns, were already non-HOT. Translation writes and metadata-only
--- PATCHes were not, and now pay the full index maintenance. Measured on a local 2M-row table,
+-- so once it is indexed NO update to this table can be a HOT update, and a non-HOT update inserts
+-- into every index on the table (29 with this one, counting the primary key), except the partial
+-- indexes whose predicate the new row does not match. Sentiment and emotions writes, and PATCHes
+-- touching indexed columns, were already non-HOT. Translation writes and metadata-only PATCHes were
+-- not: each went from about zero index inserts to twenty-odd. Measured on a local 2M-row table,
 -- translation-shaped single-row updates went from ~5.7-7.1k TPS (83-91% HOT) to ~1.1-1.2k TPS
 -- (0% HOT). Accepted because enrichment is bound by LLM latency at tens of writes per second, far
--- below that ceiling, whereas without the index every updated_since query is a sequential scan of
--- the whole table, all tenants included (57-105 ms at 2M rows and growing with total data, against
--- ~0.1 ms with it). Expect more WAL and index bloat on translation-heavy deployments.
+-- below that ceiling, whereas without the index an updated_since query for a large tenant is a
+-- sequential scan of the whole table, all tenants included (57-105 ms at 2M rows and growing with
+-- total data, against ~0.1 ms with it). Expect more WAL and index bloat on translation-heavy deployments.
 --
 -- Runs without a transaction because of CONCURRENTLY, so writes continue during the build, and is
 -- re-runnable: DROP-then-CREATE replaces the INVALID index an interrupted CREATE INDEX CONCURRENTLY
