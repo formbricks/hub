@@ -5,9 +5,11 @@ import (
 	jsonv1 "encoding/json"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/formbricks/hub/internal/api/response"
@@ -81,11 +83,21 @@ func decodeStrictJSONBody(w http.ResponseWriter, r *http.Request, dst any, maxBy
 var requestBodyOptions = json.JoinOptions(
 	json.RejectUnknownMembers(true),
 	jsontext.AllowInvalidUTF8(true),
-	json.WithUnmarshalers(json.UnmarshalFunc(func(data []byte, t *time.Time) error {
-		// Returned as is: v2 wraps it with the member's position.
-		return jsonv1.Unmarshal(data, t)
-	})),
+	json.WithUnmarshalers(json.UnmarshalFunc(unmarshalTimeLikeV1)),
 )
+
+// unmarshalTimeLikeV1 parses a timestamp the way encoding/json (v1) did. A value of the wrong kind
+// (a number, an object) is reported as a bare type mismatch, which v2 positions and the response
+// mapping names "must be time.Time", as for any other field; v1's own message would leak its
+// wording. A parse error is returned as is: v2 wraps it with the member's position.
+func unmarshalTimeLikeV1(data []byte, t *time.Time) error {
+	err := jsonv1.Unmarshal(data, t)
+	if _, ok := errors.AsType[*jsonv1.UnmarshalTypeError](err); ok {
+		return &json.SemanticError{GoType: reflect.TypeFor[time.Time]()}
+	}
+
+	return err //nolint:wrapcheck // Wrapped by v2 with the member's position; see above.
+}
 
 // decodeAndValidateJSONBody decodes like decodeJSONBody, then validates dst's struct tags. It writes
 // the matching problem response itself and reports false when it has, so callers just `return`.

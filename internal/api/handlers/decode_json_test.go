@@ -252,6 +252,15 @@ func TestDecodeJSONBody(t *testing.T) {
 		assert.Nil(t, probe.CollectedAt)
 	})
 
+	for _, value := range []string{"1", "true", "{}", "[]"} {
+		t.Run("names the expected type for a timestamp of the wrong kind: "+value, func(t *testing.T) {
+			_, rec, _ := decodeAndRespond(t, `{"collected_at":`+value+`}`, 1<<10)
+
+			assert.Equal(t, []response.InvalidParam{{Name: "collected_at", Reason: "must be time.Time"}},
+				problemOf(t, rec).InvalidParams)
+		})
+	}
+
 	t.Run("names a field holding an unparseable timestamp, with a bounded reason", func(t *testing.T) {
 		_, rec, err := decodeAndRespond(t, `{"collected_at":"`+strings.Repeat("x", 600)+`"}`, 4<<10)
 
