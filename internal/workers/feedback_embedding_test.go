@@ -3,6 +3,8 @@ package workers
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,6 +92,28 @@ type mockEmbeddingClient struct {
 	embedding []float32
 	err       error
 	input     string
+}
+
+type rateLimitedBatchEmbeddingClient struct {
+	batchCalls  atomic.Int32
+	singleCalls atomic.Int32
+	err         error
+}
+
+func (c *rateLimitedBatchEmbeddingClient) CreateEmbedding(context.Context, string) ([]float32, error) {
+	c.singleCalls.Add(1)
+
+	return nil, c.err
+}
+
+func (c *rateLimitedBatchEmbeddingClient) CreateEmbeddingForQuery(context.Context, string) ([]float32, error) {
+	return nil, c.err
+}
+
+func (c *rateLimitedBatchEmbeddingClient) CreateEmbeddings(context.Context, []string) ([][]float32, error) {
+	c.batchCalls.Add(1)
+
+	return nil, c.err
 }
 
 func (m *mockEmbeddingClient) CreateEmbedding(_ context.Context, input string) ([]float32, error) {
@@ -398,6 +422,48 @@ func TestFeedbackEmbeddingWorker_RateLimitSnoozes(t *testing.T) {
 		t.Fatalf("rate_limited=%d retry=%d failed_final=%d, want 1/1/0",
 			metrics.workerErr["rate_limited"], metrics.outcomes["retry"], metrics.outcomes["failed_final"])
 	}
+}
+
+func TestFeedbackEmbeddingWorker_BatchedRateLimitSnoozesEveryJob(t *testing.T) {
+	provider := &rateLimitedBatchEmbeddingClient{
+		err: huberrors.NewRateLimitError(45*time.Second, errors.New("429")),
+	}
+	batcher, ok := service.NewBatchingEmbeddingClient(provider, service.EmbeddingBatchConfig{
+		BatchSize: 2, MaxWait: time.Second, MaxInFlight: 1,
+	}, nil)
+	require.True(t, ok)
+
+	metrics := []*countingEmbeddingMetrics{newCountingEmbeddingMetrics(), newCountingEmbeddingMetrics()}
+	services := []*mockEmbeddingService{
+		{record: textRecord("first response")},
+		{record: textRecord("second response")},
+	}
+	errs := make([]error, len(services))
+
+	var waitGroup sync.WaitGroup
+	for i := range services {
+		waitGroup.Go(func() {
+			worker := NewFeedbackEmbeddingWorker(services[i], batcher, "", metrics[i])
+			job := embeddingJob()
+			job.MaxAttempts = 1
+			job.CreatedAt = time.Now()
+			errs[i] = worker.Work(context.Background(), job)
+		})
+	}
+
+	waitGroup.Wait()
+
+	for i, err := range errs {
+		var snooze *river.JobSnoozeError
+		require.ErrorAs(t, err, &snooze, "job %d must snooze without consuming an attempt", i)
+		assert.Equal(t, 45*time.Second, snooze.Duration)
+		assert.Zero(t, services[i].setCalls)
+		assert.Equal(t, 1, metrics[i].workerErr["rate_limited"])
+		assert.Zero(t, metrics[i].outcomes["failed_final"])
+	}
+
+	assert.EqualValues(t, 1, provider.batchCalls.Load())
+	assert.Zero(t, provider.singleCalls.Load())
 }
 
 func TestFeedbackEmbeddingWorker_SupersededWriteSkips(t *testing.T) {

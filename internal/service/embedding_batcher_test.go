@@ -10,18 +10,21 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/formbricks/hub/internal/huberrors"
 )
 
 type batcherTestClient struct {
-	mu          sync.Mutex
-	batches     [][]string
-	batchErr    error
-	batchBlock  <-chan struct{}
-	queryCalls  int
-	singleCalls int
-	singleErrs  map[string]error
-	singleBlock <-chan struct{}
-	singleStart chan<- string
+	mu           sync.Mutex
+	batches      [][]string
+	batchErr     error
+	batchVectors [][]float32
+	batchBlock   <-chan struct{}
+	queryCalls   int
+	singleCalls  int
+	singleErrs   map[string]error
+	singleBlock  <-chan struct{}
+	singleStart  chan<- string
 }
 
 func (c *batcherTestClient) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {
@@ -70,13 +73,18 @@ func (c *batcherTestClient) CreateEmbeddings(ctx context.Context, inputs []strin
 	c.mu.Lock()
 	c.batches = append(c.batches, append([]string(nil), inputs...))
 	err := c.batchErr
+	vectors := c.batchVectors
 	c.mu.Unlock()
 
 	if err != nil {
 		return nil, err
 	}
 
-	vectors := make([][]float32, len(inputs))
+	if vectors != nil {
+		return vectors, nil
+	}
+
+	vectors = make([][]float32, len(inputs))
 	for i, input := range inputs {
 		vectors[i] = []float32{float32(len(input))}
 	}
@@ -148,9 +156,10 @@ func TestBatchingEmbeddingClientPartialBatchAndQueryBypass(t *testing.T) {
 	}
 }
 
-func TestBatchingEmbeddingClientProviderErrorRetriesRequestsIndividually(t *testing.T) {
-	batchErr := errors.New("batch rejected")
-	badInputErr := errors.New("input rejected")
+func TestBatchingEmbeddingClientInputSpecificErrorRetriesRequestsIndividually(t *testing.T) {
+	batchErr := fmt.Errorf("batch rejected: %w", huberrors.NewTerminalProviderError(
+		huberrors.TerminalReasonLength, errors.New("input too long")))
+	badInputErr := huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength, errors.New("input rejected"))
 	singleBlock := make(chan struct{})
 	singleStart := make(chan string, 3)
 	provider := &batcherTestClient{
@@ -209,6 +218,70 @@ func TestBatchingEmbeddingClientProviderErrorRetriesRequestsIndividually(t *test
 
 	if provider.singleCalls != len(inputs) {
 		t.Fatalf("single calls = %d, want %d", provider.singleCalls, len(inputs))
+	}
+}
+
+func TestBatchingEmbeddingClientDoesNotFanOutSharedFailures(t *testing.T) {
+	rateLimit := huberrors.NewRateLimitError(45*time.Second, errors.New("429"))
+	tests := []struct {
+		name    string
+		err     error
+		vectors [][]float32
+		wantErr error
+	}{
+		{name: "rate limit", err: rateLimit, wantErr: rateLimit},
+		{name: "server error", err: errors.New("503 service unavailable")},
+		{name: "timeout", err: fmt.Errorf("provider timeout: %w", context.DeadlineExceeded)},
+		{name: "malformed response", vectors: [][]float32{{1}}, wantErr: ErrEmbeddingBatchResultCount},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &batcherTestClient{batchErr: test.err, batchVectors: test.vectors}
+
+			batcher, ok := NewBatchingEmbeddingClient(provider, EmbeddingBatchConfig{
+				BatchSize: 3, MaxWait: time.Second, MaxInFlight: 1,
+			}, nil)
+			if !ok {
+				t.Fatal("batch client was not enabled")
+			}
+
+			errs := make([]error, 3)
+
+			var waitGroup sync.WaitGroup
+			for i := range errs {
+				waitGroup.Go(func() {
+					_, errs[i] = batcher.CreateEmbedding(context.Background(), "document")
+				})
+			}
+
+			waitGroup.Wait()
+
+			wantErr := test.wantErr
+			if wantErr == nil {
+				wantErr = test.err
+			}
+
+			for i, err := range errs {
+				if !errors.Is(err, wantErr) {
+					t.Fatalf("input %d error = %v, want %v", i, err, wantErr)
+				}
+
+				if test.name == "rate limit" {
+					var limited *huberrors.RateLimitError
+					if !errors.As(err, &limited) || limited.RetryAfter != 45*time.Second {
+						t.Fatalf("input %d error = %v, want typed rate limit with 45s retry hint", i, err)
+					}
+				}
+			}
+
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+
+			if len(provider.batches) != 1 || provider.singleCalls != 0 {
+				t.Fatalf("batches=%d single calls=%d, want 1/0", len(provider.batches), provider.singleCalls)
+			}
+		})
 	}
 }
 
