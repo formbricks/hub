@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -88,9 +87,7 @@ func (h *TaxonomyHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateTaxonomyRunRequest
-	if err := decodeAndValidateJSON(w, r, &req, maxSmallJSONBodyBytes); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxSmallJSONBodyBytes) {
 		return
 	}
 
@@ -240,9 +237,7 @@ func (h *TaxonomyHandler) RenameNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.RenameTaxonomyNodeRequest
-	if err := decodeAndValidateJSON(w, r, &req, maxSmallJSONBodyBytes); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxSmallJSONBodyBytes) {
 		return
 	}
 
@@ -302,18 +297,6 @@ func (h *TaxonomyHandler) ListNodeRecords(w http.ResponseWriter, r *http.Request
 	}
 
 	response.RespondJSON(w, http.StatusOK, result)
-}
-
-func decodeAndValidateJSON(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) error {
-	if err := decodeJSONBody(w, r, dst, maxBytes); err != nil {
-		return fmt.Errorf("decode request JSON: %w", err)
-	}
-
-	if err := validation.ValidateStruct(dst); err != nil {
-		return fmt.Errorf("validate request body: %w", err)
-	}
-
-	return nil
 }
 
 func parseUUIDPathValue(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {

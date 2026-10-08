@@ -88,9 +88,7 @@ func (h *TaxonomyInternalHandler) CompleteRun(w http.ResponseWriter, r *http.Req
 	}
 
 	var req models.TaxonomyRunResultRequest
-	if err := decodeAndValidateJSON(w, r, &req, maxTaxonomyResultBodyBytes); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxTaxonomyResultBodyBytes) {
 		return
 	}
 
@@ -118,9 +116,7 @@ func (h *TaxonomyInternalHandler) FailRun(w http.ResponseWriter, r *http.Request
 	}
 
 	var req models.TaxonomyRunFailedRequest
-	if err := decodeAndValidateJSON(w, r, &req, maxSmallJSONBodyBytes); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxSmallJSONBodyBytes) {
 		return
 	}
 
