@@ -1672,7 +1672,7 @@ paths:
                 '400':
                     description: |
                         Bad Request. Returned for an unknown enrichment name, a body that is not a JSON
-                        object, or a missing tenant id.
+                        object, an unknown or repeated member, malformed JSON, or a missing tenant id.
                     content:
                         application/problem+json:
                             schema:
