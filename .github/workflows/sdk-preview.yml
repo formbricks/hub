@@ -31,7 +31,7 @@ env:
   # packing and comparison under the npm a release will use — npm's JSON output
   # changes between majors, and this is where that should surface, not on the
   # first release after a bump.
-  NPM_VERSION: 12.1.0
+  NPM_VERSION: 12.2.0
 
 concurrency:
   group: sdk-preview-${{ github.head_ref }}
@@ -62,7 +62,7 @@ jobs:
           package_json_file: sdks/typescript/package.json
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: pnpm
