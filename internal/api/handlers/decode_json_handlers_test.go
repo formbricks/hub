@@ -89,6 +89,48 @@ func TestHandlersRefuseCaseVariantTenant(t *testing.T) {
 		assertRefusedMember(t, rec, "TENANT_ID")
 		assert.False(t, webhooks.called, "the service must not see an ambiguous body")
 	})
+
+	// A webhook update can move the webhook to another tenant.
+	t.Run("webhook update", func(t *testing.T) {
+		webhooks := &recordingWebhooksService{}
+		handler := NewWebhooksHandler(webhooks)
+
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "http://test/v1/webhooks/x",
+			strings.NewReader(`{"tenant_id":"tenant-a","TENANT_ID":"tenant-b"}`))
+		req.SetPathValue("id", uuid.Must(uuid.NewV7()).String())
+
+		rec := httptest.NewRecorder()
+
+		handler.Update(rec, req)
+
+		assertRefusedMember(t, rec, "TENANT_ID")
+		assert.False(t, webhooks.called, "the service must not see an ambiguous body")
+	})
+
+	// tenant_id arrives here through the embedded TaxonomyScope, which v2 resolves by inlining.
+	// The stub service panics if called, so reaching it fails the test.
+	t.Run("taxonomy run create", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/v1/taxonomy/runs",
+			strings.NewReader(`{"tenant_id":"tenant-a","source_type":"survey","source_id":"s","field_id":"q1",`+
+				`"actor_id":"a","TENANT_ID":"tenant-b"}`))
+		rec := httptest.NewRecorder()
+
+		NewTaxonomyHandler(&stubTaxonomyService{}).CreateRun(rec, req)
+
+		assertRefusedMember(t, rec, "TENANT_ID")
+	})
+
+	t.Run("taxonomy node rename", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "http://test/v1/taxonomy/nodes/x",
+			strings.NewReader(`{"tenant_id":"tenant-a","actor_id":"a","label":"x","Tenant_Id":"tenant-b"}`))
+		req.SetPathValue("node_id", uuid.Must(uuid.NewV7()).String())
+
+		rec := httptest.NewRecorder()
+
+		NewTaxonomyHandler(&stubTaxonomyService{}).RenameNode(rec, req)
+
+		assertRefusedMember(t, rec, "Tenant_Id")
+	})
 }
 
 // Webhook requests decode through their own UnmarshalJSONFrom; the shared decoder's options must

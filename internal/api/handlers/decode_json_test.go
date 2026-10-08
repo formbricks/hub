@@ -408,15 +408,59 @@ var decodedRequestTypes = []any{
 }
 
 // Every request type must decode under v2's rules: a struct whose definition v2 rejects (conflicting
-// names, unsupported options) would fail every request at run time, not at build time.
+// names, unsupported options) would fail every request at run time, not at build time. v2 checks a
+// struct the first time it decodes one, so a nested struct only reached through a populated array or
+// pointer would escape a check on `{}` alone — every struct reachable from a request type is
+// decoded on its own.
 func TestDecodedRequestTypesDecodeUnderV2(t *testing.T) {
 	for _, dst := range decodedRequestTypes {
 		t.Run(reflect.TypeOf(dst).Elem().Name(), func(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/v1/x", strings.NewReader(`{}`))
 
 			require.NoError(t, decodeJSONBody(httptest.NewRecorder(), req, dst, 1<<10))
+
+			for _, nested := range reachableStructTypes(reflect.TypeOf(dst), map[reflect.Type]bool{}) {
+				require.NoError(t, json.Unmarshal([]byte(`{}`), reflect.New(nested).Interface(), requestBodyOptions),
+					"nested type %s", nested)
+			}
 		})
 	}
+}
+
+var (
+	unmarshalerFromType   = reflect.TypeFor[json.UnmarshalerFrom]()
+	unmarshalerType       = reflect.TypeFor[json.Unmarshaler]()
+	jsonv1UnmarshalerType = reflect.TypeFor[jsonv1.Unmarshaler]()
+)
+
+// reachableStructTypes returns the struct types a request type's decodable fields reach, through
+// pointers, slices, arrays and maps. A type with its own unmarshaler is not decoded from `{}` (it
+// defines its own input), but the structs its fields reach still are.
+func reachableStructTypes(typ reflect.Type, seen map[reflect.Type]bool) []reflect.Type {
+	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array || typ.Kind() == reflect.Map {
+		typ = typ.Elem()
+	}
+
+	if typ.Kind() != reflect.Struct || seen[typ] {
+		return nil
+	}
+
+	seen[typ] = true
+
+	var found []reflect.Type
+
+	ptr := reflect.PointerTo(typ)
+	if !ptr.Implements(unmarshalerFromType) && !ptr.Implements(unmarshalerType) && !ptr.Implements(jsonv1UnmarshalerType) {
+		found = append(found, typ)
+	}
+
+	for field := range typ.Fields() {
+		if field.IsExported() || field.Anonymous {
+			found = append(found, reachableStructTypes(field.Type, seen)...)
+		}
+	}
+
+	return found
 }
 
 // FuzzDecodeJSONBody checks the property the gateway relies on: whatever decodeJSONBody accepts,
