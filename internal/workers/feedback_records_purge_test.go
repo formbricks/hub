@@ -120,10 +120,9 @@ func TestFeedbackRecordsPurgeWorker_Work(t *testing.T) {
 		assert.NotContains(t, err.Error(), "org-1")
 	})
 
-	// A failed purge used to leave no trace: the worker logged only on success, and River reports
-	// retries and final discards at INFO while hub-worker's fallback logger sits at WARN. The purge
-	// commits in batches, so a silent failure leaves the dataset partly emptied with nothing to
-	// explain it.
+	// River logs the failed attempt too, but without the tenant or the progress committed before the
+	// failure. The purge commits in batches, so a failure leaves the dataset partly emptied, and this
+	// line is the only one that says how far it got.
 	t.Run("logs a retryable failure with the progress it committed", func(t *testing.T) {
 		logs := capturePurgeLogs(t)
 		svc := &recordingPurgeService{
