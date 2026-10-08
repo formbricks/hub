@@ -192,7 +192,7 @@ type CreateWebhookRequest struct {
 	URL        string                `json:"url"                   validate:"required,no_null_bytes,http_url,min=1,max=2048"`
 	SigningKey string                `json:"signing_key,omitempty" validate:"omitempty,max=255"`
 	Enabled    *bool                 `json:"enabled,omitempty"`
-	TenantID   *string               `json:"tenant_id"             validate:"required,no_null_bytes,min=1,max=255"`
+	TenantID   *string               `json:"tenant_id"             validate:"required,no_null_bytes,no_replacement_char,min=1,max=255"`
 	EventTypes []datatypes.EventType `json:"event_types,omitempty"`
 }
 
@@ -232,7 +232,7 @@ type UpdateWebhookRequest struct {
 	URL            *string                `json:"url,omitempty"         validate:"omitempty,no_null_bytes,http_url,min=1,max=2048"`
 	SigningKey     *string                `json:"signing_key,omitempty" validate:"omitempty,no_null_bytes,min=1,max=255"`
 	Enabled        *bool                  `json:"enabled,omitempty"`
-	TenantID       *string                `json:"tenant_id,omitempty"   validate:"omitempty,no_null_bytes,min=1,max=255"`
+	TenantID       *string                `json:"tenant_id,omitempty"   validate:"omitempty,no_null_bytes,no_replacement_char,min=1,max=255"`
 	EventTypes     *[]datatypes.EventType `json:"event_types,omitempty"`
 	DisabledReason *string                `json:"-"` // read-only; set by system when disabling
 	DisabledAt     *time.Time             `json:"-"` // read-only; set by system when disabling

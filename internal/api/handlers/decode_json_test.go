@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	jsonv1 "encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"log/slog"
@@ -34,7 +35,7 @@ var (
 )
 
 type decodeProbe struct {
-	TenantID    string             `json:"tenant_id"`
+	TenantID    string             `json:"tenant_id"              validate:"omitempty,no_replacement_char"`
 	Query       string             `json:"query"`
 	Kind        string             `json:"kind"`
 	Status      string             `json:"status"`
@@ -433,6 +434,8 @@ func FuzzDecodeJSONBody(f *testing.F) {
 		`{"tenant_id":null}`,
 		`{"query":"q","metadata":{"TENANT_ID":"B"}}`,
 		`{"tenant_id":"A","` + kelvinSign + `ind":"B"}`,
+		`{"tenant_id":"A` + "\xe2\x82" + `"}`,
+		`{"tenant_id":"A` + backslash + `ud800"}`,
 		`null`,
 	} {
 		f.Add([]byte(seed))
@@ -442,7 +445,7 @@ func FuzzDecodeJSONBody(f *testing.F) {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/v1/x", bytes.NewReader(body))
 
 		var probe decodeProbe
-		if err := decodeJSONBody(httptest.NewRecorder(), req, &probe, 1<<16); err != nil {
+		if !decodeAndValidateJSONBody(httptest.NewRecorder(), req, &probe, 1<<16) {
 			return
 		}
 
@@ -450,9 +453,11 @@ func FuzzDecodeJSONBody(f *testing.F) {
 		var members map[string]jsonv1.RawMessage
 		require.NoError(t, jsonv1.Unmarshal(body, &members))
 
+		// The accepted tenant must be what any JSON reader reads: v2's defaults refuse invalid UTF-8
+		// and unpaired surrogates, the inputs readers disagree on.
 		want := ""
 		if raw, ok := members["tenant_id"]; ok && string(raw) != "null" {
-			require.NoError(t, jsonv1.Unmarshal(raw, &want))
+			require.NoError(t, json.Unmarshal(raw, &want), "accepted a tenant only a lenient reader reads")
 		}
 
 		assert.Equal(t, want, probe.TenantID)

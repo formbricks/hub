@@ -9,7 +9,8 @@ info:
         match the documented spelling exactly; they are case-sensitive. A member spelled any other way, or a
         member name repeated within any object (free-form members such as metadata included), is rejected
         with 400 naming the member in invalid_params. Data after the object is rejected with 400 too, with
-        the cause in the problem detail.
+        the cause in the problem detail. A tenant_id in a request body may not contain U+FFFD, which the decoder
+        substitutes for invalid UTF-8 and unpaired surrogates; such a value is rejected with 400.
         Self-hosted Hub servers advertise their deployed base URL from PUBLIC_BASE_URL so generated SDK clients
         can point to the correct Hub instance.
         Full Documentation: https://hub.formbricks.com
@@ -3143,9 +3144,10 @@ components:
                 tenant_id:
                     type: string
                     minLength: 1
-                    description: Tenant ID (required for isolation; must match feedback record tenant_id)
+                    description: Tenant ID (required for isolation; must match feedback record tenant_id). U+FFFD is not allowed (it stands in for invalid UTF-8 or an unpaired surrogate).
                     default: "org-123"
                     example: "org-123"
+                    pattern: '^[^\uFFFD]*$'
             required:
                 - query
                 - tenant_id
@@ -3317,12 +3319,12 @@ components:
                     pattern: '^[^\x00]*$'
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier for multi-tenancy. Required.
+                    description: Tenant/organization identifier for multi-tenancy. Required. U+FFFD is not allowed (it stands in for invalid UTF-8 or an unpaired surrogate).
                     examples:
                         - org-123
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                 user_id:
                     type: string
                     description: User ID (e.g., anonymous ID or email hash)
@@ -3639,10 +3641,10 @@ components:
                     description: Whether the webhook is active (default true)
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier. Required for webhook isolation; NULL bytes not allowed.
+                    description: Tenant/organization identifier. Required for webhook isolation; NULL bytes not allowed. U+FFFD is not allowed (it stands in for invalid UTF-8 or an unpaired surrogate).
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                     example: "org-123"
                 event_types:
                     type: array
@@ -3704,10 +3706,10 @@ components:
                     description: Enable or disable the webhook
                 tenant_id:
                     type: string
-                    description: Omit to leave unchanged. Empty strings are rejected; webhooks cannot be global.
+                    description: Omit to leave unchanged. Empty strings are rejected; webhooks cannot be global. U+FFFD is not allowed (it stands in for invalid UTF-8 or an unpaired surrogate).
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                     example: "org-123"
                 event_types:
                     type: array
@@ -4354,7 +4356,7 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                 source_type:
                     type: string
                     minLength: 1
@@ -4471,7 +4473,7 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                 actor_id:
                     type: string
                     minLength: 1

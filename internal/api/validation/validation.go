@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-playground/form/v4"
 	"github.com/go-playground/validator/v10"
@@ -100,6 +101,10 @@ func init() {
 
 	if err := validate.RegisterValidation("no_null_bytes", validateNoNullBytes); err != nil {
 		slog.Error("Failed to register no_null_bytes validator", "error", err)
+	}
+
+	if err := validate.RegisterValidation(noReplacementCharTag, validateNoReplacementChar); err != nil {
+		slog.Error("Failed to register no_replacement_char validator", "error", err)
 	}
 
 	if err := validate.RegisterValidation(storableJSONTag, validateStorableJSON); err != nil {
@@ -388,6 +393,8 @@ func FormatFieldError(fieldErr validator.FieldError) string {
 		return "must be in RFC3339 (ISO 8601) format"
 	case "no_null_bytes":
 		return "must not contain NULL bytes"
+	case noReplacementCharTag:
+		return "must be valid UTF-8, with no unpaired UTF-16 surrogates or U+FFFD characters"
 	case storableJSONTag:
 		return "must contain valid UTF-8 and no NULL bytes or unpaired UTF-16 surrogates"
 	case "http_url":
@@ -450,25 +457,43 @@ func validateEmotion(fl validator.FieldLevel) bool {
 // validateNoNullBytes checks that a string field does not contain NULL bytes
 // Handles both string and *string types.
 func validateNoNullBytes(fl validator.FieldLevel) bool {
+	value, ok := stringField(fl)
+
+	return !ok || !strings.Contains(value, "\x00")
+}
+
+// noReplacementCharTag refuses U+FFFD in identifiers that authorize a request (`tenant_id`). The
+// request decoder replaces invalid UTF-8 and unpaired surrogates with U+FFFD, where another JSON
+// reader of the same bytes (a JavaScript gateway) keeps the surrogate or replaces a broken sequence
+// with a single U+FFFD — so the two could read different tenants (ENG-3658). Any identifier they
+// could disagree on holds U+FFFD on this side; refusing it leaves only values both read alike.
+const noReplacementCharTag = "no_replacement_char"
+
+// validateNoReplacementChar checks that a string field holds no U+FFFD. Handles string and *string.
+func validateNoReplacementChar(fl validator.FieldLevel) bool {
+	value, ok := stringField(fl)
+
+	return !ok || !strings.ContainsRune(value, utf8.RuneError)
+}
+
+// stringField returns the string a string or non-nil *string field holds, and false for anything
+// else — a nil pointer is left to omitempty or required, another kind to the tag's misuse.
+func stringField(fl validator.FieldLevel) (string, bool) {
 	field := fl.Field()
 
-	// Handle pointer types
 	if field.Kind() == reflect.Pointer {
 		if field.IsNil() {
-			return true // nil pointer is valid (handled by omitempty)
+			return "", false
 		}
 
 		field = field.Elem()
 	}
 
-	// Must be a string type
 	if field.Kind() != reflect.String {
-		return true // Not a string, skip validation
+		return "", false
 	}
 
-	value := field.String()
-
-	return !strings.Contains(value, "\x00")
+	return field.String(), true
 }
 
 func tagName(field reflect.StructField, key string) string {

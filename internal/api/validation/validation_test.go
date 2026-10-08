@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
@@ -315,4 +316,26 @@ func TestDecodeEnumSliceIndexedFormIsValidated(t *testing.T) {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, query.String(), http.NoBody)
 		require.Error(t, ValidateAndDecodeQueryParams(req, &filters))
 	})
+}
+
+func TestNoReplacementChar(t *testing.T) {
+	type request struct {
+		TenantID *string `json:"tenant_id,omitempty" validate:"omitempty,no_replacement_char"`
+		Count    int     `json:"count"               validate:"no_replacement_char"`
+	}
+
+	valid := "tenant-a ünïcödé"
+	assert.NoError(t, ValidateStruct(request{TenantID: &valid}), "other non-ASCII text is fine")
+	assert.NoError(t, ValidateStruct(request{}), "a nil pointer is left to omitempty")
+
+	replaced := "tenant-a" + string(utf8.RuneError)
+	err := ValidateStruct(request{TenantID: &replaced})
+	require.Error(t, err)
+
+	var validationErrors validator.ValidationErrors
+	require.ErrorAs(t, err, &validationErrors)
+	require.Len(t, validationErrors, 1)
+	assert.Equal(t, "tenant_id", validationErrors[0].Field())
+	assert.Equal(t, "must be valid UTF-8, with no unpaired UTF-16 surrogates or U+FFFD characters",
+		FormatFieldError(validationErrors[0]))
 }

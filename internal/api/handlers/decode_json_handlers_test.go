@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -284,4 +285,64 @@ func (s *recordingWebhooksService) DeleteWebhook(context.Context, uuid.UUID) err
 	s.called = true
 
 	return nil
+}
+
+// The decoder turns invalid UTF-8 and unpaired surrogates in values into U+FFFD, where a JavaScript
+// gateway keeps the surrogate or replaces a broken sequence with a single U+FFFD — so the two can read
+// different tenants from the same bytes. Every body tenant_id refuses U+FFFD before a service call.
+func TestHandlersRefuseMangledTenant(t *testing.T) {
+	const reason = "must be valid UTF-8, with no unpaired UTF-16 surrogates or U+FFFD characters"
+
+	id := uuid.Must(uuid.NewV7()).String()
+	handlers := map[string]struct {
+		call  func(http.ResponseWriter, *http.Request)
+		body  string
+		param string
+	}{
+		"feedback record create": {
+			NewFeedbackRecordsHandler(&mockFeedbackRecordsService{}).Create,
+			`{"source_type":"survey","field_id":"q1","field_type":"text","submission_id":"s1","tenant_id":%s}`, "tenant_id",
+		},
+		"semantic search": {NewSearchHandler(&mockSearchService{}).SemanticSearch, `{"query":"q","tenant_id":%s}`, "tenant_id"},
+		"webhook create": {
+			NewWebhooksHandler(&recordingWebhooksService{}).Create, `{"url":"https://example.com/hook","tenant_id":%s}`, "tenant_id",
+		},
+		"webhook update": {NewWebhooksHandler(&recordingWebhooksService{}).Update, `{"tenant_id":%s}`, "tenant_id"},
+		// The validator names a member of an embedded struct with the struct's name, as it does for
+		// every validation failure on this route.
+		"taxonomy run create": {
+			NewTaxonomyHandler(&stubTaxonomyService{}).CreateRun,
+			`{"tenant_id":%s,"source_type":"survey","source_id":"s","field_id":"q1","actor_id":"a"}`, "TaxonomyScope.tenant_id",
+		},
+		"taxonomy node rename": {
+			NewTaxonomyHandler(&stubTaxonomyService{}).RenameNode, `{"tenant_id":%s,"actor_id":"a","label":"x"}`, "tenant_id",
+		},
+	}
+	tenants := map[string]string{
+		"invalid UTF-8":           `"tenant-a` + "\xe2\x82" + `"`,
+		"an unpaired surrogate":   `"tenant-a` + backslash + `ud800"`,
+		"a literal U+FFFD":        `"tenant-a` + string(rune(0xFFFD)) + `"`,
+		"an escaped U+FFFD (too)": `"tenant-a` + backslash + `ufffd"`,
+	}
+
+	for name, handler := range handlers {
+		for kind, tenant := range tenants {
+			t.Run(name+", "+kind, func(t *testing.T) {
+				req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/x",
+					strings.NewReader(fmt.Sprintf(handler.body, tenant)))
+				req.SetPathValue("id", id)
+				req.SetPathValue("node_id", id)
+
+				rec := httptest.NewRecorder()
+
+				require.NotPanics(t, func() { handler.call(rec, req) }, "the body must be refused before any service call")
+
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+				var problem response.ProblemDetails
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &problem))
+				assert.Equal(t, []response.InvalidParam{{Name: handler.param, Reason: reason}}, problem.InvalidParams)
+			})
+		}
+	}
 }

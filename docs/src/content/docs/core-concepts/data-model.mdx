@@ -65,7 +65,7 @@ The `FeedbackRecord` entity stores individual feedback data points.
 
 | Field           | Type   | Required | Description                                                                                                  |
 | --------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------ |
-| **`tenant_id`** | String | Yes      | Tenant/organization identifier required for tenant isolation. Maximum 255 chars; NULL bytes are not allowed. |
+| **`tenant_id`** | String | Yes      | Tenant/organization identifier required for tenant isolation. Maximum 255 chars; NULL bytes and U+FFFD are not allowed. |
 
 #### Source Tracking
 
@@ -123,7 +123,9 @@ This enables:
   case-sensitive. A member spelled any other way, or a member name repeated
   within any object (`metadata` included), returns `400` with the offending
   member named in `invalid_params`. Data after the object also returns `400`,
-  with the cause in the problem `detail`.
+  with the cause in the problem `detail`. A `tenant_id` may not contain U+FFFD,
+  which the Hub substitutes for invalid UTF-8 and unpaired surrogates, so a
+  tenant id that is not valid text is refused rather than rewritten.
 </Aside>
 
 <Aside type="note">
