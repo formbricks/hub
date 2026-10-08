@@ -172,6 +172,7 @@ func (c *Client) Translate(ctx context.Context, systemPrompt, userText string) (
 	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), &genai.GenerateContentConfig{
 		Temperature:       &temperature,
 		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
+		ThinkingConfig:    c.modelThinkingConfig(),
 	})
 
 	c.recordGenerate(ctx, started, resp, err)
@@ -205,6 +206,7 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 		SystemInstruction:  genai.NewContentFromText(systemPrompt, genai.RoleUser),
 		ResponseMIMEType:   "application/json",
 		ResponseJsonSchema: schema.JSONSchema(),
+		ThinkingConfig:     c.modelThinkingConfig(),
 	}
 
 	// Gemini 2.5 models think by default (dynamic budget), which adds thinking-token cost and
@@ -212,14 +214,14 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 	// size. Request a zero budget (Flash-family models accept it); Pro models reject zero with
 	// an INVALID_ARGUMENT, in which case retry without the config and latch, falling back to
 	// the model's default thinking — self-healing, with no model list to maintain.
-	if !c.thinkingBudgetUnsupported.Load() {
+	if config.ThinkingConfig == nil && !c.thinkingBudgetUnsupported.Load() {
 		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingBudget: new(int32)}
 	}
 
 	started := time.Now()
 
 	resp, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(userText), config)
-	if err != nil && isUnsupportedThinkingBudgetError(err) {
+	if err != nil && config.ThinkingConfig != nil && config.ThinkingConfig.ThinkingBudget != nil && isUnsupportedThinkingBudgetError(err) {
 		c.thinkingBudgetUnsupported.Store(true)
 
 		config.ThinkingConfig = nil
@@ -237,6 +239,16 @@ func (c *Client) CompleteJSON(ctx context.Context, systemPrompt, userText string
 	}
 
 	return generateContentText(resp)
+}
+
+// Gemini 3.5 uses a thinking level rather than the numeric budget used by older models.
+// Keep this in the Google client so other providers retain their generation settings.
+func (c *Client) modelThinkingConfig() *genai.ThinkingConfig {
+	if c.model == "gemini-3.5-flash" {
+		return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium}
+	}
+
+	return nil
 }
 
 // isUnsupportedThinkingBudgetError reports whether err is the API rejecting the thinking-budget

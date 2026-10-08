@@ -3,6 +3,8 @@ package googleai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -141,6 +143,88 @@ var sentimentTestSchema = llm.Schema{
 		{Name: "label", Type: llm.TypeString, Description: "polarity", Enum: []string{"negative", "neutral", "positive"}},
 		{Name: "score", Type: llm.TypeNumber, Description: "polarity score"},
 	},
+}
+
+type vertexTestTransport func(*http.Request) (*http.Response, error)
+
+func (f vertexTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestGemini35_GenerationUsesMediumThinking(t *testing.T) {
+	for _, structured := range []bool{false, true} {
+		t.Run(fmt.Sprintf("structured=%t", structured), func(t *testing.T) {
+			var body map[string]any
+
+			transport := vertexTestTransport(func(r *http.Request) (*http.Response, error) {
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.Equal(t, "aiplatform.eu.rep.googleapis.com", r.URL.Host)
+				assert.Equal(t, "/v1beta1/projects/test-project/locations/eu/publishers/google/models/"+
+					"gemini-3.5-flash:generateContent", r.URL.Path)
+
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"role":"model",` +
+						`"parts":[{"text":"{\"label\":\"positive\",\"score\":1}"}]}}]}`)),
+				}, nil
+			})
+			ctx := context.Background()
+			sdk, err := genai.NewClient(ctx, &genai.ClientConfig{
+				Backend: genai.BackendVertexAI, Project: "test-project", Location: "eu",
+				HTTPClient: &http.Client{Transport: transport},
+			})
+			require.NoError(t, err)
+
+			client := &Client{client: sdk, model: "gemini-3.5-flash"}
+
+			var output string
+
+			if structured {
+				output, err = client.CompleteJSON(ctx, "classify", "great product", sentimentTestSchema)
+			} else {
+				output, err = client.Translate(ctx, "translate", "great product")
+			}
+
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"label":"positive","score":1}`, output)
+			config := llmtest.MustMap(t, body["generationConfig"], "generationConfig")
+			assert.EqualValues(t, 0, config["temperature"])
+			thinking := llmtest.MustMap(t, config["thinkingConfig"], "thinkingConfig")
+			assert.Equal(t, "MEDIUM", thinking["thinkingLevel"])
+			assert.NotContains(t, thinking, "thinkingBudget")
+
+			if structured {
+				assert.Equal(t, "application/json", config["responseMimeType"])
+				assert.Contains(t, config, "responseJsonSchema")
+			}
+		})
+	}
+}
+
+func TestGemini35_ThinkingErrorDoesNotFallBackToLegacyBudget(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"unsupported thinking configuration"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := context.Background()
+	sdk, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey: "test-key", Backend: genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
+	})
+	require.NoError(t, err)
+
+	client := &Client{client: sdk, model: "gemini-3.5-flash"}
+	_, err = client.CompleteJSON(ctx, "classify", "hello", sentimentTestSchema)
+	require.Error(t, err)
+	assert.Equal(t, 1, requests)
+	assert.False(t, client.thinkingBudgetUnsupported.Load())
 }
 
 func TestCompleteJSON_SendsResponseSchemaAndReturnsJSON(t *testing.T) {
