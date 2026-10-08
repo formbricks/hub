@@ -2,12 +2,9 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/formbricks/hub/internal/api/response"
-	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -59,7 +56,7 @@ func (h *TenantSettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenant_id")
 
 	var req models.UpdateTenantSettingsRequest
-	if !decodeSettingsBody(w, r, &req) {
+	if !decodeAndValidateJSONBody(w, r, &req, maxSettingsRequestBodyBytes) {
 		return
 	}
 
@@ -82,7 +79,7 @@ func (h *TenantSettingsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenant_id")
 
 	var req models.PatchTenantSettingsRequest
-	if !decodeSettingsBody(w, r, &req) {
+	if !decodeAndValidateJSONBody(w, r, &req, maxSettingsRequestBodyBytes) {
 		return
 	}
 
@@ -94,37 +91,4 @@ func (h *TenantSettingsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.RespondJSON(w, http.StatusOK, settings)
-}
-
-// decodeSettingsBody caps the request body, decodes it as JSON (rejecting unknown
-// fields), and validates the struct. It writes the matching problem response — 413
-// for an oversized body, 400 for malformed JSON, unknown fields, or invalid values
-// — and returns false when it has already responded, so callers just `return`.
-func decodeSettingsBody(w http.ResponseWriter, r *http.Request, dst any) bool {
-	// The settings payload is tiny, so anything larger than the cap is rejected
-	// with 413 rather than read into memory.
-	r.Body = http.MaxBytesReader(w, r.Body, maxSettingsRequestBodyBytes)
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(dst); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
-
-			return false
-		}
-
-		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
-
-		return false
-	}
-
-	if err := validation.ValidateStruct(dst); err != nil {
-		response.RespondError(w, r, err)
-
-		return false
-	}
-
-	return true
 }

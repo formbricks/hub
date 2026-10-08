@@ -5,6 +5,12 @@ info:
         Feedback record storage and webhook delivery for the Formbricks ecosystem.
         Store feedback records and subscribe to events via webhooks (Standard Webhooks).
         Webhook payloads are described by WebhookDeliveryPayload; use the signing_key to verify requests.
+        A JSON request body is a single object (a JSON null is read as an empty object) whose member names
+        match the documented spelling exactly; they are case-sensitive. A member spelled any other way, or a
+        member name repeated within any object (free-form members such as metadata included), is rejected
+        with 400 naming the member in invalid_params. Data after the object is rejected with 400 too, with
+        the cause in the problem detail. A tenant_id in a request body may not contain U+FFFD, which the decoder
+        substitutes for invalid UTF-8 and unpaired surrogates; such a value is rejected with 400.
         Self-hosted Hub servers advertise their deployed base URL from PUBLIC_BASE_URL so generated SDK clients
         can point to the correct Hub instance.
         Full Documentation: https://hub.formbricks.com
@@ -406,6 +412,12 @@ paths:
                                         invalid_params:
                                             - name: "field_type"
                                               reason: "has invalid value \"textt\"; must be one of: text, categorical, nps, csat, ces, rating, number, boolean, date"
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "409":
                     description: |
                         Conflict. Either a duplicate tenant_id/submission_id/field_id (code `conflict`, terminal),
@@ -734,6 +746,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "404":
                     description: Not Found
                     content:
@@ -836,6 +854,12 @@ paths:
                                 $ref: '#/components/schemas/SemanticSearchResponse'
                 "400":
                     description: Bad Request (e.g. missing tenant_id, empty query, or invalid cursor)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
                     content:
                         application/problem+json:
                             schema:
@@ -1049,6 +1073,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "403":
                     description: Forbidden (e.g. webhook limit exceeded)
                     content:
@@ -1140,6 +1170,12 @@ paths:
                                 $ref: '#/components/schemas/WebhookPublicData'
                 "400":
                     description: Bad Request (e.g. invalid UUID)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
                     content:
                         application/problem+json:
                             schema:
@@ -1621,6 +1657,7 @@ paths:
                   description: The tenant whose terminal failures should be cleared.
             requestBody:
                 required: false
+                description: Omit the body, or send an empty object, to clear every enrichment.
                 content:
                     application/json:
                         schema:
@@ -1635,7 +1672,7 @@ paths:
                 '400':
                     description: |
                         Bad Request. Returned for an unknown enrichment name, a body that is not a JSON
-                        object, or a missing tenant id.
+                        object, an unknown or repeated member, malformed JSON, or a missing tenant id.
                     content:
                         application/problem+json:
                             schema:
@@ -2013,6 +2050,12 @@ paths:
                         application/problem+json:
                             schema:
                                 $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
                 "401":
                     description: Unauthorized (missing or invalid API key)
                     content:
@@ -2336,6 +2379,12 @@ paths:
                                 $ref: '#/components/schemas/TaxonomyNodeData'
                 "400":
                     description: Bad Request (e.g. invalid node_id, missing fields, or empty label)
+                    content:
+                        application/problem+json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorModel'
+                "413":
+                    description: Request body exceeds the maximum allowed size.
                     content:
                         application/problem+json:
                             schema:
@@ -3095,9 +3144,10 @@ components:
                 tenant_id:
                     type: string
                     minLength: 1
-                    description: Tenant ID (required for isolation; must match feedback record tenant_id)
+                    description: Tenant ID (required for isolation; must match feedback record tenant_id). U+FFFD is not allowed (it stands in for invalid UTF-8 or an unpaired surrogate).
                     default: "org-123"
                     example: "org-123"
+                    pattern: '^[^\uFFFD]*$'
             required:
                 - query
                 - tenant_id
@@ -3269,12 +3319,12 @@ components:
                     pattern: '^[^\x00]*$'
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier for multi-tenancy. Required.
+                    description: Tenant/organization identifier for multi-tenancy. Required. U+FFFD is not allowed (it stands in for invalid UTF-8 or an unpaired surrogate).
                     examples:
                         - org-123
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                 user_id:
                     type: string
                     description: User ID (e.g., anonymous ID or email hash)
@@ -3591,10 +3641,10 @@ components:
                     description: Whether the webhook is active (default true)
                 tenant_id:
                     type: string
-                    description: Tenant/organization identifier. Required for webhook isolation; NULL bytes not allowed.
+                    description: Tenant/organization identifier. Required for webhook isolation; NULL bytes not allowed. U+FFFD is not allowed (it stands in for invalid UTF-8 or an unpaired surrogate).
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                     example: "org-123"
                 event_types:
                     type: array
@@ -3656,10 +3706,10 @@ components:
                     description: Enable or disable the webhook
                 tenant_id:
                     type: string
-                    description: Omit to leave unchanged. Empty strings are rejected; webhooks cannot be global.
+                    description: Omit to leave unchanged. Empty strings are rejected; webhooks cannot be global. U+FFFD is not allowed (it stands in for invalid UTF-8 or an unpaired surrogate).
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                     example: "org-123"
                 event_types:
                     type: array
@@ -4306,7 +4356,7 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                 source_type:
                     type: string
                     minLength: 1
@@ -4423,7 +4473,7 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 255
-                    pattern: '^[^\x00]*$'
+                    pattern: '^[^\x00\uFFFD]*$'
                 actor_id:
                     type: string
                     minLength: 1

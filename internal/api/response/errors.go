@@ -1,15 +1,18 @@
 package response
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/iancoleman/strcase"
 
 	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/huberrors"
@@ -145,10 +148,31 @@ func (e *RequestJSONDecodeError) Unwrap() error {
 	return e.err
 }
 
-// problemFromJSONDecodeError recognizes errors from decoding a JSON request body
-// and turns them into actionable 400 problems. Reports ok=false for errors that
-// are not JSON-decode failures so the caller can fall through to other mappings.
+// Reasons reported in invalid_params for a request body member.
+const (
+	ReasonJSONMemberUnknown  = "is not a recognized request field"
+	ReasonJSONMemberRepeated = "appears more than once; each member may appear only once"
+)
+
+// maxReportedJSONNameRunes bounds how much of a caller-chosen member path is echoed back, and
+// maxReportedJSONReasonRunes how much of a decoder's reason, which can quote the caller's value.
+const (
+	maxReportedJSONNameRunes   = 64
+	maxReportedJSONReasonRunes = 256
+)
+
+// problemFromJSONDecodeError recognizes errors from decoding a JSON request body with
+// encoding/json/v2 (see handlers.decodeJSONBody) and turns them into actionable problems. Reports
+// ok=false for errors that are not JSON-decode failures so the caller can fall through to other
+// mappings.
+//
+// Member names are caller-controlled, so they are reported only in invalid_params, which is not
+// logged — never in the problem detail, which is (see logProblem).
 func problemFromJSONDecodeError(err error) (ProblemDetails, bool) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		return newProblem(http.StatusRequestEntityTooLarge, "request body too large"), true
+	}
+
 	if param, ok := invalidFieldTypeParam(err); ok {
 		problem := newValidationProblem()
 		problem.InvalidParams = []InvalidParam{param}
@@ -156,51 +180,145 @@ func problemFromJSONDecodeError(err error) (ProblemDetails, bool) {
 		return problem, true
 	}
 
-	// json.SyntaxError covers malformed JSON; io.ErrUnexpectedEOF covers truncated
-	// payloads (e.g. `{"x":`). Both are client mistakes, not server failures.
-	var syntaxErr *json.SyntaxError
-	if errors.As(err, &syntaxErr) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return newProblem(http.StatusBadRequest, "Invalid JSON: "+err.Error()), true
-	}
-
+	// An empty or whitespace-only body.
 	if errors.Is(err, io.EOF) {
 		return newProblem(http.StatusBadRequest, "Invalid request body"), true
 	}
 
-	if typeErr, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
-		field := fieldNameForAPI(typeErr.Field)
-		problem := newValidationProblem()
-		problem.InvalidParams = []InvalidParam{{Name: field, Reason: "must be " + typeErr.Type.String()}}
-
-		return problem, true
+	if syntaxErr, ok := errors.AsType[*jsontext.SyntacticError](err); ok {
+		return problemFromJSONSyntaxError(syntaxErr), true
 	}
 
-	// unknownJSONField is anchored on the json decoder's exact `unknown field "X"`
-	// format, so an unrelated error that happens to contain those words won't be
-	// misclassified as a validation problem.
-	if field, ok := unknownJSONField(err); ok {
-		problem := newValidationProblem()
-		problem.InvalidParams = []InvalidParam{{Name: field, Reason: "is not a recognized request field"}}
-
-		return problem, true
+	if semanticErr, ok := errors.AsType[*json.SemanticError](err); ok {
+		return problemFromJSONSemanticError(semanticErr), true
 	}
 
 	return ProblemDetails{}, false
 }
 
-// unknownJSONField extracts the field name from the standard library's
-// "json: unknown field \"x\"" decode error.
-func unknownJSONField(err error) (string, bool) {
-	const marker = `unknown field "`
+// problemFromJSONSyntaxError maps a body that is not well-formed: malformed or truncated JSON,
+// invalid UTF-8, data after the top-level value, or a member name repeated within an object.
+func problemFromJSONSyntaxError(err *jsontext.SyntacticError) ProblemDetails {
+	if errors.Is(err.Err, jsontext.ErrDuplicateName) {
+		problem := newValidationProblem()
+		problem.InvalidParams = []InvalidParam{{
+			Name:   jsonPointerName(err.JSONPointer),
+			Reason: ReasonJSONMemberRepeated,
+		}}
 
-	_, after, found := strings.Cut(err.Error(), marker)
-	if !found {
-		return "", false
+		return problem
 	}
 
-	field, _, found := strings.Cut(after, `"`)
+	if errors.Is(err.Err, io.ErrUnexpectedEOF) {
+		return newProblem(http.StatusBadRequest, "Invalid JSON: unexpected end of input")
+	}
 
-	return field, found && field != ""
+	// err.Error() would name the member path, which is caller-controlled and would be logged with the
+	// detail; the underlying cause and the offset carry no names.
+	cause := "malformed"
+	if err.Err != nil {
+		cause = err.Err.Error()
+	}
+
+	return newProblem(http.StatusBadRequest, fmt.Sprintf("Invalid JSON: %s at byte offset %d", cause, err.ByteOffset))
+}
+
+// problemFromJSONSemanticError maps well-formed JSON that does not fit the request type: an unknown
+// member, a value of the wrong kind, a body that is not an object, or a custom decoder's refusal.
+func problemFromJSONSemanticError(err *json.SemanticError) ProblemDetails {
+	var reason string
+
+	switch {
+	case errors.Is(err.Err, json.ErrUnknownName):
+		reason = ReasonJSONMemberUnknown
+	case errors.Is(err.Err, strconv.ErrSyntax) && err.GoType != nil:
+		// A number of the wrong form for its field (1.5 or 1e2 into an int): name the expected type.
+		reason = "must be " + goTypeForAPI(err.GoType)
+	case err.Err != nil:
+		reason = truncateRunes(err.Err.Error(), maxReportedJSONReasonRunes)
+	case err.JSONPointer == "":
+		return newProblem(http.StatusBadRequest, "Invalid request body: must be a JSON object")
+	case err.GoType != nil:
+		reason = "must be " + goTypeForAPI(err.GoType)
+	default:
+		reason = "is invalid"
+	}
+
+	problem := newValidationProblem()
+	problem.InvalidParams = []InvalidParam{{Name: jsonPointerName(err.JSONPointer), Reason: reason}}
+
+	return problem
+}
+
+// jsonPointerName renders a JSON Pointer the way invalid_params names fields elsewhere — the
+// validator's field paths and the OpenAPI examples: "/diagnostics/model" → "diagnostics.model",
+// "/memberships/0/feedback_record_id" → "memberships[0].feedback_record_id". A pointer cannot tell
+// an array index from an all-digit object key, so such a key inside a free-form object (`metadata`)
+// renders as an index too. Truncated so a caller-chosen name cannot make the response arbitrarily
+// large.
+func jsonPointerName(pointer jsontext.Pointer) string {
+	// Enough bytes to hold more than the reported runes, so the rest of a long path is never built.
+	const enough = (maxReportedJSONNameRunes + 1) * utf8.UTFMax
+
+	var name strings.Builder
+
+	for token := range pointer.Tokens() {
+		switch {
+		case name.Len() > 0 && isJSONArrayIndex(token):
+			name.WriteString("[" + token + "]")
+		case name.Len() > 0:
+			name.WriteString("." + token)
+		default:
+			name.WriteString(token)
+		}
+
+		if name.Len() >= enough {
+			break
+		}
+	}
+
+	return truncateRunes(name.String(), maxReportedJSONNameRunes)
+}
+
+// isJSONArrayIndex reports whether a pointer token is an array index (all ASCII digits).
+func isJSONArrayIndex(token string) bool {
+	if token == "" {
+		return false
+	}
+
+	for i := range len(token) {
+		if token[i] < '0' || token[i] > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// truncateRunes shortens s to at most limit runes, marking the cut. It walks only as far as the cut,
+// so a long string costs no more than a short one.
+func truncateRunes(s string, limit int) string {
+	runes := 0
+
+	for i := range s {
+		if runes == limit {
+			return s[:i] + "…"
+		}
+
+		runes++
+	}
+
+	return s
+}
+
+// goTypeForAPI names the Go type a value had to decode into, looking through pointers the way the
+// API documents optional fields.
+func goTypeForAPI(goType reflect.Type) string {
+	for goType.Kind() == reflect.Pointer {
+		goType = goType.Elem()
+	}
+
+	return goType.String()
 }
 
 // invalidParamsFromValidator converts go-playground validator errors into
@@ -249,13 +367,4 @@ func invalidFieldTypeParam(err error) (InvalidParam, bool) {
 			models.ValidFieldTypeValuesString(),
 		),
 	}, true
-}
-
-// fieldNameForAPI converts a struct field path (e.g. "TenantID" or "X.Y") to API-style snake_case.
-func fieldNameForAPI(fieldPath string) string {
-	if i := strings.LastIndex(fieldPath, "."); i >= 0 && i+1 < len(fieldPath) {
-		fieldPath = fieldPath[i+1:]
-	}
-
-	return strcase.ToSnake(fieldPath)
 }

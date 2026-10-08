@@ -2,7 +2,10 @@ package models
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/google/uuid"
@@ -189,12 +192,16 @@ type CreateWebhookRequest struct {
 	URL        string                `json:"url"                   validate:"required,no_null_bytes,http_url,min=1,max=2048"`
 	SigningKey string                `json:"signing_key,omitempty" validate:"omitempty,max=255"`
 	Enabled    *bool                 `json:"enabled,omitempty"`
-	TenantID   *string               `json:"tenant_id"             validate:"required,no_null_bytes,min=1,max=255"`
+	TenantID   *string               `json:"tenant_id"             validate:"required,no_null_bytes,no_replacement_char,min=1,max=255"`
 	EventTypes []datatypes.EventType `json:"event_types,omitempty"`
 }
 
-// UnmarshalJSON converts JSON string array to []datatypes.EventType.
-func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
+// UnmarshalJSONFrom converts the JSON string array in event_types to []datatypes.EventType.
+//
+// It is the encoding/json/v2 form so that the caller's options (exact member names, unknown members
+// refused) reach the members decoded here; a v1 UnmarshalJSON would decode them with v1 semantics
+// (ENG-3658). Decoder errors are returned unwrapped so v2 keeps their position in the body.
+func (r *CreateWebhookRequest) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	type Alias CreateWebhookRequest
 
 	aux := &struct {
@@ -204,13 +211,13 @@ func (r *CreateWebhookRequest) UnmarshalJSON(data []byte) error {
 	}{
 		Alias: (*Alias)(r),
 	}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return fmt.Errorf("unmarshal create webhook request: %w", err)
+	if err := jsonv2.UnmarshalDecode(dec, aux); err != nil {
+		return err //nolint:wrapcheck // Unwrapped on purpose: see above.
 	}
 
 	parsed, err := parseEventTypes(aux.EventTypes)
 	if err != nil {
-		return fmt.Errorf("parse event types: %w", err)
+		return eventTypesError(err)
 	}
 
 	r.EventTypes = parsed
@@ -225,14 +232,15 @@ type UpdateWebhookRequest struct {
 	URL            *string                `json:"url,omitempty"         validate:"omitempty,no_null_bytes,http_url,min=1,max=2048"`
 	SigningKey     *string                `json:"signing_key,omitempty" validate:"omitempty,no_null_bytes,min=1,max=255"`
 	Enabled        *bool                  `json:"enabled,omitempty"`
-	TenantID       *string                `json:"tenant_id,omitempty"   validate:"omitempty,no_null_bytes,min=1,max=255"`
+	TenantID       *string                `json:"tenant_id,omitempty"   validate:"omitempty,no_null_bytes,no_replacement_char,min=1,max=255"`
 	EventTypes     *[]datatypes.EventType `json:"event_types,omitempty"`
 	DisabledReason *string                `json:"-"` // read-only; set by system when disabling
 	DisabledAt     *time.Time             `json:"-"` // read-only; set by system when disabling
 }
 
-// UnmarshalJSON converts JSON string array to *[]datatypes.EventType.
-func (r *UpdateWebhookRequest) UnmarshalJSON(data []byte) error {
+// UnmarshalJSONFrom converts the JSON string array in event_types to *[]datatypes.EventType; see
+// CreateWebhookRequest.UnmarshalJSONFrom.
+func (r *UpdateWebhookRequest) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	type Alias UpdateWebhookRequest
 
 	aux := &struct {
@@ -242,20 +250,27 @@ func (r *UpdateWebhookRequest) UnmarshalJSON(data []byte) error {
 	}{
 		Alias: (*Alias)(r),
 	}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return fmt.Errorf("unmarshal update webhook request: %w", err)
+	if err := jsonv2.UnmarshalDecode(dec, aux); err != nil {
+		return err //nolint:wrapcheck // Unwrapped on purpose: see CreateWebhookRequest.UnmarshalJSONFrom.
 	}
 
 	if aux.EventTypes != nil {
 		parsed, err := parseEventTypes(aux.EventTypes)
 		if err != nil {
-			return fmt.Errorf("parse event types: %w", err)
+			return eventTypesError(err)
 		}
 
 		r.EventTypes = &parsed
 	}
 
 	return nil
+}
+
+// eventTypesError reports an invalid event_types member at its own position in the body, so the
+// API names the member rather than the whole request.
+func eventTypesError(err error) error {
+	// GoType is set because a v1 decode converts this error and dereferences it.
+	return &jsonv2.SemanticError{JSONPointer: "/event_types", GoType: reflect.TypeFor[[]string](), Err: err}
 }
 
 // MarshalJSON converts *[]datatypes.EventType to JSON string array.

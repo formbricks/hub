@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
@@ -37,7 +36,7 @@ func NewSearchHandler(service SearchService) *SearchHandler {
 // SemanticSearchRequest is the body for POST /v1/feedback-records/search/semantic (snake_case for consistency with data model).
 type SemanticSearchRequest struct {
 	Query    string `json:"query"`
-	TenantID string `json:"tenant_id"`
+	TenantID string `json:"tenant_id" validate:"required,no_replacement_char"`
 }
 
 // SemanticSearchResponse is the response for semantic search and similar feedback (consistent with list endpoints: data, limit).
@@ -76,19 +75,7 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req SemanticSearchRequest
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&req); err != nil {
-		response.RespondError(w, r, response.NewRequestJSONDecodeError(err))
-
-		return
-	}
-
-	if req.TenantID == "" {
-		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "tenant_id", Reason: "is required"})
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxSmallJSONBodyBytes) {
 		return
 	}
 

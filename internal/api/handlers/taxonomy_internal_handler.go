@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -88,18 +87,8 @@ func (h *TaxonomyInternalHandler) CompleteRun(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxTaxonomyResultBodyBytes)
-
 	var req models.TaxonomyRunResultRequest
-	if err := decodeAndValidateJSON(r, &req); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			response.RespondProblem(w, r, http.StatusRequestEntityTooLarge, "request body too large")
-
-			return
-		}
-
-		response.RespondError(w, r, err)
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxTaxonomyResultBodyBytes) {
 		return
 	}
 
@@ -127,9 +116,7 @@ func (h *TaxonomyInternalHandler) FailRun(w http.ResponseWriter, r *http.Request
 	}
 
 	var req models.TaxonomyRunFailedRequest
-	if err := decodeAndValidateJSON(r, &req); err != nil {
-		response.RespondError(w, r, err)
-
+	if !decodeAndValidateJSONBody(w, r, &req, maxSmallJSONBodyBytes) {
 		return
 	}
 

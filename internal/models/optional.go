@@ -1,14 +1,9 @@
 package models
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 )
-
-// jsonNull is the JSON null literal, used to detect an explicit null member in a
-// merge-patch body.
-var jsonNull = []byte("null")
 
 // Optional captures the three states a member can take in an RFC 7396 (JSON
 // Merge Patch) request body, which a plain pointer cannot distinguish:
@@ -20,26 +15,36 @@ var jsonNull = []byte("null")
 // Its zero value is the "absent" state, so a struct field of this type is correct
 // until JSON decoding marks it present. It is a decode-only input helper.
 type Optional[T any] struct {
-	Present bool
-	Value   *T
+	// Both fields are set only by UnmarshalJSONFrom; the tags keep any default (de)serialization of
+	// them out.
+	Present bool `json:"-"`
+	Value   *T   `json:"-"`
 }
 
-// UnmarshalJSON records that the member was present. encoding/json only calls
-// this for members that actually appear in the object (including when the value
-// is null), so Present stays false for omitted members. A JSON null leaves Value
-// nil to signal removal; any other value is decoded into Value.
-func (o *Optional[T]) UnmarshalJSON(data []byte) error {
+// UnmarshalJSONFrom records that the member was present. The JSON decoder only calls this for
+// members that actually appear in the object (including when the value is null), so Present stays
+// false for omitted members. A JSON null leaves Value nil to signal removal; any other value is
+// decoded into Value.
+//
+// It is the encoding/json/v2 form so that the caller's options (exact member names, unknown members
+// refused) also apply inside Value (ENG-3658). Decoder errors are returned unwrapped so v2 keeps
+// their position in the body.
+func (o *Optional[T]) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	o.Present = true
 
-	if bytes.Equal(bytes.TrimSpace(data), jsonNull) {
+	if dec.PeekKind() == 'n' {
+		if _, err := dec.ReadToken(); err != nil {
+			return err //nolint:wrapcheck // Unwrapped on purpose: see above.
+		}
+
 		o.Value = nil
 
 		return nil
 	}
 
 	var v T
-	if err := json.Unmarshal(data, &v); err != nil {
-		return fmt.Errorf("decode optional value: %w", err)
+	if err := json.UnmarshalDecode(dec, &v); err != nil {
+		return err //nolint:wrapcheck // Unwrapped on purpose: see above.
 	}
 
 	o.Value = &v
