@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -369,45 +370,58 @@ func TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates(t *testing.
 		require.NoError(t, err)
 	}
 
-	seen := make(map[uuid.UUID]int, records)
-	nextCursor := ""
+	// Seeded in created_at order, so this is the traversal order for asc; desc walks it backwards.
+	for _, order := range []models.SortOrder{models.SortOrderAsc, models.SortOrderDesc} {
+		t.Run(string(order), func(t *testing.T) {
+			inOrder := slices.Clone(ordered)
+			if order == models.SortOrderDesc {
+				slices.Reverse(inOrder)
+			}
 
-	for page := range records {
-		tenant := env.tenant
-		resp, err := svc.ListFeedbackRecords(t.Context(), &models.ListFeedbackRecordsFilters{
-			TenantID:     &tenant,
-			UpdatedSince: &cutoff,
-			Sort:         models.SortFieldCreatedAt,
-			Order:        models.SortOrderAsc,
-			Limit:        pageLimit,
-			Cursor:       nextCursor,
+			seen := make(map[uuid.UUID]int, records)
+			nextCursor := ""
+
+			for page := range records {
+				tenant := env.tenant
+				resp, err := svc.ListFeedbackRecords(t.Context(), &models.ListFeedbackRecordsFilters{
+					TenantID:     &tenant,
+					UpdatedSince: &cutoff,
+					Sort:         models.SortFieldCreatedAt,
+					Order:        order,
+					Limit:        pageLimit,
+					Cursor:       nextCursor,
+				})
+				require.NoError(t, err, "page %d", page)
+
+				for _, record := range resp.Data {
+					seen[record.ID]++
+				}
+
+				if page == 0 {
+					// Change the first record returned and the last one not reached yet. Their
+					// created_at, the sort key, does not move, so each is still returned once. Were
+					// updated_at the sort key, both would move to the newest end of the ordering: under
+					// asc the first would come round again (returned twice), and under desc the last
+					// would land behind the cursor (never returned).
+					touch(inOrder[0])
+					touch(inOrder[records-1])
+				}
+
+				nextCursor = resp.NextCursor
+				if nextCursor == "" {
+					break
+				}
+			}
+
+			require.Empty(t, nextCursor, "pagination did not terminate")
+			assert.NotContains(t, seen, before.ID, "a record last written before updated_since must not be returned")
+			assert.Len(t, seen, records, "every record must be returned")
+
+			for id, times := range seen {
+				assert.True(t, want[id], "record %s does not belong to this traversal", id)
+				assert.Equal(t, 1, times, "record %s returned %d times", id, times)
+			}
 		})
-		require.NoError(t, err, "page %d", page)
-
-		for _, record := range resp.Data {
-			seen[record.ID]++
-		}
-
-		if page == 0 {
-			// Change one record already returned and one not reached yet. Under sort=updated_at
-			// the second would jump behind the cursor and be skipped.
-			touch(ordered[0])
-			touch(ordered[records-1])
-		}
-
-		nextCursor = resp.NextCursor
-		if nextCursor == "" {
-			break
-		}
-	}
-
-	require.Empty(t, nextCursor, "pagination did not terminate")
-	assert.NotContains(t, seen, before.ID, "a record last written before updated_since must not be returned")
-	assert.Len(t, seen, records, "every record must be returned")
-
-	for id, times := range seen {
-		assert.True(t, want[id], "record %s does not belong to this traversal", id)
-		assert.Equal(t, 1, times, "record %s returned %d times", id, times)
 	}
 }
 
