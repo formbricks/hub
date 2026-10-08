@@ -2731,12 +2731,15 @@ components:
                 every write to a record — create, update, and every enrichment result (translation,
                 sentiment, emotions) — so this selects records created OR changed since a point: the
                 parameter for incremental extraction. For the next run, use the time the previous run
-                started (its first response's Date header) minus a few minutes of overlap, not the
-                largest updated_at received. Permanently deleted records are never returned: reconcile
-                deletions separately by listing every record id, and remove only local records that
-                were not returned and were created before that listing started (its first response's
-                Date header) minus the overlap. updated_at is not a sort key; keep sorting by
-                collected_at or created_at, which stays stable while matching records change.
+                started (its first response's Date header) minus an overlap, not the largest updated_at
+                received. The overlap must outlast the longest write to a record; Hub does not bound
+                that, so a few minutes is a default rather than a guarantee. Permanently deleted records
+                are never returned: periodically list every record, upsert what it returns (which also
+                repairs any change a slow write slipped past the overlap), and remove only local records
+                that were not returned and were created before that listing started (its first
+                response's Date header) minus the overlap. updated_at is not a sort key; keep sorting by
+                collected_at or created_at, which stays stable while matching records change. See
+                "Incremental extraction" in the filtering and sorting guide.
             schema:
                 type: string
                 format: date-time

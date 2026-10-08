@@ -21,12 +21,19 @@
 -- into every index on the table (29 with this one, counting the primary key), except the partial
 -- indexes whose predicate the new row does not match. Sentiment and emotions writes, and PATCHes
 -- touching indexed columns, were already non-HOT. Translation writes and metadata-only PATCHes were
--- not: each went from about zero index inserts to twenty-odd. Measured on a local 2M-row table,
--- translation-shaped single-row updates went from ~5.7-7.1k TPS (83-91% HOT) to ~1.1-1.2k TPS
--- (0% HOT). Accepted because enrichment is bound by LLM latency at tens of writes per second, far
--- below that ceiling, whereas without the index an updated_since query for a large tenant is a
--- sequential scan of the whole table, all tenants included (57-105 ms at 2M rows and growing with
--- total data, against ~0.1 ms with it). Expect more WAL and index bloat on translation-heavy deployments.
+-- not: each went from about zero index inserts to twenty-odd. As a raw ceiling, translation-shaped
+-- single-row updates on a local 2M-row table went from ~5.7-7.1k TPS (83-91% HOT) to ~1.1-1.2k TPS
+-- (0% HOT).
+--
+-- That ceiling is not what the pipeline hits. The common translation write makes no LLM call at
+-- all (an unset source language copies value_text), so a bulk import or a target-language backfill
+-- is a burst of these writes paced by worker concurrency. Measured end to end through hub-worker on
+-- a 20k-record backfill, the drain rate was the same with and without this index: ~105/s at the
+-- default TRANSLATION_MAX_CONCURRENT of 5, ~570-600/s at 50, because per-job overhead dominates the
+-- write. The cost shows up as storage traffic instead: 114 MB of WAL against 81 MB for those 20k
+-- copies (job bookkeeping included), and index bloat for autovacuum to clean up. Accepted, because
+-- without the index an updated_since query for a large tenant is a sequential scan of the whole
+-- table, all tenants included (57-105 ms at 2M rows and growing with total data, ~0.1 ms with it).
 --
 -- Runs without a transaction because of CONCURRENTLY, so writes continue during the build, and is
 -- re-runnable: DROP-then-CREATE replaces the INVALID index an interrupted CREATE INDEX CONCURRENTLY

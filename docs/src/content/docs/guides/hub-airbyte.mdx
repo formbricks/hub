@@ -21,7 +21,7 @@ Hub stores all data in a single PostgreSQL database. **Airbyte** is an open-sour
 
 - **One source, many destinations** - Hub's data is a standard PostgreSQL table. Airbyte's Postgres source connector reads it, and any of Airbyte's [warehouse destinations](https://docs.airbyte.com/integrations/destinations) (Snowflake, Databricks, BigQuery, Redshift, ClickHouse, ...) can receive it.
 - **Open source and self-hostable** - [Airbyte OSS](https://docs.airbyte.com/) runs on your own infrastructure; no third-party SaaS is involved.
-- **Incremental sync out of the box** - Hub's `updated_at` column is a perfect cursor for incremental replication; you only move new and changed rows after the initial backfill.
+- **Incremental sync out of the box** - Hub's `updated_at` column lets incremental replication move only new and changed rows after the initial backfill. It is not a perfect cursor, though: see the caution in Step 5.
 - **Schema-aware** - Airbyte maps Hub's columns to native warehouse types (including `metadata` JSONB to Snowflake `VARIANT`, BigQuery `JSON`, Redshift `SUPER`, etc.).
 
 <Aside type="note">
@@ -222,6 +222,16 @@ Other supported destinations include **Postgres**, **ClickHouse**, **S3** (raw f
   `updated_at` to land exactly one row per record in the destination, with the
   latest version winning. This matches Hub's [Data Model](/core-concepts/data-model)
   where each feedback record is mutable and time-ordered.
+</Aside>
+
+<Aside type="caution">
+  **A cursor on `updated_at` can miss changes, and never sees deletes.** Hub stamps `updated_at`
+  when a write *starts*, so a write that commits after a sync has read past it can carry an earlier
+  timestamp than the cursor and is skipped until the record changes again. Two writes to one record
+  can also commit out of order, so the destination may keep an older version. Deleted records are
+  never replicated. Schedule a periodic full refresh of the stream to repair all three, and see
+  [Incremental extraction](/core-concepts/filtering-and-sorting#incremental-extraction) for the
+  procedure the Hub API supports.
 </Aside>
 
 ## Query in the destination
