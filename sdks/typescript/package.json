@@ -10,7 +10,7 @@
     "directory": "sdks/typescript"
   },
   "homepage": "https://hub.formbricks.com",
-  "packageManager": "pnpm@12.8.1",
+  "packageManager": "pnpm@12.10.1",
   "type": "module",
   "sideEffects": false,
   "engines": {
