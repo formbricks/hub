@@ -79,7 +79,7 @@ jobs:
 
       - name: Run River migrations
         run: |
-          go install github.com/riverqueue/river/cmd/river@v0.47.0
+          go install github.com/riverqueue/river/cmd/river@v0.49.0
           make river-migrate
 
       - name: Build application
