@@ -652,6 +652,21 @@ func scanBackfillTargetIDs(rows pgx.Rows, name string) ([]uuid.UUID, error) {
 	return ids, nil
 }
 
+// filterQueryArgs runs a filtered list or count on the unnamed prepared statement instead of pgx's
+// default named one, so Postgres plans every execution with its actual parameter values.
+//
+// A named statement is planned generically from its sixth execution on a connection whenever the
+// generic plan's estimated cost looks no worse than the custom ones, and a generic plan cannot see
+// which tenant or how narrow a time window it is serving. On a large tenant among many small ones
+// that turns an updated_since sync (ENG-3420) from an index scan of the matching rows into a walk of
+// the tenant's ordering index that discards nearly everything: under 1 ms for the first five calls,
+// ~15 ms from the sixth, on a local 200k-row tenant. Every filter on these endpoints is skewed by
+// tenant size the same way, so the mode covers list, cursor pages and count alike. The cost is a
+// plan per execution, still in one round trip because the statement description stays cached.
+func filterQueryArgs(args []any) []any {
+	return append([]any{pgx.QueryExecModeCacheDescribe}, args...)
+}
+
 // Count returns the number of feedback records matching the given filters.
 func (r *FeedbackRecordsRepository) Count(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
@@ -662,7 +677,7 @@ func (r *FeedbackRecordsRepository) Count(
 	}
 
 	var count int
-	if err := r.db.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+	if err := r.db.QueryRow(ctx, query, filterQueryArgs(args)...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("query feedback records count: %w", err)
 	}
 
@@ -1196,7 +1211,7 @@ func listUserFeedbackTenants(
 func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
 	ctx context.Context, query string, args ...any,
 ) ([]models.FeedbackRecord, error) {
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, filterQueryArgs(args)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feedback records: %w", err)
 	}
