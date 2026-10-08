@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-playground/validator/v10"
 
@@ -256,6 +257,9 @@ func problemFromJSONSemanticError(err *json.SemanticError) ProblemDetails {
 // renders as an index too. Truncated so a caller-chosen name cannot make the response arbitrarily
 // large.
 func jsonPointerName(pointer jsontext.Pointer) string {
+	// Enough bytes to hold more than the reported runes, so the rest of a long path is never built.
+	const enough = (maxReportedJSONNameRunes + 1) * utf8.UTFMax
+
 	var name strings.Builder
 
 	for token := range pointer.Tokens() {
@@ -266,6 +270,10 @@ func jsonPointerName(pointer jsontext.Pointer) string {
 			name.WriteString("." + token)
 		default:
 			name.WriteString(token)
+		}
+
+		if name.Len() >= enough {
+			break
 		}
 	}
 
@@ -287,10 +295,17 @@ func isJSONArrayIndex(token string) bool {
 	return true
 }
 
-// truncateRunes shortens s to at most limit runes, marking the cut.
+// truncateRunes shortens s to at most limit runes, marking the cut. It walks only as far as the cut,
+// so a long string costs no more than a short one.
 func truncateRunes(s string, limit int) string {
-	if runes := []rune(s); len(runes) > limit {
-		return string(runes[:limit]) + "…"
+	runes := 0
+
+	for i := range s {
+		if runes == limit {
+			return s[:i] + "…"
+		}
+
+		runes++
 	}
 
 	return s

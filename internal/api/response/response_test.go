@@ -305,6 +305,21 @@ func TestRespondErrorJSONDecodeFailures(t *testing.T) {
 		assert.Equal(t, strings.Repeat("X", 64)+"…", problem.InvalidParams[0].Name)
 	})
 
+	t.Run("member names are cut by runes, across path segments", func(t *testing.T) {
+		wide := string(rune(0x1F600)) // four bytes in UTF-8
+
+		for _, example := range []struct{ body, want string }{
+			{`{"` + strings.Repeat(wide, 64) + `":1}`, strings.Repeat(wide, 64)},
+			{`{"` + strings.Repeat(wide, 65) + `":1}`, strings.Repeat(wide, 64) + "…"},
+			{`{"diagnostics":{"` + strings.Repeat("X", 300) + `":1}}`, "diagnostics." + strings.Repeat("X", 52) + "…"},
+		} {
+			problem := respond(t, decodeV2(t, example.body, &decodeTarget{}))
+
+			require.Len(t, problem.InvalidParams, 1)
+			assert.Equal(t, example.want, problem.InvalidParams[0].Name)
+		}
+	})
+
 	t.Run("empty body is bad request", func(t *testing.T) {
 		problem := respond(t, NewRequestJSONDecodeError(io.EOF))
 

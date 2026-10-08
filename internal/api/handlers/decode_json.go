@@ -119,6 +119,10 @@ func decodeAndValidateJSONBody(w http.ResponseWriter, r *http.Request, dst any, 
 
 // readBoundedBody reads the whole body through http.MaxBytesReader, so an oversized body fails
 // with *http.MaxBytesError before more than maxBytes is buffered.
+//
+// A declared Content-Length over the cap is deliberately not refused before reading: answering
+// without consuming the body makes the server close the connection mid-upload, and a client still
+// sending sees a reset instead of the 413.
 func readBoundedBody(w http.ResponseWriter, r *http.Request, maxBytes int64) ([]byte, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
