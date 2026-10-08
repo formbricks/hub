@@ -90,8 +90,8 @@ func TestHandlersRefuseCaseVariantTenant(t *testing.T) {
 	})
 }
 
-// Webhook requests decode through their own UnmarshalJSON, which DisallowUnknownFields does not
-// reach on its own; a misspelled member must still be refused there.
+// Webhook requests decode through their own UnmarshalJSONFrom; the shared decoder's options must
+// reach the members decoded there, so a misspelled member is refused like everywhere else.
 func TestWebhookRequestsRefuseUnknownMembers(t *testing.T) {
 	body := `{"url":"https://example.com/hook","tenant_id":"tenant-a","tenantid":"tenant-b"}`
 
@@ -218,17 +218,40 @@ func TestEnrichmentRetryBody(t *testing.T) {
 	})
 }
 
-func TestSemanticSearchBodyIsBounded(t *testing.T) {
-	handler := NewSearchHandler(&mockSearchService{})
+// stubTaxonomyService satisfies TaxonomyService so the handlers reach their body decode; any call
+// into it panics, which an oversized body must never get far enough to cause.
+type stubTaxonomyService struct{ TaxonomyService }
 
-	body := `{"tenant_id":"tenant-a","query":"` + strings.Repeat("a", maxSmallJSONBodyBytes) + `"}`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
-		"http://test/v1/feedback-records/search/semantic", strings.NewReader(body))
-	rec := httptest.NewRecorder()
+// The bodies that had no cap before ENG-3658 must refuse anything over maxSmallJSONBodyBytes with 413
+// before a service sees it — each call site passes its own limit, so each is pinned.
+func TestNewlyCappedBodiesAreBounded(t *testing.T) {
+	oversized := `{"x":"` + strings.Repeat("a", maxSmallJSONBodyBytes) + `"}`
+	id := uuid.Must(uuid.NewV7()).String()
 
-	handler.SemanticSearch(rec, req)
+	cases := map[string]func(http.ResponseWriter, *http.Request){
+		"semantic search":      NewSearchHandler(&mockSearchService{}).SemanticSearch,
+		"webhook create":       NewWebhooksHandler(&recordingWebhooksService{}).Create,
+		"webhook update":       NewWebhooksHandler(&recordingWebhooksService{}).Update,
+		"taxonomy run create":  NewTaxonomyHandler(&stubTaxonomyService{}).CreateRun,
+		"taxonomy node rename": NewTaxonomyHandler(&stubTaxonomyService{}).RenameNode,
+		"taxonomy run failed":  NewTaxonomyInternalHandler(&taxonomyInternalHandlerTestService{}).FailRun,
+	}
 
-	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/x",
+				strings.NewReader(oversized))
+			req.SetPathValue("id", id)
+			req.SetPathValue("node_id", id)
+			req.SetPathValue("run_id", id)
+
+			rec := httptest.NewRecorder()
+
+			require.NotPanics(t, func() { call(rec, req) }, "the body must be refused before any service call")
+
+			assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+		})
+	}
 }
 
 type recordingWebhooksService struct{ called bool }

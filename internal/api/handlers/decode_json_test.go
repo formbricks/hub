@@ -327,6 +327,8 @@ func TestDecodeJSONBodyDoesNotLogMemberNames(t *testing.T) {
 		`{"diagnostics":{"SECRET_NAME":"x"}}`,
 		`{"metadata":{"SECRET_NAME":1,"SECRET_NAME":2}}`,
 		`{"tenant_id":"A"} {"SECRET_NAME":1}`,
+		// A syntax error under a caller-chosen name: the error's own text would name the path.
+		`{"metadata":{"SECRET_NAME":tru}}`,
 	} {
 		_, rec, _ := decodeAndRespond(t, body, 1<<10)
 		require.Equal(t, http.StatusBadRequest, rec.Code, body)
@@ -334,6 +336,49 @@ func TestDecodeJSONBodyDoesNotLogMemberNames(t *testing.T) {
 
 	require.NotEmpty(t, logs.String())
 	assert.NotContains(t, logs.String(), "SECRET_NAME")
+}
+
+// Members of arrays are named the way the validator and the OpenAPI examples name them.
+func TestDecodeJSONBodyNamesArrayMembersWithIndexes(t *testing.T) {
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/x",
+		strings.NewReader(`{"clusters":[],"nodes":[],"memberships":[{"cluster_key":1,"feedback_record_id":"not-a-uuid"}]}`))
+	rec := httptest.NewRecorder()
+
+	err := decodeJSONBody(rec, req, &models.TaxonomyRunResultRequest{}, 1<<10)
+	require.Error(t, err)
+	response.RespondError(rec, req, err)
+
+	params := problemOf(t, rec).InvalidParams
+	require.Len(t, params, 1)
+	assert.Equal(t, "memberships[0].feedback_record_id", params[0].Name)
+}
+
+// Custom decoders (webhook requests, Optional) return the decoder's errors unwrapped, so v2 keeps
+// the member's position: a wrong-type member is named, not reported against the whole body.
+func TestCustomDecodersReportTheMemberPosition(t *testing.T) {
+	cases := map[string]struct {
+		body   string
+		dst    any
+		member string
+	}{
+		"webhook create": {`{"url":1,"tenant_id":"t"}`, &models.CreateWebhookRequest{}, "url"},
+		"webhook update": {`{"url":1}`, &models.UpdateWebhookRequest{}, "url"},
+		"settings patch": {`{"target_language":123}`, &models.PatchTenantSettingsRequest{}, "target_language"},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/x",
+				strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+
+			err := decodeJSONBody(rec, req, tt.dst, 1<<10)
+			require.Error(t, err)
+			response.RespondError(rec, req, err)
+
+			assert.Equal(t, []response.InvalidParam{{Name: tt.member, Reason: "must be string"}}, problemOf(t, rec).InvalidParams)
+		})
+	}
 }
 
 // decodedRequestTypes lists every type passed to decodeJSONBody.

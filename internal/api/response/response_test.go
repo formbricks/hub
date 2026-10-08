@@ -179,8 +179,9 @@ func TestRespondErrorQueryDecodeErrorIsValidationProblem(t *testing.T) {
 	assert.Equal(t, "must be in RFC3339 (ISO 8601) format", problem.InvalidParams[0].Reason)
 }
 
-// decodeV2 decodes the way handlers.decodeJSONBody does, so these cases see the errors the API
-// actually produces.
+// decodeV2 produces the encoding/json/v2 error types the request decoder returns, with its member
+// rule (RejectUnknownMembers). It is not the whole decoder — the empty-body io.EOF, invalid-UTF-8 and
+// time handling are tested on handlers.decodeJSONBody itself — but it is all this mapping reads.
 func decodeV2(t *testing.T, body string, dst any) error {
 	t.Helper()
 
@@ -194,6 +195,7 @@ type decodeTarget struct {
 	TenantID    string           `json:"tenant_id"`
 	Count       *int             `json:"count,omitempty"`
 	Diagnostics *decodeTargetSub `json:"diagnostics,omitempty"`
+	Metadata    map[string]any   `json:"metadata,omitempty"`
 }
 
 type decodeTargetSub struct {
@@ -269,6 +271,16 @@ func TestRespondErrorJSONDecodeFailures(t *testing.T) {
 		assert.Equal(t, []InvalidParam{{Name: "diagnostics.model", Reason: ReasonJSONMemberRepeated}}, nested.InvalidParams)
 	})
 
+	t.Run("array members are named with indexes", func(t *testing.T) {
+		var dst struct {
+			Items []decodeTargetSub `json:"items"`
+		}
+
+		problem := respond(t, decodeV2(t, `{"items":[{"model":"a"},{"model":1}]}`, &dst))
+
+		assert.Equal(t, []InvalidParam{{Name: "items[1].model", Reason: "must be string"}}, problem.InvalidParams)
+	})
+
 	t.Run("a body that is not an object is bad request", func(t *testing.T) {
 		for _, body := range []string{`[]`, `"x"`, `1`, `true`} {
 			problem := respond(t, decodeV2(t, body, &decodeTarget{}))
@@ -332,6 +344,9 @@ func TestRespondErrorJSONDecodeFailuresDoNotLogMemberNames(t *testing.T) {
 		`{"SECRET_MEMBER_NAME":"a","SECRET_MEMBER_NAME":"b"}`,
 		`{"diagnostics":{"SECRET_MEMBER_NAME":1}}`,
 		`{"diagnostics":{"model":"a"},"SECRET_MEMBER_NAME":1} x`,
+		// A syntax error under a caller-chosen name in a free-form member: the error's own text
+		// would name the path.
+		`{"metadata":{"SECRET_MEMBER_NAME":tru}}`,
 	} {
 		rec := httptest.NewRecorder()
 		RespondError(rec, newReq(t, http.MethodPost, "/v1/x"), decodeV2(t, body, &decodeTarget{}))

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -250,11 +249,42 @@ func problemFromJSONSemanticError(err *json.SemanticError) ProblemDetails {
 	return problem
 }
 
-// jsonPointerName renders a JSON Pointer as the dotted path invalid_params uses elsewhere
-// ("/diagnostics/model" → "diagnostics.model"), truncated so a caller-chosen name cannot make the
-// response arbitrarily large.
+// jsonPointerName renders a JSON Pointer the way invalid_params names fields elsewhere — the
+// validator's field paths and the OpenAPI examples: "/diagnostics/model" → "diagnostics.model",
+// "/memberships/0/feedback_record_id" → "memberships[0].feedback_record_id". A pointer cannot tell
+// an array index from an all-digit object key, so such a key inside a free-form object (`metadata`)
+// renders as an index too. Truncated so a caller-chosen name cannot make the response arbitrarily
+// large.
 func jsonPointerName(pointer jsontext.Pointer) string {
-	return truncateRunes(strings.Join(slices.Collect(pointer.Tokens()), "."), maxReportedJSONNameRunes)
+	var name strings.Builder
+
+	for token := range pointer.Tokens() {
+		switch {
+		case name.Len() > 0 && isJSONArrayIndex(token):
+			name.WriteString("[" + token + "]")
+		case name.Len() > 0:
+			name.WriteString("." + token)
+		default:
+			name.WriteString(token)
+		}
+	}
+
+	return truncateRunes(name.String(), maxReportedJSONNameRunes)
+}
+
+// isJSONArrayIndex reports whether a pointer token is an array index (all ASCII digits).
+func isJSONArrayIndex(token string) bool {
+	if token == "" {
+		return false
+	}
+
+	for i := range len(token) {
+		if token[i] < '0' || token[i] > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // truncateRunes shortens s to at most limit runes, marking the cut.
