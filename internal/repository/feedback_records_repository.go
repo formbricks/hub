@@ -662,7 +662,8 @@ func scanBackfillTargetIDs(rows pgx.Rows, name string) ([]uuid.UUID, error) {
 // the tenant's ordering index that discards nearly everything: under 1 ms for the first five calls,
 // ~15 ms from the sixth, on a local 200k-row tenant. Every filter on these endpoints is skewed by
 // tenant size the same way, so the mode covers list, cursor pages and count alike. The cost is a
-// plan per execution, still in one round trip because the statement description stays cached.
+// plan per execution; it stays one round trip once pgx has cached the statement's description
+// (the first execution of each query text on a connection takes two, as with the default mode).
 func filterQueryArgs(args []any) []any {
 	return append([]any{pgx.QueryExecModeCacheDescribe}, args...)
 }

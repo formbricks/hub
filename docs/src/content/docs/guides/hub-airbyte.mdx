@@ -220,7 +220,7 @@ Other supported destinations include **Postgres**, **ClickHouse**, **S3** (raw f
 <Aside type="note">
   **Incremental \| Append + Deduped** uses Hub's `id` (UUIDv7) primary key plus
   `updated_at` to land exactly one row per record in the destination, with the
-  latest version winning. This matches Hub's [Data Model](/core-concepts/data-model)
+  version carrying the largest `updated_at` winning. This matches Hub's [Data Model](/core-concepts/data-model)
   where each feedback record is mutable and time-ordered.
 </Aside>
 
@@ -229,7 +229,11 @@ Other supported destinations include **Postgres**, **ClickHouse**, **S3** (raw f
   when a write *starts*, so a write that commits after a sync has read past it can carry an earlier
   timestamp than the cursor and is skipped until the record changes again. Two writes to one record
   can also commit out of order, so the destination may keep an older version. Deleted records are
-  never replicated. Schedule a periodic full refresh of the stream to repair all three, and see
+  never replicated. Only a refresh that clears the destination first repairs all three: Airbyte's
+  **refresh and remove records** (or a **Full refresh \| Overwrite** sync). A refresh that retains
+  records does not, because deduping keeps the version with the largest `updated_at`, and deleted rows
+  stay. Refreshes are not part of the connection schedule; trigger one periodically from the UI, the
+  Airbyte API or your orchestrator. See
   [Incremental extraction](/core-concepts/filtering-and-sorting#incremental-extraction) for the
   procedure the Hub API supports.
 </Aside>

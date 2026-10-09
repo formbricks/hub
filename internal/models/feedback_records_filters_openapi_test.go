@@ -180,9 +180,11 @@ type openAPIOperationParameters struct {
 // `form:"updated_untl"` would pass every other test while the decoder silently ignored the real
 // parameter — for updated_since (ENG-3420), a sync that reads the whole tenant every run.
 //
-// List must document every field; count every field except the four pagination and ordering ones,
-// which it does not accept. Every documented parameter must in turn decode into a field, and every
-// timestamp field must be documented as date-time.
+// List must document every field. Count shares the struct but documents only the filters: the four
+// pagination and ordering fields mean nothing to a count, so the spec keeps them off it (the handler
+// still decodes and validates them, which is why an out-of-range limit on count is a 400). Every
+// documented parameter must in turn decode into a field, and every timestamp field must be
+// documented as date-time.
 func TestOpenAPIDocumentsEveryFilterByItsFormName(t *testing.T) {
 	t.Parallel()
 
@@ -244,6 +246,10 @@ func TestOpenAPIDocumentsEveryFilterByItsFormName(t *testing.T) {
 			formNames[name] = true
 
 			if operation.skipNames[name] {
+				if _, documented := operation.formats[name]; documented {
+					t.Fatalf("%s documents %q, a list-only parameter", operation.path, name)
+				}
+
 				continue
 			}
 
