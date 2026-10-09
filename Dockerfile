@@ -2,7 +2,7 @@
 # Stage 1: Build
 # =============================================================================
 # TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
-FROM golang:1.27.1-alpine AS builder
+FROM golang:1.27.2-alpine AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG GOOSE_VERSION=v3.28.0
@@ -10,7 +10,7 @@ ARG RIVER_VERSION=v0.49.0
 ARG OTEL_VERSION=v1.47.0
 ARG GRPC_VERSION=v1.84.0
 ARG X_CRYPTO_VERSION=v0.57.0
-ARG X_NET_VERSION=v0.59.0
+ARG X_NET_VERSION=v0.60.0
 ARG X_SYS_VERSION=v0.48.0
 ARG X_TEXT_VERSION=v0.42.0
 
