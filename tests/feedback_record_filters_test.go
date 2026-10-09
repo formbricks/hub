@@ -337,57 +337,73 @@ func TestFeedbackRecordFilters_UpdatedSinceSelectsCreatedAndChanged(t *testing.T
 		"updated_until bounds updated_at, so only the record nobody touched is at or before the cutoff")
 }
 
-// TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates is the reason updated_at is a
-// filter and never a sort key. Records keep changing while a sync pages through them; ordering by
-// an immutable column means an update moves a record's updated_at but never its position, so the
-// traversal still returns every record exactly once.
+// TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates pages through an updated_since
+// listing while records in it change, in every ordering a sync may use, and checks nothing is
+// skipped.
+//
+// Each case touches the first record it was returned and the last one it has not reached yet:
+//   - created_at, either direction: the sort key does not move, so each record comes back once.
+//   - updated_at asc: both touched records move to the newest end, AHEAD of the cursor, so the
+//     already-returned one comes back a second time (the duplicate the docs tell callers to upsert)
+//     and the unreached one is still reached. This is the property that makes updated_at sortable
+//     ascending; descending it would land behind the cursor and be lost, which is why that
+//     combination is rejected rather than tested here.
+//
+// Each case seeds its own tenant: the touches change updated_at, so cases sharing records would
+// see each other's edits and could pass for the wrong reason.
 func TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates(t *testing.T) {
-	env := newFilterTestEnv(t, "updated-since-pages")
-	svc := service.NewFeedbackRecordsService(
-		repository.NewFeedbackRecordsRepository(env.db), nil, "", nil, nil, "", 0, "",
-	)
-
-	// Written before the cutoff, so it must never appear: without it this test would pass with
-	// updated_since ignored altogether.
-	before := env.seed(t)
-	cutoff := env.dbNow(t)
-
 	const records, pageLimit = 6, 2
 
-	want := make(map[uuid.UUID]bool, records)
-	ordered := make([]uuid.UUID, 0, records)
-
-	for range records {
-		record := env.seed(t)
-		want[record.ID] = true
-		ordered = append(ordered, record.ID)
+	cases := []struct {
+		sort  models.SortField
+		order models.SortOrder
+		// timesFirstTouched is how often the record touched after being returned comes back.
+		timesFirstTouched int
+	}{
+		{models.SortFieldCreatedAt, models.SortOrderAsc, 1},
+		{models.SortFieldCreatedAt, models.SortOrderDesc, 1},
+		{models.SortFieldUpdatedAt, models.SortOrderAsc, 2},
 	}
 
-	touch := func(id uuid.UUID) {
-		_, _, err := env.repo.Update(t.Context(), id, &models.UpdateFeedbackRecordRequest{
-			UserID: new("touched-" + uuid.NewString()),
-		})
-		require.NoError(t, err)
-	}
+	for _, testCase := range cases {
+		t.Run(string(testCase.sort)+" "+string(testCase.order), func(t *testing.T) {
+			env := newFilterTestEnv(t, "updated-since-pages")
+			svc := service.NewFeedbackRecordsService(
+				repository.NewFeedbackRecordsRepository(env.db), nil, "", nil, nil, "", 0, "",
+			)
 
-	// Seeded in created_at order, so this is the traversal order for asc; desc walks it backwards.
-	for _, order := range []models.SortOrder{models.SortOrderAsc, models.SortOrderDesc} {
-		t.Run(string(order), func(t *testing.T) {
-			inOrder := slices.Clone(ordered)
-			if order == models.SortOrderDesc {
+			// Written before the cutoff, so it must never appear: without it this test would pass
+			// with updated_since ignored altogether.
+			before := env.seed(t)
+			cutoff := env.dbNow(t)
+
+			// Seeded one insert at a time, so created_at and updated_at both follow this order.
+			inOrder := make([]uuid.UUID, 0, records)
+			for range records {
+				inOrder = append(inOrder, env.seed(t).ID)
+			}
+
+			if testCase.order == models.SortOrderDesc {
 				slices.Reverse(inOrder)
+			}
+
+			touch := func(id uuid.UUID) {
+				_, _, err := env.repo.Update(t.Context(), id, &models.UpdateFeedbackRecordRequest{
+					UserID: new("touched-" + uuid.NewString()),
+				})
+				require.NoError(t, err)
 			}
 
 			seen := make(map[uuid.UUID]int, records)
 			nextCursor := ""
 
-			for page := range records {
+			for page := range records + 2 {
 				tenant := env.tenant
 				resp, err := svc.ListFeedbackRecords(t.Context(), &models.ListFeedbackRecordsFilters{
 					TenantID:     &tenant,
 					UpdatedSince: &cutoff,
-					Sort:         models.SortFieldCreatedAt,
-					Order:        order,
+					Sort:         testCase.sort,
+					Order:        testCase.order,
 					Limit:        pageLimit,
 					Cursor:       nextCursor,
 				})
@@ -398,11 +414,7 @@ func TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates(t *testing.
 				}
 
 				if page == 0 {
-					// Change the first record returned and the last one not reached yet. Their
-					// created_at, the sort key, does not move, so each is still returned once. Were
-					// updated_at the sort key, both would move to the newest end of the ordering: under
-					// asc the first would come round again (returned twice), and under desc the last
-					// would land behind the cursor (never returned).
+					require.Equal(t, inOrder[0], resp.Data[0].ID, "the first page must start where the seed order says")
 					touch(inOrder[0])
 					touch(inOrder[records-1])
 				}
@@ -415,12 +427,17 @@ func TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates(t *testing.
 
 			require.Empty(t, nextCursor, "pagination did not terminate")
 			assert.NotContains(t, seen, before.ID, "a record last written before updated_since must not be returned")
-			assert.Len(t, seen, records, "every record must be returned")
 
-			for id, times := range seen {
-				assert.True(t, want[id], "record %s does not belong to this traversal", id)
-				assert.Equal(t, 1, times, "record %s returned %d times", id, times)
+			for _, id := range inOrder {
+				want := 1
+				if id == inOrder[0] {
+					want = testCase.timesFirstTouched
+				}
+
+				assert.Equal(t, want, seen[id], "record %s returned %d times, want %d", id, seen[id], want)
 			}
+
+			assert.Len(t, seen, records, "no record outside the traversal may appear")
 		})
 	}
 }
@@ -811,6 +828,7 @@ func TestFeedbackRecordFilters_PaginationInvariant(t *testing.T) {
 		{models.SortFieldCollectedAt, models.SortOrderAsc},
 		{models.SortFieldCreatedAt, models.SortOrderDesc},
 		{models.SortFieldCreatedAt, models.SortOrderAsc},
+		{models.SortFieldUpdatedAt, models.SortOrderAsc},
 	}
 
 	for _, ordering := range orderings {

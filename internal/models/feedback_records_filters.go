@@ -9,15 +9,20 @@ import (
 
 // SortField is the column a feedback record listing is ordered by (ENG-2059).
 //
-// Every member must name a column that is both NOT NULL and IMMUTABLE after insert:
-//   - NOT NULL, because the keyset predicate has no NULL handling — `col < $t` is NULL for a NULL
-//     row, which would drop it from every page after the first.
-//   - immutable, because a mutable sort key lets a row move across the cursor between pages and be
-//     silently skipped. This is why updated_at is deliberately absent: the enrichment workers
-//     (SetTranslation, SetSentiment, writeEmotions) and every PATCH bump it, so `sort=updated_at`
-//     would lose rows under ordinary traffic. Incremental extraction FILTERS on it instead
-//     (updated_since, ENG-3420) while ordering by an immutable column, which keeps every page
-//     stable however often the matching rows change.
+// Every member must name a NOT NULL column, because the keyset predicate has no NULL handling —
+// `col < $t` is NULL for a NULL row, which would drop it from every page after the first.
+//
+// Every member must also be immutable after insert, with one deliberate exception. A mutable sort
+// key lets a row move across the cursor between pages. collected_at and created_at never change.
+// updated_at does — every PATCH and enrichment write bumps it — and is allowed in ONE direction
+// only (ENG-3420): ascending, a changed row moves AHEAD of the cursor, so it is returned again
+// (a duplicate the caller upserts away) but never skipped. Descending it would move behind the
+// cursor and be lost, which is why resolveListOrdering and the HTTP validator both reject
+// sort=updated_at with any order but asc. It exists because filtering on updated_at while ordering
+// by another column leaves the planner guessing how many rows match — it multiplies the tenant's
+// share by the window's share and cannot see that recent activity belongs to other tenants — and
+// a wrong guess walks the whole tenant per page. Ordered by (updated_at, id) on the
+// (tenant_id, updated_at, id) index, every page of an incremental sync is O(limit).
 //
 // Adding a member requires a case in the repository's resolveListOrdering (token -> SQL column)
 // and in FeedbackRecord.SortValue (token -> record field). Both switches are exhaustive-linted, so
@@ -28,7 +33,14 @@ type SortField string
 const (
 	SortFieldCollectedAt SortField = "collected_at"
 	SortFieldCreatedAt   SortField = "created_at"
+	// SortFieldUpdatedAt is ascending-only; see SortField.
+	SortFieldUpdatedAt SortField = "updated_at"
 )
+
+// UpdatedAtAscendingOnlyReason is the client-facing reason for rejecting sort=updated_at with an order
+// other than asc (the default order is desc, so the order must be given explicitly).
+const UpdatedAtAscendingOnlyReason = "must be asc when sort=updated_at: a record that changes while you page would " +
+	"otherwise move behind the cursor and be skipped"
 
 // SortOrder is the direction of a feedback record listing.
 type SortOrder string
@@ -134,7 +146,7 @@ type ListFeedbackRecordsFilters struct {
 	SentimentScoreMin *float64 `form:"sentiment_score_min" validate:"omitempty,gte=-1,lte=1"`
 	SentimentScoreMax *float64 `form:"sentiment_score_max" validate:"omitempty,gte=-1,lte=1"`
 
-	Sort  SortField `form:"sort"  validate:"omitempty,oneof=collected_at created_at"`
+	Sort  SortField `form:"sort"  validate:"omitempty,oneof=collected_at created_at updated_at"`
 	Order SortOrder `form:"order" validate:"omitempty,oneof=asc desc"`
 
 	Limit  int    `form:"limit"  validate:"omitempty,min=1,max=1000"`

@@ -1016,11 +1016,13 @@ func listPage() []models.FeedbackRecord {
 		ID:          uuid.MustParse("018e1234-0000-7000-8000-000000000001"),
 		CollectedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 		CreatedAt:   time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC),
 	}
 	last := models.FeedbackRecord{
 		ID:          uuid.MustParse("018e1234-0000-7000-8000-000000000002"),
 		CollectedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		CreatedAt:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 	}
 
 	return []models.FeedbackRecord{first, last}
@@ -1062,6 +1064,7 @@ func TestListFeedbackRecords_NextCursorBoundsTheSortColumn(t *testing.T) {
 	}{
 		{name: "collected_at", sort: models.SortFieldCollectedAt, order: models.SortOrderDesc, want: last.CollectedAt},
 		{name: "created_at", sort: models.SortFieldCreatedAt, order: models.SortOrderAsc, want: last.CreatedAt},
+		{name: "updated_at", sort: models.SortFieldUpdatedAt, order: models.SortOrderAsc, want: last.UpdatedAt},
 	}
 
 	for _, tt := range tests {

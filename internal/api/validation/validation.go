@@ -160,7 +160,13 @@ func init() {
 // parameter.
 const rangeBoundsTag = "range_bounds"
 
-// validateListFeedbackRecordsFilters rejects inverted min/max filter pairs.
+// updatedAtAscendingTag marks sort=updated_at combined with an order other than asc. Struct-level for
+// the same reason as rangeBoundsTag: the rule is a relationship between two parameters, and it is
+// attributed to order, the one the client must change.
+const updatedAtAscendingTag = "updated_at_ascending"
+
+// validateListFeedbackRecordsFilters rejects inverted min/max filter pairs, and sort=updated_at with
+// any order but asc.
 //
 // An inverted range matches zero rows, so without this a swapped pair returns an empty page that
 // the caller reads as "there is no such feedback" rather than "your filter is backwards".
@@ -174,6 +180,11 @@ func validateListFeedbackRecordsFilters(structLevel validator.StructLevel) {
 		// The snake_case form name is passed as the field name so FieldPath reports the parameter
 		// the client sent, not the Go identifier.
 		structLevel.ReportError(inverted.MinValue, inverted.MinParam, inverted.StructField, rangeBoundsTag, inverted.MaxParam)
+	}
+
+	// An omitted order defaults to desc, so sort=updated_at needs order=asc spelled out.
+	if filters.Sort == models.SortFieldUpdatedAt && filters.Order != models.SortOrderAsc {
+		structLevel.ReportError(filters.Order, "order", "Order", updatedAtAscendingTag, "")
 	}
 }
 
@@ -382,6 +393,8 @@ func FormatFieldError(fieldErr validator.FieldError) string {
 	case rangeBoundsTag:
 		// Param carries the upper bound's parameter name, set by the struct-level validator.
 		return "must be less than or equal to " + fieldErr.Param()
+	case updatedAtAscendingTag:
+		return models.UpdatedAtAscendingOnlyReason
 	case "uuid":
 		return "must be a valid UUID"
 	case "rfc3339":

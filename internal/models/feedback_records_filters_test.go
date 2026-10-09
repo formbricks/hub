@@ -162,7 +162,8 @@ func TestValidEnumValuesStrings(t *testing.T) {
 func TestFeedbackRecord_SortValue(t *testing.T) {
 	collected := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	created := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	record := &FeedbackRecord{CollectedAt: collected, CreatedAt: created}
+	updated := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	record := &FeedbackRecord{CollectedAt: collected, CreatedAt: created, UpdatedAt: updated}
 
 	tests := []struct {
 		name  string
@@ -171,6 +172,7 @@ func TestFeedbackRecord_SortValue(t *testing.T) {
 	}{
 		{name: "collected_at", field: SortFieldCollectedAt, want: collected},
 		{name: "created_at", field: SortFieldCreatedAt, want: created},
+		{name: "updated_at", field: SortFieldUpdatedAt, want: updated},
 		{name: "unknown falls back to the default sort", field: SortField("nonsense"), want: collected},
 	}
 

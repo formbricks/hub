@@ -5,16 +5,19 @@
 --
 -- updated_since exists for incremental extraction: "every record created or changed since my last
 -- run". That query is narrow by design — a sync that runs hourly matches a sliver of the tenant —
--- and without an index the planner can only satisfy it by walking
--- idx_feedback_records_tenant_collected_at_id and discarding rows, or by a sequential scan of the
--- whole table (what it chose on a local 2M-row table), so every page of every sync reads at least
--- the whole tenant. That is the degradation migration 021 indexed created_at against, and it
--- gets worse exactly as a tenant grows large enough to need incremental extraction at all.
+-- and without this index it can only be answered by walking the tenant's collected_at/created_at
+-- ordering index and discarding rows, or by a sequential scan of the whole table, so every page of
+-- every sync reads at least the whole tenant.
 --
--- (tenant_id, updated_at), with no id and no DESC: unlike created_at, updated_at is never a sort
--- key (it is mutable, see models.SortField), so this index only has to find the matching rows. The
--- listing still orders by collected_at or created_at; a narrow match set is fetched here and
--- sorted, and a wide one falls back to walking the ordering index, which the planner picks by cost.
+-- (tenant_id, updated_at, id) serves the sync as one ordered index range: sort=updated_at&order=asc
+-- (the one direction updated_at may be sorted in, see models.SortField) with the keyset tiebreak on
+-- id, so every page reads LIMIT rows and stops. Filtering on updated_at while ordering by created_at
+-- would be served by the same index only when the planner guesses the match count right, and it
+-- guesses wrong exactly in the case that matters: it multiplies the tenant's share of the table by
+-- the window's share and cannot see that the recent activity belongs to other tenants. Measured on
+-- a 200k-record tenant among 2,000 small ones with 69 recent changes, it estimated ~3,000 matches,
+-- walked the ordering index and read all 200k rows per page (29-61 ms), even with a per-execution
+-- plan. The same request ordered by updated_at reads the 69.
 --
 -- Write cost, accepted deliberately, and larger than "one more index": every writer sets updated_at,
 -- so once it is indexed NO update to this table can be a HOT update, and a non-HOT update inserts
@@ -41,7 +44,7 @@
 -- caused a checkpoint stall, so a large deployment should expect a short write-latency spike.
 DROP INDEX CONCURRENTLY IF EXISTS idx_feedback_records_tenant_updated_at;
 CREATE INDEX CONCURRENTLY idx_feedback_records_tenant_updated_at
-  ON feedback_records (tenant_id, updated_at);
+  ON feedback_records (tenant_id, updated_at, id);
 
 -- +goose down
 DROP INDEX CONCURRENTLY IF EXISTS idx_feedback_records_tenant_updated_at;

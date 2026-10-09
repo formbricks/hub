@@ -473,6 +473,8 @@ func (r *FeedbackRecord) SortValue(field SortField) time.Time {
 		return r.CreatedAt
 	case SortFieldCollectedAt:
 		return r.CollectedAt
+	case SortFieldUpdatedAt:
+		return r.UpdatedAt
 	default:
 		return r.CollectedAt
 	}

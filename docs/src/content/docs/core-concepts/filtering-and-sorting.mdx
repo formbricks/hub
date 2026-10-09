@@ -132,29 +132,35 @@ new and changed records:
 Every writer takes the timestamp from the database clock, at the moment its transaction starts.
 
 ```bash
-# everything created or changed since the last run, oldest first
+# everything created or changed since the last run, in the order it changed
 curl -G "$HUB/v1/feedback-records" \
   -H "Authorization: Bearer $HUB_API_KEY" \
   -d tenant_id=org-123 \
   -d updated_since=2026-10-05T07:55:00Z \
-  -d sort=created_at \
+  -d sort=updated_at \
   -d order=asc \
   -d limit=1000
 ```
 
-**Sort by `created_at` or `collected_at`, not by `updated_at`.** `updated_at` is not a sort option,
-on purpose: it changes under you, so a record could jump past the cursor and be skipped. The sort
-columns never change, so every page stays stable even while records in the result are being
-updated.
+**Sort by `updated_at`, ascending.** Every page is then one range of the `updated_at` index, so a
+sync reads only the records it returns, however large the tenant. Filtering on `updated_since` while
+sorting by `created_at` also works, but the database cannot tell how few records changed and may
+read the whole tenant for every page.
+
+Ascending is the only direction `updated_at` can be sorted in, because `updated_at` changes while you
+page. A record that changes mid-run gets a newer `updated_at`, which moves it *ahead* of the cursor:
+it comes back later in the same run, and you upsert it again. Descending would move it *behind* the
+cursor, where it would be skipped, so `sort=updated_at` with `order=desc` — or with no `order`, which
+defaults to `desc` — is a `400`.
 
 ### Choosing the next `updated_since`
 
 **Note when the run starts, and use that time minus an overlap as the next run's `updated_since`.**
-Do not use the largest `updated_at` you received. A run that spans several pages reads each page at
-a different moment: a record you paged past early can change while later pages are still being
-read, and its new `updated_at` is then older than the newest one on your last page. A watermark
-taken from the results skips that change. A watermark taken from the run's start, minus the overlap
-below, does not.
+Do not use the largest `updated_at` you received. `updated_at` is when a write *started*, and a
+write becomes visible only when it commits: one that was still in flight when your run read past its
+timestamp is missing from this run, and its `updated_at` is older than the newest one you received.
+A watermark taken from the results skips it for good. A watermark taken from the run's start, minus
+the overlap below, reads it next time.
 
 - **Take the start time from the server, not from your own clock.** Every response carries an HTTP
   `Date` header; use the one on the run's first response, so drift between your clock and the
@@ -218,9 +224,10 @@ record tagged `{joy, anger}` both match `?emotions=joy&emotions=anger`.
 
 ## Sorting
 
-`sort` accepts `collected_at` (the default) or `created_at`; `order` accepts `asc` or `desc`
-(default `desc`). Records tied on the sort column are ordered by `id` ascending, so the sequence is
-always total and stable.
+`sort` accepts `collected_at` (the default), `created_at` or `updated_at`; `order` accepts `asc` or
+`desc` (default `desc`). Records tied on the sort column are ordered by `id` ascending, so the sequence
+is always total and stable. `updated_at` is accepted only with `order=asc` — see
+[Incremental extraction](#incremental-extraction).
 
 Sort by the column you filter on. Filtering `created_at` while ordering by `collected_at` cannot use
 the index for the ordering, and gets slower as a dataset grows.
