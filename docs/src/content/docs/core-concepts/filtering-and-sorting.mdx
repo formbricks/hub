@@ -159,11 +159,14 @@ before the cursor's position and commits after the run has read past it lands be
 can the earlier of two writes to one record that commit out of order. Those are missing from this run
 and picked up by the next one, as long as you choose the next `updated_since` as below.
 
-**Bound each run with `updated_until`.** Set it to the run's start time (the first response's `Date`
-header). Otherwise a run never quite ends while records keep changing: every write during the run
-moves a record ahead of the cursor, and a new record collects several (translation, sentiment,
-emotions) in its first minutes. Anything that changes after the start has a newer `updated_at` and
-belongs to the next run anyway.
+**Bound each run with `updated_until`.** Otherwise a run never quite ends while records keep
+changing: every write during the run moves a record ahead of the cursor, and a new record collects
+several (translation, sentiment, emotions) in its first minutes. Start each run with a cheap request
+(a page with `limit=1`) and read its `Date` header: that one value, *S*, is this run's
+`updated_until`, and *S* minus the overlap is the next run's `updated_since`. Both bounds have to come
+from the same *S* — an `updated_until` from your own clock can fall short of the next run's
+`updated_since` and leave records in between that neither run ever reads. Anything that changes after
+*S* has a newer `updated_at` and belongs to the next run.
 
 ### Choosing the next `updated_since`
 
