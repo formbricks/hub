@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/formbricks/hub/internal/huberrors"
 )
 
 var (
@@ -256,13 +258,26 @@ func (b *BatchingEmbeddingClient) dispatch(batch []*embeddingBatchRequest) {
 		b.metrics.RecordEmbeddingBatch(context.WithoutCancel(providerCtx), int64(len(inputs)), time.Since(started), status)
 	}
 
-	if err != nil && len(active) > 1 {
+	if len(active) > 1 && isInputSpecificBatchError(err) {
 		b.retryIndividually(active)
 
 		return
 	}
 
 	b.deliver(active, vectors, err)
+}
+
+// Only a typed input-specific rejection can be isolated by retrying each input. Rate limits,
+// transient provider failures, and malformed batch responses must reach the workers unchanged;
+// fanning those out would amplify the failing request and bypass River's snooze/retry policy.
+func isInputSpecificBatchError(err error) bool {
+	if _, rateLimited := errors.AsType[*huberrors.RateLimitError](err); rateLimited {
+		return false
+	}
+
+	_, inputSpecific := huberrors.TerminalReasonOf(err)
+
+	return inputSpecific
 }
 
 // retryIndividually isolates a rejected input after a provider rejects the all-or-nothing batch.
