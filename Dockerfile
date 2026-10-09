@@ -2,7 +2,7 @@
 # Stage 1: Build
 # =============================================================================
 # TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
-FROM golang:1.27.1-alpine AS builder
+FROM golang:1.27.2-alpine AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG GOOSE_VERSION=v3.28.0
@@ -10,7 +10,7 @@ ARG RIVER_VERSION=v0.49.0
 ARG OTEL_VERSION=v1.47.0
 ARG GRPC_VERSION=v1.84.0
 ARG X_CRYPTO_VERSION=v0.57.0
-ARG X_NET_VERSION=v0.59.0
+ARG X_NET_VERSION=v0.60.0
 ARG X_SYS_VERSION=v0.48.0
 ARG X_TEXT_VERSION=v0.42.0
 
@@ -51,7 +51,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/h
 # =============================================================================
 FROM alpine:3.24
 
-RUN apk add --no-cache ca-certificates tzdata wget
+# Require the patched zlib even when the base image contains an older package (CVE-2026-85091).
+RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.3.2-r1'
 
 # Create non-root user
 RUN addgroup -S app && adduser -S app -G app
