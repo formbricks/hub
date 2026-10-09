@@ -496,6 +496,8 @@ func TestTerminalEmptyReason(t *testing.T) {
 		{"OTHER stays retryable", withFinish(genai.FinishReasonOther), "", false},
 		{"LANGUAGE stays retryable", withFinish(genai.FinishReasonLanguage), "", false},
 		{"STOP with empty text stays retryable", withFinish(genai.FinishReasonStop), "", false},
+		// Generation stopped part-way; this client never resumes with a continuation token.
+		{"CONTINUATION stays retryable", withFinish(genai.FinishReasonContinuation), "", false},
 		{"no candidates stays retryable", &genai.GenerateContentResponse{}, "", false},
 	}
 

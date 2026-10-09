@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node (for Spectral)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
 
@@ -69,12 +69,12 @@ jobs:
           path: |
             ~/go/bin/golangci-lint
             ~/go/bin/govulncheck
-          key: ${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-lint2.13.2-vuln1.8.0
+          key: ${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-lint2.14.0-vuln1.8.0
 
       - name: Install development tools
         if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
       - name: Format check (make fmt)

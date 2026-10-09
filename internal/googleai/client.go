@@ -348,11 +348,14 @@ func terminalEmptyReason(resp *genai.GenerateContentResponse) (huberrors.Termina
 		genai.FinishReasonLanguage, genai.FinishReasonOther,
 		genai.FinishReasonMalformedFunctionCall, genai.FinishReasonUnexpectedToolCall,
 		genai.FinishReasonTooManyToolCalls,
-		genai.FinishReasonNoImage, genai.FinishReasonImageOther:
+		genai.FinishReasonNoImage, genai.FinishReasonImageOther,
+		genai.FinishReasonContinuation:
 		// Deliberately retryable, listed rather than defaulted so the choice is reviewable.
 		// LANGUAGE is arguably permanent, but it is rare and abandoning a record wrongly is the
 		// worse error; the image and tool reasons cannot occur for the calls this client makes;
-		// STOP with empty text and UNSPECIFIED carry no information at all.
+		// STOP with empty text and UNSPECIFIED carry no information at all. CONTINUATION means
+		// generation stopped part-way and could resume with a continuation token, which this
+		// client never sends — it says nothing about the content, so a fresh call may complete.
 		return "", false
 	default:
 		// A reason added by a future SDK version. Retry rather than abandon — the same asymmetry.
