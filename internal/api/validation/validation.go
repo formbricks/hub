@@ -182,8 +182,11 @@ func validateListFeedbackRecordsFilters(structLevel validator.StructLevel) {
 		structLevel.ReportError(inverted.MinValue, inverted.MinParam, inverted.StructField, rangeBoundsTag, inverted.MaxParam)
 	}
 
-	// An omitted order defaults to desc, so sort=updated_at needs order=asc spelled out.
-	if filters.Sort == models.SortFieldUpdatedAt && filters.Order != models.SortOrderAsc {
+	// An omitted order defaults to desc, so sort=updated_at needs order=asc spelled out. An order that
+	// is not asc/desc at all is already reported by its oneof tag; repeating it here would give the
+	// caller two reasons for one parameter.
+	if filters.Sort == models.SortFieldUpdatedAt &&
+		(filters.Order == "" || filters.Order == models.SortOrderDesc) {
 		structLevel.ReportError(filters.Order, "order", "Order", updatedAtAscendingTag, "")
 	}
 }

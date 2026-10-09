@@ -137,6 +137,7 @@ curl -G "$HUB/v1/feedback-records" \
   -H "Authorization: Bearer $HUB_API_KEY" \
   -d tenant_id=org-123 \
   -d updated_since=2026-10-05T07:55:00Z \
+  -d updated_until=2026-10-05T09:00:00Z \
   -d sort=updated_at \
   -d order=asc \
   -d limit=1000
@@ -148,10 +149,21 @@ sorting by `created_at` also works, but the database cannot tell how few records
 read the whole tenant for every page.
 
 Ascending is the only direction `updated_at` can be sorted in, because `updated_at` changes while you
-page. A record that changes mid-run gets a newer `updated_at`, which moves it *ahead* of the cursor:
-it comes back later in the same run, and you upsert it again. Descending would move it *behind* the
-cursor, where it would be skipped, so `sort=updated_at` with `order=desc` — or with no `order`, which
-defaults to `desc` — is a `400`.
+page. A record that changes mid-run normally gets a newer `updated_at`, which moves it *ahead* of the
+cursor: it comes back later in the same run, and you upsert it again. Descending would move every such
+record *behind* the cursor, where it would be skipped, so `sort=updated_at` with `order=desc` — or with
+no `order`, which defaults to `desc` — is a `400`.
+
+Ascending still has one exception: `updated_at` is when a write *started*, so a write that started
+before the cursor's position and commits after the run has read past it lands behind the cursor, as
+can the earlier of two writes to one record that commit out of order. Those are missing from this run
+and picked up by the next one, as long as you choose the next `updated_since` as below.
+
+**Bound each run with `updated_until`.** Set it to the run's start time (the first response's `Date`
+header). Otherwise a run never quite ends while records keep changing: every write during the run
+moves a record ahead of the cursor, and a new record collects several (translation, sentiment,
+emotions) in its first minutes. Anything that changes after the start has a newer `updated_at` and
+belongs to the next run anyway.
 
 ### Choosing the next `updated_since`
 
@@ -159,8 +171,10 @@ defaults to `desc` — is a `400`.
 Do not use the largest `updated_at` you received. `updated_at` is when a write *started*, and a
 write becomes visible only when it commits: one that was still in flight when your run read past its
 timestamp is missing from this run, and its `updated_at` is older than the newest one you received.
-A watermark taken from the results skips it for good. A watermark taken from the run's start, minus
-the overlap below, reads it next time.
+If you sort by `created_at` instead, there is a second way to lose a change: a record you paged past
+early can change while later pages are read, and its new `updated_at` is still older than the newest
+one on your last page. Either way, a watermark taken from the results skips the change for good; a
+watermark taken from the run's start, minus the overlap below, reads it next time.
 
 - **Take the start time from the server, not from your own clock.** Every response carries an HTTP
   `Date` header; use the one on the run's first response, so drift between your clock and the

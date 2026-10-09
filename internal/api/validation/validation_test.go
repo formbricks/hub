@@ -192,8 +192,6 @@ func TestDecodeEnumSliceQueryParams(t *testing.T) {
 	})
 }
 
-// TestValidateInvertedRangeFilters verifies an inverted min/max pair is a 400 naming the lower
-// bound, rather than an empty result page the caller reads as "there is no such feedback".
 // TestValidateUpdatedAtSortIsAscendingOnly covers the struct-level rule that sort=updated_at needs
 // order=asc spelled out: descending would skip records that change mid-traversal, and an omitted
 // order defaults to desc. The 400 names order, the parameter the client has to change.
@@ -226,8 +224,23 @@ func TestValidateUpdatedAtSortIsAscendingOnly(t *testing.T) {
 			TenantID: &tenant, Sort: models.SortFieldCreatedAt,
 		}))
 	})
+
+	// An unrecognised order is the oneof tag's to report; one parameter gets one reason.
+	t.Run("does not double-report an invalid order", func(t *testing.T) {
+		err := ValidateStruct(models.ListFeedbackRecordsFilters{
+			TenantID: &tenant, Sort: models.SortFieldUpdatedAt, Order: models.SortOrder("ASC"),
+		})
+		require.Error(t, err)
+
+		var validationErrs validator.ValidationErrors
+		require.ErrorAs(t, err, &validationErrs)
+		require.Len(t, validationErrs, 1)
+		assert.Equal(t, "oneof", validationErrs[0].Tag())
+	})
 }
 
+// TestValidateInvertedRangeFilters verifies an inverted min/max pair is a 400 naming the lower
+// bound, rather than an empty result page the caller reads as "there is no such feedback".
 func TestValidateInvertedRangeFilters(t *testing.T) {
 	tenant := "org-123"
 

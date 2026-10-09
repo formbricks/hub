@@ -116,10 +116,14 @@ paths:
                   description: |
                     Column to order by. Defaults to collected_at. collected_at and created_at never
                     change. updated_at does, so it is accepted only with order=asc: ascending, a
-                    record that changes while you page moves ahead of the cursor and is returned again
-                    (upsert it by id), but never skipped; descending, it would land behind the cursor
-                    and be lost, so that combination is a 400. Use sort=updated_at&order=asc with
-                    updated_since for incremental extraction: every page is one ordered index range.
+                    record that changes while you page normally moves ahead of the cursor and is
+                    returned again (upsert it by id); descending, every such record would land behind
+                    the cursor and be lost, so that combination is a 400. Ascending still misses a
+                    write that started before the cursor's position and commits after it; the next
+                    run picks it up when its updated_since is the previous run's start minus an
+                    overlap. Use sort=updated_at&order=asc with updated_since (and updated_until set
+                    to the run's start) for incremental extraction: every page is one ordered index
+                    range.
                   schema:
                     type: string
                     default: collected_at

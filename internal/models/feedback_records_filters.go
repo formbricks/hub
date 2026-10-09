@@ -15,10 +15,14 @@ import (
 // Every member must also be immutable after insert, with one deliberate exception. A mutable sort
 // key lets a row move across the cursor between pages. collected_at and created_at never change.
 // updated_at does — every PATCH and enrichment write bumps it — and is allowed in ONE direction
-// only (ENG-3420): ascending, a changed row moves AHEAD of the cursor, so it is returned again
-// (a duplicate the caller upserts away) but never skipped. Descending it would move behind the
+// only (ENG-3420): ascending, a changed row normally moves AHEAD of the cursor, so it is returned
+// again (a duplicate the caller upserts away). Descending, every such row would move behind the
 // cursor and be lost, which is why resolveListOrdering and the HTTP validator both reject
-// sort=updated_at with any order but asc. It exists because filtering on updated_at while ordering
+// sort=updated_at with any order but asc. Ascending is not airtight either: updated_at is the
+// writing transaction's NOW(), so a write that started before the cursor's position and commits
+// after it — or the earlier of two writes to one row that commit out of order — lands behind the
+// cursor. The documented sync recovers those on the next run, whose updated_since is the previous
+// run's start minus an overlap longer than any write. It exists because filtering on updated_at while ordering
 // by another column leaves the planner guessing how many rows match — it multiplies the tenant's
 // share by the window's share and cannot see that recent activity belongs to other tenants — and
 // a wrong guess walks the whole tenant per page. Ordered by (updated_at, id) on the
