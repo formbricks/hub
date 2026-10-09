@@ -51,7 +51,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/h
 # =============================================================================
 FROM alpine:3.24
 
-RUN apk add --no-cache ca-certificates tzdata wget
+# Require the patched zlib even when the base image contains an older package (CVE-2026-85091).
+RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.3.2-r1'
 
 # Create non-root user
 RUN addgroup -S app && adduser -S app -G app
