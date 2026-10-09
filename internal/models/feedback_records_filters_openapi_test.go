@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -148,4 +149,124 @@ func loadOpenAPIParameters(t *testing.T) openAPIParameters {
 	}
 
 	return spec
+}
+
+// openAPIOperationParameters is the slice of openapi.yaml naming each list operation's query
+// parameters, either inline or by $ref to a shared component.
+type openAPIOperationParameters struct {
+	Paths map[string]struct {
+		Get struct {
+			Parameters []struct {
+				Ref    string `yaml:"$ref"`
+				Name   string `yaml:"name"`
+				Schema struct {
+					Format string `yaml:"format"`
+				} `yaml:"schema"`
+			} `yaml:"parameters"`
+		} `yaml:"get"`
+	} `yaml:"paths"`
+	Components struct {
+		Parameters map[string]struct {
+			Name   string `yaml:"name"`
+			Schema struct {
+				Format string `yaml:"format"`
+			} `yaml:"schema"`
+		} `yaml:"parameters"`
+	} `yaml:"components"`
+}
+
+// TestOpenAPIDocumentsEveryFilterByItsFormName pins the public parameter names to the struct's form
+// tags, in both directions. The integration tests set struct fields directly, so a tag typo such as
+// `form:"updated_untl"` would pass every other test while the decoder silently ignored the real
+// parameter — for updated_since (ENG-3420), a sync that reads the whole tenant every run.
+//
+// List must document every field. Count shares the struct but documents only the filters: the four
+// pagination and ordering fields mean nothing to a count, so the spec keeps them off it (the handler
+// still decodes and validates them, which is why an out-of-range limit on count is a 400). Every
+// documented parameter must in turn decode into a field, and every timestamp field must be
+// documented as date-time.
+func TestOpenAPIDocumentsEveryFilterByItsFormName(t *testing.T) {
+	t.Parallel()
+
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve this test file's path")
+	}
+
+	// #nosec G304 -- the repository-local spec path is derived from this test file's location.
+	contents, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "openapi.yaml"))
+	if err != nil {
+		t.Fatalf("read openapi.yaml: %v", err)
+	}
+
+	var spec openAPIOperationParameters
+	if err := yaml.Unmarshal(contents, &spec); err != nil {
+		t.Fatalf("parse openapi.yaml: %v", err)
+	}
+
+	documented := func(path string) map[string]string {
+		formats := map[string]string{}
+
+		for _, parameter := range spec.Paths[path].Get.Parameters {
+			if parameter.Ref == "" {
+				formats[parameter.Name] = parameter.Schema.Format
+
+				continue
+			}
+
+			component, found := spec.Components.Parameters[strings.TrimPrefix(parameter.Ref, "#/components/parameters/")]
+			if !found {
+				t.Fatalf("%s references %s, which openapi.yaml does not define", path, parameter.Ref)
+			}
+
+			formats[component.Name] = component.Schema.Format
+		}
+
+		return formats
+	}
+
+	listOnly := map[string]bool{"sort": true, "order": true, "limit": true, "cursor": true}
+	timeType := reflect.TypeFor[*time.Time]()
+	formNames := map[string]bool{}
+
+	for _, operation := range []struct {
+		path      string
+		formats   map[string]string
+		skipNames map[string]bool
+	}{
+		{"/v1/feedback-records", documented("/v1/feedback-records"), nil},
+		{"/v1/feedback-records/count", documented("/v1/feedback-records/count"), listOnly},
+	} {
+		if len(operation.formats) == 0 {
+			t.Fatalf("%s documents no parameters; this test would check nothing", operation.path)
+		}
+
+		for field := range reflect.TypeFor[ListFeedbackRecordsFilters]().Fields() {
+			name, _, _ := strings.Cut(field.Tag.Get("form"), ",")
+			formNames[name] = true
+
+			if operation.skipNames[name] {
+				if _, documented := operation.formats[name]; documented {
+					t.Fatalf("%s documents %q, a list-only parameter", operation.path, name)
+				}
+
+				continue
+			}
+
+			format, isDocumented := operation.formats[name]
+			if !isDocumented {
+				t.Fatalf("%s does not document %q, the form name of %s", operation.path, name, field.Name)
+			}
+
+			if field.Type == timeType && format != "date-time" {
+				t.Fatalf("%s documents %q with format %q; %s is a timestamp", operation.path, name, format, field.Name)
+			}
+		}
+
+		for name := range operation.formats {
+			if !formNames[name] {
+				t.Fatalf("%s documents %q, which no filter field decodes; the spec names a parameter the API ignores", operation.path, name)
+			}
+		}
+	}
 }

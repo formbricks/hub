@@ -28,6 +28,10 @@ func TestResolveListOrdering(t *testing.T) {
 			name: "created_at asc", sort: models.SortFieldCreatedAt, order: models.SortOrderAsc,
 			wantColumn: colCreatedAt, wantDesc: false,
 		},
+		{
+			name: "updated_at asc", sort: models.SortFieldUpdatedAt, order: models.SortOrderAsc,
+			wantColumn: colUpdatedAt, wantDesc: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -63,6 +67,10 @@ func TestResolveListOrdering_RejectsUnknownTokens(t *testing.T) {
 	}{
 		{name: "unknown sort", sort: models.SortField("value_number"), order: models.SortOrderDesc},
 		{name: "unknown order", sort: models.SortFieldCreatedAt, order: models.SortOrder("sideways")},
+		// updated_at is ascending-only (models.SortField): descending, a record that changes
+		// mid-traversal moves behind the cursor and is skipped. An omitted order defaults to desc.
+		{name: "updated_at desc", sort: models.SortFieldUpdatedAt, order: models.SortOrderDesc},
+		{name: "updated_at with the default order", sort: models.SortFieldUpdatedAt},
 		{
 			name:  "injection attempt",
 			sort:  models.SortField(`collected_at"; DROP TABLE feedback_records--`),
@@ -122,7 +130,7 @@ func TestOrderingRendering(t *testing.T) {
 			name:          "collected_at asc",
 			ordering:      listOrdering{column: colCollectedAt, desc: false},
 			wantOrderBy:   " ORDER BY collected_at ASC, id ASC",
-			wantPredicate: "(collected_at > $1 OR (collected_at = $1 AND id > $2))",
+			wantPredicate: "(collected_at, id) > ($1, $2)",
 		},
 		{
 			name:          "created_at desc",
@@ -134,7 +142,13 @@ func TestOrderingRendering(t *testing.T) {
 			name:          "created_at asc",
 			ordering:      listOrdering{column: colCreatedAt, desc: false},
 			wantOrderBy:   " ORDER BY created_at ASC, id ASC",
-			wantPredicate: "(created_at > $1 OR (created_at = $1 AND id > $2))",
+			wantPredicate: "(created_at, id) > ($1, $2)",
+		},
+		{
+			name:          "updated_at asc",
+			ordering:      listOrdering{column: colUpdatedAt, desc: false},
+			wantOrderBy:   " ORDER BY updated_at ASC, id ASC",
+			wantPredicate: "(updated_at, id) > ($1, $2)",
 		},
 	}
 

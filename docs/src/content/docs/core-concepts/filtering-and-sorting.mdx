@@ -81,13 +81,14 @@ narrow with the filters and post-process.
 
 ## Ranges
 
-`collected_at`, `created_at`, `value_number`, `value_date` and `sentiment_score` take bounds. Every
-bound is **inclusive** — a record sitting exactly on it is included.
+`collected_at`, `created_at`, `updated_at`, `value_number`, `value_date` and `sentiment_score` take
+bounds. Every bound is **inclusive** — a record sitting exactly on it is included.
 
 | Filter | Bounds |
 | --- | --- |
 | `collected_at` — when the feedback was given | `since` / `until` |
 | `created_at` — when Hub stored it | `created_since` / `created_until` |
+| `updated_at` — when Hub last changed it | `updated_since` / `updated_until` |
 | `value_number` | `value_number_min` / `value_number_max` |
 | `value_date` | `value_date_min` / `value_date_max` |
 | `sentiment_score` | `sentiment_score_min` / `sentiment_score_max` |
@@ -116,6 +117,105 @@ The two diverge whenever historical data is imported: the feedback was *collecte
 *created* in Hub today. Use `created_since` to answer "what did this import bring in", and `since`
 to answer "what did people tell us in this period".
 
+## Incremental extraction
+
+To keep a copy of a tenant's records in sync without re-reading everything, filter on
+`updated_since`. Hub stamps `updated_at` on every write to a record, so one filter picks up both
+new and changed records:
+
+| Stamps `updated_at` | Does not |
+| --- | --- |
+| creating the record | embeddings (stored apart from the record) |
+| every `PATCH` | taxonomy assignment (not part of the listed record) |
+| every translation, sentiment and emotion result | deleting the record — see below |
+
+Every writer takes the timestamp from the database clock, at the moment its transaction starts.
+
+```bash
+# everything created or changed since the last run, in the order it changed
+curl -G "$HUB/v1/feedback-records" \
+  -H "Authorization: Bearer $HUB_API_KEY" \
+  -d tenant_id=org-123 \
+  -d updated_since=2026-10-05T07:55:00Z \
+  -d updated_until=2026-10-05T09:00:00Z \
+  -d sort=updated_at \
+  -d order=asc \
+  -d limit=1000
+```
+
+**Sort by `updated_at`, ascending.** Every page is then one range of the `updated_at` index, so a
+sync reads only the records it returns, however large the tenant. Filtering on `updated_since` while
+sorting by `created_at` also works, but the database cannot tell how few records changed and may
+read the whole tenant for every page.
+
+Ascending is the only direction `updated_at` can be sorted in, because `updated_at` changes while you
+page. A record that changes mid-run normally gets a newer `updated_at`, which moves it *ahead* of the
+cursor: it comes back later in the same run, and you upsert it again. Descending would move every such
+record *behind* the cursor, where it would be skipped, so `sort=updated_at` with `order=desc` — or with
+no `order`, which defaults to `desc` — is a `400`.
+
+Ascending still has one exception: `updated_at` is when a write *started*, so a write that started
+before the cursor's position and commits after the run has read past it lands behind the cursor, as
+can the earlier of two writes to one record that commit out of order. Those are missing from this run
+and picked up by the next one, as long as you choose the next `updated_since` as below.
+
+**Bound each run with `updated_until`.** Otherwise a run never quite ends while records keep
+changing: every write during the run moves a record ahead of the cursor, and a new record collects
+several (translation, sentiment, emotions) in its first minutes. Start each run with a cheap request
+(a page with `limit=1`) and read its `Date` header: that one value, *S*, is this run's
+`updated_until`, and *S* minus the overlap is the next run's `updated_since`. Both bounds have to come
+from the same *S* — an `updated_until` from your own clock can fall short of the next run's
+`updated_since` and leave records in between that neither run ever reads. Anything that changes after
+*S* has a newer `updated_at` and belongs to the next run.
+
+### Choosing the next `updated_since`
+
+**Note when the run starts, and use that time minus an overlap as the next run's `updated_since`.**
+Do not use the largest `updated_at` you received. `updated_at` is when a write *started*, and a
+write becomes visible only when it commits: one that was still in flight when your run read past its
+timestamp is missing from this run, and its `updated_at` is older than the newest one you received.
+If you sort by `created_at` instead, there is a second way to lose a change: a record you paged past
+early can change while later pages are read, and its new `updated_at` is still older than the newest
+one on your last page. Either way, a watermark taken from the results skips the change for good; a
+watermark taken from the run's start, minus the overlap below, reads it next time.
+
+- **Take the start time from the server, not from your own clock.** Every response carries an HTTP
+  `Date` header; use the one on the run's first response, so drift between your clock and the
+  server's cannot open a gap.
+- **Keep an overlap longer than any write to a record can take.** `updated_at` is when the
+  writing transaction *started*, so a write that commits after your run began can carry a
+  timestamp from before it; the overlap has to exceed the longest such transaction, plus the time
+  the first response took (`Date` is stamped after that page was read) and the clock difference
+  between whatever stamped `Date` (Hub, or a proxy in front of it) and the database. Hub's writes
+  are short single-record transactions, so five minutes is a comfortable default, but Hub does not
+  enforce a limit on how long one may take. A write stalled for longer than the overlap is missed
+  by the incremental sync, which is one reason to keep the full sweep below.
+- **The latest fetch wins, so never run two syncs at once** (the full sweep below included). The overlap re-reads some records, so
+  upsert by `id` and let the copy from the most recent run replace the older one. Do not compare
+  `updated_at` to pick a copy: two writes to one record can commit in the opposite order to the one
+  they started in, so a newer state can carry an older timestamp. A later read always sees the later
+  state, which only holds if one run finishes before the next begins.
+
+### Deleted records
+
+<Aside type="caution">
+  **`updated_since` never returns a deleted record.** Deleting a record removes it, and there is no
+  row left for the filter to match. Without separate handling, a synced copy keeps every record
+  that Hub has since deleted.
+</Aside>
+
+To reconcile deletions, periodically list **every** record id for the tenant: note the run's start
+from the first response's `Date` header, then page through `GET /v1/feedback-records` with no
+`updated_since` and a stable sort, such as `sort=created_at`. Afterwards, remove the local records
+that were not returned **and whose `created_at` is earlier than that start minus the overlap**.
+That condition matters: a record created after the sweep began may have been stored by your
+incremental sync but never reached by the sweep, and deleting it would lose it for good.
+
+This catches every way a record can disappear, including deletes by user and dataset purges. The
+sweep returns every record in full, so upsert what it returns as well: that also repairs any change
+the incremental sync missed, such as a write that took longer than the overlap. It reads the whole
+tenant, so run it less often than the incremental sync, for example daily against an hourly sync.
+
 ## Enrichment filters
 
 `sentiment`, `emotions` and `sentiment_score` filter on
@@ -141,9 +241,10 @@ record tagged `{joy, anger}` both match `?emotions=joy&emotions=anger`.
 
 ## Sorting
 
-`sort` accepts `collected_at` (the default) or `created_at`; `order` accepts `asc` or `desc`
-(default `desc`). Records tied on the sort column are ordered by `id` ascending, so the sequence is
-always total and stable.
+`sort` accepts `collected_at` (the default), `created_at` or `updated_at`; `order` accepts `asc` or
+`desc` (default `desc`). Records tied on the sort column are ordered by `id` ascending, so the sequence
+is always total and stable. `updated_at` is accepted only with `order=asc` — see
+[Incremental extraction](#incremental-extraction).
 
 Sort by the column you filter on. Filtering `created_at` while ordering by `collected_at` cannot use
 the index for the ordering, and gets slower as a dataset grows.
