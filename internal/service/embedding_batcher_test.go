@@ -27,6 +27,7 @@ type batcherTestClient struct {
 	singleStart  chan<- string
 }
 
+// CreateEmbedding records individual retries and models per-input provider outcomes.
 func (c *batcherTestClient) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {
 	c.mu.Lock()
 	c.singleCalls++
@@ -61,6 +62,7 @@ func (c *batcherTestClient) CreateEmbeddingForQuery(_ context.Context, input str
 	return []float32{float32(len(input))}, nil
 }
 
+// CreateEmbeddings records coalesced calls and can return a shared failure or malformed vectors.
 func (c *batcherTestClient) CreateEmbeddings(ctx context.Context, inputs []string) ([][]float32, error) {
 	if c.batchBlock != nil {
 		select {
@@ -156,6 +158,8 @@ func TestBatchingEmbeddingClientPartialBatchAndQueryBypass(t *testing.T) {
 	}
 }
 
+// TestBatchingEmbeddingClientInputSpecificErrorRetriesRequestsIndividually verifies that valid
+// peers survive an input-specific batch rejection and singles run concurrently.
 func TestBatchingEmbeddingClientInputSpecificErrorRetriesRequestsIndividually(t *testing.T) {
 	batchErr := fmt.Errorf("batch rejected: %w", huberrors.NewTerminalProviderError(
 		huberrors.TerminalReasonLength, errors.New("input too long")))
@@ -221,6 +225,8 @@ func TestBatchingEmbeddingClientInputSpecificErrorRetriesRequestsIndividually(t 
 	}
 }
 
+// TestBatchingEmbeddingClientDoesNotFanOutSharedFailures prevents extra provider calls on
+// shared failures, including errors carrying both rate-limit and terminal classifications.
 func TestBatchingEmbeddingClientDoesNotFanOutSharedFailures(t *testing.T) {
 	rateLimit := huberrors.NewRateLimitError(45*time.Second, errors.New("429"))
 	tests := []struct {
@@ -230,6 +236,10 @@ func TestBatchingEmbeddingClientDoesNotFanOutSharedFailures(t *testing.T) {
 		wantErr error
 	}{
 		{name: "rate limit", err: rateLimit, wantErr: rateLimit},
+		{name: "rate limit wrapping terminal", err: huberrors.NewRateLimitError(45*time.Second,
+			huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength, errors.New("length")))},
+		{name: "terminal wrapping rate limit", err: huberrors.NewTerminalProviderError(
+			huberrors.TerminalReasonLength, rateLimit)},
 		{name: "server error", err: errors.New("503 service unavailable")},
 		{name: "timeout", err: fmt.Errorf("provider timeout: %w", context.DeadlineExceeded)},
 		{name: "malformed response", vectors: [][]float32{{1}}, wantErr: ErrEmbeddingBatchResultCount},

@@ -267,7 +267,7 @@ func (b *BatchingEmbeddingClient) dispatch(batch []*embeddingBatchRequest) {
 	b.deliver(active, vectors, err)
 }
 
-// Only a typed input-specific rejection can be isolated by retrying each input. Rate limits,
+// isInputSpecificBatchError reports whether a typed input-specific rejection can be isolated by retrying each input. Rate limits,
 // transient provider failures, and malformed batch responses must reach the workers unchanged;
 // fanning those out would amplify the failing request and bypass River's snooze/retry policy.
 func isInputSpecificBatchError(err error) bool {

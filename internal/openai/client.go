@@ -3,9 +3,12 @@
 package openai
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strconv"
@@ -441,7 +444,48 @@ func wrapOpenAIError(op string, err error) error {
 		return huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength, wrapped)
 	}
 
+	if isTEIInputLengthError(apiErr) {
+		return huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength,
+			fmt.Errorf("TEI input length limit exceeded: %w", wrapped))
+	}
+
 	return wrapped
+}
+
+// isTEIInputLengthError recognizes TEI's explicit token/character limit validation failures.
+// The SDK only decodes a nested OpenAI "error" object, so TEI's flat envelope must be read
+// from the restored response body. Other 422s (including deployment configuration errors)
+// stay recoverable; the body is preserved for callers inspecting the underlying SDK error.
+func isTEIInputLengthError(apiErr *openaisdk.Error) bool {
+	if apiErr == nil || apiErr.StatusCode != http.StatusUnprocessableEntity ||
+		apiErr.Response == nil || apiErr.Response.Body == nil {
+		return false
+	}
+
+	const maxErrorBodyBytes = 16 << 10
+
+	originalBody := apiErr.Response.Body
+	body, err := io.ReadAll(io.LimitReader(originalBody, maxErrorBodyBytes))
+
+	apiErr.Response.Body = struct {
+		io.Reader
+		io.Closer
+	}{Reader: io.MultiReader(bytes.NewReader(body), originalBody), Closer: originalBody}
+	if err != nil || len(body) == maxErrorBodyBytes {
+		return false
+	}
+
+	var detail struct {
+		Message string `json:"message"`
+		Code    int    `json:"code"`
+		Type    string `json:"type"`
+	}
+	if json.Unmarshal(body, &detail) != nil || detail.Code != http.StatusUnprocessableEntity || detail.Type != "validation" {
+		return false
+	}
+
+	return strings.HasPrefix(detail.Message, "`inputs` must have less than ") &&
+		(strings.Contains(detail.Message, " tokens. Given: ") || strings.Contains(detail.Message, " characters. Given: "))
 }
 
 // isOpenAIInputLengthError recognizes only explicit per-request input/context limit failures.
@@ -449,7 +493,8 @@ func wrapOpenAIError(op string, err error) error {
 // retryable at the record layer because classifying them as terminal would permanently suppress
 // every record after an operator fixes the deployment.
 func isOpenAIInputLengthError(apiErr *openaisdk.Error) bool {
-	if apiErr == nil || (apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusRequestEntityTooLarge) {
+	if apiErr == nil || (apiErr.StatusCode != http.StatusBadRequest &&
+		apiErr.StatusCode != http.StatusRequestEntityTooLarge && apiErr.StatusCode != http.StatusUnprocessableEntity) {
 		return false
 	}
 

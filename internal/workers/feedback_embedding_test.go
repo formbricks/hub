@@ -100,16 +100,19 @@ type rateLimitedBatchEmbeddingClient struct {
 	err         error
 }
 
+// CreateEmbedding counts accidental single-input fan-out after a batch rate limit.
 func (c *rateLimitedBatchEmbeddingClient) CreateEmbedding(context.Context, string) ([]float32, error) {
 	c.singleCalls.Add(1)
 
 	return nil, c.err
 }
 
+// CreateEmbeddingForQuery models the same rate-limited provider for foreground requests.
 func (c *rateLimitedBatchEmbeddingClient) CreateEmbeddingForQuery(context.Context, string) ([]float32, error) {
 	return nil, c.err
 }
 
+// CreateEmbeddings returns a rate-limit error once per coalesced provider call.
 func (c *rateLimitedBatchEmbeddingClient) CreateEmbeddings(context.Context, []string) ([][]float32, error) {
 	c.batchCalls.Add(1)
 
@@ -424,6 +427,8 @@ func TestFeedbackEmbeddingWorker_RateLimitSnoozes(t *testing.T) {
 	}
 }
 
+// TestFeedbackEmbeddingWorker_BatchedRateLimitSnoozesEveryJob preserves Retry-After for every
+// peer and ensures rate limits neither fan out nor consume the jobs as terminal failures.
 func TestFeedbackEmbeddingWorker_BatchedRateLimitSnoozesEveryJob(t *testing.T) {
 	provider := &rateLimitedBatchEmbeddingClient{
 		err: huberrors.NewRateLimitError(45*time.Second, errors.New("429")),
