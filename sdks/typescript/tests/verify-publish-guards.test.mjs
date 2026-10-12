@@ -56,14 +56,20 @@ const environment = (overrides = {}) => ({
     protected_branches: false,
     custom_branch_policies: true,
   },
-  protection_rules: [
-    { type: "branch_policy" },
-    { type: "required_reviewers", prevent_self_review: true, reviewers: [] },
-  ],
+  protection_rules: [{ type: "branch_policy" }],
   ...overrides,
 });
 
-// The configuration AGENTS.md recommends.
+const withReviewers = (preventSelfReview = true) => [
+  { type: "branch_policy" },
+  {
+    type: "required_reviewers",
+    prevent_self_review: preventSelfReview,
+    reviewers: [],
+  },
+];
+
+// The configuration AGENTS.md recommends: release tags only, no approval.
 function recommended() {
   return {
     [`/repos/${REPO}`]: [200, { default_branch: "main" }],
@@ -124,6 +130,23 @@ test("the recommended configuration passes cleanly", async () => {
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.warnings, [], "nothing to warn about");
   assert.match(result.summary, /✅ .*\[0-9\]\*\.\[0-9\]\*\.\[0-9\]\*/);
+  assert.match(result.summary, /✅ .*needs no approval/);
+});
+
+test("required reviewers are still accepted, without a warning", async () => {
+  // Not required since ENG-3857, but an environment that adds a second person
+  // is stricter than the recommendation, not a misconfiguration.
+  routes = {
+    ...recommended(),
+    [`/repos/${REPO}/environments/${ENV}`]: [
+      200,
+      environment({ protection_rules: withReviewers() }),
+    ],
+  };
+  const result = await run();
+  assert.equal(result.exitCode, 0, result.stdout);
+  assert.deepEqual(result.warnings, []);
+  assert.match(result.summary, /✅ .*requires a reviewer/);
 });
 
 test("a missing environment stops the publish", async () => {
@@ -190,17 +213,14 @@ test("a branch-only rule stops the publish, because every release is a tag", asy
   );
 });
 
-test("tags without reviewers publishes, but says why that is weak", async () => {
+test("a * tag rule without reviewers publishes, but says why that is weak", async () => {
   // pypa/pip's `PyPI` uses the tag rule `*`, which is fine there because it
   // also requires a reviewer. Without one, the pattern is the only line.
   routes = {
     ...recommended(),
     [`/repos/${REPO}/environments/${ENV}`]: [
       200,
-      environment({
-        protection_rules: [{ type: "branch_policy" }],
-        can_admins_bypass: true,
-      }),
+      environment({ can_admins_bypass: true }),
     ],
     [`/repos/${REPO}/environments/${ENV}/deployment-branch-policies`]: [
       200,
@@ -210,9 +230,9 @@ test("tags without reviewers publishes, but says why that is weak", async () => 
   const result = await run();
   assert.equal(result.exitCode, 0, "a working configuration must not block");
   const warnings = result.warnings.join("\n");
-  assert.match(warnings, /no required reviewers/);
   assert.match(warnings, /matches every tag/);
   assert.match(warnings, /Administrators can bypass/);
+  assert.doesNotMatch(result.summary, /needs no approval/);
 });
 
 test("reviewers without a ref restriction publishes, with a warning", async () => {
@@ -221,7 +241,10 @@ test("reviewers without a ref restriction publishes, with a warning", async () =
     ...recommended(),
     [`/repos/${REPO}/environments/${ENV}`]: [
       200,
-      environment({ deployment_branch_policy: null }),
+      environment({
+        deployment_branch_policy: null,
+        protection_rules: withReviewers(),
+      }),
     ],
   };
   const result = await run();
@@ -234,12 +257,7 @@ test("reviewers who may approve their own run are flagged", async () => {
     ...recommended(),
     [`/repos/${REPO}/environments/${ENV}`]: [
       200,
-      environment({
-        protection_rules: [
-          { type: "branch_policy" },
-          { type: "required_reviewers", prevent_self_review: false },
-        ],
-      }),
+      environment({ protection_rules: withReviewers(false) }),
     ],
   };
   const result = await run();

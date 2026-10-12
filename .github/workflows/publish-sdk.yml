@@ -38,10 +38,9 @@ env:
 concurrency:
   # One package-wide group, not per-release: the compare step plans the
   # dist-tag from every version already on npm, so two concurrent releases
-  # could plan against the same list and race. A run holds the group while it
-  # waits for its npm-publish approval, so a second release queues behind it;
-  # GitHub keeps only one pending run per group, so a third release cancels the
-  # second's pending run, which then has to be re-run.
+  # could plan against the same list and race. A second release queues behind
+  # the running one; GitHub keeps only one pending run per group, so a third
+  # release cancels the second's pending run, which then has to be re-run.
   group: publish-sdk
   cancel-in-progress: false
 
@@ -162,8 +161,8 @@ jobs:
       # (scripts/release-version.mjs `plan`): `latest` for a release above all of
       # them, `release-X.Y` for a backport — a 0.14.1 security fix released after
       # 0.15.0, which Hub releases as stable but not latest — so `latest` never
-      # moves backwards. What stops a release here, before anyone is asked to
-      # approve it: a version npm already has, and a backport older than one
+      # moves backwards. What stops a release here, before the publish job
+      # starts: a version npm already has, and a backport older than one
       # already published on its line.
       - name: Compare against the package on npm
         id: compare
@@ -265,7 +264,7 @@ jobs:
   # runs the generator's dependencies and should not hold `actions: read`, and
   # the publish job must not start at all if a check fails. It runs alongside
   # the build rather than after it, so a misconfigured release path surfaces
-  # while the build runs, before anyone is asked to approve the publish.
+  # while the build runs, before the publish job can start.
   #
   # A dry run from a tag runs it too, which makes that a full rehearsal of the
   # release path — environment and token permissions included — that publishes
@@ -413,7 +412,7 @@ jobs:
           // itself — GITHUB_REF_NAME, set by the runner in this job — and not
           // only against what the build job reported. That job runs third-party
           // code, which could rewrite both the manifest and its own outputs; this
-          // way, whoever approves the release of tag X knows X is what publishes.
+          // way, whoever creates the release of tag X knows X is what publishes.
           // The pattern must stay the one in scripts/release-version.mjs, which
           // this job cannot load (it has no checkout); a test pins the two equal.
           const RELEASE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
