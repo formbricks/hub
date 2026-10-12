@@ -27,8 +27,9 @@
  * whoever may create a Hub release may publish its SDK, with no second person
  * approving the publish (ENG-3857). An environment restricted to release tags
  * is therefore the intended configuration and passes cleanly. Required
- * reviewers, or a ruleset limiting who may create release tags, would add a
- * second person; they are still accepted, but not required.
+ * reviewers would add a second person; they are still accepted, but not
+ * required. A ruleset limiting who may create release tags is a separate
+ * restriction this check does not inspect.
  *
  * Reads the standard Actions variables (GITHUB_API_URL, GITHUB_REPOSITORY,
  * GITHUB_REF, GITHUB_SHA, GITHUB_STEP_SUMMARY), plus GITHUB_TOKEN, and
