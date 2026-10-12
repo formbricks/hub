@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -663,6 +664,21 @@ func TestWrapOpenAIErrorClassifiesOnlyExplicitInputLengthFailures(t *testing.T) 
 			terminal: true,
 		},
 		{
+			name: "unprocessable explicit input length code",
+			err: &openaisdk.Error{
+				StatusCode: http.StatusUnprocessableEntity,
+				Code:       "input_too_long",
+			},
+			terminal: true,
+		},
+		{
+			name: "unprocessable dimensions stays recoverable",
+			err: &openaisdk.Error{
+				StatusCode: http.StatusUnprocessableEntity,
+				Message:    "unsupported embedding dimensions",
+			},
+		},
+		{
 			name: "invalid model stays recoverable",
 			err: &openaisdk.Error{
 				StatusCode: http.StatusBadRequest,
@@ -848,4 +864,68 @@ func TestUsageIsRecordedForChatCompletions(t *testing.T) {
 			require.NoError(t, err)
 		})
 	})
+}
+
+// TestCreateEmbeddingTEIInputLengthClassification drives TEI's flat numeric-code envelope
+// through the real SDK. Only explicit input-length validation becomes permanent; deployment
+// errors and shared provider failures remain recoverable, and the SDK response stays readable.
+func TestCreateEmbeddingTEIInputLengthClassification(t *testing.T) {
+	const (
+		tokenMessage = "`inputs` must have less than 8192 tokens. Given: 8193"
+		charMessage  = "`inputs` must have less than 2048000 characters. Given: 2048001"
+	)
+
+	tests := []struct {
+		name     string
+		status   int
+		message  string
+		kind     string
+		terminal bool
+	}{
+		{name: "token limit", status: 422, message: tokenMessage, kind: "validation", terminal: true},
+		{name: "character limit", status: 422, message: charMessage, kind: "validation", terminal: true},
+		{
+			name: "prompt configuration", status: 422,
+			message: "`default-prompt-name` was not found in the Sentence Transformers prompts", kind: "validation",
+		},
+		{name: "batch size configuration", status: 422, message: "batch size 4 > maximum allowed batch size 2", kind: "validation"},
+		{name: "tokenizer failure", status: 422, message: tokenMessage, kind: "tokenizer"},
+		{name: "rate limit takes precedence", status: 429, message: tokenMessage, kind: "validation"},
+		{name: "server failure takes precedence", status: 500, message: tokenMessage, kind: "validation"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"message": testCase.message, "code": testCase.status, "type": testCase.kind})
+			require.NoError(t, err)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "45")
+				w.WriteHeader(testCase.status)
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(server.Close)
+			client := NewClient("test-key", WithBaseURL(server.URL+"/v1"), WithDimensions(2), WithModel("test-model"))
+			_, err = client.CreateEmbedding(context.Background(), "test input")
+			require.Error(t, err)
+			reason, terminal := huberrors.TerminalReasonOf(err)
+			assert.Equal(t, testCase.terminal, terminal)
+
+			if testCase.terminal {
+				assert.Equal(t, huberrors.TerminalReasonLength, reason)
+			}
+
+			var apiErr *openaisdk.Error
+			require.ErrorAs(t, err, &apiErr)
+			preserved, readErr := io.ReadAll(apiErr.Response.Body)
+			require.NoError(t, readErr)
+			assert.JSONEq(t, string(body), string(preserved))
+
+			if testCase.status == http.StatusTooManyRequests {
+				var limited *huberrors.RateLimitError
+				require.ErrorAs(t, err, &limited)
+				assert.Equal(t, 45*time.Second, limited.RetryAfter)
+			}
+		})
+	}
 }
