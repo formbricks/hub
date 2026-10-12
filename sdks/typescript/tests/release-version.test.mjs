@@ -145,28 +145,33 @@ test("the published-versions list is read in either of npm's shapes", () => {
 });
 
 test("stamp changes only the version line of the real package.json", () => {
+  // On a release run the tests come after the stamp, so package.json already
+  // holds that release's version; stamping it again would change nothing. The
+  // target is therefore one the manifest does not hold, whatever it holds.
+  const before = JSON.parse(realManifest);
+  const target = before.version === "123.45.678" ? "123.45.679" : "123.45.678";
+
   const pkg = scratchPackage(realManifest);
   const result = pkg.run(["stamp"], {
     GITHUB_REF_TYPE: "tag",
-    GITHUB_REF_NAME: "v0.14.0",
+    GITHUB_REF_NAME: `v${target}`,
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), "0.14.0");
+  assert.equal(result.stdout.trim(), target);
 
-  // Every field survives, in order, and the file differs from the committed
-  // one in exactly one line.
-  const before = JSON.parse(realManifest);
+  // Every field survives, in order, and the file differs from the one it
+  // started as in exactly one line.
   const after = JSON.parse(pkg.raw());
   assert.deepEqual(Object.keys(after), Object.keys(before));
   assert.deepEqual({ ...after, version: before.version }, before);
-  assert.equal(after.version, "0.14.0");
+  assert.equal(after.version, target);
   const beforeLines = realManifest.split("\n");
   const afterLines = pkg.raw().split("\n");
   assert.equal(afterLines.length, beforeLines.length);
   const changed = afterLines.filter(
     (line, index) => line !== beforeLines[index],
   );
-  assert.deepEqual(changed, ['  "version": "0.14.0",']);
+  assert.deepEqual(changed, [`  "version": "${target}",`]);
 });
 
 test("stamp refuses a tag that is not a plain version, and leaves package.json alone", () => {
