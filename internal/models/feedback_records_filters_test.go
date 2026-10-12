@@ -162,7 +162,8 @@ func TestValidEnumValuesStrings(t *testing.T) {
 func TestFeedbackRecord_SortValue(t *testing.T) {
 	collected := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	created := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	record := &FeedbackRecord{CollectedAt: collected, CreatedAt: created}
+	updated := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	record := &FeedbackRecord{CollectedAt: collected, CreatedAt: created, UpdatedAt: updated}
 
 	tests := []struct {
 		name  string
@@ -171,6 +172,7 @@ func TestFeedbackRecord_SortValue(t *testing.T) {
 	}{
 		{name: "collected_at", field: SortFieldCollectedAt, want: collected},
 		{name: "created_at", field: SortFieldCreatedAt, want: created},
+		{name: "updated_at", field: SortFieldUpdatedAt, want: updated},
 		{name: "unknown falls back to the default sort", field: SortField("nonsense"), want: collected},
 	}
 
@@ -204,6 +206,7 @@ func TestInvertedRanges_ReportsEachInvertedPair(t *testing.T) {
 	want := map[string]string{
 		"since":               "until",
 		"created_since":       "created_until",
+		"updated_since":       "updated_until",
 		"value_date_min":      "value_date_max",
 		"value_number_min":    "value_number_max",
 		"sentiment_score_min": "sentiment_score_max",
@@ -280,6 +283,7 @@ func invertedFilters() *ListFeedbackRecordsFilters {
 	return &ListFeedbackRecordsFilters{
 		Since: &late, Until: &early,
 		CreatedSince: &late, CreatedUntil: &early,
+		UpdatedSince: &late, UpdatedUntil: &early,
 		ValueDateMin: &late, ValueDateMax: &early,
 		ValueNumberMin: &high, ValueNumberMax: &low,
 		SentimentScoreMin: &high, SentimentScoreMax: &low,

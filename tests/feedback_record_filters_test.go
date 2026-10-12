@@ -1,10 +1,12 @@
 package tests
 
 import (
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -282,6 +284,314 @@ func TestFeedbackRecordFilters_CreatedAtIsDistinctFromCollectedAt(t *testing.T) 
 		"created_since bounds created_at, which is after the cutoff")
 }
 
+// dbNow reads the database clock, the one every writer stamps updated_at from. A cutoff taken from
+// the test process's clock would make these tests depend on the two clocks agreeing.
+func (e *filterTestEnv) dbNow(t *testing.T) time.Time {
+	t.Helper()
+
+	var now time.Time
+	require.NoError(t, e.db.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&now))
+
+	return now
+}
+
+// TestFeedbackRecordFilters_UpdatedSinceSelectsCreatedAndChanged drives each real write path the
+// docs promise stamps updated_at — insert, PATCH, and the sentiment, emotions and translation
+// results — and checks updated_since selects exactly those records, while an untouched older record
+// stays out (ENG-3420).
+func TestFeedbackRecordFilters_UpdatedSinceSelectsCreatedAndChanged(t *testing.T) {
+	env := newFilterTestEnv(t, "updated-since")
+
+	untouched := env.seed(t)
+	patched := env.seed(t)
+	withSentiment := env.seed(t)
+	withEmotions := env.seed(t)
+	translated := env.seed(t)
+
+	cutoff := env.dbNow(t)
+
+	updated, _, err := env.repo.Update(t.Context(), patched.ID, &models.UpdateFeedbackRecordRequest{
+		UserID: new("user-after-cutoff"),
+	})
+	require.NoError(t, err)
+	require.False(t, updated.UpdatedAt.Before(cutoff), "PATCH must move updated_at past the cutoff")
+
+	sentiment, score := models.SentimentPositive, 0.5
+	require.NoError(t, env.repo.SetSentiment(t.Context(), withSentiment.ID, &sentiment, &score, nil))
+	require.NoError(t, env.repo.SetEmotions(t.Context(), withEmotions.ID, []models.EmotionValue{models.EmotionJoy}, nil))
+
+	// No tenant settings row, so the effective target is the default passed here and the write lands.
+	translation := "etwas Feedback"
+	require.NoError(t, env.repo.SetTranslation(t.Context(), translated.ID, &translation, "de", "de", nil))
+
+	created := env.seed(t)
+
+	want := []uuid.UUID{patched.ID, withSentiment.ID, withEmotions.ID, translated.ID, created.ID}
+	since := func(f *models.ListFeedbackRecordsFilters) { f.UpdatedSince = &cutoff }
+	assert.ElementsMatch(t, want, env.list(t, since),
+		"updated_since selects records created or changed at or after the cutoff")
+	assert.Equal(t, len(want), env.count(t, since), "count must describe the same set")
+
+	until := func(f *models.ListFeedbackRecordsFilters) { f.UpdatedUntil = &cutoff }
+	assert.Equal(t, []uuid.UUID{untouched.ID}, env.list(t, until),
+		"updated_until bounds updated_at, so only the record nobody touched is at or before the cutoff")
+}
+
+// TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates pages through an updated_since
+// listing while records in it change, in every ordering a sync may use, and checks nothing is
+// skipped.
+//
+// Each case touches the first record it was returned and the last one it has not reached yet:
+//   - created_at, either direction: the sort key does not move, so each record comes back once.
+//   - updated_at asc: both touched records move to the newest end, AHEAD of the cursor, so the
+//     already-returned one comes back a second time (the duplicate the docs tell callers to upsert)
+//     and the unreached one is still reached. This is the property that makes updated_at sortable
+//     ascending; descending it would land behind the cursor and be lost, which is why that
+//     combination is rejected rather than tested here.
+//
+// Each case seeds its own tenant: the touches change updated_at, so cases sharing records would
+// see each other's edits and could pass for the wrong reason.
+func TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates(t *testing.T) {
+	const records, pageLimit = 6, 2
+
+	cases := []struct {
+		sort  models.SortField
+		order models.SortOrder
+		// timesFirstTouched is how often the record touched after being returned comes back.
+		timesFirstTouched int
+	}{
+		{models.SortFieldCreatedAt, models.SortOrderAsc, 1},
+		{models.SortFieldCreatedAt, models.SortOrderDesc, 1},
+		{models.SortFieldUpdatedAt, models.SortOrderAsc, 2},
+	}
+
+	for _, testCase := range cases {
+		t.Run(string(testCase.sort)+" "+string(testCase.order), func(t *testing.T) {
+			env := newFilterTestEnv(t, "updated-since-pages")
+			svc := service.NewFeedbackRecordsService(
+				repository.NewFeedbackRecordsRepository(env.db), nil, "", nil, nil, "", 0, "",
+			)
+
+			// Written before the cutoff, so it must never appear: without it this test would pass
+			// with updated_since ignored altogether.
+			before := env.seed(t)
+			cutoff := env.dbNow(t)
+
+			// Seeded one insert at a time, so created_at and updated_at both follow this order.
+			inOrder := make([]uuid.UUID, 0, records)
+			for range records {
+				inOrder = append(inOrder, env.seed(t).ID)
+			}
+
+			if testCase.order == models.SortOrderDesc {
+				slices.Reverse(inOrder)
+			}
+
+			touch := func(id uuid.UUID) {
+				_, _, err := env.repo.Update(t.Context(), id, &models.UpdateFeedbackRecordRequest{
+					UserID: new("touched-" + uuid.NewString()),
+				})
+				require.NoError(t, err)
+			}
+
+			seen := make(map[uuid.UUID]int, records)
+			nextCursor := ""
+
+			for page := range records + 2 {
+				tenant := env.tenant
+				resp, err := svc.ListFeedbackRecords(t.Context(), &models.ListFeedbackRecordsFilters{
+					TenantID:     &tenant,
+					UpdatedSince: &cutoff,
+					Sort:         testCase.sort,
+					Order:        testCase.order,
+					Limit:        pageLimit,
+					Cursor:       nextCursor,
+				})
+				require.NoError(t, err, "page %d", page)
+
+				for _, record := range resp.Data {
+					seen[record.ID]++
+				}
+
+				if page == 0 {
+					require.Equal(t, inOrder[0], resp.Data[0].ID, "the first page must start where the seed order says")
+					touch(inOrder[0])
+					touch(inOrder[records-1])
+				}
+
+				nextCursor = resp.NextCursor
+				if nextCursor == "" {
+					break
+				}
+			}
+
+			require.Empty(t, nextCursor, "pagination did not terminate")
+			assert.NotContains(t, seen, before.ID, "a record last written before updated_since must not be returned")
+
+			for _, id := range inOrder {
+				want := 1
+				if id == inOrder[0] {
+					want = testCase.timesFirstTouched
+				}
+
+				assert.Equal(t, want, seen[id], "record %s returned %d times, want %d", id, seen[id], want)
+			}
+
+			assert.Len(t, seen, records, "no record outside the traversal may appear")
+		})
+	}
+}
+
+// TestFeedbackRecordFilters_UpdatedSinceWatermarkFromRunStart drives the sync procedure the docs
+// prescribe across two runs, in the one shape that makes the choice of watermark matter: a record
+// changes after the run has paged past it, while a record further along changes later still.
+//
+// The newest updated_at the run received is then AFTER the first record's change, so a watermark
+// taken from the results would skip that change for good. The watermark the docs prescribe — the
+// run's start — is before it, and the second run returns it.
+func TestFeedbackRecordFilters_UpdatedSinceWatermarkFromRunStart(t *testing.T) {
+	env := newFilterTestEnv(t, "updated-since-watermark")
+	svc := service.NewFeedbackRecordsService(
+		repository.NewFeedbackRecordsRepository(env.db), nil, "", nil, nil, "", 0, "",
+	)
+
+	first := env.seed(t)
+	middle := env.seed(t) // never changes, so the second run must leave it out
+	last := env.seed(t)
+
+	touch := func(id uuid.UUID) {
+		_, _, err := env.repo.Update(t.Context(), id, &models.UpdateFeedbackRecordRequest{
+			UserID: new("touched-" + uuid.NewString()),
+		})
+		require.NoError(t, err)
+	}
+
+	// run pages through every record updated at or after since, one per page, calling between
+	// after the first page. It returns the records in the order received.
+	run := func(since time.Time, between func()) []*models.FeedbackRecord {
+		var (
+			received   []*models.FeedbackRecord
+			nextCursor string
+		)
+
+		for page := range 10 {
+			tenant := env.tenant
+			resp, err := svc.ListFeedbackRecords(t.Context(), &models.ListFeedbackRecordsFilters{
+				TenantID: &tenant, UpdatedSince: &since,
+				Sort: models.SortFieldCreatedAt, Order: models.SortOrderAsc,
+				Limit: 1, Cursor: nextCursor,
+			})
+			require.NoError(t, err)
+
+			for i := range resp.Data {
+				received = append(received, &resp.Data[i])
+			}
+
+			if page == 0 && between != nil {
+				between()
+			}
+
+			nextCursor = resp.NextCursor
+			if nextCursor == "" {
+				return received
+			}
+		}
+
+		t.Fatal("pagination did not terminate")
+
+		return nil
+	}
+
+	runStart := env.dbNow(t)
+	firstRun := run(time.Time{}, func() {
+		touch(first.ID) // already paged past
+		touch(last.ID)  // not reached yet, changed later still
+	})
+	require.Len(t, firstRun, 3)
+	require.Equal(t, first.ID, firstRun[0].ID)
+
+	newestReceived := firstRun[0].UpdatedAt
+	for _, record := range firstRun {
+		if record.UpdatedAt.After(newestReceived) {
+			newestReceived = record.UpdatedAt
+		}
+	}
+
+	var firstChangedAt time.Time
+	require.NoError(t, env.db.QueryRow(t.Context(),
+		`SELECT updated_at FROM feedback_records WHERE id = $1`, first.ID).Scan(&firstChangedAt))
+
+	// The scenario is real: a results-derived watermark would already be past the first change.
+	require.True(t, firstChangedAt.Before(newestReceived),
+		"the first record's change (%v) must be older than the newest updated_at received (%v)",
+		firstChangedAt, newestReceived)
+
+	secondRun := run(runStart, nil)
+
+	ids := make([]uuid.UUID, 0, len(secondRun))
+	for _, record := range secondRun {
+		ids = append(ids, record.ID)
+	}
+
+	assert.Contains(t, ids, first.ID, "a run-start watermark must return the change made behind the cursor")
+	assert.NotContains(t, ids, middle.ID, "a record unchanged since the run started must not be re-read")
+}
+
+// TestFeedbackRecordFilters_ListAndCountAvoidNamedStatements pins the plan-cache fix behind
+// updated_since (ENG-3420). pgx's default mode keeps a named prepared statement per connection, and
+// Postgres plans one generically from its sixth execution; a generic plan cannot see which tenant or
+// how narrow a window it serves, so a large tenant's sync degraded from an index scan of the matching
+// rows to a walk of the whole tenant. Timings are too noisy to assert on, so this asserts the
+// mechanism instead: on a single connection, list, cursor page and count leave no named statement.
+func TestFeedbackRecordFilters_ListAndCountAvoidNamedStatements(t *testing.T) {
+	env := newFilterTestEnv(t, "unnamed-statements")
+	first := env.seed(t)
+	env.seed(t)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	single, err := database.NewPostgresPool(t.Context(), cfg.Database.URL,
+		database.PoolOption(func(c *pgxpool.Config) { c.MaxConns = 1 }))
+	require.NoError(t, err)
+	t.Cleanup(single.Close)
+
+	repo := repository.NewFeedbackRecordsRepository(single)
+	tenant := env.tenant
+	since := first.CreatedAt.Add(-time.Hour)
+
+	// Well past the five executions after which a named statement may switch to a generic plan.
+	for range 7 {
+		filters := &models.ListFeedbackRecordsFilters{TenantID: &tenant, UpdatedSince: &since, Limit: 1}
+
+		_, _, err = repo.List(t.Context(), filters)
+		require.NoError(t, err)
+
+		_, _, err = repo.ListAfterCursor(t.Context(), filters, first.CollectedAt, first.ID)
+		require.NoError(t, err)
+
+		_, err = repo.Count(t.Context(), filters)
+		require.NoError(t, err)
+	}
+
+	// Simple protocol, so this probe does not become a named statement itself.
+	var named []string
+
+	rows, err := single.Query(t.Context(),
+		`SELECT statement FROM pg_prepared_statements WHERE statement ILIKE '%FROM feedback_records%'`,
+		pgx.QueryExecModeSimpleProtocol)
+	require.NoError(t, err)
+
+	for rows.Next() {
+		var statement string
+		require.NoError(t, rows.Scan(&statement))
+		named = append(named, statement)
+	}
+
+	require.NoError(t, rows.Err())
+	assert.Empty(t, named, "filtered list/count queries must run on the unnamed statement")
+}
+
 // TestFeedbackRecordFilters_PresencePartitions verifies each presence filter reads the column it
 // is supposed to, and that true/false partition the tenant exactly.
 //
@@ -435,6 +745,7 @@ func TestFeedbackRecordFilters_TenantIsolation(t *testing.T) {
 		{"has_sentiment", func(f *models.ListFeedbackRecordsFilters) { f.HasSentiment = new(true) }},
 		{"collected_at range", func(f *models.ListFeedbackRecordsFilters) { f.Since = &collected }},
 		{"created_at range", func(f *models.ListFeedbackRecordsFilters) { f.CreatedSince = &collected }},
+		{"updated_at range", func(f *models.ListFeedbackRecordsFilters) { f.UpdatedSince = &collected }},
 	}
 
 	for _, tt := range tests {
@@ -517,6 +828,7 @@ func TestFeedbackRecordFilters_PaginationInvariant(t *testing.T) {
 		{models.SortFieldCollectedAt, models.SortOrderAsc},
 		{models.SortFieldCreatedAt, models.SortOrderDesc},
 		{models.SortFieldCreatedAt, models.SortOrderAsc},
+		{models.SortFieldUpdatedAt, models.SortOrderAsc},
 	}
 
 	for _, ordering := range orderings {

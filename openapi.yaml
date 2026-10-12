@@ -104,6 +104,8 @@ paths:
                 - $ref: '#/components/parameters/FeedbackRecordsUntil'
                 - $ref: '#/components/parameters/FeedbackRecordsCreatedSince'
                 - $ref: '#/components/parameters/FeedbackRecordsCreatedUntil'
+                - $ref: '#/components/parameters/FeedbackRecordsUpdatedSince'
+                - $ref: '#/components/parameters/FeedbackRecordsUpdatedUntil'
                 - $ref: '#/components/parameters/FeedbackRecordsValueNumberMin'
                 - $ref: '#/components/parameters/FeedbackRecordsValueNumberMax'
                 - $ref: '#/components/parameters/FeedbackRecordsValueDateMin'
@@ -118,18 +120,27 @@ paths:
                 - name: sort
                   in: query
                   description: |
-                    Column to order by. Defaults to collected_at. Only columns that are non-null and
-                    immutable after insert are offered: a mutable sort key would let a row move across
-                    the cursor between pages and be silently skipped.
+                    Column to order by. Defaults to collected_at. collected_at and created_at never
+                    change. updated_at does, so it is accepted only with order=asc: ascending, a
+                    record that changes while you page normally moves ahead of the cursor and is
+                    returned again (upsert it by id); descending, every such record would land behind
+                    the cursor and be lost, so that combination is a 400. Ascending still misses a
+                    write that started before the cursor's position and commits after it; the next
+                    run picks it up when its updated_since is the previous run's start minus an
+                    overlap. Use sort=updated_at&order=asc with updated_since and updated_until for
+                    incremental extraction, both derived from the Date header of one request made
+                    at the run's start (see the filtering and sorting guide): every page is one
+                    ordered index range.
                   schema:
                     type: string
                     default: collected_at
                     enum:
                         - collected_at
                         - created_at
+                        - updated_at
                 - name: order
                   in: query
-                  description: Sort direction. Defaults to desc. Rows tied on the sort column are ordered by id ascending.
+                  description: Sort direction. Defaults to desc, so sort=updated_at needs order=asc given explicitly. Rows tied on the sort column are ordered by id ascending.
                   schema:
                     type: string
                     default: desc
@@ -524,6 +535,8 @@ paths:
                 - $ref: '#/components/parameters/FeedbackRecordsUntil'
                 - $ref: '#/components/parameters/FeedbackRecordsCreatedSince'
                 - $ref: '#/components/parameters/FeedbackRecordsCreatedUntil'
+                - $ref: '#/components/parameters/FeedbackRecordsUpdatedSince'
+                - $ref: '#/components/parameters/FeedbackRecordsUpdatedUntil'
                 - $ref: '#/components/parameters/FeedbackRecordsValueNumberMin'
                 - $ref: '#/components/parameters/FeedbackRecordsValueNumberMax'
                 - $ref: '#/components/parameters/FeedbackRecordsValueDateMin'
@@ -2764,6 +2777,36 @@ components:
             description: |
                 Filter by created_at <= created_until (ISO 8601, inclusive). See created_since for how
                 created_at differs from collected_at. Must be between 1970-01-01 and 2080-12-31.
+            schema:
+                type: string
+                format: date-time
+                example: "2026-12-31T00:00:00Z"
+        FeedbackRecordsUpdatedSince:
+            name: updated_since
+            in: query
+            description: |
+                Filter by updated_at >= updated_since (ISO 8601, inclusive). updated_at is stamped on
+                every write to a record — create, update, and every enrichment result (translation,
+                sentiment, emotions) — so this selects records created OR changed since a point: the
+                parameter for incremental extraction. Pair it with sort=updated_at&order=asc. For the
+                next run, use the time the previous run started (its first response's Date header)
+                minus an overlap, not the largest updated_at received. The overlap must outlast the
+                longest write to a record; Hub does not bound that, so a few minutes is a default
+                rather than a guarantee. Permanently deleted records are never returned: periodically
+                list every record, upsert what it returns (which also repairs any change a slow write
+                slipped past the overlap), and remove only local records that were not returned and
+                were created before that listing started (its first response's Date header) minus the
+                overlap. See "Incremental extraction" in the filtering and sorting guide.
+            schema:
+                type: string
+                format: date-time
+                example: "2026-01-01T00:00:00Z"
+        FeedbackRecordsUpdatedUntil:
+            name: updated_until
+            in: query
+            description: |
+                Filter by updated_at <= updated_until (ISO 8601, inclusive). See updated_since for what
+                updates updated_at.
             schema:
                 type: string
                 format: date-time

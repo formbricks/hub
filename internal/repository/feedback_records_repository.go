@@ -652,6 +652,22 @@ func scanBackfillTargetIDs(rows pgx.Rows, name string) ([]uuid.UUID, error) {
 	return ids, nil
 }
 
+// filterQueryArgs runs a filtered list or count on the unnamed prepared statement instead of pgx's
+// default named one, so Postgres plans every execution with its actual parameter values.
+//
+// A named statement is planned generically from its sixth execution on a connection whenever the
+// generic plan's estimated cost looks no worse than the custom ones, and a generic plan cannot see
+// which tenant or how narrow a time window it is serving. On a large tenant among many small ones
+// that turns an updated_since sync (ENG-3420) from an index scan of the matching rows into a walk of
+// the tenant's ordering index that discards nearly everything: under 1 ms for the first five calls,
+// ~15 ms from the sixth, on a local 200k-row tenant. Every filter on these endpoints is skewed by
+// tenant size the same way, so the mode covers list, cursor pages and count alike. The cost is a
+// plan per execution; it stays one round trip once pgx has cached the statement's description
+// (the first execution of each query text on a connection takes two, as with the default mode).
+func filterQueryArgs(args []any) []any {
+	return append([]any{pgx.QueryExecModeCacheDescribe}, args...)
+}
+
 // Count returns the number of feedback records matching the given filters.
 func (r *FeedbackRecordsRepository) Count(
 	ctx context.Context, filters *models.ListFeedbackRecordsFilters,
@@ -662,7 +678,7 @@ func (r *FeedbackRecordsRepository) Count(
 	}
 
 	var count int
-	if err := r.db.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+	if err := r.db.QueryRow(ctx, query, filterQueryArgs(args)...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("query feedback records count: %w", err)
 	}
 
@@ -790,8 +806,13 @@ func (r *FeedbackRecordsRepository) ListAfterCursor(
 
 // buildUpdateQuery builds an UPDATE query with SET clause and arguments.
 // Returns the query string, arguments, and a boolean indicating if any updates were provided.
+//
+// updated_at is stamped from the database clock (NOW()), the same clock every enrichment write and
+// the insert default use. updated_since (ENG-3420) compares that column against a caller's
+// watermark, so one writer on a pod's clock would let that pod's skew hide its edits from an
+// incremental extraction.
 func buildUpdateQuery(
-	req *models.UpdateFeedbackRecordRequest, id uuid.UUID, updatedAt time.Time,
+	req *models.UpdateFeedbackRecordRequest, id uuid.UUID,
 ) (query string, args []any, hasUpdates bool) {
 	var updates []string
 
@@ -910,9 +931,7 @@ func buildUpdateQuery(
 		return "", nil, false
 	}
 
-	updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
-	args = append(args, updatedAt)
-	argCount++
+	updates = append(updates, "updated_at = NOW()")
 
 	args = append(args, id)
 
@@ -956,7 +975,7 @@ func joinOr(conds ...string) string {
 func (r *FeedbackRecordsRepository) Update(
 	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
 ) (updated, previous *models.FeedbackRecord, err error) {
-	query, args, hasUpdates := buildUpdateQuery(req, id, time.Now())
+	query, args, hasUpdates := buildUpdateQuery(req, id)
 	if !hasUpdates {
 		// No write happens, so no tenant write lock is needed; nothing changed, so the previous
 		// state is the current row.
@@ -1193,7 +1212,7 @@ func listUserFeedbackTenants(
 func (r *FeedbackRecordsRepository) fetchFeedbackRecords(
 	ctx context.Context, query string, args ...any,
 ) ([]models.FeedbackRecord, error) {
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, filterQueryArgs(args)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feedback records: %w", err)
 	}
