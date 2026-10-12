@@ -4,9 +4,9 @@
  * Packs this package, fetches the one currently on npm, extracts both, and
  * prints what the comparison scripts need.
  *
- * Shared by publish-sdk.yml (which compares packed contents to decide whether a
- * release publishes) and sdk-preview.yml (which compares the public surface for
- * a reviewer), so both always measure the same two things the same way. The
+ * Shared by publish-sdk.yml (which compares packed contents for the release's
+ * job summary) and sdk-preview.yml (which compares the public surface for a
+ * reviewer), so both always measure the same two things the same way. The
  * npm quirks worth knowing live here rather than twice in YAML:
  *
  *   - `npm view` exits non-zero both when a package does not exist and when the

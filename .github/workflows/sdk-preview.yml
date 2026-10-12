@@ -95,7 +95,7 @@ jobs:
       # generated side too and what is compared is what would actually ship. The
       # packing, fetching and npm error handling are shared with publish-sdk.yml
       # via scripts/prepare-comparison.mjs, so the preview a reviewer reads and
-      # the release decision measure the same two packages the same way.
+      # the release's summary measure the same two packages the same way.
       - name: Diff the public surface against the package on npm
         run: |
           set -euo pipefail

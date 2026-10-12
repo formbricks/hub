@@ -1,8 +1,9 @@
-// compare-packed.mjs decides whether a Hub release publishes a new SDK, so the
-// ways it can be wrong are expensive in both directions: too sensitive and every
-// release burns a version number, too blunt and a changed package silently never
-// ships. The previous check compared only src/ and so missed every manifest-only
-// change — these pin the cases that motivated replacing it.
+// compare-packed.mjs reports what a Hub release changes for SDK users — in the
+// release's job summary and in every SDK pull request's preview — so the ways it
+// can be wrong mislead in both directions: too sensitive and every release looks
+// like a package change, too blunt and a changed package reads as unchanged. The
+// previous check compared only src/ and so missed every manifest-only change —
+// these pin the cases that motivated replacing it.
 //
 // No network: the script takes two directories, so the fixtures are built here.
 
@@ -73,7 +74,7 @@ function compare({ manifest = {}, files = {} } = {}) {
   };
 }
 
-test("identical packages compare equal, so a release skips", () => {
+test("identical packages compare equal", () => {
   const { exitCode, changes } = compare();
   assert.equal(exitCode, 0);
   assert.deepEqual(changes, []);
@@ -81,7 +82,7 @@ test("identical packages compare equal, so a release skips", () => {
 
 test("a version bump alone is not a package change", () => {
   // The version is the input to a release, not evidence the package differs.
-  // Without this, every release would look changed and publish.
+  // Without this, every release's summary would show a manifest change.
   const { exitCode, changes } = compare({ manifest: { version: "9.9.9" } });
   assert.equal(exitCode, 0);
   assert.deepEqual(changes, []);
