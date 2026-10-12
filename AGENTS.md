@@ -48,7 +48,7 @@ Commands, from `sdks/typescript/`: `pnpm install`, `pnpm generate`, `pnpm build`
 
 **To change the API surface, change `openapi.yaml`.** Never patch the SDK to paper over a spec problem — the next generation run erases it.
 
-**Bump `version` in `sdks/typescript/package.json` by hand** when a release should ship a new SDK. The publish workflow compares the packed package — build output, sources, manifest, docs — against what is on npm: identical contents skip the publish, and changed contents with an already-published version fails the build rather than overwriting it. The SDK version line is deliberately independent of the Hub's release version — they have never matched.
+**The SDK's version is the Hub release's**, so `@formbricks/hub@X` is the client for Hub X. Never bump `version` in `sdks/typescript/package.json`: it is a `0.0.0-development` placeholder, and `publish-sdk.yml` stamps the release tag into the manifest (`scripts/release-version.mjs`) before building and packing. Every stable Hub release publishes its SDK, unchanged or not, so each Hub version has one. The build fails, before the release is approved, when the tag is not a plain `X.Y.Z`, when that version is already on npm, or when it is not above npm's `latest`: npm will not move `latest` backwards, so a Hub version below the SDK's (0.9 against Stainless's 0.13, say) has to skip ahead. The comparison against the package on npm stays, for the job summary: it shows what the release changes for SDK users, and a removed export there makes that Hub release a breaking one.
 
 The generator version is pinned exactly. Bumping it is a deliberate change: regenerate, run `pnpm test`, and read the surface diff the `sdk-preview` workflow writes to the job summary.
 

@@ -1,8 +1,10 @@
 name: Publish TypeScript SDK
 
-# Generates @formbricks/hub from openapi.yaml and publishes it to npm on a stable
-# Hub release. The SDK is a build artifact — nothing generated is committed — so
-# this workflow is the only place it is produced.
+# Generates @formbricks/hub from openapi.yaml and publishes it to npm on every
+# stable Hub release, under the release's own version: @formbricks/hub@X is the
+# client for Hub X. The SDK is a build artifact — nothing generated is committed,
+# and its version is stamped from the tag — so this workflow is the only place
+# it is produced.
 #
 # SECURITY: this file's name is part of npm's trusted-publisher binding
 # (formbricks/hub + publish-sdk.yml + the npm-publish environment). Do not rename
@@ -100,11 +102,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Read the target version
+      # The SDK's version is the Hub release's, stamped into package.json from the
+      # tag before anything is built or packed, so nobody bumps it by hand. A tag
+      # that is not a plain X.Y.Z fails here. Off a tag — a dry run from a branch
+      # — the committed placeholder version is kept. GITHUB_REF_TYPE and
+      # GITHUB_REF_NAME come from the runner. See scripts/release-version.mjs.
+      - name: Take the version from the release tag
         id: version
         run: |
           set -euo pipefail
-          VERSION="$(node -p "require('./package.json').version")"
+          VERSION="$(node scripts/release-version.mjs stamp)"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Target version: $VERSION"
 
@@ -139,58 +146,74 @@ jobs:
             echo "on_npm=$(PREP="$PREP" node -p 'JSON.parse(process.env.PREP).publishedVersion ?? ""')"
           } >> "$GITHUB_OUTPUT"
 
-      # The core of the artifact model. With nothing committed there is no diff to
-      # read, so the tarball on npm IS the baseline: if the packed package is
-      # unchanged, a Hub release that only touched Go must not burn an SDK
-      # version. The comparison covers everything the package ships — build
-      # output, sources, manifest and documentation — because a change to any of
-      # them changes what a consumer installs.
+      # Every stable Hub release publishes its SDK, so each Hub version has a
+      # client with the same version — including a release whose SDK is otherwise
+      # unchanged since the last one. The comparison against the package on npm
+      # stays, for the job summary: it shows what the release changes for SDK
+      # users. It covers everything the package ships — build output, sources,
+      # manifest and documentation — minus the version, which is the input.
+      #
+      # What still stops a release here: a version npm already has, and one at or
+      # below npm's latest. npm would refuse both, but only after the release had
+      # been approved; failing in this job says so first, and names a Hub version
+      # that would work.
       - name: Compare against the package on npm
         id: compare
         env:
           VERSION: ${{ steps.version.outputs.version }}
           ON_NPM: ${{ steps.pack.outputs.on_npm }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
           set -euo pipefail
 
           if [ -z "$ON_NPM" ]; then
             echo "::notice::@formbricks/hub is not on npm yet — publishing $VERSION."
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          else
+            echo "On npm: $ON_NPM / building: $VERSION"
+
+            STATUS=0
+            node scripts/compare-packed.mjs .compare/published .compare/generated \
+              > .compare/packed-diff.txt || STATUS=$?
+
+            if [ "$STATUS" -eq 2 ]; then
+              echo "::error::compare-packed.mjs could not compare the two packages — see the log above."
+              exit 1
+            fi
+
+            if [ "$STATUS" -eq 0 ]; then
+              echo "::notice::Packed contents are unchanged since @formbricks/hub@$ON_NPM; publishing $VERSION anyway, so this Hub release has its SDK."
+            else
+              PATHS="$(wc -l < .compare/packed-diff.txt | tr -d ' ')"
+              echo "Packed contents differ from @formbricks/hub@$ON_NPM ($PATHS paths):"
+              {
+                echo '```'
+                head -100 .compare/packed-diff.txt
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
 
-          echo "On npm: $ON_NPM / building: $VERSION"
-
-          STATUS=0
-          node scripts/compare-packed.mjs .compare/published .compare/generated \
-            > .compare/packed-diff.txt || STATUS=$?
-
-          if [ "$STATUS" -eq 2 ]; then
-            echo "::error::compare-packed.mjs could not compare the two packages — see the log above."
-            exit 1
-          fi
-
-          if [ "$STATUS" -eq 0 ]; then
-            echo "::notice::Packed contents are identical to @formbricks/hub@$ON_NPM — skipping publish."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          PATHS="$(wc -l < .compare/packed-diff.txt | tr -d ' ')"
-          echo "Packed contents differ from @formbricks/hub@$ON_NPM ($PATHS paths):"
-          {
-            echo '```'
-            head -100 .compare/packed-diff.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          # A changed package with a version that already exists is a forgotten
-          # bump. Fail loudly rather than skipping silently or overwriting. A
-          # registry error here reads as "version available", which is safe: the
-          # registry refuses an overwrite, so the worst case is a failed run.
-          if npm view "@formbricks/hub@$VERSION" version >/dev/null 2>&1; then
-            echo "::error::The SDK package changed but version $VERSION is already on npm. Bump the version in sdks/typescript/package.json."
-            exit 1
+          # Only a release publishes, so only a tag is held to npm's ordering; a
+          # dry run from a branch builds the committed placeholder version.
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            REFUSED=0
+            node scripts/release-version.mjs check "$VERSION" "$ON_NPM" || REFUSED=1
+            # A registry error reads as "not published", which is safe: the
+            # registry refuses an overwrite, so the worst case is a failed run.
+            PUBLISHED="$(npm view "@formbricks/hub@$VERSION" version 2>/dev/null || true)"
+            if [ -n "$PUBLISHED" ]; then
+              echo "@formbricks/hub@$VERSION is already on npm."
+              REFUSED=1
+            fi
+            if [ "$REFUSED" -ne 0 ]; then
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "::warning::A release from this tag would not publish — see above."
+                echo "should_publish=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "::error::Not publishing @formbricks/hub@$VERSION — see above."
+              exit 1
+            fi
           fi
 
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
@@ -464,16 +487,31 @@ jobs:
       # implicitly to a prerelease, or to a version lower than the current
       # `latest`. Passing `--tag latest` explicitly switches that guard off, and
       # would let a hand-edited version move `latest` backwards for everyone.
+      #
+      # On failure it prints npm's own trusted-publishing lines. A refused OIDC
+      # login reaches the log only as "404 Not Found" on the PUT — npm records
+      # why at verbose level, which its debug log always keeps whatever the
+      # console level. Only the `oidc` lines are shown; npm never logs a token.
       - name: Publish
         working-directory: package
         run: |
           set -euo pipefail
           echo "Publishing $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
-          npm publish \
+          # Its own logs directory, so the debug log read below is this
+          # publish's and no earlier npm command's.
+          LOGS="$RUNNER_TEMP/npm-publish-logs"
+          if ! npm publish \
             --access public \
             --provenance \
             --ignore-scripts \
-            --registry https://registry.npmjs.org/
+            --registry https://registry.npmjs.org/ \
+            --logs-dir "$LOGS"; then
+            echo "::group::npm's trusted-publishing (OIDC) log"
+            grep -hE '^[0-9]+ (verbose|silly) oidc ' "$LOGS"/*-debug-*.log ||
+              echo "(no OIDC lines: npm did not attempt the token exchange, or wrote no log)"
+            echo "::endgroup::"
+            exit 1
+          fi
 
       # `npm view` exits 0 and prints nothing when the field is absent, so a bare
       # `if npm view …; then` succeeds on the first pass with no attestation at

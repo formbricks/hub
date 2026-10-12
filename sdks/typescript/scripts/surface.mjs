@@ -409,7 +409,7 @@ if (addedNames.length === 0) {
 lines.push("");
 
 lines.push(
-  "If anything is listed as removed, bump the version in `sdks/typescript/package.json` accordingly.",
+  "The SDK ships with the Hub release, under its version. If anything is listed as removed, that release is a breaking change for SDK users: release it as a new minor version (a new major from 1.0) and say so in its notes.",
 );
 
 console.log(lines.join("\n"));
