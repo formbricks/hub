@@ -23,10 +23,13 @@
  *
  * What this cannot do: anyone who can push a commit can also edit this check
  * out of the workflow at that commit. So it catches honest mistakes and
- * misconfiguration. Resisting a malicious committer is the environment's job —
- * required reviewers, or a ruleset on release tags — which is why a
- * configuration that works but lacks those is reported as a warning rather than
- * accepted silently.
+ * misconfiguration, not a malicious committer. That is a deliberate trade:
+ * whoever may create a Hub release may publish its SDK, with no second person
+ * approving the publish (ENG-3857). An environment restricted to release tags
+ * is therefore the intended configuration and passes cleanly. Required
+ * reviewers would add a second person; they are still accepted, but not
+ * required. A ruleset limiting who may create release tags is a separate
+ * restriction this check does not inspect.
  *
  * Reads the standard Actions variables (GITHUB_API_URL, GITHUB_REPOSITORY,
  * GITHUB_REF, GITHUB_SHA, GITHUB_STEP_SUMMARY), plus GITHUB_TOKEN, and
@@ -144,7 +147,7 @@ async function checkEnvironment() {
 
   if (!policy && !reviewers) {
     failures.push(
-      `The ${name} environment restricts neither which refs may use it nor who must approve — the same state as one created automatically. Restrict it to release tags, add required reviewers, or both.`,
+      `The ${name} environment restricts neither which refs may use it nor who must approve — the same state as one created automatically. Restrict it to the release tags, [0-9]*.[0-9]*.[0-9]*.`,
     );
     return;
   }
@@ -186,12 +189,15 @@ async function checkEnvironment() {
         `The ${name} environment lets the person who started a run approve it. Enable "Prevent self-review", so approval is a second person's.`,
       );
     }
-  } else {
-    const matchesEveryTag = tagRules.some((rule) => rule.name === "*");
+  } else if (tagRules.some((rule) => rule.name === "*")) {
+    // With no approval, the tag rule is the environment's only line, and * lets
+    // a run for any tag at all obtain the publishing identity.
     warnings.push(
-      `The ${name} environment has no required reviewers, so anyone who can create a matching tag can publish without a second person${
-        matchesEveryTag ? " — and its tag rule * matches every tag" : ""
-      }. Add required reviewers with "Prevent self-review", or a ruleset limiting who may create release tags.`,
+      `The ${name} environment has no required reviewers and its tag rule * matches every tag, so a run for any tag can obtain the publishing identity. Narrow it to the release tags, [0-9]*.[0-9]*.[0-9]*.`,
+    );
+  } else {
+    passed.push(
+      `${name} needs no approval: a release publishes as soon as it is created`,
     );
   }
 
