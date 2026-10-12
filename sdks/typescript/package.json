@@ -1,6 +1,6 @@
 {
   "name": "@formbricks/hub",
-  "version": "0.14.0",
+  "version": "0.0.0-development",
   "description": "The official TypeScript library for the Formbricks Hub API",
   "author": "Formbricks Hub <hola@formbricks.com>",
   "license": "Apache-2.0",

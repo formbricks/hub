@@ -87,7 +87,7 @@ Array filters are sent as repeated parameters (`?source_type=survey&source_type=
 
 ## How this package is built
 
-It is generated from [`openapi.yaml`](https://github.com/formbricks/hub/blob/main/openapi.yaml) in the Hub repository by [`@hey-api/openapi-ts`](https://heyapi.dev/), and published from that repository on release with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). The generated source is not committed — this tarball ships it under `src/`, and the provenance attestation names the exact commit it came from, so you can regenerate and compare.
+It is generated from [`openapi.yaml`](https://github.com/formbricks/hub/blob/main/openapi.yaml) in the Hub repository by [`@hey-api/openapi-ts`](https://heyapi.dev/), and published from that repository on every stable Hub release with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). Its version is the Hub release's: `@formbricks/hub@0.14.0` is the client for Hub 0.14.0, so pin the SDK to the Hub version you run. The generated source is not committed — this tarball ships it under `src/`, and the provenance attestation names the exact commit it came from, so you can regenerate and compare.
 
 To report a problem or request a change to the API surface, open an issue in [formbricks/hub](https://github.com/formbricks/hub/issues).
 

@@ -64,8 +64,8 @@ async function listFiles(root) {
 
 /**
  * The version is the release's input, not part of the package, so it is left
- * out: with an otherwise unchanged package, a bumped version must not force a
- * publish.
+ * out: with an otherwise unchanged package, a new version must not read as a
+ * package change.
  */
 function comparableManifest(manifest) {
   const comparable = { ...manifest };

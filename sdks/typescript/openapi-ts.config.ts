@@ -13,8 +13,8 @@ export default defineConfig({
   output: {
     path: "./src/generated",
     // Keep formatting out of generation so the output is a pure function of
-    // (spec, generator version). The publish pipeline's skip-if-unchanged check
-    // compares the packed package byte for byte, so anything nondeterministic
+    // (spec, generator version). The release summary and the SDK preview
+    // compare the packed package byte for byte, so anything nondeterministic
     // here would make every release look changed.
     postProcess: [],
   },
