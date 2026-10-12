@@ -36,9 +36,12 @@ env:
   NPM_VERSION: 12.2.0
 
 concurrency:
-  # One package-wide group, not per-release: the compare step reads npm's
-  # "latest", so two concurrent releases could both diff against the same
-  # version and race to publish the same target version.
+  # One package-wide group, not per-release: the compare step plans the
+  # dist-tag from every version already on npm, so two concurrent releases
+  # could plan against the same list and race. A run holds the group while it
+  # waits for its npm-publish approval, so a second release queues behind it;
+  # GitHub keeps only one pending run per group, so a third release cancels the
+  # second's pending run, which then has to be re-run.
   group: publish-sdk
   cancel-in-progress: false
 
@@ -60,6 +63,8 @@ jobs:
     outputs:
       should_publish: ${{ steps.compare.outputs.should_publish }}
       version: ${{ steps.version.outputs.version }}
+      # `latest`, or `release-X.Y` for a backport; see the compare step.
+      dist_tag: ${{ steps.compare.outputs.dist_tag }}
       # The identity of the tarball this job packed and compared. The publish job
       # re-packs the artifact and refuses to publish anything else.
       pack_integrity: ${{ steps.pack.outputs.integrity }}
@@ -132,8 +137,8 @@ jobs:
         run: npm install -g --ignore-scripts "npm@${NPM_VERSION}"
 
       # Packs this package and fetches the one on npm. Shared with sdk-preview.yml
-      # so the release decision and the preview a reviewer reads are measured the
-      # same way. See scripts/prepare-comparison.mjs for the npm behaviour it
+      # so the release's summary and the preview a reviewer reads are measured
+      # the same way. See scripts/prepare-comparison.mjs for the npm behaviour it
       # absorbs — notably that `npm view` failing does not mean "not published".
       - name: Pack and fetch the package on npm
         id: pack
@@ -153,10 +158,13 @@ jobs:
       # users. It covers everything the package ships — build output, sources,
       # manifest and documentation — minus the version, which is the input.
       #
-      # What still stops a release here: a version npm already has, and one at or
-      # below npm's latest. npm would refuse both, but only after the release had
-      # been approved; failing in this job says so first, and names a Hub version
-      # that would work.
+      # It also decides the npm dist-tag, from every version already published
+      # (scripts/release-version.mjs `plan`): `latest` for a release above all of
+      # them, `release-X.Y` for a backport — a 0.14.1 security fix released after
+      # 0.15.0, which Hub releases as stable but not latest — so `latest` never
+      # moves backwards. What stops a release here, before anyone is asked to
+      # approve it: a version npm already has, and a backport older than one
+      # already published on its line.
       - name: Compare against the package on npm
         id: compare
         env:
@@ -193,18 +201,24 @@ jobs:
             fi
           fi
 
-          # Only a release publishes, so only a tag is held to npm's ordering; a
-          # dry run from a branch builds the committed placeholder version.
+          # Only a release publishes, so only a tag is planned; a dry run from a
+          # branch builds the committed placeholder version.
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            REFUSED=0
-            node scripts/release-version.mjs check "$VERSION" "$ON_NPM" || REFUSED=1
-            # A registry error reads as "not published", which is safe: the
-            # registry refuses an overwrite, so the worst case is a failed run.
-            PUBLISHED="$(npm view "@formbricks/hub@$VERSION" version 2>/dev/null || true)"
-            if [ -n "$PUBLISHED" ]; then
-              echo "@formbricks/hub@$VERSION is already on npm."
-              REFUSED=1
+            # A package with nothing published is a 404, so an empty list; any
+            # other failure to read the registry stops the release.
+            if ! npm view @formbricks/hub versions --json \
+              > .compare/versions.json 2> .compare/versions.err; then
+              if grep -q E404 .compare/versions.err; then
+                echo "[]" > .compare/versions.json
+              else
+                cat .compare/versions.err
+                echo "::error::Could not read @formbricks/hub's published versions from npm."
+                exit 1
+              fi
             fi
+
+            REFUSED=0
+            DIST_TAG="$(node scripts/release-version.mjs plan "$VERSION" .compare/versions.json)" || REFUSED=1
             if [ "$REFUSED" -ne 0 ]; then
               if [ "$DRY_RUN" = "true" ]; then
                 echo "::warning::A release from this tag would not publish — see above."
@@ -214,6 +228,8 @@ jobs:
               echo "::error::Not publishing @formbricks/hub@$VERSION — see above."
               exit 1
             fi
+            echo "Publishing $VERSION under the $DIST_TAG dist-tag."
+            echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
           fi
 
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
@@ -249,7 +265,7 @@ jobs:
   # runs the generator's dependencies and should not hold `actions: read`, and
   # the publish job must not start at all if a check fails. It runs alongside
   # the build rather than after it, so a misconfigured release path surfaces
-  # even on a release whose SDK did not change.
+  # while the build runs, before anyone is asked to approve the publish.
   #
   # A dry run from a tag runs it too, which makes that a full rehearsal of the
   # release path — environment and token permissions included — that publishes
@@ -340,11 +356,17 @@ jobs:
       # first: both the validation and that install need it. No cache, per
       # setup-node's guidance for publishing workflows: in this job a poisoned
       # cache would sit next to the OIDC token.
+      #
+      # No registry-url, deliberately: setup-node would write an .npmrc whose
+      # _authToken is ${NODE_AUTH_TOKEN}. With no token set, npm presents that
+      # placeholder when the OIDC exchange fails, and the registry answers the
+      # PUT with a 404 — the misleading error Hub 0.9.0's publish got. Without
+      # it, a failed exchange is an honest ENEEDAUTH; the publish names the
+      # registry with --registry.
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
 
       # Before the checks below, because the integrity one has to run under the
@@ -364,6 +386,7 @@ jobs:
         env:
           EXPECTED_NAME: '@formbricks/hub'
           EXPECTED_VERSION: '${{ needs.build.outputs.version }}'
+          EXPECTED_DIST_TAG: '${{ needs.build.outputs.dist_tag }}'
         run: |
           set -euo pipefail
           node --input-type=commonjs - <<'NODE'
@@ -384,6 +407,40 @@ jobs:
           assert(
             manifest.version === process.env.EXPECTED_VERSION,
             `The package is at version ${manifest.version} but the build job reported ${process.env.EXPECTED_VERSION}.`,
+          );
+
+          // The version is the release tag's, so it is checked against the tag
+          // itself — GITHUB_REF_NAME, set by the runner in this job — and not
+          // only against what the build job reported. That job runs third-party
+          // code, which could rewrite both the manifest and its own outputs; this
+          // way, whoever approves the release of tag X knows X is what publishes.
+          // The pattern must stay the one in scripts/release-version.mjs, which
+          // this job cannot load (it has no checkout); a test pins the two equal.
+          const RELEASE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+          assert(
+            process.env.GITHUB_REF_TYPE === "tag",
+            `This run is for a ${process.env.GITHUB_REF_TYPE}, not a release tag.`,
+          );
+          const tag = RELEASE.exec(process.env.GITHUB_REF_NAME ?? "");
+          assert(
+            tag !== null,
+            `The release tag ${JSON.stringify(process.env.GITHUB_REF_NAME)} is not a plain X.Y.Z version.`,
+          );
+          const tagVersion = `${tag[1]}.${tag[2]}.${tag[3]}`;
+          assert(
+            manifest.version === tagVersion,
+            `The package is at version ${manifest.version} but the release tag is ${tagVersion}.`,
+          );
+
+          // The dist-tag comes from the build job too, so it is held to the only
+          // two the tag allows: `latest` — published with no --tag, so npm
+          // itself refuses it for anything below the highest version — or this
+          // version's own backport line. Nothing else can be named.
+          const lineTag = `release-${tag[1]}.${tag[2]}`;
+          assert(
+            process.env.EXPECTED_DIST_TAG === "latest" ||
+              process.env.EXPECTED_DIST_TAG === lineTag,
+            `The build job chose the dist-tag ${JSON.stringify(process.env.EXPECTED_DIST_TAG)}, but tag ${tagVersion} can only publish under "latest" or "${lineTag}".`,
           );
 
           // npm runs these out of the manifest while packing and while publishing.
@@ -421,7 +478,7 @@ jobs:
           );
 
           console.log(
-            `Validated ${manifest.name}@${manifest.version}: no publish lifecycle scripts, no publishConfig override.`,
+            `Validated ${manifest.name}@${manifest.version}: the release tag's version, no publish lifecycle scripts, no publishConfig override.`,
           );
           NODE
 
@@ -482,21 +539,32 @@ jobs:
       # pages disagree on whether the flag is needed, and passing it when it is
       # already implied is harmless while omitting it when it is not is silent.
       #
-      # No --tag, deliberately. The dist-tag defaults to `latest` anyway, and
-      # leaving it implicit keeps npm's own guard: it refuses to apply `latest`
-      # implicitly to a prerelease, or to a version lower than the current
-      # `latest`. Passing `--tag latest` explicitly switches that guard off, and
-      # would let a hand-edited version move `latest` backwards for everyone.
+      # No --tag for a latest release, deliberately. The dist-tag defaults to
+      # `latest` anyway, and leaving it implicit keeps npm's own guard: it refuses
+      # to apply `latest` implicitly to a prerelease, or to a version lower than
+      # the highest published. Passing `--tag latest` explicitly switches that
+      # guard off, and would let a hand-edited version move `latest` backwards
+      # for everyone. A backport passes `--tag release-X.Y`, which never names
+      # `latest`, so it cannot move it either.
       #
-      # On failure it prints npm's own trusted-publishing lines. A refused OIDC
-      # login reaches the log only as "404 Not Found" on the PUT — npm records
-      # why at verbose level, which its debug log always keeps whatever the
-      # console level. Only the `oidc` lines are shown; npm never logs a token.
+      # On failure it prints npm's own trusted-publishing lines. npm reports a
+      # refused OIDC exchange only as a missing login, and records why at verbose
+      # level, which its debug log always keeps whatever the console level. A
+      # successful exchange is logged there too, so a publish refused after one
+      # — a trusted publisher limited to `npm stage publish`, say — reads
+      # differently from one never authorised. Only the `oidc` lines are shown;
+      # npm never logs a token.
       - name: Publish
         working-directory: package
+        env:
+          DIST_TAG: ${{ needs.build.outputs.dist_tag }}
         run: |
           set -euo pipefail
-          echo "Publishing $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")"
+          echo "Publishing $(node -p "require('./package.json').name")@$(node -p "require('./package.json').version") under $DIST_TAG"
+          TAG_ARGS=()
+          if [ "$DIST_TAG" != "latest" ]; then
+            TAG_ARGS=(--tag "$DIST_TAG")
+          fi
           # Its own logs directory, so the debug log read below is this
           # publish's and no earlier npm command's.
           LOGS="$RUNNER_TEMP/npm-publish-logs"
@@ -505,7 +573,8 @@ jobs:
             --provenance \
             --ignore-scripts \
             --registry https://registry.npmjs.org/ \
-            --logs-dir "$LOGS"; then
+            --logs-dir "$LOGS" \
+            "${TAG_ARGS[@]}"; then
             echo "::group::npm's trusted-publishing (OIDC) log"
             grep -hE '^[0-9]+ (verbose|silly) oidc ' "$LOGS"/*-debug-*.log ||
               echo "(no OIDC lines: npm did not attempt the token exchange, or wrote no log)"
