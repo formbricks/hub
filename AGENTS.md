@@ -94,6 +94,8 @@ Sentiment, emotions, and translation are "classify" enrichments (`text → struc
 
 A new enrichment is then a thin per-type spec: an enum/result type in `models`, a `*_client.go` (prompt + parse + `structuredSpec`), a `*_provider.go` (config for `EnrichmentProvider`), a `*_job_args.go`, a one-line `*_worker.go` (a configured `enrichmentWorker`), a metrics adapter, a config struct, and wiring in `cmd/*`. Enrichment outputs are read-only, server-generated columns — `NULL` until enriched, cleared and re-enqueued when `value_text` changes (translation also on `language`). Writes are guarded against content supersession, so a job that read older text skips rather than overwriting a newer result; carry `tenant_id` (and, for correlation, the originating `event_id`) through job args and log lines.
 
+**Bound what you send.** `value_text` is accepted up to 30,000 characters, so a classify hook takes its text through `trimForProvider` with that type's `*_MAX_INPUT_BYTES` cap (see `service.TextCap` for why the unit is bytes) and counts the cut in `hub_enrichment_text_trimmed_total`. Trim where a partial result is still a result — a label or a vector for the start of a record beats none — and turn the input away as a terminal `TerminalReasonLength` failure where a partial result would be *wrong* stored as complete, which is translation's case. Skipping a cross-cutting step here does not merely overspend: an over-long embedding input is a terminal provider failure, so the record stays out of the index and out of the reconciler's reach for good.
+
 ## Multi-Tenancy & Data Isolation
 
 - Treat `tenant_id` as a security boundary, not a convenience filter. Tenant-owned data must never be read, enqueued, dispatched, cached, searched, embedded, or deleted across tenants.
