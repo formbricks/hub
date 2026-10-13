@@ -97,6 +97,12 @@ and emotions — processed asynchronously by `hub-worker`. Each is enabled per t
 by setting its `*_PROVIDER` and `*_MODEL`; if either is unset, that enrichment is
 disabled and no jobs are enqueued.
 
+Each enrichment also has a `*_MAX_INPUT_BYTES` cap on the text it sends to its provider, in
+UTF-8 bytes (`0` disables it). No accepted record can exceed the 30,000-rune ingest ceiling —
+roughly 120,000 bytes, and about 90,000 for CJK — so a value at or above that has no effect
+whatever; the defaults are deliberately far below it, because the caps exist to bound cost and,
+for embeddings, to stay inside the model's own limit.
+
 All four accept the same providers: `openai`, `google` (Gemini Developer API /
 Google AI Studio), and `google-gemini` (Gemini Enterprise Agent Platform API).
 `openai` and `google` authenticate with the enrichment's `*_PROVIDER_API_KEY`;
@@ -133,7 +139,7 @@ to a service-account key path when running outside Google Cloud). A custom
 | `TRANSLATION_MAX_CONCURRENT`        | `5`     | Max concurrent translation jobs.                                                                                                                       |
 | `TRANSLATION_RECONCILE_MAX_CONCURRENT` | `2`  | Max concurrent translation jobs on the reconcile lane (see [Reconciliation](#reconciliation)).                                                          |
 | `TRANSLATION_MAX_ATTEMPTS`          | `3`     | Max translation attempts.                                                                                                                              |
-| `TRANSLATION_MAX_INPUT_BYTES`       | `24000` | Max bytes of a record sent to the translation provider. Over it the record is skipped — not trimmed, since a partial translation stored as complete is wrong — and recorded as a terminal failure. `0` disables the cap. |
+| `TRANSLATION_MAX_INPUT_BYTES`       | `24000` | Max bytes of a record sent to the translation provider. Over it the record is skipped — not trimmed, since a partial translation stored as complete is wrong — and marked as a terminal failure, without calling the provider. An edit that brings the text back under the cap re-runs it; **raising this value does not clear markers already written** (a tenant clears them with the retry endpoint). `0` disables the cap. |
 | `TRANSLATION_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                                                                            |
 | `TRANSLATION_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                                                                           |
 
@@ -208,14 +214,17 @@ and the API still accepts a retry: it deletes the markers, spends the tenant's c
 those records out of the status endpoint's failed counts, and no sweep ever picks them up. Set it
 on the API alone and every retry is refused with a 409 while the worker sweeps normally.
 
-Records that failed **terminally** are excluded. A terminal failure means the provider rejected the
-text on structural grounds — a content-policy block, a refusal, input past the model's limit — so
-retrying spends a provider call that cannot succeed, and a sweep that re-enqueued them would never
-terminate. To give those records another chance after the underlying reason has changed (the text
-was edited, or a provider relaxed a policy), clear their markers with
-`POST /v1/tenants/{tenant_id}/enrichments/retry`. That endpoint is rate-limited by a per-tenant,
-per-enrichment cooldown, because clearing the markers is what makes the next sweep spend money on
-records already known to fail.
+Records that failed **terminally** are excluded. A terminal failure means retrying cannot change the
+outcome, because the outcome is a property of the record's own text: the provider rejected it on
+structural grounds — a content-policy block, a refusal, input past the model's limit — or the record
+is over the enrichment's own configured cap, which Hub refuses before calling anything
+(`TRANSLATION_MAX_INPUT_BYTES`; the other three trim instead). A sweep that re-enqueued them would
+never terminate, and for the provider-rejected case every attempt would spend a call that cannot
+succeed. To give those records another chance after the underlying reason has changed (the text was
+edited, a provider relaxed a policy, or **you raised the cap** — raising it does not clear markers
+already written), clear their markers with `POST /v1/tenants/{tenant_id}/enrichments/retry`. That
+endpoint is rate-limited by a per-tenant, per-enrichment cooldown, because clearing the markers is
+what makes the next sweep spend money on records already known to fail.
 
 ## Taxonomy
 

@@ -6,19 +6,23 @@ import (
 	"github.com/google/uuid"
 )
 
-// The enrichment names. These are the values in migration 022's CHECK, the `enrichment` metric
-// label, and the discriminator on every failure marker, so they are declared once rather than
-// spelled out at each use.
+// The enrichment names, declared once rather than spelled out at each use. They are shared by the
+// marker table's `enrichment` column (migration 022's CHECK, widened by 024), the `enrichment`
+// metric label, and the sweep's per-enrichment specs — but not every name is all three: a name is a
+// marker value only for a pipeline that can write one, and a metric label for every pipeline that
+// can be trimmed or can fail. Do not write a marker under a name the CHECK does not admit; the
+// insert fails on the failure path, which is the worst place to find out.
 const (
 	EnrichmentNameTranslation = "translation"
 	EnrichmentNameSentiment   = "sentiment"
 	EnrichmentNameEmotions    = "emotions"
 	// EnrichmentNameEmbedding is the raw search embedding — the vector behind semantic search and
-	// similar-feedback. It has no failure marker (see EnrichmentNameTaxonomyEmbedding below), but it
-	// is named here because it carries metric labels like the others do.
+	// similar-feedback. It carries metric labels only: raw embeddings are deliberately outside the
+	// taxonomy progress/reconcile contract, so nothing writes a failure marker for it (the marker
+	// CHECK does not admit this value).
 	EnrichmentNameEmbedding = "embedding"
-	// EnrichmentNameTaxonomyEmbedding is the translated-text embedding consumed by taxonomy.
-	// Raw search embeddings are intentionally not reconciled by this pipeline.
+	// EnrichmentNameTaxonomyEmbedding is the translated-text embedding consumed by taxonomy. It is
+	// the one embedding that does get a marker (migration 024), bound to a model and a revision.
 	EnrichmentNameTaxonomyEmbedding = "taxonomy_embedding"
 )
 

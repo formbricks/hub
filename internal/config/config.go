@@ -217,8 +217,10 @@ type TranslationConfig struct {
 	MaxAttempts     int    `env:"TRANSLATION_MAX_ATTEMPTS"     env-default:"3"`
 	// MaxInputBytes caps the text sent to the translation provider, in UTF-8 bytes; 0 disables the
 	// cap. Over the cap the record is SKIPPED and marked failed_terminal rather than trimmed: a
-	// translation of the first N bytes of an answer is wrong stored as if it were the whole thing,
-	// and a tenant can still clear the marker to retry after an edit (ENG-3908).
+	// translation of the first N bytes of an answer is wrong stored as if it were the whole thing.
+	// The refusal happens before any provider call, so retrying one costs nothing — but note that
+	// raising this value later does not clear markers already written, so records refused under the
+	// old value stay terminally failed until their tenant clears them (ENG-3908).
 	MaxInputBytes          int    `env:"TRANSLATION_MAX_INPUT_BYTES"          env-default:"24000"`
 	ReconcileMaxConcurrent int    `env:"TRANSLATION_RECONCILE_MAX_CONCURRENT" env-default:"2"`
 	GoogleCloudProject     string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`

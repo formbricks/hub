@@ -124,9 +124,16 @@ This enables:
   the cap, translation is skipped and recorded as a terminal failure — a partial
   translation stored as if it were complete is wrong — while the embeddings,
   sentiment and emotions inputs are trimmed to their first N bytes. Trimming is
-  counted in `hub_enrichment_text_trimmed_total`. An embedding of a trimmed
-  record therefore describes its beginning, not the whole answer; raising
-  `EMBEDDING_MAX_INPUT_BYTES` up to your model's input limit embeds more of it.
+  counted in `hub_enrichment_text_trimmed_total`.
+
+  An embedding of a trimmed record therefore describes its beginning, not the whole
+  answer. Raising `EMBEDDING_MAX_INPUT_BYTES` affects only embeddings created after
+  the change: the backfill fills missing rows and never overwrites an existing
+  vector, so records already embedded keep the shorter vector until their rows are
+  deleted and rebuilt (the `-prune-stale-models` path does that for rows left by a
+  previous `EMBEDDING_MODEL`). A translation refused by the cap is the easier one to
+  recover: an edit re-runs it, and raising the cap takes effect for those records
+  once their tenant clears the recorded failures.
 </Aside>
 
 <Aside type="note">

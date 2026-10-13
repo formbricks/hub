@@ -37,8 +37,9 @@ func NewEnrichmentTrimmedMetrics(meter metric.Meter) (EnrichmentTrimmedMetrics, 
 		MetricNameEnrichmentTextTrimmedTotal,
 		metric.WithDescription(
 			"Enrichment calls whose input was cut to the configured byte cap, labeled by "+
-				"enrichment. The call still runs: a rising rate means the cap is too low for the "+
-				"records and model in this deployment, or records outgrew it."),
+				"enrichment. Counted once per attempt, so a retry of a trimmed call counts again. "+
+				"The call still runs: a rising rate means the cap is too low for the records and "+
+				"model in this deployment, or records outgrew it."),
 		metric.WithUnit("1"),
 	)
 	if err != nil {

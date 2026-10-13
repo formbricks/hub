@@ -223,8 +223,9 @@ func BuildEmbeddingInputFromValues(
 
 // buildEmbeddingInput assembles the provider input and applies the cap to the assembled string —
 // the instruction prefix and field label are part of what the provider sees, so they are part of
-// what is bounded. The label is capped at 2,048 runes on write, so a practical cap always leaves
-// room for it ahead of the answer.
+// what is bounded. A cap smaller than the prefix plus the label therefore cuts inside them and the
+// answer never reaches the provider, which is why the recommended caps are orders of magnitude
+// larger than a label can be (2,048 runes, up to ~8 KiB of multi-byte text).
 func buildEmbeddingInput(fieldLabel, valueText *string, prefix string, inputCap TextCap) (string, bool) {
 	if valueText == nil {
 		return "", false
