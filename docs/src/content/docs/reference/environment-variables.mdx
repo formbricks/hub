@@ -116,6 +116,7 @@ to a service-account key path when running outside Google Cloud). A custom
 | `EMBEDDING_BASE_URL`              | -       | OpenAI-compatible embeddings root URL. Use with `EMBEDDING_PROVIDER=openai` to target a self-hosted endpoint. See [Self-Hosted Embeddings](/guides/hub-self-hosted-embeddings). |
 | `EMBEDDING_MAX_CONCURRENT`        | `5`     | Max concurrent embedding jobs.                                                                                                                                                  |
 | `EMBEDDING_MAX_ATTEMPTS`          | `3`     | Max embedding attempts.                                                                                                                                                         |
+| `EMBEDDING_MAX_INPUT_BYTES`       | `12000` | Max bytes of a record sent to the embedding provider; over it the input is trimmed to its first N bytes, so an over-long record still gets a vector. `0` disables the cap.      |
 | `EMBEDDING_NORMALIZE`             | `false` | Whether to normalize embeddings before storage.                                                                                                                                 |
 | `EMBEDDING_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                                                                                                     |
 | `EMBEDDING_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                                                                                                    |
@@ -132,6 +133,7 @@ to a service-account key path when running outside Google Cloud). A custom
 | `TRANSLATION_MAX_CONCURRENT`        | `5`     | Max concurrent translation jobs.                                                                                                                       |
 | `TRANSLATION_RECONCILE_MAX_CONCURRENT` | `2`  | Max concurrent translation jobs on the reconcile lane (see [Reconciliation](#reconciliation)).                                                          |
 | `TRANSLATION_MAX_ATTEMPTS`          | `3`     | Max translation attempts.                                                                                                                              |
+| `TRANSLATION_MAX_INPUT_BYTES`       | `24000` | Max bytes of a record sent to the translation provider. Over it the record is skipped — not trimmed, since a partial translation stored as complete is wrong — and recorded as a terminal failure. `0` disables the cap. |
 | `TRANSLATION_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                                                                            |
 | `TRANSLATION_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                                                                           |
 
@@ -150,6 +152,7 @@ have not set one.
 | `SENTIMENT_MAX_CONCURRENT`        | `5`     | Max concurrent sentiment jobs.                                                                     |
 | `SENTIMENT_RECONCILE_MAX_CONCURRENT` | `2`  | Max concurrent sentiment jobs on the reconcile lane (see [Reconciliation](#reconciliation)).        |
 | `SENTIMENT_MAX_ATTEMPTS`          | `3`     | Max sentiment attempts.                                                                            |
+| `SENTIMENT_MAX_INPUT_BYTES`       | `24000` | Max bytes of a record sent to the sentiment provider; over it the input is trimmed to its first N bytes. `0` disables the cap. |
 | `SENTIMENT_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                        |
 | `SENTIMENT_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                       |
 
@@ -164,6 +167,7 @@ have not set one.
 | `EMOTIONS_MAX_CONCURRENT`        | `5`     | Max concurrent emotion jobs.                                                                    |
 | `EMOTIONS_RECONCILE_MAX_CONCURRENT` | `2`  | Max concurrent emotion jobs on the reconcile lane (see [Reconciliation](#reconciliation)).       |
 | `EMOTIONS_MAX_ATTEMPTS`          | `3`     | Max emotion attempts.                                                                           |
+| `EMOTIONS_MAX_INPUT_BYTES`       | `24000` | Max bytes of a record sent to the emotion provider; over it the input is trimmed to its first N bytes. `0` disables the cap. |
 | `EMOTIONS_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                     |
 | `EMOTIONS_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                    |
 

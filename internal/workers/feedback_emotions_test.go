@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,10 +94,13 @@ type stubEmotionsClient struct {
 	result service.EmotionsResult
 	err    error
 	calls  int
+	// lastText is the text the worker handed the provider, once the input cap has had its say.
+	lastText string
 }
 
-func (s *stubEmotionsClient) Classify(_ context.Context, _, _ string) (service.EmotionsResult, error) {
+func (s *stubEmotionsClient) Classify(_ context.Context, text, _ string) (service.EmotionsResult, error) {
 	s.calls++
+	s.lastText = text
 
 	return s.result, s.err
 }
@@ -142,7 +146,7 @@ func TestFeedbackEmotionsWorker_Success(t *testing.T) {
 	client := &stubEmotionsClient{result: service.EmotionsResult{
 		Labels: []models.EmotionValue{models.EmotionJoy, models.EmotionFear},
 	}}
-	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil)
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -168,7 +172,7 @@ func TestFeedbackEmotionsWorker_EmptyResultClears(t *testing.T) {
 	metrics := newCountingEmotionsMetrics()
 	svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text)}
 	client := &stubEmotionsClient{result: service.EmotionsResult{Labels: nil}}
-	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil)
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -197,7 +201,7 @@ func TestFeedbackEmotionsWorker_EmptyValueTextClears(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			svc := &mockEmotionsWorkerService{record: record}
 			client := &stubEmotionsClient{}
-			worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, newCountingEmotionsMetrics(), nil, nil)
+			worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, newCountingEmotionsMetrics(), nil, nil, nil, service.TextCap{})
 
 			if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
 				t.Fatalf("Work() error = %v", err)
@@ -225,7 +229,7 @@ func TestFeedbackEmotionsWorker_NonTextFieldSkips(t *testing.T) {
 	svc := &mockEmotionsWorkerService{record: &models.FeedbackRecord{ID: uuid.Must(uuid.NewV7()), FieldType: models.FieldTypeNumber}}
 	client := &stubEmotionsClient{}
 	metrics := newCountingEmotionsMetrics()
-	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil)
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -243,7 +247,7 @@ func TestFeedbackEmotionsWorker_NonTextFieldSkips(t *testing.T) {
 func TestFeedbackEmotionsWorker_RecordGoneSkips(t *testing.T) {
 	svc := &mockEmotionsWorkerService{getErr: huberrors.ErrNotFound}
 	metrics := newCountingEmotionsMetrics()
-	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, &stubEmotionsClient{}, metrics, nil, nil)
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, &stubEmotionsClient{}, metrics, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
 		t.Fatalf("Work() error = %v, want nil (a record gone before classify is a benign skip)", err)
@@ -259,7 +263,7 @@ func TestFeedbackEmotionsWorker_RateLimitSnoozes(t *testing.T) {
 	metrics := newCountingEmotionsMetrics()
 	svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text)}
 	client := &stubEmotionsClient{err: huberrors.NewRateLimitError(45*time.Second, errors.New("429"))}
-	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil)
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil, nil, service.TextCap{})
 
 	err := worker.Work(context.Background(), emotionsJob(1))
 
@@ -286,7 +290,7 @@ func TestFeedbackEmotionsWorker_ClassifyFailsOnFinalAttempt(t *testing.T) {
 	metrics := newCountingEmotionsMetrics()
 	svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text)}
 	client := &stubEmotionsClient{err: errors.New("provider down")}
-	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil)
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, metrics, nil, nil, nil, service.TextCap{})
 
 	err := worker.Work(context.Background(), emotionsJob(3)) // attempt == MaxAttempts
 	if err == nil {
@@ -306,7 +310,8 @@ func TestFeedbackEmotionsWorker_SetEmotionsErrors(t *testing.T) {
 	t.Run("record gone before write is a benign skip", func(t *testing.T) {
 		svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text), setErr: huberrors.ErrNotFound}
 		metrics := newCountingEmotionsMetrics()
-		worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics, nil, nil)
+		worker := NewFeedbackEmotionsWorker(
+			svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics, nil, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
 			t.Fatalf("Work() error = %v, want nil", err)
@@ -320,7 +325,8 @@ func TestFeedbackEmotionsWorker_SetEmotionsErrors(t *testing.T) {
 	t.Run("content-superseded write is a benign skip", func(t *testing.T) {
 		svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text), setErr: huberrors.ErrClassificationSuperseded}
 		metrics := newCountingEmotionsMetrics()
-		worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics, nil, nil)
+		worker := NewFeedbackEmotionsWorker(
+			svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics, nil, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
 			t.Fatalf("Work() error = %v, want nil (superseded is a skip, not a failure)", err)
@@ -335,7 +341,8 @@ func TestFeedbackEmotionsWorker_SetEmotionsErrors(t *testing.T) {
 	t.Run("tenant write conflict retries", func(t *testing.T) {
 		svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text), setErr: huberrors.ErrTenantWriteConflict}
 		metrics := newCountingEmotionsMetrics()
-		worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics, nil, nil)
+		worker := NewFeedbackEmotionsWorker(
+			svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics, nil, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), emotionsJob(1)); err == nil {
 			t.Fatal("Work() error = nil, want a retryable error")
@@ -350,7 +357,8 @@ func TestFeedbackEmotionsWorker_SetEmotionsErrors(t *testing.T) {
 	t.Run("other write error retries, failing on the final attempt", func(t *testing.T) {
 		svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text), setErr: errors.New("db unavailable")}
 		metrics := newCountingEmotionsMetrics()
-		worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics, nil, nil)
+		worker := NewFeedbackEmotionsWorker(
+			svc, stubEmotionsSettings{}, &stubEmotionsClient{result: result}, metrics, nil, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), emotionsJob(1)); err == nil {
 			t.Fatal("Work() error = nil, want a failure")
@@ -379,7 +387,7 @@ func TestFeedbackEmotionsWorker_DisabledForTenantSkips(t *testing.T) {
 	svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text)}
 	client := &stubEmotionsClient{result: service.EmotionsResult{Labels: []models.EmotionValue{models.EmotionJoy}}}
 	metrics := newCountingEmotionsMetrics()
-	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{enabled: &off}, client, metrics, nil, nil)
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{enabled: &off}, client, metrics, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), emotionsJob(1)); err != nil {
 		t.Fatalf("Work() error = %v, want nil (a disabled tenant is a benign skip)", err)
@@ -414,7 +422,7 @@ func TestFeedbackEmotionsWorker_SettingsReadErrorRetriesThenFailsFinal(t *testin
 			client := &stubEmotionsClient{result: service.EmotionsResult{Labels: []models.EmotionValue{models.EmotionJoy}}}
 			metrics := newCountingEmotionsMetrics()
 			worker := NewFeedbackEmotionsWorker(
-				svc, stubEmotionsSettings{err: errors.New("db unavailable")}, client, metrics, nil, nil)
+				svc, stubEmotionsSettings{err: errors.New("db unavailable")}, client, metrics, nil, nil, nil, service.TextCap{})
 
 			if err := worker.Work(context.Background(), emotionsJob(testCase.attempt)); err == nil {
 				t.Fatal("Work() error = nil, want a settings-read failure")
@@ -446,7 +454,7 @@ func TestFeedbackEmotionsWorker_TerminalFailureIsRecorded(t *testing.T) {
 	failures := &recordingFailureRecorder{}
 	client := &stubEmotionsClient{err: huberrors.NewTerminalProviderError(
 		huberrors.TerminalReasonContentFilter, errors.New("blocked"))}
-	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, nil, failures, nil)
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, nil, failures, nil, nil, service.TextCap{})
 
 	require.Error(t, worker.Work(context.Background(), emotionsJob(1)))
 
@@ -455,4 +463,21 @@ func TestFeedbackEmotionsWorker_TerminalFailureIsRecorded(t *testing.T) {
 	assert.Equal(t, record.ID, failures.calls[0].FeedbackRecordID)
 	assert.Equal(t, record.TenantID, failures.calls[0].TenantID)
 	assert.True(t, failures.calls[0].Terminal)
+}
+
+// TestFeedbackEmotionsWorker_TrimsToTheInputCap is the emotions half of the sentiment cap test:
+// each classify hook applies the cap itself, so each one needs to be pinned or a later change can
+// quietly leave one of them sending the whole record.
+func TestFeedbackEmotionsWorker_TrimsToTheInputCap(t *testing.T) {
+	text := strings.Repeat("a", 100)
+	trimmed := newCountingTrimmedMetrics()
+	svc := &mockEmotionsWorkerService{record: emotionsTextRecord(&text)}
+	client := &stubEmotionsClient{result: service.EmotionsResult{Labels: []models.EmotionValue{models.EmotionJoy}}}
+	worker := NewFeedbackEmotionsWorker(svc, stubEmotionsSettings{}, client, newCountingEmotionsMetrics(),
+		nil, nil, trimmed, service.TextCap{MaxBytes: 40})
+
+	require.NoError(t, worker.Work(context.Background(), emotionsJob(1)))
+
+	assert.Equal(t, strings.Repeat("a", 40), client.lastText, "the provider gets the capped text")
+	assert.Equal(t, 1, trimmed.counts[models.EnrichmentNameEmotions], "the cut must be counted")
 }

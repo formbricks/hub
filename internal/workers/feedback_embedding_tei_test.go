@@ -118,7 +118,7 @@ func TestFeedbackEmbeddingWorkerTEILengthErrorIsolatesValidPeers(t *testing.T) {
 	for i := range count {
 		group.Go(func() {
 			worker := NewFeedbackEmbeddingWorkerWithOptions(services[i], batcher, "", nil,
-				time.Minute, failures[i], nil)
+				time.Minute, failures[i], nil, 0, nil)
 			job := taxonomyEmbeddingJob(1)
 			job.Args.FeedbackRecordID = services[i].record.ID
 			errs[i] = worker.Work(context.Background(), job)

@@ -19,18 +19,20 @@ import (
 // when the event is FeedbackRecordCreated (with non-empty value_text) or FeedbackRecordUpdated
 // (with value_text in ChangedFields, including when value_text is now empty so the worker can clear).
 type EmbeddingProvider struct {
-	inserter    RiverJobInserter
-	model       string
-	queueName   string
-	maxAttempts int
-	docPrefix   string // model-specific prefix for document embedding; OpenAI and Google use ""
-	metrics     observability.EmbeddingMetrics
-	inputKind   models.EmbeddingInputKind
+	inserter      RiverJobInserter
+	model         string
+	queueName     string
+	maxAttempts   int
+	docPrefix     string // model-specific prefix for document embedding; OpenAI and Google use ""
+	maxInputBytes int    // cap on the embedding input, in bytes; 0 = unlimited
+	metrics       observability.EmbeddingMetrics
+	inputKind     models.EmbeddingInputKind
 }
 
 // NewEmbeddingProvider creates a provider that enqueues feedback_embedding jobs.
 // model is the embedding model name (e.g. text-embedding-3-small) from EMBEDDING_MODEL.
 // docPrefix is the prefix for document text (from EmbeddingPrefixForProvider); use "" for OpenAI/Google.
+// maxInputBytes caps the input (EMBEDDING_MAX_INPUT_BYTES); 0 is unlimited.
 // metrics may be nil when metrics are disabled.
 func NewEmbeddingProvider(
 	inserter RiverJobInserter,
@@ -38,10 +40,11 @@ func NewEmbeddingProvider(
 	queueName string,
 	maxAttempts int,
 	docPrefix string,
+	maxInputBytes int,
 	metrics observability.EmbeddingMetrics,
 ) *EmbeddingProvider {
 	return NewEmbeddingProviderForInputKind(
-		inserter, model, queueName, maxAttempts, docPrefix, metrics, models.EmbeddingInputKindRaw)
+		inserter, model, queueName, maxAttempts, docPrefix, maxInputBytes, metrics, models.EmbeddingInputKindRaw)
 }
 
 // NewEmbeddingProviderForInputKind creates a provider for a specific embedding input kind.
@@ -51,17 +54,19 @@ func NewEmbeddingProviderForInputKind(
 	queueName string,
 	maxAttempts int,
 	docPrefix string,
+	maxInputBytes int,
 	metrics observability.EmbeddingMetrics,
 	inputKind models.EmbeddingInputKind,
 ) *EmbeddingProvider {
 	return &EmbeddingProvider{
-		inserter:    inserter,
-		model:       model,
-		queueName:   queueName,
-		maxAttempts: maxAttempts,
-		docPrefix:   docPrefix,
-		metrics:     metrics,
-		inputKind:   models.NormalizeEmbeddingInputKind(inputKind),
+		inserter:      inserter,
+		model:         model,
+		queueName:     queueName,
+		maxAttempts:   maxAttempts,
+		docPrefix:     docPrefix,
+		maxInputBytes: maxInputBytes,
+		metrics:       metrics,
+		inputKind:     models.NormalizeEmbeddingInputKind(inputKind),
 	}
 }
 
@@ -91,8 +96,10 @@ func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
 	}
 
 	// Build the embedding input once and reuse it for both the create-time empty check and the
-	// dedupe hash; it was otherwise computed twice on the create path.
-	input := BuildEmbeddingInputForKind(record, p.inputKind, p.docPrefix)
+	// dedupe hash; it was otherwise computed twice on the create path. The same capped string the
+	// worker will embed is what gets hashed, so a change past the cap cannot present as a different
+	// embedding than the one already stored.
+	input, _ := BuildEmbeddingInputForKind(record, p.inputKind, p.docPrefix, TextCap{MaxBytes: p.maxInputBytes})
 
 	// On create, only enqueue when there is embeddable text. On update we enqueue regardless so the worker can clear.
 	if event.Type == datatypes.FeedbackRecordCreated && input == "" {
@@ -171,45 +178,61 @@ const (
 //   - fieldLabel: The "question" or metadata key (e.g. "What is your reasoning?").
 //   - valueText:  The "answer" or main content (e.g. "I chose option B because...").
 //   - prefix:     Model-specific task instruction; OpenAI and Google use "".
+//   - inputCap:   Maximum bytes to send (see TextCap); the zero value is unlimited.
 //
-// Returns formatted string: "[prefix]Question: [label]\nAnswer: [value]" (or "[prefix][value]" when label is empty).
-func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
-	return BuildEmbeddingInputFromValues(fieldLabel, valueText, nil, models.EmbeddingInputKindRaw, prefix)
+// Returns the formatted string — "[prefix]Question: [label]\nAnswer: [value]" (or "[prefix][value]"
+// when label is empty) — and whether the cap had to cut it.
+func BuildEmbeddingInput(fieldLabel, valueText *string, prefix string, inputCap TextCap) (string, bool) {
+	return BuildEmbeddingInputFromValues(fieldLabel, valueText, nil, models.EmbeddingInputKindRaw, prefix, inputCap)
 }
 
 // BuildEmbeddingInputForKind prepares text for a specific embedding input kind.
-func BuildEmbeddingInputForKind(record *models.FeedbackRecord, kind models.EmbeddingInputKind, prefix string) string {
+func BuildEmbeddingInputForKind(
+	record *models.FeedbackRecord, kind models.EmbeddingInputKind, prefix string, inputCap TextCap,
+) (string, bool) {
 	if record == nil {
-		return ""
+		return "", false
 	}
 
-	return BuildEmbeddingInputFromValues(record.FieldLabel, record.ValueText, record.ValueTextTranslated, kind, prefix)
+	return BuildEmbeddingInputFromValues(
+		record.FieldLabel, record.ValueText, record.ValueTextTranslated, kind, prefix, inputCap)
 }
 
 // BuildEmbeddingInputFromValues prepares text for vector embedding from raw record values.
 // Taxonomy embeddings prefer translated text when present, falling back to original value_text.
+//
+// The cap is applied HERE, not at the call sites, because this string is both what is sent to the
+// provider and what the write-time supersession guard compares against (see the stillCurrent closure
+// in FeedbackEmbeddingWorker.Work). The two must agree byte for byte: a caller that remembered the
+// cap in one place and not the other would let an edited record's vector keep describing text it no
+// longer has, which nothing downstream can detect.
 func BuildEmbeddingInputFromValues(
 	fieldLabel, valueText, valueTextTranslated *string,
 	kind models.EmbeddingInputKind,
 	prefix string,
-) string {
+	inputCap TextCap,
+) (string, bool) {
 	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
 		if normalizedText(valueTextTranslated) != "" {
-			return buildEmbeddingInput(fieldLabel, valueTextTranslated, prefix)
+			return buildEmbeddingInput(fieldLabel, valueTextTranslated, prefix, inputCap)
 		}
 	}
 
-	return buildEmbeddingInput(fieldLabel, valueText, prefix)
+	return buildEmbeddingInput(fieldLabel, valueText, prefix, inputCap)
 }
 
-func buildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
+// buildEmbeddingInput assembles the provider input and applies the cap to the assembled string —
+// the instruction prefix and field label are part of what the provider sees, so they are part of
+// what is bounded. The label is capped at 2,048 runes on write, so a practical cap always leaves
+// room for it ahead of the answer.
+func buildEmbeddingInput(fieldLabel, valueText *string, prefix string, inputCap TextCap) (string, bool) {
 	if valueText == nil {
-		return ""
+		return "", false
 	}
 
 	trimmedValue := strings.TrimSpace(*valueText)
 	if trimmedValue == "" {
-		return ""
+		return "", false
 	}
 
 	// Unicode NFC normalization: consistent byte representation without changing meaning (e.g. ñ as single codepoint).
@@ -239,5 +262,6 @@ func buildEmbeddingInput(fieldLabel, valueText *string, prefix string) string {
 
 	builder.WriteString(val)
 
-	return builder.String()
+	// Slicing shares the builder's buffer, so an over-cap input costs no extra allocation here.
+	return inputCap.Apply(builder.String())
 }

@@ -35,7 +35,7 @@ type translationWorkerService interface {
 func NewFeedbackTranslationWorker(
 	svc translationWorkerService, client service.TranslationClient, metrics observability.TranslationMetrics,
 	failures FailureRecorder,
-	failureMetrics observability.EnrichmentFailureMetrics,
+	failureMetrics observability.EnrichmentFailureMetrics, inputCap service.TextCap,
 ) *FeedbackTranslationWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackTranslationArgs, string]{
 		name:           "translation",
@@ -48,7 +48,7 @@ func NewFeedbackTranslationWorker(
 		eligible:       (*models.FeedbackRecord).IsTextField,
 		hasContent:     (*models.FeedbackRecord).HasOpenText,
 		classify: func(ctx context.Context, record *models.FeedbackRecord, args service.FeedbackTranslationArgs) (string, error) {
-			return translate(ctx, client, record, args.TargetLang, args.EventID)
+			return translate(ctx, client, record, args.TargetLang, args.EventID, inputCap)
 		},
 		persist: func(ctx context.Context, record *models.FeedbackRecord, args service.FeedbackTranslationArgs, translated *string) error {
 			// Guard the write against content churn since the Work-time read: a stale job's
@@ -72,10 +72,16 @@ func NewFeedbackTranslationWorker(
 	})
 }
 
+// errTranslationInputTooLong is the terminal reason a translation is refused: the record's own text
+// is over the configured cap. Static so callers can match it, wrapped with the numbers so the log
+// line says which record and which cap.
+var errTranslationInputTooLong = errors.New("value_text is over the configured translation input cap")
+
 // translate returns the translated value_text, short-circuiting (copying the original) when the
 // record has no usable source language, or its source language already matches the target.
 func translate(
-	ctx context.Context, client service.TranslationClient, record *models.FeedbackRecord, targetLang string, eventID uuid.UUID,
+	ctx context.Context, client service.TranslationClient, record *models.FeedbackRecord, targetLang string,
+	eventID uuid.UUID, inputCap service.TextCap,
 ) (string, error) {
 	sourceLang := ""
 	if record.Language != nil {
@@ -101,6 +107,20 @@ func translate(
 			"feedback_record_id", record.ID, "event_id", eventID)
 
 		return *record.ValueText, nil
+	}
+
+	// Over the cap, refuse rather than trim: a translation of the first N bytes of an answer is
+	// wrong stored as if it were the whole text, and the consumer of value_text_translated (the
+	// taxonomy embedding, the tenant's own reads) has no way to tell a partial translation from a
+	// complete one. Returning a TERMINAL error is what makes the skip cheap and visible: the
+	// provider is never called, the shared worker cancels the job instead of retrying an input
+	// that cannot change between attempts, and the record shows up as failed_terminal in the
+	// enrichment status with a 'length' marker a tenant can clear after editing the text.
+	if inputCap.Exceeds(*record.ValueText) {
+		return "", huberrors.NewTerminalProviderError(
+			huberrors.TerminalReasonLength,
+			fmt.Errorf("%w: %d bytes, cap %d", errTranslationInputTooLong, len(*record.ValueText), inputCap.MaxBytes),
+		)
 	}
 
 	translated, err := client.Translate(ctx, service.TranslateRequest{

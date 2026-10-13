@@ -25,6 +25,9 @@ type Metrics struct {
 	// EnrichmentFailures counts permanent give-ups by cause and gauges how many records are
 	// currently failed. Carries the enrichment as a label rather than in the metric name.
 	EnrichmentFailures EnrichmentFailureMetrics
+	// EnrichmentTrimmed counts calls whose input was cut to the configured byte cap, by enrichment.
+	// Not a failure: the call runs and stores a result, with less of the record than it has.
+	EnrichmentTrimmed EnrichmentTrimmedMetrics
 	// EnrichmentReconcile reports the level-triggered sweep and the manual retry endpoint — two
 	// paths that spend provider money with nobody watching a request.
 	EnrichmentReconcile EnrichmentReconcileMetrics
@@ -94,6 +97,11 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		return nil, fmt.Errorf("create enrichment reconcile metrics: %w", err)
 	}
 
+	enrichmentTrimmed, err := NewEnrichmentTrimmedMetrics(meter)
+	if err != nil {
+		return nil, fmt.Errorf("create enrichment trimmed metrics: %w", err)
+	}
+
 	taxonomy, err := NewTaxonomyMetrics(meter)
 	if err != nil {
 		return nil, fmt.Errorf("taxonomy metrics: %w", err)
@@ -110,6 +118,7 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		EnrichmentClear:     enrichmentClear,
 		EnrichmentBacklog:   enrichmentBacklog,
 		EnrichmentFailures:  enrichmentFailures,
+		EnrichmentTrimmed:   enrichmentTrimmed,
 		EnrichmentReconcile: enrichmentReconcile,
 		Taxonomy:            taxonomy,
 	}, nil

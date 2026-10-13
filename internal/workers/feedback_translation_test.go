@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,7 +126,7 @@ func translationJob(targetLang string, attempt int) *river.Job[service.FeedbackT
 func TestFeedbackTranslationWorker_TranslatesAndStores(t *testing.T) {
 	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour le monde", "fr")}
 	client := &stubTranslationClient{out: "Hello world"}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -144,7 +145,7 @@ func TestFeedbackTranslationWorker_TranslatesAndStores(t *testing.T) {
 func TestFeedbackTranslationWorker_SourceEqualsTargetCopies(t *testing.T) {
 	svc := &mockTranslationWorkerService{record: translationRecord("Hello", "en-US")}
 	client := &stubTranslationClient{out: "should-not-be-used"}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-GB", 1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -162,7 +163,7 @@ func TestFeedbackTranslationWorker_SourceEqualsTargetCopies(t *testing.T) {
 func TestFeedbackTranslationWorker_ClearsWhenValueTextEmpty(t *testing.T) {
 	svc := &mockTranslationWorkerService{record: translationRecord("   ", "fr")}
 	client := &stubTranslationClient{out: "x"}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -183,7 +184,7 @@ func TestFeedbackTranslationWorker_UnsetSourceLanguageCopies(t *testing.T) {
 	// instead of round-tripping identical text through the LLM (e.g. English -> English).
 	svc := &mockTranslationWorkerService{record: translationRecord("Hello world", "")}
 	client := &stubTranslationClient{out: "should-not-be-used"}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -203,7 +204,7 @@ func TestFeedbackTranslationWorker_UndeterminedSourceTranslates(t *testing.T) {
 	// "und" (undetermined) must not be treated as matching the target — translate, not copy.
 	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "und")}
 	client := &stubTranslationClient{out: "Hello"}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -218,7 +219,7 @@ func TestFeedbackTranslationWorker_DifferentScriptTranslates(t *testing.T) {
 	// zh-Hans and zh-Hant share a base language but not a script: must translate, not copy.
 	svc := &mockTranslationWorkerService{record: translationRecord("simplified content", "zh-Hans")}
 	client := &stubTranslationClient{out: "translated"}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("zh-Hant", 1)); err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -232,7 +233,7 @@ func TestFeedbackTranslationWorker_DifferentScriptTranslates(t *testing.T) {
 func TestFeedbackTranslationWorker_NotFoundCompletes(t *testing.T) {
 	metrics := newCountingTranslationMetrics()
 	svc := &mockTranslationWorkerService{getErr: huberrors.NewNotFoundError("feedback record", "gone")}
-	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, metrics, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, metrics, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 		t.Fatalf("Work() error = %v, want nil (not-found completes)", err)
@@ -252,7 +253,7 @@ func TestFeedbackTranslationWorker_NotFoundCompletes(t *testing.T) {
 func TestFeedbackTranslationWorker_ProviderErrorRetriesThenFails(t *testing.T) {
 	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "fr")}
 	client := &stubTranslationClient{err: errors.New("api down")}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err == nil {
 		t.Fatal("Work() = nil on non-final attempt, want retry error")
@@ -272,7 +273,7 @@ func TestFeedbackTranslationWorker_TenantWriteConflictRetries(t *testing.T) {
 		record: translationRecord("Bonjour", "fr"),
 		setErr: huberrors.NewTenantWriteConflictError("purge in progress"),
 	}
-	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err == nil {
 		t.Fatal("Work() = nil, want retry on tenant write conflict")
@@ -284,7 +285,7 @@ func TestFeedbackTranslationWorker_RecordGoneOnWriteCompletes(t *testing.T) {
 		record: translationRecord("Bonjour", "fr"),
 		setErr: huberrors.NewNotFoundError("feedback record", "gone"),
 	}
-	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, nil, nil, nil, service.TextCap{})
 
 	if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 		t.Fatalf("Work() error = %v, want nil (record gone before write completes)", err)
@@ -297,7 +298,7 @@ func TestFeedbackTranslationWorker_SupersededWriteSkips(t *testing.T) {
 		record: translationRecord("Bonjour le monde", "fr"),
 		setErr: huberrors.ErrTranslationSuperseded,
 	}
-	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hello world"}, metrics, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hello world"}, metrics, nil, nil, service.TextCap{})
 
 	// A stale-target write (the tenant's target changed before this job's write landed) is a
 	// benign no-op: the worker completes the job and records it as skipped, not failed.
@@ -319,7 +320,7 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 	t.Run("success records outcome and duration", func(t *testing.T) {
 		metrics := newCountingTranslationMetrics()
 		svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "fr")}
-		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics, nil, nil)
+		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 			t.Fatalf("Work() error = %v", err)
@@ -335,7 +336,8 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 		metrics := newCountingTranslationMetrics()
 		record := translationRecord("hello", "fr")
 		record.FieldType = models.FieldTypeCategorical
-		worker := NewFeedbackTranslationWorker(&mockTranslationWorkerService{record: record}, &stubTranslationClient{}, metrics, nil, nil)
+		worker := NewFeedbackTranslationWorker(
+			&mockTranslationWorkerService{record: record}, &stubTranslationClient{}, metrics, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 			t.Fatalf("Work() error = %v", err)
@@ -349,7 +351,7 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 	t.Run("empty value_text clear records success", func(t *testing.T) {
 		metrics := newCountingTranslationMetrics()
 		svc := &mockTranslationWorkerService{record: translationRecord("   ", "fr")}
-		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, metrics, nil, nil)
+		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, metrics, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 			t.Fatalf("Work() error = %v", err)
@@ -363,7 +365,7 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 	t.Run("provider failure records worker error, retry then failed_final", func(t *testing.T) {
 		metrics := newCountingTranslationMetrics()
 		svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "fr")}
-		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{err: errors.New("api down")}, metrics, nil, nil)
+		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{err: errors.New("api down")}, metrics, nil, nil, service.TextCap{})
 
 		_ = worker.Work(context.Background(), translationJob("en-US", 1)) // non-final -> retry
 		_ = worker.Work(context.Background(), translationJob("en-US", 3)) // final -> failed_final
@@ -383,7 +385,7 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 		// on the last attempt, so failed_final is not overcounted.
 		metrics := newCountingTranslationMetrics()
 		svc := &mockTranslationWorkerService{getErr: errors.New("db down")}
-		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, metrics, nil, nil)
+		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{}, metrics, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), translationJob("en-US", 1)); err == nil {
 			t.Fatal("Work() = nil, want error on get failure")
@@ -409,7 +411,7 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 			record: translationRecord("Bonjour", "fr"),
 			setErr: huberrors.NewTenantWriteConflictError("purge"),
 		}
-		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics, nil, nil)
+		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics, nil, nil, service.TextCap{})
 
 		_ = worker.Work(context.Background(), translationJob("en-US", 1))
 
@@ -425,7 +427,7 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 			record: translationRecord("Bonjour", "fr"),
 			setErr: errors.New("update boom"),
 		}
-		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics, nil, nil)
+		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics, nil, nil, service.TextCap{})
 
 		// Non-final attempt: River retries, so the outcome is "retry", not failed_final.
 		_ = worker.Work(context.Background(), translationJob("en-US", 1))
@@ -448,7 +450,7 @@ func TestFeedbackTranslationWorker_RecordsMetrics(t *testing.T) {
 			record: translationRecord("Bonjour", "fr"),
 			setErr: huberrors.NewNotFoundError("feedback record", "gone"),
 		}
-		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics, nil, nil)
+		worker := NewFeedbackTranslationWorker(svc, &stubTranslationClient{out: "Hi"}, metrics, nil, nil, service.TextCap{})
 
 		if err := worker.Work(context.Background(), translationJob("en-US", 1)); err != nil {
 			t.Fatalf("Work() error = %v, want nil", err)
@@ -464,7 +466,7 @@ func TestFeedbackTranslationWorker_RateLimitSnoozes(t *testing.T) {
 	metrics := newCountingTranslationMetrics()
 	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "fr")}
 	client := &stubTranslationClient{err: huberrors.NewRateLimitError(45*time.Second, errors.New("429"))}
-	worker := NewFeedbackTranslationWorker(svc, client, metrics, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, metrics, nil, nil, service.TextCap{})
 
 	err := worker.Work(context.Background(), translationJob("en-US", 1))
 
@@ -494,7 +496,7 @@ func TestFeedbackTranslationWorker_RateLimitSnoozesOnLastAttempt(t *testing.T) {
 	// not consume an attempt, so a 429 defers work instead of being dropped as failed_final.
 	svc := &mockTranslationWorkerService{record: translationRecord("Bonjour", "fr")}
 	client := &stubTranslationClient{err: huberrors.NewRateLimitError(0, errors.New("429"))}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{})
 
 	err := worker.Work(context.Background(), translationJob("en-US", 3))
 
@@ -617,7 +619,7 @@ func TestFeedbackTranslationWorker_TerminalFailureIsRecorded(t *testing.T) {
 	failures := &recordingFailureRecorder{}
 	client := &stubTranslationClient{err: huberrors.NewTerminalProviderError(
 		huberrors.TerminalReasonRefusal, errors.New("declined"))}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, failures, nil)
+	worker := NewFeedbackTranslationWorker(svc, client, nil, failures, nil, service.TextCap{})
 
 	require.Error(t, worker.Work(context.Background(), translationJob("en-US", 1)))
 
@@ -626,4 +628,66 @@ func TestFeedbackTranslationWorker_TerminalFailureIsRecorded(t *testing.T) {
 	assert.Equal(t, record.ID, failures.calls[0].FeedbackRecordID)
 	assert.Equal(t, record.TenantID, failures.calls[0].TenantID)
 	assert.True(t, failures.calls[0].Terminal)
+}
+
+// TestFeedbackTranslationWorker_OverCapRefusesWithoutCallingTheProvider pins ENG-3908's translation
+// behaviour, which deliberately differs from the other three: a translation of the first N bytes
+// stored as if it were the whole text is wrong, and nothing downstream can tell the two apart. So
+// over the cap the record is refused — and the refusal has to be TERMINAL, because an input that is
+// too long will still be too long on the next attempt, so retrying would spend the whole budget on
+// calls that cannot succeed.
+func TestFeedbackTranslationWorker_OverCapRefusesWithoutCallingTheProvider(t *testing.T) {
+	text := strings.Repeat("a", 100)
+	svc := &mockTranslationWorkerService{record: translationRecord(text, "fr")}
+	client := &stubTranslationClient{out: "unused"}
+	failures := &recordingFailureRecorder{}
+	worker := NewFeedbackTranslationWorker(svc, client, nil, failures, nil, service.TextCap{MaxBytes: 40})
+
+	err := worker.Work(context.Background(), translationJob("en-US", 1))
+	require.Error(t, err)
+
+	var cancelErr *river.JobCancelError
+	require.ErrorAs(t, err, &cancelErr, "an input that cannot change must cancel, not retry")
+
+	assert.Empty(t, client.calls, "the provider must not be called at all")
+	require.Len(t, failures.calls, 1, "the skip must be recorded durably")
+	assert.True(t, failures.calls[0].Terminal)
+	assert.Equal(t, string(huberrors.TerminalReasonLength), failures.calls[0].Reason)
+	assert.Equal(t, models.EnrichmentNameTranslation, failures.calls[0].Enrichment)
+	assert.Empty(t, svc.setCalls, "nothing may be stored for a record that was refused")
+}
+
+// TestFeedbackTranslationWorker_AtTheCapStillTranslates is the boundary: the cap is a limit, not a
+// trim, so a record exactly at it is translated whole.
+func TestFeedbackTranslationWorker_AtTheCapStillTranslates(t *testing.T) {
+	text := strings.Repeat("a", 40)
+	svc := &mockTranslationWorkerService{record: translationRecord(text, "fr")}
+	client := &stubTranslationClient{out: "Hello world"}
+	worker := NewFeedbackTranslationWorker(svc, client, nil, nil, nil, service.TextCap{MaxBytes: 40})
+
+	require.NoError(t, worker.Work(context.Background(), translationJob("en-US", 1)))
+
+	require.Len(t, client.calls, 1)
+	assert.Equal(t, text, client.calls[0].Text)
+}
+
+// TestFeedbackTranslationWorker_OverCapCopyThroughStillCopies guards the ordering of the check: a
+// record whose source language is unknown is COPIED, not translated, so nothing is sent to a
+// provider and the cap must not apply. Refusing it here would mark a record terminally failed —
+// and therefore skip it in every later sweep — for a job that costs nothing and would have worked.
+func TestFeedbackTranslationWorker_OverCapCopyThroughStillCopies(t *testing.T) {
+	text := strings.Repeat("a", 100)
+	record := translationRecord(text, "") // unset source language: copy through
+	svc := &mockTranslationWorkerService{record: record}
+	client := &stubTranslationClient{out: "unused"}
+	failures := &recordingFailureRecorder{}
+	worker := NewFeedbackTranslationWorker(svc, client, nil, failures, nil, service.TextCap{MaxBytes: 40})
+
+	require.NoError(t, worker.Work(context.Background(), translationJob("en-US", 1)))
+
+	assert.Empty(t, client.calls)
+	assert.Empty(t, failures.calls, "a copy-through is not a failure")
+	require.Len(t, svc.setCalls, 1)
+	require.NotNil(t, svc.setCalls[0].translated)
+	assert.Equal(t, text, *svc.setCalls[0].translated, "the copy-through carries the whole text")
 }

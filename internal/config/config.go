@@ -41,6 +41,18 @@ var (
 		".env file is malformed (fix quoting/characters; parse detail withheld to avoid logging secrets)")
 	ErrInvalidTranslationDefaultLanguage = errors.New("TRANSLATION_DEFAULT_LANGUAGE must be a valid BCP-47 locale (e.g. en-US)")
 	ErrInvalidTaxonomyServiceURL         = errors.New("TAXONOMY_SERVICE_URL must be an absolute http(s) URL without query or fragment")
+	// ErrInvalidEmbeddingMaxInputBytes and its three siblings exist one per enrichment so the message
+	// names the env var the operator actually set, the way every other per-type error in this block
+	// does. The floor is one rune (4 bytes, the longest UTF-8 encoding): a smaller cap could not cut
+	// anywhere but at zero, which would hand an enrichment empty text for a record that has some.
+	ErrInvalidEmbeddingMaxInputBytes = errors.New(
+		"EMBEDDING_MAX_INPUT_BYTES must be 0 (unlimited) or at least 4 bytes (one rune)")
+	ErrInvalidTranslationMaxInputBytes = errors.New(
+		"TRANSLATION_MAX_INPUT_BYTES must be 0 (unlimited) or at least 4 bytes (one rune)")
+	ErrInvalidSentimentMaxInputBytes = errors.New(
+		"SENTIMENT_MAX_INPUT_BYTES must be 0 (unlimited) or at least 4 bytes (one rune)")
+	ErrInvalidEmotionsMaxInputBytes = errors.New(
+		"EMOTIONS_MAX_INPUT_BYTES must be 0 (unlimited) or at least 4 bytes (one rune)")
 )
 
 // DefaultDatabaseURL is the default connection URL when DATABASE_URL is unset (local/test only).
@@ -53,6 +65,28 @@ const (
 	defaultEmbeddingJobTimeout          = 60 * time.Second
 	defaultEmbeddingReconcileInterval   = 5 * time.Minute
 	defaultEmbeddingReconcileRetryAfter = 15 * time.Minute
+)
+
+// Default input caps for the enrichment pipelines, in UTF-8 bytes (see service.TextCap for why
+// bytes rather than runes or tokens).
+//
+// Embedding is the tight one because it is the only pipeline with a HARD limit: an embedding model
+// refuses an over-long input outright, which after ENG-2375 is a terminal failure — the record never
+// gets a vector and never becomes searchable. 12,000 bytes is ~8,000 tokens at the worst bytes-per-
+// token ratio any script shows (Korean and emoji run about 1.5), so it fits the 8,192-token window
+// of both text-embedding-3-* and the gte-multilingual-base runtime the chart ships, while still
+// embedding 12,000 characters of Latin text. A deployment on a 2,048-token embedding model wants
+// roughly 3,000.
+//
+// The classify caps are cost bounds, not limits: every chat model in use accepts the full 30,000-
+// rune ingest cap. 24,000 bytes is ~6,000 Latin tokens and ~16,000 tokens at worst — a bound that
+// keeps the per-record, per-edit, per-pipeline spend predictable without trimming text a classifier
+// would have used. Raise it for long-form translation, lower it to bound an open-ingest deployment.
+// Translation is the one that SKIPS rather than trims past its cap, because half a translation
+// stored as complete is wrong.
+const (
+	defaultEmbeddingMaxInputBytes = 12000
+	defaultClassifyMaxInputBytes  = 24000
 )
 
 // Config holds all application configuration in nested groups.
@@ -141,13 +175,18 @@ type MessagePublisherConfig struct {
 
 // EmbeddingConfig holds embedding provider and queue settings.
 type EmbeddingConfig struct {
-	ProviderAPIKey         string      `env:"EMBEDDING_PROVIDER_API_KEY"`
-	Provider               string      `env:"EMBEDDING_PROVIDER"`
-	Model                  string      `env:"EMBEDDING_MODEL"`
-	BaseURL                string      `env:"EMBEDDING_BASE_URL"`
-	MaxConcurrent          int         `env:"EMBEDDING_MAX_CONCURRENT"                env-default:"5"`
-	MaxAttempts            int         `env:"EMBEDDING_MAX_ATTEMPTS"                  env-default:"5"`
-	JobTimeout             DurationSec `env:"EMBEDDING_JOB_TIMEOUT_SECONDS"           env-default:"60"`
+	ProviderAPIKey string      `env:"EMBEDDING_PROVIDER_API_KEY"`
+	Provider       string      `env:"EMBEDDING_PROVIDER"`
+	Model          string      `env:"EMBEDDING_MODEL"`
+	BaseURL        string      `env:"EMBEDDING_BASE_URL"`
+	MaxConcurrent  int         `env:"EMBEDDING_MAX_CONCURRENT"      env-default:"5"`
+	MaxAttempts    int         `env:"EMBEDDING_MAX_ATTEMPTS"        env-default:"5"`
+	JobTimeout     DurationSec `env:"EMBEDDING_JOB_TIMEOUT_SECONDS" env-default:"60"`
+	// MaxInputBytes caps the text sent to the embedding provider, in UTF-8 bytes; 0 disables the
+	// cap. Over the cap the input is trimmed to its first N bytes, because a vector for the first
+	// part of a record beats no vector at all — an over-long input is a terminal provider failure,
+	// which leaves the record permanently unsearchable (ENG-3908).
+	MaxInputBytes          int         `env:"EMBEDDING_MAX_INPUT_BYTES"               env-default:"12000"`
 	BatchSize              int         `env:"EMBEDDING_BATCH_SIZE"                    env-default:"1"`
 	BatchMaxWaitMs         int         `env:"EMBEDDING_BATCH_MAX_WAIT_MS"             env-default:"25"`
 	BatchMaxInFlight       int         `env:"EMBEDDING_BATCH_MAX_IN_FLIGHT"           env-default:"1"`
@@ -173,9 +212,14 @@ type TranslationConfig struct {
 	// target_language of its own. Empty means no fallback — translation is then per-tenant
 	// opt-in (a tenant is translated only once it sets its own target). Normalized to
 	// canonical form at load.
-	DefaultLanguage        string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
-	MaxConcurrent          int    `env:"TRANSLATION_MAX_CONCURRENT"           env-default:"5"`
-	MaxAttempts            int    `env:"TRANSLATION_MAX_ATTEMPTS"             env-default:"3"`
+	DefaultLanguage string `env:"TRANSLATION_DEFAULT_LANGUAGE"`
+	MaxConcurrent   int    `env:"TRANSLATION_MAX_CONCURRENT"   env-default:"5"`
+	MaxAttempts     int    `env:"TRANSLATION_MAX_ATTEMPTS"     env-default:"3"`
+	// MaxInputBytes caps the text sent to the translation provider, in UTF-8 bytes; 0 disables the
+	// cap. Over the cap the record is SKIPPED and marked failed_terminal rather than trimmed: a
+	// translation of the first N bytes of an answer is wrong stored as if it were the whole thing,
+	// and a tenant can still clear the marker to retry after an edit (ENG-3908).
+	MaxInputBytes          int    `env:"TRANSLATION_MAX_INPUT_BYTES"          env-default:"24000"`
 	ReconcileMaxConcurrent int    `env:"TRANSLATION_RECONCILE_MAX_CONCURRENT" env-default:"2"`
 	GoogleCloudProject     string `env:"TRANSLATION_GOOGLE_CLOUD_PROJECT"`
 	GoogleCloudLocation    string `env:"TRANSLATION_GOOGLE_CLOUD_LOCATION"`
@@ -185,12 +229,16 @@ type TranslationConfig struct {
 // Sentiment enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate embeddings and translation use (there is no separate enable flag).
 type SentimentConfig struct {
-	ProviderAPIKey         string `env:"SENTIMENT_PROVIDER_API_KEY"`
-	Provider               string `env:"SENTIMENT_PROVIDER"`
-	Model                  string `env:"SENTIMENT_MODEL"`
-	BaseURL                string `env:"SENTIMENT_BASE_URL"`
-	MaxConcurrent          int    `env:"SENTIMENT_MAX_CONCURRENT"           env-default:"5"`
-	MaxAttempts            int    `env:"SENTIMENT_MAX_ATTEMPTS"             env-default:"3"`
+	ProviderAPIKey string `env:"SENTIMENT_PROVIDER_API_KEY"`
+	Provider       string `env:"SENTIMENT_PROVIDER"`
+	Model          string `env:"SENTIMENT_MODEL"`
+	BaseURL        string `env:"SENTIMENT_BASE_URL"`
+	MaxConcurrent  int    `env:"SENTIMENT_MAX_CONCURRENT"   env-default:"5"`
+	MaxAttempts    int    `env:"SENTIMENT_MAX_ATTEMPTS"     env-default:"3"`
+	// MaxInputBytes caps the text sent to the sentiment provider, in UTF-8 bytes; 0 disables the
+	// cap. Over the cap the input is trimmed: the polarity of the first N bytes of an answer is
+	// still a useful label, and classifying nothing is not (ENG-3908).
+	MaxInputBytes          int    `env:"SENTIMENT_MAX_INPUT_BYTES"          env-default:"24000"`
 	ReconcileMaxConcurrent int    `env:"SENTIMENT_RECONCILE_MAX_CONCURRENT" env-default:"2"`
 	GoogleCloudProject     string `env:"SENTIMENT_GOOGLE_CLOUD_PROJECT"`
 	GoogleCloudLocation    string `env:"SENTIMENT_GOOGLE_CLOUD_LOCATION"`
@@ -212,12 +260,15 @@ func (c SentimentConfig) Enabled() bool {
 // Emotion enrichment is disabled unless Provider and Model are both set — the same
 // provider+model gate the other enrichments use (there is no separate enable flag).
 type EmotionsConfig struct {
-	ProviderAPIKey         string `env:"EMOTIONS_PROVIDER_API_KEY"`
-	Provider               string `env:"EMOTIONS_PROVIDER"`
-	Model                  string `env:"EMOTIONS_MODEL"`
-	BaseURL                string `env:"EMOTIONS_BASE_URL"`
-	MaxConcurrent          int    `env:"EMOTIONS_MAX_CONCURRENT"           env-default:"5"`
-	MaxAttempts            int    `env:"EMOTIONS_MAX_ATTEMPTS"             env-default:"3"`
+	ProviderAPIKey string `env:"EMOTIONS_PROVIDER_API_KEY"`
+	Provider       string `env:"EMOTIONS_PROVIDER"`
+	Model          string `env:"EMOTIONS_MODEL"`
+	BaseURL        string `env:"EMOTIONS_BASE_URL"`
+	MaxConcurrent  int    `env:"EMOTIONS_MAX_CONCURRENT"   env-default:"5"`
+	MaxAttempts    int    `env:"EMOTIONS_MAX_ATTEMPTS"     env-default:"3"`
+	// MaxInputBytes caps the text sent to the emotions provider, in UTF-8 bytes; 0 disables the cap.
+	// Over the cap the input is trimmed, like sentiment (ENG-3908).
+	MaxInputBytes          int    `env:"EMOTIONS_MAX_INPUT_BYTES"          env-default:"24000"`
 	ReconcileMaxConcurrent int    `env:"EMOTIONS_RECONCILE_MAX_CONCURRENT" env-default:"2"`
 	GoogleCloudProject     string `env:"EMOTIONS_GOOGLE_CLOUD_PROJECT"`
 	GoogleCloudLocation    string `env:"EMOTIONS_GOOGLE_CLOUD_LOCATION"`
@@ -525,6 +576,25 @@ func applyDefaults(cfg *Config) {
 		cfg.Embedding.ReconcileMaxConcurrent = 1
 	}
 
+	// Input caps: 0 means "unlimited", which is a value an operator may legitimately set, so
+	// "unset" and "explicitly 0" have to be told apart — and cleanenv does not reliably apply
+	// env-default to nested-struct fields, so the env is consulted directly (the same reason
+	// TENANT_SETTINGS_CACHE_SIZE does). A negative value is rejected in validate().
+	for _, cap := range []struct {
+		env   string
+		value *int
+		def   int
+	}{
+		{"EMBEDDING_MAX_INPUT_BYTES", &cfg.Embedding.MaxInputBytes, defaultEmbeddingMaxInputBytes},
+		{"TRANSLATION_MAX_INPUT_BYTES", &cfg.Translation.MaxInputBytes, defaultClassifyMaxInputBytes},
+		{"SENTIMENT_MAX_INPUT_BYTES", &cfg.Sentiment.MaxInputBytes, defaultClassifyMaxInputBytes},
+		{"EMOTIONS_MAX_INPUT_BYTES", &cfg.Emotions.MaxInputBytes, defaultClassifyMaxInputBytes},
+	} {
+		if _, set := os.LookupEnv(cap.env); !set {
+			*cap.value = cap.def
+		}
+	}
+
 	// Default the cache size only when the operator did not set it. An explicit 0 (or
 	// negative) disables the cache: NewCachedTenantSettings treats size <= 0 as "no
 	// caching". cleanenv does not reliably apply env-default to nested-struct fields, so
@@ -628,6 +698,24 @@ func validate(cfg *Config) error {
 		}
 
 		cfg.Emotions.BaseURL = normalized
+	}
+
+	// A negative cap would read as "unlimited" to service.TextCap, which is a silently different
+	// meaning from the 0 an operator writes, so reject it rather than guess. 0 is valid: no cap.
+	// Below one rune is rejected too: such a cap could only ever cut to nothing, handing the
+	// enrichment empty text for a record that has some.
+	for _, cap := range []struct {
+		value int
+		err   error
+	}{
+		{cfg.Embedding.MaxInputBytes, ErrInvalidEmbeddingMaxInputBytes},
+		{cfg.Translation.MaxInputBytes, ErrInvalidTranslationMaxInputBytes},
+		{cfg.Sentiment.MaxInputBytes, ErrInvalidSentimentMaxInputBytes},
+		{cfg.Emotions.MaxInputBytes, ErrInvalidEmotionsMaxInputBytes},
+	} {
+		if cap.value < 0 || (cap.value > 0 && cap.value < 4) {
+			return cap.err
+		}
 	}
 
 	// Canonicalize the fallback target language so it compares equal to tenant targets (which

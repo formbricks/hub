@@ -47,7 +47,7 @@ func (m *mockEmbeddingInserter) Insert(
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	valueText := "Some feedback text"
@@ -77,7 +77,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPointer_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
 
 	// Pass value type (as was happening before the service fix) — provider should skip and not enqueue.
 	event := Event{
@@ -98,7 +98,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPoin
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
 
 	event := Event{
 		ID:        uuid.Must(uuid.NewV7()),
@@ -118,7 +118,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_ski
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -143,7 +143,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChanged
 
 func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_fieldLabelInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", nil)
+	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -174,6 +174,7 @@ func TestEmbeddingProvider_PublishEvent_TaxonomyTranslatedPrefersTranslatedText(
 		"embeddings",
 		3,
 		"",
+		0,
 		nil,
 		models.EmbeddingInputKindTaxonomyTranslated,
 	)
@@ -207,26 +208,55 @@ func TestEmbeddingProvider_PublishEvent_TaxonomyTranslatedPrefersTranslatedText(
 
 func TestBuildEmbeddingInput(t *testing.T) {
 	t.Run("label and value produces Question/Answer format", func(t *testing.T) {
-		out := BuildEmbeddingInput(
+		out, trimmed := BuildEmbeddingInput(
 			new("What features are you missing?"),
 			new("Dashboards, Charts"),
 			"",
+			TextCap{},
 		)
 		assert.Equal(t, "Question: What features are you missing?\nAnswer: Dashboards, Charts", out)
+		assert.False(t, trimmed)
 	})
 	t.Run("empty label returns value only", func(t *testing.T) {
-		out := BuildEmbeddingInput(nil, new("Just the value"), "")
+		out, _ := BuildEmbeddingInput(nil, new("Just the value"), "", TextCap{})
 		assert.Equal(t, "Just the value", out)
 	})
 	t.Run("nil valueText returns empty", func(t *testing.T) {
-		assert.Empty(t, BuildEmbeddingInput(new("Label"), nil, ""))
+		out, _ := BuildEmbeddingInput(new("Label"), nil, "", TextCap{})
+		assert.Empty(t, out)
 	})
 	t.Run("whitespace value returns empty", func(t *testing.T) {
-		assert.Empty(t, BuildEmbeddingInput(nil, new("   "), ""))
+		out, _ := BuildEmbeddingInput(nil, new("   "), "", TextCap{})
+		assert.Empty(t, out)
 	})
 	t.Run("prefix is prepended", func(t *testing.T) {
-		out := BuildEmbeddingInput(new("Q"), new("A"), "search_document: ")
+		out, _ := BuildEmbeddingInput(new("Q"), new("A"), "search_document: ", TextCap{})
 		assert.Equal(t, "search_document: Question: Q\nAnswer: A", out)
+	})
+	t.Run("input within the cap is not cut", func(t *testing.T) {
+		// The label is part of what the provider sees, so it counts against the cap.
+		label, value := "Q", "Answer"
+
+		out, trimmed := BuildEmbeddingInput(&label, &value, "", TextCap{MaxBytes: len("Question: Q\nAnswer: Answer")})
+
+		assert.Equal(t, "Question: Q\nAnswer: Answer", out)
+		assert.False(t, trimmed)
+	})
+	t.Run("input over the cap keeps the head and reports the cut", func(t *testing.T) {
+		label, value := "Q", "abcdefghij"
+
+		out, trimmed := BuildEmbeddingInput(&label, &value, "", TextCap{MaxBytes: len("Question: Q\nAnswer: abcd")})
+
+		assert.Equal(t, "Question: Q\nAnswer: abcd", out)
+		assert.True(t, trimmed)
+	})
+	t.Run("a cut never splits a rune", func(t *testing.T) {
+		value := "ééé" // 2 bytes each
+
+		out, trimmed := BuildEmbeddingInput(nil, &value, "", TextCap{MaxBytes: 3})
+
+		assert.Equal(t, "é", out, "cut lands back on the 2-byte boundary, not mid-rune")
+		assert.True(t, trimmed)
 	})
 }
 
@@ -235,22 +265,24 @@ func TestBuildEmbeddingInputForKind(t *testing.T) {
 	valueText := "Original text"
 	translated := "Translated text"
 
-	out := BuildEmbeddingInputFromValues(
+	out, _ := BuildEmbeddingInputFromValues(
 		&fieldLabel,
 		&valueText,
 		&translated,
 		models.EmbeddingInputKindTaxonomyTranslated,
 		"",
+		TextCap{},
 	)
 	assert.Equal(t, "Question: Open feedback\nAnswer: Translated text", out)
 
 	blankTranslated := "  "
-	out = BuildEmbeddingInputFromValues(
+	out, _ = BuildEmbeddingInputFromValues(
 		&fieldLabel,
 		&valueText,
 		&blankTranslated,
 		models.EmbeddingInputKindTaxonomyTranslated,
 		"",
+		TextCap{},
 	)
 	assert.Equal(t, "Question: Open feedback\nAnswer: Original text", out)
 }

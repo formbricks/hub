@@ -19,12 +19,13 @@ Embeddings, translation, sentiment, and emotions each emit the same five instrum
 | `hub_{type}_worker_errors_total`   | counter   | `reason` | Worker-side errors (for example `{type}_api_failed`, `get_record_failed`, `rate_limited`, `superseded`, `tenant_write_conflict`). |
 | `hub_{type}_duration_seconds`      | histogram | `status` | Time to process one job.                                                                                                          |
 
-Two enrichment-wide instruments:
+Enrichment-wide instruments:
 
-| Metric                                 | Type    | Labels       | Description                                                                                                                                                                |
-| -------------------------------------- | ------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hub_provider_panics_total`            | counter | `event_type` | Recovered panics in an event fan-out provider. Expected to stay flat; a rising value means a provider is repeatedly crashing.                                              |
-| `hub_enrichment_outputs_cleared_total` | counter | `output`     | Enrichment outputs (`sentiment`, `emotions`, `translation`) nulled by an edit's eager-clear. A high rate with no matching re-enrichment points at backfill-recovery cases. |
+| Metric                                 | Type    | Labels        | Description                                                                                                                                                                |
+| -------------------------------------- | ------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hub_provider_panics_total`            | counter | `event_type`  | Recovered panics in an event fan-out provider. Expected to stay flat; a rising value means a provider is repeatedly crashing.                                              |
+| `hub_enrichment_outputs_cleared_total` | counter | `output`      | Enrichment outputs (`sentiment`, `emotions`, `translation`) nulled by an edit's eager-clear. A high rate with no matching re-enrichment points at backfill-recovery cases. |
+| `hub_enrichment_text_trimmed_total`    | counter | `enrichment`  | Provider calls whose input was cut to its type's configured cap (`*_MAX_INPUT_BYTES`). The call still runs — trimming is not a failure — so a rising rate means the cap is too low for this deployment's records or its model. |
 
 ## Semantic search
 

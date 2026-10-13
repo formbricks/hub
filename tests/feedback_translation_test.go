@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -409,7 +410,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("translates and persists", func(t *testing.T) {
 		rec := createText("Bonjour le monde", "fr", "en-US")
 		fake := &fakeTranslationClient{out: "Hello world"}
-		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, nil, nil)
+		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, nil, nil, service.TextCap{})
 
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
 
@@ -427,7 +428,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("copies when source matches target without calling the provider", func(t *testing.T) {
 		rec := createText("Hello world", "en-US", "en-GB")
 		fake := &fakeTranslationClient{out: "should-not-be-used"}
-		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, nil, nil)
+		worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, nil, nil, service.TextCap{})
 
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-GB")))
 
@@ -443,7 +444,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 		stale := "stale translation"
 		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &stale, "en-US", "", nil))
 
-		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"}, nil, nil, nil)
+		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"}, nil, nil, nil, service.TextCap{})
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
 
 		got, getErr := repo.GetByID(ctx, rec.ID)
@@ -455,7 +456,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("stale-target write is superseded without persisting", func(t *testing.T) {
 		rec := createText("Hallo Welt", "de", "de-DE") // tenant's current target is de-DE
 
-		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "Bonjour le monde"}, nil, nil, nil)
+		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "Bonjour le monde"}, nil, nil, nil, service.TextCap{})
 
 		// The job's target (fr-FR) no longer matches the tenant's current target (de-DE) — an
 		// older job or a stale-cache enqueue. The write must no-op and the job must complete
@@ -730,4 +731,116 @@ func TestFeedbackRecords_GlobalBackfillUsesDefaultLanguage(t *testing.T) {
 
 	assert.Equal(t, "en-US", withDefaultByID[created.ID],
 		"a tenant with no target inherits the default language for backfill")
+}
+
+// TestFeedbackTranslation_OverCapSkipIsTerminalAndDurable covers ENG-3908's translation rule end to
+// end against Postgres: a record over the configured input cap is refused BEFORE the provider is
+// called, the refusal is recorded as a terminal 'length' failure, the status counts it as
+// failed_terminal, and the reconciler then leaves it alone — a terminal failure is re-enqueued by
+// nothing, which is what stops a sweep from spending a provider call per tick on an input that
+// cannot change. A record already translated must keep its translation, and an edit that brings the
+// text back under the cap must heal it with no marker cleanup at all.
+func TestFeedbackTranslation_OverCapSkipIsTerminalAndDurable(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	repo := repository.NewFeedbackRecordsRepository(db)
+	settingsRepo := repository.NewTenantSettingsRepository(db)
+	failuresRepo := repository.NewEnrichmentFailuresRepository(db)
+	statusRepo := repository.NewEnrichmentStatusRepository(db)
+	reconcileRepo := repository.NewEnrichmentReconcileRepository(db)
+	svc := service.NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+
+	tenantID := testTenantID("over-cap-skip")
+	_, err = settingsRepo.Upsert(ctx, tenantID, models.EnrichmentSettings{TargetLanguage: "de-DE"})
+	require.NoError(t, err)
+
+	longText := strings.Repeat("a", 200)
+	// A source language is required for the provider to be called at all: with none, the worker
+	// copies value_text through (the cap deliberately does not apply to that path, which the unit
+	// test pins), so an unset source would make this test pass for the wrong reason.
+	sourceLang := "fr"
+	create := func(valueText string) *models.FeedbackRecord {
+		rec, createErr := repo.Create(ctx, &models.CreateFeedbackRecordRequest{
+			SourceType:   "formbricks",
+			FieldID:      "q1",
+			FieldType:    models.FieldTypeText,
+			ValueText:    &valueText,
+			Language:     &sourceLang,
+			TenantID:     tenantID,
+			SubmissionID: testTenantID("over-cap-sub"),
+		})
+		require.NoError(t, createErr)
+
+		return rec
+	}
+
+	const capBytes = 50
+
+	inputCap := service.TextCap{MaxBytes: capBytes}
+
+	// --- over the cap: refused, recorded, never sent ---
+	rec := create(longText)
+	fake := &fakeTranslationClient{out: "should-not-be-used"}
+	worker := workers.NewFeedbackTranslationWorker(svc, fake, nil, failuresRepo, nil, inputCap)
+
+	err = worker.Work(ctx, translationWorkerJob(rec.ID, "de-DE"))
+	require.Error(t, err)
+
+	var cancelErr *river.JobCancelError
+	require.ErrorAs(t, err, &cancelErr, "an input that cannot change must cancel the job, not retry it")
+	assert.Equal(t, 0, fake.calls, "the provider must not be called for a record over the cap")
+
+	got, getErr := repo.GetByID(ctx, rec.ID)
+	require.NoError(t, getErr)
+	assert.Nil(t, got.ValueTextTranslated, "nothing may be stored for a record that was refused")
+
+	counts, err := statusRepo.CountEnrichmentStatus(ctx, tenantID, "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), counts.TranslationFailedTerminal, "the skip must show as failed_terminal")
+	assert.Equal(t, int64(0), counts.TranslationFailed, "a terminal failure is not a retryable one")
+	assert.Equal(t, int64(0), counts.TranslationDone)
+
+	// --- the reconciler must not pick it back up ---
+	pending, err := reconcileRepo.ListPendingEnrichment(ctx, models.EnrichmentNameTranslation, "", 100)
+	require.NoError(t, err)
+
+	for _, target := range pending {
+		assert.NotEqual(t, rec.ID, target.ID,
+			"a terminal failure must be excluded from the sweep, or it re-runs forever")
+	}
+
+	// --- an edit that fits heals it: markers are advisory, the live event path never reads them ---
+	shortText := "Bonjour le monde"
+	_, _, err = repo.Update(ctx, rec.ID, &models.UpdateFeedbackRecordRequest{ValueText: &shortText})
+	require.NoError(t, err)
+
+	healing := &fakeTranslationClient{out: "Hallo Welt"}
+	healingWorker := workers.NewFeedbackTranslationWorker(svc, healing, nil, failuresRepo, nil, inputCap)
+	require.NoError(t, healingWorker.Work(ctx, translationWorkerJob(rec.ID, "de-DE")))
+
+	healed, getErr := repo.GetByID(ctx, rec.ID)
+	require.NoError(t, getErr)
+	require.NotNil(t, healed.ValueTextTranslated, "an edited record must be translatable again")
+	assert.Equal(t, "Hallo Welt", *healed.ValueTextTranslated)
+
+	counts, err = statusRepo.CountEnrichmentStatus(ctx, tenantID, "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), counts.TranslationDone)
+	assert.Equal(t, int64(0), counts.TranslationFailedTerminal,
+		"a marker is advisory: once the record is enriched it must not be counted as failed")
+
+	// --- a record exactly at the cap is translated whole: the cap is a limit, not a trim ---
+	atCap := create(strings.Repeat("b", capBytes))
+	exact := &fakeTranslationClient{out: "Grenzwertig"}
+	exactWorker := workers.NewFeedbackTranslationWorker(svc, exact, nil, failuresRepo, nil, inputCap)
+	require.NoError(t, exactWorker.Work(ctx, translationWorkerJob(atCap.ID, "de-DE")))
+	assert.Equal(t, 1, exact.calls)
 }

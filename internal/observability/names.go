@@ -22,6 +22,9 @@ const (
 	// shape a consolidation would move those to.
 	MetricNameEnrichmentTerminalTotal = "hub_enrichment_terminal_total"
 	MetricNameEnrichmentFailedRecords = "hub_enrichment_failed_records"
+	// MetricNameEnrichmentTextTrimmedTotal counts calls whose input was cut to the configured cap.
+	// Same label-not-name convention: the enrichment is an attribute, not part of the name.
+	MetricNameEnrichmentTextTrimmedTotal = "hub_enrichment_text_trimmed_total"
 	// MetricNameEnrichmentReconcileSweeps and the three below are the reconciler's own signals.
 	// Same label-not-name convention as the two above.
 	MetricNameEnrichmentReconcileSweeps   = "hub_enrichment_reconcile_sweeps_total"

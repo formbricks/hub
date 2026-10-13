@@ -13,6 +13,10 @@ const (
 	EnrichmentNameTranslation = "translation"
 	EnrichmentNameSentiment   = "sentiment"
 	EnrichmentNameEmotions    = "emotions"
+	// EnrichmentNameEmbedding is the raw search embedding — the vector behind semantic search and
+	// similar-feedback. It has no failure marker (see EnrichmentNameTaxonomyEmbedding below), but it
+	// is named here because it carries metric labels like the others do.
+	EnrichmentNameEmbedding = "embedding"
 	// EnrichmentNameTaxonomyEmbedding is the translated-text embedding consumed by taxonomy.
 	// Raw search embeddings are intentionally not reconciled by this pipeline.
 	EnrichmentNameTaxonomyEmbedding = "taxonomy_embedding"

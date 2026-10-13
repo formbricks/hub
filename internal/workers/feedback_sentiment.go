@@ -31,7 +31,8 @@ type sentimentWorkerService interface {
 func NewFeedbackSentimentWorker(
 	svc sentimentWorkerService, resolver tenantSettingsReader,
 	client service.SentimentClient, metrics observability.SentimentMetrics, failures FailureRecorder,
-	failureMetrics observability.EnrichmentFailureMetrics,
+	failureMetrics observability.EnrichmentFailureMetrics, trimmed observability.EnrichmentTrimmedMetrics,
+	inputCap service.TextCap,
 ) *FeedbackSentimentWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackSentimentArgs, service.SentimentResult]{
 		name:           "sentiment",
@@ -50,7 +51,9 @@ func NewFeedbackSentimentWorker(
 				sourceLang = *record.Language
 			}
 
-			return client.Classify(ctx, *record.ValueText, sourceLang)
+			text := trimForProvider(ctx, *record.ValueText, inputCap, trimmed, models.EnrichmentNameSentiment)
+
+			return client.Classify(ctx, text, sourceLang)
 		},
 		persist: func(
 			ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackSentimentArgs, result *service.SentimentResult,
