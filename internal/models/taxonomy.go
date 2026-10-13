@@ -131,7 +131,7 @@ type TaxonomyRun struct {
 type CreateTaxonomyRunRequest struct {
 	TaxonomyScope
 
-	FieldLabel *string `json:"field_label,omitempty" validate:"omitempty,no_null_bytes"`
+	FieldLabel *string `json:"field_label,omitempty" validate:"omitempty,no_null_bytes,max=2048"`
 	ActorID    *string `json:"actor_id,omitempty"    validate:"omitempty,no_null_bytes,min=1,max=255"`
 }
 
@@ -339,7 +339,7 @@ type TaxonomyRunPartialMetrics struct {
 type RenameTaxonomyNodeRequest struct {
 	TenantID string `json:"tenant_id" validate:"required,no_null_bytes,no_replacement_char,min=1,max=255"`
 	ActorID  string `json:"actor_id"  validate:"required,no_null_bytes,min=1,max=255"`
-	Label    string `json:"label"     validate:"required,no_null_bytes,min=1"`
+	Label    string `json:"label"     validate:"required,no_null_bytes,min=1,max=2048"`
 }
 
 // TaxonomyNodeRecordsFilters scopes taxonomy node feedback record drilldown.

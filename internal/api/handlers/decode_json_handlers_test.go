@@ -297,6 +297,50 @@ func TestNewlyCappedBodiesAreBounded(t *testing.T) {
 	}
 }
 
+// Both taxonomy labels are free text with no limit of their own before ENG-1652; an over-long one
+// must be refused with 400 naming it, before the (panicking) stub service is reached.
+func TestTaxonomyLabelsAreBounded(t *testing.T) {
+	long := strings.Repeat("l", 2049)
+	id := uuid.Must(uuid.NewV7()).String()
+
+	cases := map[string]struct {
+		member string
+		body   string
+		call   func(http.ResponseWriter, *http.Request)
+	}{
+		"taxonomy run create": {
+			member: "field_label",
+			body: `{"tenant_id":"tenant-a","source_type":"survey","source_id":"s","field_id":"q1",` +
+				`"actor_id":"a","field_label":"` + long + `"}`,
+			call: NewTaxonomyHandler(&stubTaxonomyService{}).CreateRun,
+		},
+		"taxonomy node rename": {
+			member: "label",
+			body:   `{"tenant_id":"tenant-a","actor_id":"a","label":"` + long + `"}`,
+			call:   NewTaxonomyHandler(&stubTaxonomyService{}).RenameNode,
+		},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://test/x",
+				strings.NewReader(testCase.body))
+			req.SetPathValue("node_id", id)
+
+			rec := httptest.NewRecorder()
+
+			require.NotPanics(t, func() { testCase.call(rec, req) }, "the body must be refused before any service call")
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+			var problem response.ProblemDetails
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &problem))
+			require.Len(t, problem.InvalidParams, 1)
+			assert.Equal(t, testCase.member, problem.InvalidParams[0].Name)
+		})
+	}
+}
+
 type recordingWebhooksService struct{ called bool }
 
 func (s *recordingWebhooksService) CreateWebhook(context.Context, *models.CreateWebhookRequest) (*models.Webhook, error) {

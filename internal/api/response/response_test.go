@@ -158,6 +158,21 @@ func TestRespondErrorInvalidFieldTypeReason(t *testing.T) {
 	assert.Contains(t, problem.InvalidParams[0].Reason, "date")
 }
 
+func TestRespondErrorInvalidFieldTypeReasonTruncatesLongValue(t *testing.T) {
+	rec := httptest.NewRecorder()
+	value := strings.Repeat("x", 512<<10)
+
+	RespondError(rec, newReq(t, http.MethodPost, "/v1/feedback-records"), &models.InvalidFieldTypeError{Value: value})
+
+	problem := decodeProblem(t, rec)
+	require.Len(t, problem.InvalidParams, 1)
+
+	reason := problem.InvalidParams[0].Reason
+	assert.Contains(t, reason, `"`+strings.Repeat("x", maxReportedValueRunes)+`…"`)
+	assert.NotContains(t, reason, strings.Repeat("x", maxReportedValueRunes+1))
+	assert.Contains(t, reason, "must be one of")
+}
+
 func TestRespondErrorQueryDecodeErrorIsValidationProblem(t *testing.T) {
 	var filters struct {
 		Since *time.Time `form:"since"`
