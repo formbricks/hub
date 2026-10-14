@@ -72,11 +72,6 @@ func NewFeedbackTranslationWorker(
 	})
 }
 
-// errTranslationInputTooLong is the terminal reason a translation is refused: the record's own text
-// is over the configured cap. Static so callers can match it, wrapped with the numbers so the log
-// line says which record and which cap.
-var errTranslationInputTooLong = errors.New("value_text is over the configured translation input cap")
-
 // translate returns the translated value_text, short-circuiting (copying the original) when the
 // record has no usable source language, or its source language already matches the target.
 func translate(
@@ -119,7 +114,8 @@ func translate(
 	if inputCap.Exceeds(*record.ValueText) {
 		return "", huberrors.NewTerminalProviderError(
 			huberrors.TerminalReasonLength,
-			fmt.Errorf("%w: %d bytes, cap %d", errTranslationInputTooLong, len(*record.ValueText), inputCap.MaxBytes),
+			fmt.Errorf("%w: value_text is %d bytes, translation cap %d",
+				errInputOverCap, len(*record.ValueText), inputCap.MaxBytes),
 		)
 	}
 

@@ -641,7 +641,8 @@ func TestFeedbackTranslationWorker_OverCapRefusesWithoutCallingTheProvider(t *te
 	svc := &mockTranslationWorkerService{record: translationRecord(text, "fr")}
 	client := &stubTranslationClient{out: "unused"}
 	failures := &recordingFailureRecorder{}
-	worker := NewFeedbackTranslationWorker(svc, client, nil, failures, nil, service.TextCap{MaxBytes: 40})
+	metrics := newCountingTranslationMetrics()
+	worker := NewFeedbackTranslationWorker(svc, client, metrics, failures, nil, service.TextCap{MaxBytes: 40})
 
 	err := worker.Work(context.Background(), translationJob("en-US", 1))
 	require.Error(t, err)
@@ -655,6 +656,13 @@ func TestFeedbackTranslationWorker_OverCapRefusesWithoutCallingTheProvider(t *te
 	assert.Equal(t, string(huberrors.TerminalReasonLength), failures.calls[0].Reason)
 	assert.Equal(t, models.EnrichmentNameTranslation, failures.calls[0].Enrichment)
 	assert.Empty(t, svc.setCalls, "nothing may be stored for a record that was refused")
+
+	// The refusal is Hub's own policy, not a provider failure: counting it as translation_api_failed
+	// would page whoever alerts on provider errors for a call that was never made, and would leave
+	// the skip indistinguishable from a provider's own length rejection.
+	assert.Equal(t, 1, metrics.workerErr[inputOverCapReason], "the skip has its own reason")
+	assert.Zero(t, metrics.workerErr["translation_api_failed"], "no provider call, so no provider error")
+	assert.Equal(t, 1, metrics.outcomes["failed_final"])
 }
 
 // TestFeedbackTranslationWorker_AtTheCapStillTranslates is the boundary: the cap is a limit, not a

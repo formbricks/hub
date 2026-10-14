@@ -283,7 +283,14 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 		}
 	}
 
-	cfg.metrics.workerError(ctx, cfg.apiErrorReason)
+	// A refusal Hub made before calling the provider is not a provider failure; counting it as one
+	// would page whoever alerts on {type}_api_failed for a call that never happened.
+	refusedBeforeCall := errors.Is(err, errInputOverCap)
+	if refusedBeforeCall {
+		cfg.metrics.workerError(ctx, inputOverCapReason)
+	} else {
+		cfg.metrics.workerError(ctx, cfg.apiErrorReason)
+	}
 
 	// A terminal failure is a property of the record's text, so further attempts would fail
 	// identically and cost a provider call each. Give up NOW rather than after the remaining
@@ -300,8 +307,15 @@ func (w *enrichmentWorker[A, R]) handleClassifyError(
 		// a slow provider, which is the one confusion these metrics exist to prevent.
 		w.recordOutcome(ctx, "failed_final", start)
 		w.markFailed(ctx, log, record, job.Attempt, true, string(reason))
-		log.Error(cfg.name+": provider failed permanently for this record, not retrying",
-			"reason", string(reason), "attempt", job.Attempt, "error", err)
+
+		if refusedBeforeCall {
+			// Expected behaviour under the configured cap, not a fault: Warn, and say no call was made.
+			log.Warn(cfg.name+": input over the configured cap, refused without calling the provider",
+				"reason", string(reason), "attempt", job.Attempt, "error", err)
+		} else {
+			log.Error(cfg.name+": provider failed permanently for this record, not retrying",
+				"reason", string(reason), "attempt", job.Attempt, "error", err)
+		}
 
 		//nolint:wrapcheck // river sentinel: JobCancel must be returned for River to stop retrying
 		return river.JobCancel(fmt.Errorf("%s (terminal, %s): %w", cfg.classifyErrVerb, reason, err))

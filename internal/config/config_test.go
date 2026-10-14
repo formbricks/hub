@@ -294,8 +294,8 @@ func TestLoad_EnrichmentInputCaps(t *testing.T) {
 	})
 
 	t.Run("a cap below one rune is rejected", func(t *testing.T) {
-		// Such a cap could only ever cut to nothing, which would hand the enrichment empty text for
-		// a record that has some.
+		// Such a cap cuts a record that starts with a longer rune to nothing, which would hand the
+		// enrichment empty text for a record that has some.
 		setOrUnsetEnv(t, "EMOTIONS_MAX_INPUT_BYTES", "2", true)
 
 		if _, err := Load(); !errors.Is(err, ErrInvalidEmotionsMaxInputBytes) {

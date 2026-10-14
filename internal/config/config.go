@@ -43,8 +43,9 @@ var (
 	ErrInvalidTaxonomyServiceURL         = errors.New("TAXONOMY_SERVICE_URL must be an absolute http(s) URL without query or fragment")
 	// ErrInvalidEmbeddingMaxInputBytes and its three siblings exist one per enrichment so the message
 	// names the env var the operator actually set, the way every other per-type error in this block
-	// does. The floor is one rune (4 bytes, the longest UTF-8 encoding): a smaller cap could not cut
-	// anywhere but at zero, which would hand an enrichment empty text for a record that has some.
+	// does. The floor is one rune (4 bytes, the longest UTF-8 encoding): below it, a record that
+	// starts with a longer rune is cut to nothing, handing an enrichment empty text for a record
+	// that has some.
 	ErrInvalidEmbeddingMaxInputBytes = errors.New(
 		"EMBEDDING_MAX_INPUT_BYTES must be 0 (unlimited) or at least 4 bytes (one rune)")
 	ErrInvalidTranslationMaxInputBytes = errors.New(
@@ -704,8 +705,8 @@ func validate(cfg *Config) error {
 
 	// A negative cap would read as "unlimited" to service.TextCap, which is a silently different
 	// meaning from the 0 an operator writes, so reject it rather than guess. 0 is valid: no cap.
-	// Below one rune is rejected too: such a cap could only ever cut to nothing, handing the
-	// enrichment empty text for a record that has some.
+	// Below one rune is rejected too: such a cap cuts a record that starts with a longer rune to
+	// nothing, handing the enrichment empty text for a record that has some.
 	for _, cap := range []struct {
 		value int
 		err   error

@@ -2,11 +2,24 @@ package workers
 
 import (
 	"context"
+	"errors"
 
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
+
+// errInputOverCap marks a refusal Hub made itself, before any provider call, because the record's
+// text is over the configured cap (ENG-3908; today only translation refuses, the rest trim). It
+// travels inside the TerminalProviderError so the shared worker gives up the same way it does for a
+// provider's own length rejection, but the worker checks for it to keep the two apart in metrics
+// and logs: no provider was called, so nothing may count as a provider failure.
+var errInputOverCap = errors.New("input is over the configured cap")
+
+// inputOverCapReason is the worker-error reason a pre-call refusal is counted under, in place of
+// the type's {type}_api_failed. It is the skip counter the ticket asks for, per enrichment by
+// virtue of living in each type's own worker-errors family.
+const inputOverCapReason = "input_over_cap"
 
 // recordTrimmed counts one provider call whose input had to be cut to the configured cap. It is a
 // no-op when metrics are disabled, so call sites stay free of nil checks.

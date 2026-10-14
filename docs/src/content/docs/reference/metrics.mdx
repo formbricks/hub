@@ -16,7 +16,7 @@ Embeddings, translation, sentiment, and emotions each emit the same five instrum
 | `hub_{type}_jobs_enqueued_total`   | counter   | —        | Jobs enqueued by the enqueue provider.                                                                                            |
 | `hub_{type}_provider_errors_total` | counter   | `reason` | Enqueue-path failures (for example `enqueue_failed`, `settings_read_failed`).                                                     |
 | `hub_{type}_outcomes_total`        | counter   | `status` | Worker outcomes: `success`, `retry`, `failed_final`, `skipped`.                                                                   |
-| `hub_{type}_worker_errors_total`   | counter   | `reason` | Worker-side errors (for example `{type}_api_failed`, `get_record_failed`, `rate_limited`, `superseded`, `tenant_write_conflict`). |
+| `hub_{type}_worker_errors_total`   | counter   | `reason` | Worker-side errors (for example `{type}_api_failed`, `get_record_failed`, `rate_limited`, `superseded`, `tenant_write_conflict`). `input_over_cap` counts translations refused before any provider call because `value_text` is over `TRANSLATION_MAX_INPUT_BYTES`; they are not `{type}_api_failed`. |
 | `hub_{type}_duration_seconds`      | histogram | `status` | Time to process one job.                                                                                                          |
 
 Enrichment-wide instruments:
@@ -25,7 +25,7 @@ Enrichment-wide instruments:
 | -------------------------------------- | ------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hub_provider_panics_total`            | counter | `event_type`  | Recovered panics in an event fan-out provider. Expected to stay flat; a rising value means a provider is repeatedly crashing.                                              |
 | `hub_enrichment_outputs_cleared_total` | counter | `output`      | Enrichment outputs (`sentiment`, `emotions`, `translation`) nulled by an edit's eager-clear. A high rate with no matching re-enrichment points at backfill-recovery cases. |
-| `hub_enrichment_text_trimmed_total`    | counter | `enrichment`  | Provider calls whose input was cut to its type's configured cap (`*_MAX_INPUT_BYTES`), counted once per attempt. The call still runs — trimming is not a failure — so a rising rate means the cap is too low for this deployment's records or its model. |
+| `hub_enrichment_text_trimmed_total`    | counter | `enrichment`  | Provider calls whose input was cut to its type's configured cap (`*_MAX_INPUT_BYTES`), counted once per attempt. The call still runs — trimming is not a failure — so a rising rate means the cap is too low for this deployment's records or its model. Translation never appears here: it refuses over-cap input instead (`hub_translation_worker_errors_total{reason="input_over_cap"}`). |
 
 ## Semantic search
 
