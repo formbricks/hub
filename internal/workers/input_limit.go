@@ -19,7 +19,7 @@ var errInputOverCap = errors.New("input is over the configured cap")
 // inputOverCapReason is the worker-error reason a pre-call refusal is counted under, in place of
 // the type's {type}_api_failed. It is the skip counter the ticket asks for, per enrichment by
 // virtue of living in each type's own worker-errors family.
-const inputOverCapReason = "input_over_cap"
+const inputOverCapReason = observability.WorkerReasonInputOverCap
 
 // recordTrimmed counts one provider call whose input had to be cut to the configured cap. It is a
 // no-op when metrics are disabled, so call sites stay free of nil checks.

@@ -81,6 +81,12 @@ const (
 	MetricNameTaxonomyRunsReaped    = "hub_taxonomy_runs_reaped_total"
 )
 
+// WorkerReasonInputOverCap is the worker-error reason for a record refused before any provider call
+// because its text is over the enrichment's configured cap (ENG-3908). Declared here, beside the
+// allowlists, because a reason a type's allowlist does not name is exported as "other": a pipeline
+// that starts refusing must add this to its own allowlist, or the series never appears.
+const WorkerReasonInputOverCap = "input_over_cap"
+
 // Attribute keys.
 const (
 	AttrEventType = "event_type"
@@ -194,6 +200,8 @@ var allowedTranslationWorkerReasons = map[string]bool{
 	// A stale-target write skipped by the supersession guard: benign, but kept under its own
 	// label (not folded into "other") so target churn / cache staleness stays observable.
 	"superseded": true,
+	// A record refused before any provider call for being over TRANSLATION_MAX_INPUT_BYTES.
+	WorkerReasonInputOverCap: true,
 }
 
 // AllowedTranslationProviderReason returns true if reason is allowed for translation provider errors.

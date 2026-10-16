@@ -12,6 +12,9 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
@@ -663,6 +666,55 @@ func TestFeedbackTranslationWorker_OverCapRefusesWithoutCallingTheProvider(t *te
 	assert.Equal(t, 1, metrics.workerErr[inputOverCapReason], "the skip has its own reason")
 	assert.Zero(t, metrics.workerErr["translation_api_failed"], "no provider call, so no provider error")
 	assert.Equal(t, 1, metrics.outcomes["failed_final"])
+}
+
+// TestFeedbackTranslationWorker_OverCapSkipIsExportedUnderItsOwnReason runs the refusal through the
+// REAL translation metrics rather than the counting double above. The real adapter passes every
+// worker-error reason through an allowlist and folds anything unlisted into "other", which the double
+// skips; a reason the allowlist does not name never reaches a dashboard, so only this test can tell.
+func TestFeedbackTranslationWorker_OverCapSkipIsExportedUnderItsOwnReason(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	metrics, err := observability.NewTranslationMetrics(
+		sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
+	require.NoError(t, err)
+
+	svc := &mockTranslationWorkerService{record: translationRecord(strings.Repeat("a", 100), "fr")}
+	worker := NewFeedbackTranslationWorker(
+		svc, &stubTranslationClient{out: "unused"}, metrics, nil, nil, service.TextCap{MaxBytes: 40})
+
+	require.Error(t, worker.Work(context.Background(), translationJob("en-US", 1)))
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &collected))
+
+	reasons := workerErrorReasons(t, collected, observability.MetricNameTranslationWorkerErrors)
+	assert.Equal(t, map[string]int64{observability.WorkerReasonInputOverCap: 1}, reasons,
+		"the skip must be exported under input_over_cap, not folded into other")
+}
+
+// workerErrorReasons returns every reason series of an Int64 worker-errors counter with its value.
+func workerErrorReasons(t *testing.T, data metricdata.ResourceMetrics, name string) map[string]int64 {
+	t.Helper()
+
+	reasons := map[string]int64{}
+
+	for _, scope := range data.ScopeMetrics {
+		for _, item := range scope.Metrics {
+			if item.Name != name {
+				continue
+			}
+
+			sum, ok := item.Data.(metricdata.Sum[int64])
+			require.True(t, ok, "%s is not an Int64 counter", name)
+
+			for _, point := range sum.DataPoints {
+				reason, _ := point.Attributes.Value(attribute.Key(observability.AttrReason))
+				reasons[reason.AsString()] += point.Value
+			}
+		}
+	}
+
+	return reasons
 }
 
 // TestFeedbackTranslationWorker_AtTheCapStillTranslates is the boundary: the cap is a limit, not a

@@ -20,6 +20,7 @@ func TestTranslationAllowedReasonsAndStatuses(t *testing.T) {
 
 	workerReasons := []string{
 		"translation_api_failed", "get_record_failed", "update_failed", "tenant_write_conflict", "rate_limited",
+		WorkerReasonInputOverCap,
 	}
 	for _, reason := range workerReasons {
 		assert.True(t, AllowedTranslationWorkerReason(reason), reason)
