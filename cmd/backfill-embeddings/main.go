@@ -227,6 +227,8 @@ func run() int {
 		cfg.Embedding.JobTimeout.Duration(),
 		nil,
 		nil,
+		cfg.Embedding.MaxInputBytes,
+		nil,
 	)
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, embeddingWorker)

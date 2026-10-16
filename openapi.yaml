@@ -3233,7 +3233,7 @@ components:
                     description: Label of the feedback field (included in embedding for context). May be empty if the source record had no label.
                 value_text:
                     type: string
-                    description: value_text of the feedback record (the text that was embedded). May be empty if the source had no text; embeddings are only created for records with non-empty value_text, but the field can be cleared after embedding creation.
+                    description: value_text of the feedback record. May be empty if the source had no text; embeddings are only created for records with non-empty value_text, but the field can be cleared after embedding creation. A record longer than `EMBEDDING_MAX_INPUT_BYTES` was embedded from at most its first N bytes, so the vector may not cover the whole value.
             required:
                 - feedback_record_id
                 - score
@@ -4268,9 +4268,11 @@ components:
                     type: integer
                     format: int64
                     description: |
-                        Eligible records the provider will never accept, because the outcome is a property of
+                        Eligible records whose enrichment will never succeed, because the outcome is a property of
                         the record's own text — a content-policy block, a refusal, an input past the model's
-                        limit. Retrying these cannot help; they resolve only if the text changes.
+                        limit — or because the record is over that enrichment's configured input cap, which is
+                        refused before any provider call (`TRANSLATION_MAX_INPUT_BYTES`). Retrying these cannot
+                        help; they resolve only if the text changes.
                 disabled_reason:
                     type: string
                     enum:

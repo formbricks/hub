@@ -373,6 +373,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 			service.EmbeddingsQueueName,
 			cfg.Embedding.MaxAttempts,
 			docPrefix,
+			cfg.Embedding.MaxInputBytes,
 			embeddingMetrics,
 		)
 		messageManager.RegisterProvider(embeddingProv)
@@ -384,6 +385,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 				service.EmbeddingsQueueName,
 				cfg.Embedding.MaxAttempts,
 				docPrefix,
+				cfg.Embedding.MaxInputBytes,
 				embeddingMetrics,
 				models.EmbeddingInputKindTaxonomyTranslated,
 			)

@@ -59,6 +59,7 @@ When a text feedback record is created, or its text changes, Hub checks whether 
 - **The source language** comes from the record's [`language`](/core-concepts/data-model) field. When it's absent, the provider detects the source language automatically.
 - **Same-language answers are copied, not translated.** If a record's source language already matches the target (same base language and script, for example `en-GB` into `en-US`), Hub copies `value_text` verbatim into `value_text_translated` and still sets `translation_lang_key` — no provider call.
 - **Edits re-translate.** Changing `value_text`, or correcting the source `language`, re-runs the translation. Emptying `value_text` clears the stored translation.
+- **Over-long answers are skipped, not translated.** A record whose `value_text` is over `TRANSLATION_MAX_INPUT_BYTES` (24,000 bytes by default) is refused before any provider call and recorded as a terminal failure, so half a translation is never stored as if it were the whole text. An edit that brings the text back under the cap re-runs it; raising the cap afterwards does not clear the failures already recorded.
 
 <Aside type="note">
   Translation is **eventually consistent**. `value_text_translated` is populated

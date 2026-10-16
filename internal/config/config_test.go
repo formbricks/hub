@@ -226,6 +226,84 @@ func TestLoad_TenantSettingsCacheSize(t *testing.T) {
 	})
 }
 
+// TestLoad_EnrichmentInputCaps covers the ENG-3908 knobs: each enrichment gets its own byte cap,
+// with embeddings tighter than the classify pipelines because it is the only one whose model
+// refuses an over-long input outright.
+func TestLoad_EnrichmentInputCaps(t *testing.T) {
+	t.Run("defaults when unset", func(t *testing.T) {
+		setOrUnsetEnv(t, "EMBEDDING_MAX_INPUT_BYTES", "", false)
+		setOrUnsetEnv(t, "TRANSLATION_MAX_INPUT_BYTES", "", false)
+		setOrUnsetEnv(t, "SENTIMENT_MAX_INPUT_BYTES", "", false)
+		setOrUnsetEnv(t, "EMOTIONS_MAX_INPUT_BYTES", "", false)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.Embedding.MaxInputBytes != 12000 {
+			t.Errorf("Embedding.MaxInputBytes = %d, want 12000", cfg.Embedding.MaxInputBytes)
+		}
+
+		for name, got := range map[string]int{
+			"Translation": cfg.Translation.MaxInputBytes,
+			"Sentiment":   cfg.Sentiment.MaxInputBytes,
+			"Emotions":    cfg.Emotions.MaxInputBytes,
+		} {
+			if got != 24000 {
+				t.Errorf("%s.MaxInputBytes = %d, want 24000", name, got)
+			}
+		}
+	})
+
+	t.Run("explicit 0 means unlimited and is not reset to the default", func(t *testing.T) {
+		// 0 is a real setting (no cap at all), so the "unset" case cannot be told from it by value
+		// alone — the loader has to consult the environment, and this is the test that holds it to
+		// that. Silently defaulting an explicit 0 would re-impose a cap the operator turned off.
+		setOrUnsetEnv(t, "EMBEDDING_MAX_INPUT_BYTES", "0", true)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.Embedding.MaxInputBytes != 0 {
+			t.Errorf("Embedding.MaxInputBytes = %d, want 0 (explicit 0 = unlimited)", cfg.Embedding.MaxInputBytes)
+		}
+	})
+
+	t.Run("an explicit cap is honoured", func(t *testing.T) {
+		setOrUnsetEnv(t, "TRANSLATION_MAX_INPUT_BYTES", "4096", true)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		if cfg.Translation.MaxInputBytes != 4096 {
+			t.Errorf("Translation.MaxInputBytes = %d, want 4096", cfg.Translation.MaxInputBytes)
+		}
+	})
+
+	t.Run("a negative cap is rejected rather than read as unlimited", func(t *testing.T) {
+		setOrUnsetEnv(t, "SENTIMENT_MAX_INPUT_BYTES", "-1", true)
+
+		if _, err := Load(); !errors.Is(err, ErrInvalidSentimentMaxInputBytes) {
+			t.Errorf("Load() error = %v, want %v", err, ErrInvalidSentimentMaxInputBytes)
+		}
+	})
+
+	t.Run("a cap below one rune is rejected", func(t *testing.T) {
+		// Such a cap cuts a record that starts with a longer rune to nothing, which would hand the
+		// enrichment empty text for a record that has some.
+		setOrUnsetEnv(t, "EMOTIONS_MAX_INPUT_BYTES", "2", true)
+
+		if _, err := Load(); !errors.Is(err, ErrInvalidEmotionsMaxInputBytes) {
+			t.Errorf("Load() error = %v, want %v", err, ErrInvalidEmotionsMaxInputBytes)
+		}
+	})
+}
+
 func TestLoad_EmbeddingGoogleCloudProject(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
 	t.Setenv("EMBEDDING_GOOGLE_CLOUD_PROJECT", "my-google-cloud-project")

@@ -53,7 +53,9 @@ type SemanticSearchResultItem struct {
 	FeedbackRecordID uuid.UUID `json:"feedback_record_id"`
 	Score            float64   `json:"score"`
 	FieldLabel       string    `json:"field_label"`
-	ValueText        string    `json:"value_text"` // value_text of the feedback record (the text that was embedded)
+	// ValueText is the record's text; over EMBEDDING_MAX_INPUT_BYTES the vector covers at most its
+	// first N bytes, so a hit does not imply the whole value was embedded.
+	ValueText string `json:"value_text"`
 }
 
 const (

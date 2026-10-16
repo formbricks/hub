@@ -22,6 +22,9 @@ const (
 	// shape a consolidation would move those to.
 	MetricNameEnrichmentTerminalTotal = "hub_enrichment_terminal_total"
 	MetricNameEnrichmentFailedRecords = "hub_enrichment_failed_records"
+	// MetricNameEnrichmentTextTrimmedTotal counts calls whose input was cut to the configured cap.
+	// Same label-not-name convention: the enrichment is an attribute, not part of the name.
+	MetricNameEnrichmentTextTrimmedTotal = "hub_enrichment_text_trimmed_total"
 	// MetricNameEnrichmentReconcileSweeps and the three below are the reconciler's own signals.
 	// Same label-not-name convention as the two above.
 	MetricNameEnrichmentReconcileSweeps   = "hub_enrichment_reconcile_sweeps_total"
@@ -77,6 +80,12 @@ const (
 	MetricNameTaxonomyDispatchError = "hub_taxonomy_dispatch_errors_total"
 	MetricNameTaxonomyRunsReaped    = "hub_taxonomy_runs_reaped_total"
 )
+
+// WorkerReasonInputOverCap is the worker-error reason for a record refused before any provider call
+// because its text is over the enrichment's configured cap (ENG-3908). Declared here, beside the
+// allowlists, because a reason a type's allowlist does not name is exported as "other": a pipeline
+// that starts refusing must add this to its own allowlist, or the series never appears.
+const WorkerReasonInputOverCap = "input_over_cap"
 
 // Attribute keys.
 const (
@@ -191,6 +200,8 @@ var allowedTranslationWorkerReasons = map[string]bool{
 	// A stale-target write skipped by the supersession guard: benign, but kept under its own
 	// label (not folded into "other") so target churn / cache staleness stays observable.
 	"superseded": true,
+	// A record refused before any provider call for being over TRANSLATION_MAX_INPUT_BYTES.
+	WorkerReasonInputOverCap: true,
 }
 
 // AllowedTranslationProviderReason returns true if reason is allowed for translation provider errors.

@@ -124,6 +124,9 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		// The worker is where a terminal give-up is observed, so it is where the counter lives.
 		// nil when metrics are disabled, which the worker treats as "do not record".
 		FailureMetrics: failureMetrics(metrics),
+		// Same shape and nil-guard as FailureMetrics: the counter lives where the trimming is
+		// observed (the worker), and a disabled-metrics deployment simply records nothing.
+		TrimmedMetrics: trimmedMetrics(metrics),
 		// nil when the sweep is switched off or no enrichment is configured, which leaves the
 		// reconcile worker and its queue unregistered rather than registered-and-idle.
 		ReconcileSweeper: reconcileSweeperOrNil(reconcileService),
@@ -608,6 +611,16 @@ func reconcileMetrics(metrics *observability.Metrics) observability.EnrichmentRe
 	}
 
 	return metrics.EnrichmentReconcile
+}
+
+// trimmedMetrics is failureMetrics for the input-cap counter (ENG-3908): nil in, nil out, so a
+// deployment without metrics never records a trim.
+func trimmedMetrics(metrics *observability.Metrics) observability.EnrichmentTrimmedMetrics {
+	if metrics == nil {
+		return nil
+	}
+
+	return metrics.EnrichmentTrimmed
 }
 
 // newEnrichmentReconcileService builds the sweep, or returns nil when it should not run: the kill

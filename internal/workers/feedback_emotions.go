@@ -42,7 +42,8 @@ type tenantSettingsReader interface {
 func NewFeedbackEmotionsWorker(
 	svc emotionsWorkerService, resolver tenantSettingsReader,
 	client service.EmotionsClient, metrics observability.EmotionsMetrics, failures FailureRecorder,
-	failureMetrics observability.EnrichmentFailureMetrics,
+	failureMetrics observability.EnrichmentFailureMetrics, trimmed observability.EnrichmentTrimmedMetrics,
+	inputCap service.TextCap,
 ) *FeedbackEmotionsWorker {
 	return newEnrichmentWorker(enrichmentWorkerConfig[service.FeedbackEmotionsArgs, service.EmotionsResult]{
 		name:           "emotions",
@@ -61,7 +62,9 @@ func NewFeedbackEmotionsWorker(
 				sourceLang = *record.Language
 			}
 
-			return client.Classify(ctx, *record.ValueText, sourceLang)
+			text := trimForProvider(ctx, *record.ValueText, inputCap, trimmed, models.EnrichmentNameEmotions)
+
+			return client.Classify(ctx, text, sourceLang)
 		},
 		persist: func(ctx context.Context, record *models.FeedbackRecord, _ service.FeedbackEmotionsArgs, result *service.EmotionsResult) error {
 			// Guard the write against content churn since the Work-time read: a stale job's labels

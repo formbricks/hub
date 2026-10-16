@@ -66,6 +66,9 @@ type RiverDeps struct {
 	// FailureMetrics counts permanent give-ups by cause, for whoever watches the deployment
 	// rather than a single tenant. nil disables it.
 	FailureMetrics observability.EnrichmentFailureMetrics
+	// TrimmedMetrics counts provider calls whose input had to be cut to its type's configured cap
+	// (ENG-3908). nil disables it; the caps still apply.
+	TrimmedMetrics observability.EnrichmentTrimmedMetrics
 }
 
 // NewRiverWorkersAndQueues builds River workers and queue config from cfg and deps. Each optional
@@ -122,6 +125,8 @@ func NewRiverWorkersAndQueues(
 			cfg.Embedding.JobTimeout.Duration(),
 			deps.Failures,
 			deps.FailureMetrics,
+			cfg.Embedding.MaxInputBytes,
+			deps.TrimmedMetrics,
 		)
 		river.AddWorker(workers, embeddingWorker)
 
@@ -142,7 +147,7 @@ func NewRiverWorkersAndQueues(
 
 	if deps.TranslationClient != nil {
 		translationWorker := NewFeedbackTranslationWorker(deps.TranslationService, deps.TranslationClient, deps.TranslationMetrics,
-			deps.Failures, deps.FailureMetrics)
+			deps.Failures, deps.FailureMetrics, service.TextCap{MaxBytes: cfg.Translation.MaxInputBytes})
 		river.AddWorker(workers, translationWorker)
 
 		queues[service.TranslationsQueueName] = river.QueueConfig{MaxWorkers: maxTranslation}
@@ -166,7 +171,8 @@ func NewRiverWorkersAndQueues(
 	if deps.SentimentClient != nil {
 		sentimentWorker := NewFeedbackSentimentWorker(
 			deps.SentimentService, deps.SentimentResolver, deps.SentimentClient, deps.SentimentMetrics,
-			deps.Failures, deps.FailureMetrics)
+			deps.Failures, deps.FailureMetrics, deps.TrimmedMetrics,
+			service.TextCap{MaxBytes: cfg.Sentiment.MaxInputBytes})
 		river.AddWorker(workers, sentimentWorker)
 
 		queues[service.SentimentsQueueName] = river.QueueConfig{MaxWorkers: maxSentiment}
@@ -176,7 +182,8 @@ func NewRiverWorkersAndQueues(
 	if deps.EmotionsClient != nil {
 		emotionsWorker := NewFeedbackEmotionsWorker(
 			deps.EmotionsService, deps.EmotionsResolver, deps.EmotionsClient, deps.EmotionsMetrics,
-			deps.Failures, deps.FailureMetrics)
+			deps.Failures, deps.FailureMetrics, deps.TrimmedMetrics,
+			service.TextCap{MaxBytes: cfg.Emotions.MaxInputBytes})
 		river.AddWorker(workers, emotionsWorker)
 
 		queues[service.EmotionsQueueName] = river.QueueConfig{MaxWorkers: maxEmotions}

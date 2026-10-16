@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -72,6 +73,9 @@ type mockEmbeddingService struct {
 	setErr          error
 	setCalls        int
 	setEmbeddingNil bool
+	// stillCurrent is the supersession guard the worker passed to SetEmbedding, kept so a test can
+	// ask it directly whether a given content is still current.
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool
 }
 
 func (m *mockEmbeddingService) GetFeedbackRecord(_ context.Context, _ uuid.UUID) (*models.FeedbackRecord, error) {
@@ -80,10 +84,11 @@ func (m *mockEmbeddingService) GetFeedbackRecord(_ context.Context, _ uuid.UUID)
 
 func (m *mockEmbeddingService) SetEmbedding(
 	_ context.Context, _ uuid.UUID, _ string, embedding []float32,
-	_ func(fieldLabel, valueText, valueTextTranslated *string) bool,
+	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	m.setCalls++
 	m.setEmbeddingNil = embedding == nil
+	m.stillCurrent = stillCurrent
 
 	return m.setErr
 }
@@ -168,7 +173,7 @@ func taxonomyEmbeddingJob(attempt int) *river.Job[service.FeedbackEmbeddingArgs]
 
 func TestFeedbackEmbeddingWorkerUsesConfiguredTimeout(t *testing.T) {
 	worker := NewFeedbackEmbeddingWorkerWithOptions(
-		&mockEmbeddingService{}, &mockEmbeddingClient{}, "", nil, 75*time.Second, nil, nil)
+		&mockEmbeddingService{}, &mockEmbeddingClient{}, "", nil, 75*time.Second, nil, nil, 0, nil)
 
 	assert.Equal(t, 75*time.Second, worker.Timeout(embeddingJob()))
 }
@@ -183,7 +188,7 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 		worker := NewFeedbackEmbeddingWorkerWithOptions(
 			&mockEmbeddingService{record: record},
 			&mockEmbeddingClient{err: errors.New("provider unavailable")},
-			"", nil, time.Minute, failures, nil)
+			"", nil, time.Minute, failures, nil, 0, nil)
 
 		require.Error(t, worker.Work(context.Background(), taxonomyEmbeddingJob(1)))
 		assert.Empty(t, failures.calls)
@@ -208,7 +213,7 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 			&mockEmbeddingService{record: record},
 			&mockEmbeddingClient{err: huberrors.NewTerminalProviderError(
 				huberrors.TerminalReasonContentFilter, errors.New("blocked"))},
-			"", nil, time.Minute, failures, nil)
+			"", nil, time.Minute, failures, nil, 0, nil)
 
 		err := worker.Work(context.Background(), taxonomyEmbeddingJob(1))
 
@@ -225,7 +230,7 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 		worker := NewFeedbackEmbeddingWorkerWithOptions(
 			&mockEmbeddingService{record: record, setErr: errors.New("database unavailable")},
 			&mockEmbeddingClient{embedding: []float32{0.1}},
-			"", nil, time.Minute, failures, nil)
+			"", nil, time.Minute, failures, nil, 0, nil)
 
 		require.Error(t, worker.Work(context.Background(), taxonomyEmbeddingJob(5)))
 		require.Len(t, failures.calls, 1)
@@ -240,7 +245,7 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 			&mockEmbeddingService{record: record},
 			&mockEmbeddingClient{err: huberrors.NewTerminalProviderError(
 				huberrors.TerminalReasonContentFilter, errors.New("blocked"))},
-			"", nil, time.Minute, failures, failureMetrics)
+			"", nil, time.Minute, failures, failureMetrics, 0, nil)
 		job := embeddingJob()
 
 		var cancelErr *river.JobCancelError
@@ -486,4 +491,49 @@ func TestFeedbackEmbeddingWorker_SupersededWriteSkips(t *testing.T) {
 	if metrics.outcomes["skipped"] != 1 || metrics.workerErr["superseded"] != 1 {
 		t.Fatalf("skipped=%d superseded=%d, want 1/1", metrics.outcomes["skipped"], metrics.workerErr["superseded"])
 	}
+}
+
+// TestFeedbackEmbeddingWorker_TrimsToTheInputCap is the case ENG-3908 opens with: an embedding
+// model stops at ~8k tokens, so a near-limit answer is a TERMINAL provider failure — the record
+// stays out of the index and out of the reconciler's reach forever. A vector for the first part of
+// it beats no vector, so the input is cut to the cap before the call.
+func TestFeedbackEmbeddingWorker_TrimsToTheInputCap(t *testing.T) {
+	svc := &mockEmbeddingService{record: textRecord(strings.Repeat("a", 200))}
+	client := &mockEmbeddingClient{embedding: []float32{0.1}}
+	trimmed := newCountingTrimmedMetrics()
+	worker := NewFeedbackEmbeddingWorkerWithOptions(svc, client, "", nil, time.Minute, nil, nil, 50, trimmed)
+
+	require.NoError(t, worker.Work(context.Background(), embeddingJob()))
+
+	assert.Len(t, client.input, 50, "the provider gets the capped text")
+	assert.Equal(t, 1, trimmed.counts[models.EnrichmentNameEmbedding], "the cut must be counted")
+}
+
+// TestFeedbackEmbeddingWorker_SupersessionGuardUsesTheCappedText pins the invariant that makes the
+// cap safe to apply inside the builder: the guard compares the string the provider would have been
+// sent, so a change past the cap — which cannot change the vector — must not be treated as
+// supersession, while a change inside the capped prefix must be.
+func TestFeedbackEmbeddingWorker_SupersessionGuardUsesTheCappedText(t *testing.T) {
+	head := strings.Repeat("a", 100)
+	text := head + "tail"
+	record := textRecord(text)
+	svc := &mockEmbeddingService{record: record}
+	client := &mockEmbeddingClient{embedding: []float32{0.1}}
+	// The cap has to reach into the answer for this test to mean anything: the assembled input is
+	// "Question: How was it?\nAnswer: " plus the value, which is 29 bytes before the first character
+	// of the answer.
+	worker := NewFeedbackEmbeddingWorkerWithOptions(svc, client, "", nil, time.Minute, nil, nil, 40, nil)
+
+	require.NoError(t, worker.Work(context.Background(), embeddingJob()))
+	require.NotNil(t, svc.stillCurrent, "the write must be guarded against content churn")
+
+	assert.True(t, svc.stillCurrent(record.FieldLabel, &text, nil), "unchanged text is still current")
+
+	changedTail := head + "different tail"
+	assert.True(t, svc.stillCurrent(record.FieldLabel, &changedTail, nil),
+		"a change past the cap cannot change the vector")
+
+	changedHead := strings.Repeat("b", 100) + "tail"
+	assert.False(t, svc.stillCurrent(record.FieldLabel, &changedHead, nil),
+		"a change inside the capped prefix supersedes it")
 }

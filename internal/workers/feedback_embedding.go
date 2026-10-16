@@ -24,10 +24,12 @@ type FeedbackEmbeddingWorker struct {
 	embeddingService feedbackEmbeddingService
 	embeddingClient  service.EmbeddingClient
 	docPrefix        string // model-specific prefix for document embedding
+	maxInputBytes    int    // cap on the text sent to the provider, in bytes; 0 = unlimited
 	metrics          observability.EmbeddingMetrics
 	jobTimeout       time.Duration
 	failures         FailureRecorder
 	failureMetrics   observability.EnrichmentFailureMetrics
+	trimmedMetrics   observability.EnrichmentTrimmedMetrics
 }
 
 const defaultEmbeddingJobTimeout = 60 * time.Second
@@ -52,7 +54,7 @@ func NewFeedbackEmbeddingWorker(
 ) *FeedbackEmbeddingWorker {
 	return NewFeedbackEmbeddingWorkerWithOptions(
 		embeddingService, embeddingClient, docPrefix, metrics,
-		defaultEmbeddingJobTimeout, nil, nil,
+		defaultEmbeddingJobTimeout, nil, nil, 0, nil,
 	)
 }
 
@@ -67,6 +69,8 @@ func NewFeedbackEmbeddingWorkerWithOptions(
 	jobTimeout time.Duration,
 	failures FailureRecorder,
 	failureMetrics observability.EnrichmentFailureMetrics,
+	maxInputBytes int,
+	trimmedMetrics observability.EnrichmentTrimmedMetrics,
 ) *FeedbackEmbeddingWorker {
 	if jobTimeout <= 0 {
 		jobTimeout = defaultEmbeddingJobTimeout
@@ -76,10 +80,12 @@ func NewFeedbackEmbeddingWorkerWithOptions(
 		embeddingService: embeddingService,
 		embeddingClient:  embeddingClient,
 		docPrefix:        docPrefix,
+		maxInputBytes:    maxInputBytes,
 		metrics:          metrics,
 		jobTimeout:       jobTimeout,
 		failures:         failures,
 		failureMetrics:   failureMetrics,
+		trimmedMetrics:   trimmedMetrics,
 	}
 }
 
@@ -136,14 +142,24 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 	}
 
 	inputKind := models.NormalizeEmbeddingInputKind(args.InputKind)
-	text := service.BuildEmbeddingInputForKind(record, inputKind, w.docPrefix)
+	inputCap := service.TextCap{MaxBytes: w.maxInputBytes}
+
+	text, trimmed := service.BuildEmbeddingInputForKind(record, inputKind, w.docPrefix, inputCap)
+	if trimmed {
+		recordTrimmed(ctx, w.trimmedMetrics, embeddingEnrichmentName(inputKind))
+	}
 
 	// stillCurrent lets the repository verify, atomically with the write, that the content this
 	// job embedded is still the record's content — so of two concurrent jobs for one record, the
 	// stale one skips instead of clobbering the newer vector (last-write-wins would attach an old
-	// text's embedding forever; the missing-rows-only backfill cannot repair that).
+	// text's embedding forever; the missing-rows-only backfill cannot repair that). It rebuilds
+	// through the same capped builder, so the comparison is between the two strings the provider
+	// would actually have been sent.
 	stillCurrent := func(fieldLabel, valueText, valueTextTranslated *string) bool {
-		return service.BuildEmbeddingInputFromValues(fieldLabel, valueText, valueTextTranslated, inputKind, w.docPrefix) == text
+		current, _ := service.BuildEmbeddingInputFromValues(
+			fieldLabel, valueText, valueTextTranslated, inputKind, w.docPrefix, inputCap)
+
+		return current == text
 	}
 
 	if text == "" {
