@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -79,6 +80,62 @@ func TestSearchHandler_SemanticSearch(t *testing.T) {
 
 		require.True(t, called)
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("over-long query or tenant_id returns 400 before the provider is called", func(t *testing.T) {
+		for name, body := range map[string]map[string]string{
+			"query":     {"query": strings.Repeat("a", 4097), "tenant_id": "env-1"},
+			"tenant_id": {"query": "login is slow", "tenant_id": strings.Repeat("t", 256)},
+		} {
+			t.Run(name, func(t *testing.T) {
+				called := false
+				mock := &mockSearchService{
+					semanticFunc: func(_ context.Context, _, _ string, _ int, _ float64, _ string) (service.SearchResult, error) {
+						called = true
+
+						return service.SearchResult{}, nil
+					},
+				}
+				raw, err := json.Marshal(body)
+				require.NoError(t, err)
+
+				req := httptest.NewRequestWithContext(context.Background(),
+					http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(raw))
+				req.Header.Set("Content-Type", "application/json")
+
+				rec := httptest.NewRecorder()
+
+				NewSearchHandler(mock).SemanticSearch(rec, req)
+
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
+				assert.Contains(t, rec.Body.String(), `"name":"`+name+`"`)
+				assert.False(t, called)
+			})
+		}
+	})
+
+	t.Run("query at the limit counts characters, not bytes", func(t *testing.T) {
+		called := false
+		mock := &mockSearchService{
+			semanticFunc: func(_ context.Context, _, _ string, _ int, _ float64, _ string) (service.SearchResult, error) {
+				called = true
+
+				return service.SearchResult{}, nil
+			},
+		}
+		raw, err := json.Marshal(map[string]string{"query": strings.Repeat("ü", 4096), "tenant_id": "env-1"})
+		require.NoError(t, err)
+
+		req := httptest.NewRequestWithContext(context.Background(),
+			http.MethodPost, "http://test/v1/feedback-records/search/semantic", bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+
+		rec := httptest.NewRecorder()
+
+		NewSearchHandler(mock).SemanticSearch(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.True(t, called)
 	})
 
 	t.Run("success returns 200 with data and value", func(t *testing.T) {

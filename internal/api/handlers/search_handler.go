@@ -34,9 +34,11 @@ func NewSearchHandler(service SearchService) *SearchHandler {
 }
 
 // SemanticSearchRequest is the body for POST /v1/feedback-records/search/semantic (snake_case for consistency with data model).
+// The query is sent to the paid embedding provider on every uncached call, so it is capped; 4,096
+// characters is twice what the Formbricks gateway already allows, so the gateway's error comes first.
 type SemanticSearchRequest struct {
-	Query    string `json:"query"`
-	TenantID string `json:"tenant_id" validate:"required,no_replacement_char"`
+	Query    string `json:"query"     validate:"max=4096"`
+	TenantID string `json:"tenant_id" validate:"required,no_replacement_char,max=255"`
 }
 
 // SemanticSearchResponse is the response for semantic search and similar feedback (consistent with list endpoints: data, limit).

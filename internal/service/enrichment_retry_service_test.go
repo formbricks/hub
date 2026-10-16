@@ -85,6 +85,25 @@ func TestRetryReportsTheCeilingOfTheWait(t *testing.T) {
 		"90.4s remaining must report 91, not 90")
 }
 
+// TestRetryRefusesMoreNamesThanThereAreEnrichments: a repeated name is still folded away, but a
+// list longer than the three enrichments is refused before anything is cleared.
+func TestRetryRefusesMoreNamesThanThereAreEnrichments(t *testing.T) {
+	repo := &fakeRetryRepo{claimed: true, cleared: 1}
+	svc := newRetryService(repo, true)
+
+	resp, err := svc.Retry(context.Background(), "tenant-1", []string{"sentiment", "sentiment"})
+	require.NoError(t, err)
+	assert.Len(t, resp.Results, 1)
+
+	_, err = svc.Retry(context.Background(), "tenant-1", []string{"sentiment", "emotions", "translation", "sentiment"})
+	require.Error(t, err)
+
+	var validation *huberrors.ValidationError
+	require.ErrorAs(t, err, &validation)
+	assert.Equal(t, "enrichments", validation.Field)
+	assert.Equal(t, 1, repo.calls, "only the valid request reached the repository")
+}
+
 // TestRetryWindowDecisionBelongsToTheClear: the service must not pre-check the cooldown and then
 // clear — the repository claims the window atomically with the delete, and the service's only job
 // on refusal is to report the wait. One repo call on the success path is the proof.

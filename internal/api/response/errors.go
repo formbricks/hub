@@ -154,11 +154,13 @@ const (
 	ReasonJSONMemberRepeated = "appears more than once; each member may appear only once"
 )
 
-// maxReportedJSONNameRunes bounds how much of a caller-chosen member path is echoed back, and
-// maxReportedJSONReasonRunes how much of a decoder's reason, which can quote the caller's value.
+// maxReportedJSONNameRunes bounds how much of a caller-chosen member path is echoed back,
+// maxReportedJSONReasonRunes how much of a decoder's reason, which can quote the caller's value,
+// and maxReportedValueRunes how much of a rejected value a reason quotes itself.
 const (
 	maxReportedJSONNameRunes   = 64
 	maxReportedJSONReasonRunes = 256
+	maxReportedValueRunes      = 64
 )
 
 // problemFromJSONDecodeError recognizes errors from decoding a JSON request body with
@@ -363,7 +365,7 @@ func invalidFieldTypeParam(err error) (InvalidParam, bool) {
 		Name: "field_type",
 		Reason: fmt.Sprintf(
 			"has invalid value %q; must be one of: %s",
-			invalidFieldType.Value,
+			truncateRunes(invalidFieldType.Value, maxReportedValueRunes),
 			models.ValidFieldTypeValuesString(),
 		),
 	}, true

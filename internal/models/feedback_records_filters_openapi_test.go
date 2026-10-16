@@ -127,6 +127,20 @@ func TestOpenAPICapsMatchTheFilterStruct(t *testing.T) {
 func loadOpenAPIParameters(t *testing.T) openAPIParameters {
 	t.Helper()
 
+	var spec openAPIParameters
+	loadOpenAPISpec(t, &spec)
+
+	if len(spec.Components.Parameters) == 0 {
+		t.Fatal("openapi.yaml parsed to zero parameters; this test would assert nothing")
+	}
+
+	return spec
+}
+
+// loadOpenAPISpec decodes the repository's openapi.yaml into dst, which names only the parts a test needs.
+func loadOpenAPISpec(t *testing.T, dst any) {
+	t.Helper()
+
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot resolve this test file's path")
@@ -139,16 +153,9 @@ func loadOpenAPIParameters(t *testing.T) openAPIParameters {
 		t.Fatalf("read openapi.yaml: %v", err)
 	}
 
-	var spec openAPIParameters
-	if err := yaml.Unmarshal(contents, &spec); err != nil {
+	if err := yaml.Unmarshal(contents, dst); err != nil {
 		t.Fatalf("parse openapi.yaml: %v", err)
 	}
-
-	if len(spec.Components.Parameters) == 0 {
-		t.Fatal("openapi.yaml parsed to zero parameters; this test would assert nothing")
-	}
-
-	return spec
 }
 
 // openAPIOperationParameters is the slice of openapi.yaml naming each list operation's query

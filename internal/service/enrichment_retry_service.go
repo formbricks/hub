@@ -255,6 +255,13 @@ func normalizeRequestedEnrichments(requested []string) ([]string, error) {
 		return all, nil
 	}
 
+	// There are only three names, so a longer list can only repeat them. The cap matches the spec's
+	// maxItems, which lets a generated client refuse such a list before sending it.
+	if len(requested) > len(all) {
+		return nil, huberrors.NewValidationError("enrichments",
+			fmt.Sprintf("must list at most %d enrichments", len(all)))
+	}
+
 	known := make(map[string]struct{}, len(all))
 	for _, name := range all {
 		known[name] = struct{}{}
