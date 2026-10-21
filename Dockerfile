@@ -55,8 +55,10 @@ FROM alpine:3.24
 # Require the CA store that drops emSign ECC Root CA - G3 after the October 2026 eMudhra
 # intermediate CA compromise. Both packages are pinned: plain `apk add ca-certificates`
 # regenerates the bundle file but leaves the base image's older ca-certificates-bundle installed.
+# Require OpenSSL 3.5.9 (busybox wget's TLS and apk) over the base image's 3.5.8.
 RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.3.2-r1' \
-	'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0'
+	'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0' \
+	'libssl3>=3.5.9-r0' 'libcrypto3>=3.5.9-r0'
 
 # Create non-root user
 RUN addgroup -S app && adduser -S app -G app
