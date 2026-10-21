@@ -2,7 +2,7 @@
 # Stage 1: Build
 # =============================================================================
 # TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
-FROM golang:1.27.2-alpine AS builder
+FROM golang:1.27.3-alpine AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG GOOSE_VERSION=v3.28.0
@@ -52,7 +52,11 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/h
 FROM alpine:3.24
 
 # Require the patched zlib even when the base image contains an older package (CVE-2026-85091).
-RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.3.2-r1'
+# Require the CA store that drops emSign ECC Root CA - G3 after the October 2026 eMudhra
+# intermediate CA compromise. Both packages are pinned: plain `apk add ca-certificates`
+# regenerates the bundle file but leaves the base image's older ca-certificates-bundle installed.
+RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.3.2-r1' \
+	'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0'
 
 # Create non-root user
 RUN addgroup -S app && adduser -S app -G app
