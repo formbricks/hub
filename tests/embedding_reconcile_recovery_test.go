@@ -29,6 +29,7 @@ type scriptedEmbeddingClient struct {
 	err     error
 }
 
+// CreateEmbedding returns the scripted error while unhealthy, and a fixed vector once healthy.
 func (c *scriptedEmbeddingClient) CreateEmbedding(context.Context, string) ([]float32, error) {
 	if !c.healthy {
 		return nil, c.err
@@ -40,6 +41,7 @@ func (c *scriptedEmbeddingClient) CreateEmbedding(context.Context, string) ([]fl
 	return vector, nil
 }
 
+// CreateEmbeddingForQuery behaves exactly like CreateEmbedding.
 func (c *scriptedEmbeddingClient) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
 	return c.CreateEmbedding(ctx, input)
 }
@@ -67,6 +69,8 @@ func TestTaxonomyEmbeddingRecoversAfterTransientExhaustion(t *testing.T) {
 	}
 }
 
+// testTaxonomyEmbeddingRecovery drives one record of fieldType through live enqueue, a final failed
+// attempt, the cooldown, the repair sweep and the repair job, and asserts readiness reaches full coverage.
 func testTaxonomyEmbeddingRecovery(t *testing.T, fieldType models.FieldType, valueText string) {
 	t.Helper()
 
@@ -424,6 +428,7 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 		"the failed-records gauge counts every record owed a taxonomy embedding, whatever its field type")
 }
 
+// transientTaxonomyFailures returns the non-terminal taxonomy_embedding bucket of the failed-records gauge.
 func transientTaxonomyFailures(counts []repository.FailedRecordCount) int64 {
 	for _, count := range counts {
 		if count.Enrichment == models.EnrichmentNameTaxonomyEmbedding && !count.Terminal {

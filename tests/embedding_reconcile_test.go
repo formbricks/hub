@@ -33,6 +33,8 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 	}
 }
 
+// testListPendingTaxonomyEmbeddingIDs seeds one record per selection case with the given field type
+// and asserts which ones the repair query returns.
 func testListPendingTaxonomyEmbeddingIDs(t *testing.T, fieldType models.FieldType) {
 	t.Helper()
 
