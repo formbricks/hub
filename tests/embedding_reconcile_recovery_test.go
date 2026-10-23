@@ -219,3 +219,143 @@ func testTaxonomyEmbeddingRecovery(t *testing.T, fieldType models.FieldType, val
 	assert.Equal(t, 1, recordCount)
 	assert.Equal(t, 1, embeddingCount, "directory must reach full taxonomy embedding coverage")
 }
+
+// TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths pins the rule whose drift caused ENG-2792: for
+// every field type the schema allows, the live provider, the repair sweep and the readiness count
+// must agree on which records need a taxonomy embedding. Field types are read from the database
+// enum, so a type added later is covered without editing this test.
+func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
+	require.NoError(t, err)
+
+	defer db.Close()
+
+	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{})
+	require.NoError(t, err)
+
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	taxonomyRepo := repository.NewTaxonomyRepository(db)
+	recordsService := service.NewFeedbackRecordsService(
+		repository.NewFeedbackRecordsRepository(db), embeddingsRepo, "", nil, nil,
+		service.EmbeddingsQueueName, 5, "",
+	)
+
+	runID := uuid.NewString()
+	model := "taxonomy:parity-" + runID
+	tenantPrefix := "embedding-parity-" + runID + "-"
+
+	t.Cleanup(func() {
+		_, _ = db.Exec(ctx, `DELETE FROM river_job WHERE args->>'model' = $1`, model)
+		_, _ = db.Exec(ctx, `DELETE FROM feedback_records WHERE tenant_id LIKE $1 || '%'`, tenantPrefix)
+	})
+
+	rows, err := db.Query(ctx, `SELECT unnest(enum_range(NULL::field_type_enum))::text`)
+	require.NoError(t, err)
+
+	var fieldTypes []string
+
+	for rows.Next() {
+		var fieldType string
+		require.NoError(t, rows.Scan(&fieldType))
+
+		fieldTypes = append(fieldTypes, fieldType)
+	}
+
+	require.NoError(t, rows.Err())
+	require.NotEmpty(t, fieldTypes)
+
+	liveProvider := service.NewEmbeddingProviderForInputKind(
+		riverClient, model, service.EmbeddingsQueueName, 5, "", 0, nil,
+		models.EmbeddingInputKindTaxonomyTranslated,
+	)
+
+	type fixture struct {
+		id       uuid.UUID
+		hasText  bool
+		tenantID string
+	}
+
+	fixtures := make([]fixture, 0, 2*len(fieldTypes))
+
+	for _, fieldType := range fieldTypes {
+		tenantID := tenantPrefix + fieldType
+
+		for _, valueText := range []string{"Option label " + fieldType, " \t "} {
+			var id uuid.UUID
+
+			err := db.QueryRow(ctx, `
+				INSERT INTO feedback_records (
+					source_type, source_id, field_id, field_label, field_type,
+					value_text, tenant_id, submission_id, collected_at
+				)
+				VALUES ('formbricks', 'survey-1', 'q1', 'Question', $1::field_type_enum,
+				        $2, $3, $4, '1970-01-01'::timestamptz)
+				RETURNING id`,
+				fieldType, valueText, tenantID, "submission-"+uuid.NewString(),
+			).Scan(&id)
+			require.NoError(t, err)
+
+			record, err := recordsService.GetFeedbackRecord(ctx, id)
+			require.NoError(t, err)
+
+			liveProvider.PublishEvent(ctx, service.Event{
+				ID: uuid.Must(uuid.NewV7()), Type: datatypes.FeedbackRecordCreated, Timestamp: time.Now(), Data: record,
+			})
+
+			fixtures = append(fixtures, fixture{id: id, hasText: valueText != " \t ", tenantID: tenantID})
+		}
+	}
+
+	// Live enqueue first, then clear those jobs: an active job would (correctly) hide a record from
+	// the repair sweep, and the question here is eligibility alone.
+	liveQueued := map[uuid.UUID]bool{}
+
+	jobRows, err := db.Query(ctx, `SELECT (args->>'feedback_record_id')::uuid FROM river_job WHERE args->>'model' = $1`, model)
+	require.NoError(t, err)
+
+	for jobRows.Next() {
+		var id uuid.UUID
+		require.NoError(t, jobRows.Scan(&id))
+
+		liveQueued[id] = true
+	}
+
+	require.NoError(t, jobRows.Err())
+
+	_, err = db.Exec(ctx, `DELETE FROM river_job WHERE args->>'model' = $1`, model)
+	require.NoError(t, err)
+
+	pending, err := embeddingsRepo.ListPendingTaxonomyEmbeddingIDs(ctx, model, time.Now(), 10_000)
+	require.NoError(t, err)
+
+	repairSelected := make(map[uuid.UUID]bool, len(pending))
+	for _, id := range pending {
+		repairSelected[id] = true
+	}
+
+	readinessWant := map[string]int{}
+
+	for _, seeded := range fixtures {
+		assert.Equal(t, seeded.hasText, liveQueued[seeded.id], "live enqueue for %s (has text: %v)", seeded.tenantID, seeded.hasText)
+		assert.Equal(t, liveQueued[seeded.id], repairSelected[seeded.id],
+			"repair must select exactly what live delivery embeds (%s, has text: %v)", seeded.tenantID, seeded.hasText)
+
+		if seeded.hasText {
+			readinessWant[seeded.tenantID]++
+		}
+	}
+
+	for _, fieldType := range fieldTypes {
+		tenantID := tenantPrefix + fieldType
+
+		recordCount, _, _, err := taxonomyRepo.CountScopeInput(ctx, models.TaxonomyScope{
+			ScopeType: models.TaxonomyScopeTypeDirectory, TenantID: tenantID,
+		}, model)
+		require.NoError(t, err)
+		assert.Equal(t, readinessWant[tenantID], recordCount, "readiness counts what live delivery embeds (%s)", fieldType)
+	}
+}

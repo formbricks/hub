@@ -18,7 +18,7 @@ Taxonomies are generated on demand as **runs**. A run reads a defined slice of f
 
 ## How it works
 
-1. **Embeddings first.** Taxonomy reuses the same embeddings as [semantic search](/guides/hub-self-hosted-embeddings). Only text records with a stored embedding participate, so a deployment must have embeddings configured, and the records must already be embedded.
+1. **Embeddings first.** Taxonomy reuses the same embeddings as [semantic search](/guides/hub-self-hosted-embeddings). Every record that carries text and has a stored embedding participates, whatever its field type. That includes open-text answers and the option labels that choice and matrix questions store on categorical records. So a deployment must have embeddings configured, and the records must already be embedded. Records whose embedding failed on a transient provider error are retried automatically when `EMBEDDING_RECONCILE_ENABLED` is set.
 2. **Clustering.** When you start a run, Hub sends the in-scope records and their embeddings to the standalone taxonomy service, which groups semantically similar feedback into clusters.
 3. **Tree.** Hub stores the returned clusters as a tree of nodes — a root, intermediate **topics**, and leaf **subtopics** — and marks the run active for its scope.
 
