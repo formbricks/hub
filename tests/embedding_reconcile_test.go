@@ -31,7 +31,9 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
 	require.NoError(t, err)
 
-	defer db.Close()
+	// Registered before the data cleanup below: cleanups run last-in-first-out, so the
+	// pool closes only after the fixtures are deleted. A deferred Close would run first.
+	t.Cleanup(db.Close)
 
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	failuresRepo := repository.NewEnrichmentFailuresRepository(db)

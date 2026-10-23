@@ -39,8 +39,9 @@ const (
 	// of the live provider's non-empty BuildEmbeddingInputForKind check. It deliberately has no
 	// field_type predicate: the live provider embeds any record carrying text, including the option
 	// labels that choice and matrix expansion write onto categorical rows, and readiness counts them.
-	// Repair, the backlog gauge, readiness and run input must all select through it, or records the
-	// live path embedded can exhaust their retries and never be repaired (ENG-2792).
+	// Repair, the pending and failed-records gauges, readiness, run input and the backfill command
+	// must all select through it, or records the live path embedded can exhaust their retries and
+	// never be repaired or reported (ENG-2792).
 	taxonomyEmbeddingEligibleTextSQL = taxonomyEmbeddingInputTextSQL + ` IS NOT NULL`
 
 	// hnswEfSearch increases HNSW graph traversal candidates (default 40); higher improves recall.
@@ -417,10 +418,7 @@ func (r *EmbeddingsRepository) listFeedbackRecordIDsForBackfillByInputKind(
 	afterID uuid.UUID,
 	limit int,
 ) ([]uuid.UUID, error) {
-	eligibility := `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
-	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
-		eligibility = `COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`
-	}
+	eligibility := backfillEligibilitySQL(inputKind)
 
 	tenantClause := ""
 	args := []any{model, afterID, limit}
@@ -522,10 +520,7 @@ func (r *EmbeddingsRepository) countFeedbackRecordsForBackfillByInputKind(
 	tenantID string,
 	tenantScoped bool,
 ) (int, error) {
-	eligibility := `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
-	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
-		eligibility = `COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`
-	}
+	eligibility := backfillEligibilitySQL(inputKind)
 
 	tenantClause := ""
 	args := []any{model}
@@ -864,4 +859,16 @@ func (r *EmbeddingsRepository) beginNearestTx(ctx context.Context) (pgx.Tx, erro
 	}
 
 	return dbTx, nil
+}
+
+// backfillEligibilitySQL is the backfill command's selection rule for an input kind. The taxonomy
+// kind uses taxonomyEmbeddingEligibleTextSQL so an operator backfill selects exactly what the live
+// provider embeds and the repair sweep repairs: no whitespace-only records it would re-enqueue on
+// every run, no categorical records it would miss.
+func backfillEligibilitySQL(inputKind models.EmbeddingInputKind) string {
+	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
+		return taxonomyEmbeddingEligibleTextSQL
+	}
+
+	return `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
 }

@@ -77,7 +77,9 @@ func testTaxonomyEmbeddingRecovery(t *testing.T, fieldType models.FieldType, val
 	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
 	require.NoError(t, err)
 
-	defer db.Close()
+	// Registered before the data cleanup below: cleanups run last-in-first-out, so the
+	// pool closes only after the fixtures are deleted. A deferred Close would run first.
+	t.Cleanup(db.Close)
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{})
 	require.NoError(t, err)
@@ -221,9 +223,10 @@ func testTaxonomyEmbeddingRecovery(t *testing.T, fieldType models.FieldType, val
 }
 
 // TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths pins the rule whose drift caused ENG-2792: for
-// every field type the schema allows, the live provider, the repair sweep and the readiness count
-// must agree on which records need a taxonomy embedding. Field types are read from the database
-// enum, so a type added later is covered without editing this test.
+// every field type the schema allows, the live provider, the repair sweep, readiness, the pending
+// and failed-records gauges, and the backfill command must agree on which records need a taxonomy
+// embedding. Field types are read from the database enum, so a type added later is covered without
+// editing this test.
 func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := config.Load()
@@ -232,17 +235,27 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
 	require.NoError(t, err)
 
-	defer db.Close()
+	// Registered before the data cleanup below: cleanups run last-in-first-out, so the
+	// pool closes only after the fixtures are deleted. A deferred Close would run first.
+	t.Cleanup(db.Close)
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{})
 	require.NoError(t, err)
 
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	taxonomyRepo := repository.NewTaxonomyRepository(db)
+	failuresRepo := repository.NewEnrichmentFailuresRepository(db)
+	statusRepo := repository.NewEnrichmentStatusRepository(db)
 	recordsService := service.NewFeedbackRecordsService(
 		repository.NewFeedbackRecordsRepository(db), embeddingsRepo, "", nil, nil,
 		service.EmbeddingsQueueName, 5, "",
 	)
+
+	// The pending gauge is only computed by the elected backlog leader. Closed before the pool:
+	// this cleanup is registered after t.Cleanup(db.Close), so it runs first.
+	leader := repository.NewEnrichmentBacklogLeader(db)
+
+	t.Cleanup(func() { leader.Close(ctx) })
 
 	runID := uuid.NewString()
 	model := "taxonomy:parity-" + runID
@@ -250,7 +263,7 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 
 	t.Cleanup(func() {
 		_, _ = db.Exec(ctx, `DELETE FROM river_job WHERE args->>'model' = $1`, model)
-		_, _ = db.Exec(ctx, `DELETE FROM feedback_records WHERE tenant_id LIKE $1 || '%'`, tenantPrefix)
+		_, _ = db.Exec(ctx, `DELETE FROM feedback_records WHERE starts_with(tenant_id, $1)`, tenantPrefix)
 	})
 
 	rows, err := db.Query(ctx, `SELECT unnest(enum_range(NULL::field_type_enum))::text`)
@@ -268,6 +281,15 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 	require.NoError(t, rows.Err())
 	require.NotEmpty(t, fieldTypes)
 
+	// Deployment-wide gauges are compared as deltas around the fixtures. The unique model makes every
+	// pre-existing record count as missing in both readings, so only the fixtures move the counts.
+	pendingBefore, isLeader, err := leader.CountIfLeader(ctx, "", model)
+	require.NoError(t, err)
+	require.True(t, isLeader, "the test must hold backlog leadership to read the pending gauge")
+
+	failedBefore, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
+	require.NoError(t, err)
+
 	liveProvider := service.NewEmbeddingProviderForInputKind(
 		riverClient, model, service.EmbeddingsQueueName, 5, "", 0, nil,
 		models.EmbeddingInputKindTaxonomyTranslated,
@@ -280,6 +302,7 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 	}
 
 	fixtures := make([]fixture, 0, 2*len(fieldTypes))
+	records := make(map[uuid.UUID]*models.FeedbackRecord, 2*len(fieldTypes))
 
 	for _, fieldType := range fieldTypes {
 		tenantID := tenantPrefix + fieldType
@@ -301,6 +324,8 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 
 			record, err := recordsService.GetFeedbackRecord(ctx, id)
 			require.NoError(t, err)
+
+			records[id] = record
 
 			liveProvider.PublishEvent(ctx, service.Event{
 				ID: uuid.Must(uuid.NewV7()), Type: datatypes.FeedbackRecordCreated, Timestamp: time.Now(), Data: record,
@@ -338,6 +363,7 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 	}
 
 	readinessWant := map[string]int{}
+	wantTotal := 0
 
 	for _, seeded := range fixtures {
 		assert.Equal(t, seeded.hasText, liveQueued[seeded.id], "live enqueue for %s (has text: %v)", seeded.tenantID, seeded.hasText)
@@ -346,6 +372,7 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 
 		if seeded.hasText {
 			readinessWant[seeded.tenantID]++
+			wantTotal++
 		}
 	}
 
@@ -357,5 +384,52 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 		}, model)
 		require.NoError(t, err)
 		assert.Equal(t, readinessWant[tenantID], recordCount, "readiness counts what live delivery embeds (%s)", fieldType)
+
+		// The operator backfill must select exactly the same records, and count what it would select.
+		backfillIDs, err := embeddingsRepo.ListTenantFeedbackRecordIDsForBackfillByInputKind(
+			ctx, tenantID, model, models.EmbeddingInputKindTaxonomyTranslated, uuid.Nil, 100)
+		require.NoError(t, err)
+		assert.Len(t, backfillIDs, readinessWant[tenantID], "backfill selects what live delivery embeds (%s)", fieldType)
+
+		backfillCount, err := embeddingsRepo.CountTenantFeedbackRecordsForBackfillByInputKind(
+			ctx, tenantID, model, models.EmbeddingInputKindTaxonomyTranslated)
+		require.NoError(t, err)
+		assert.Equal(t, readinessWant[tenantID], backfillCount, "backfill counts what it selects (%s)", fieldType)
 	}
+
+	pendingAfter, isLeader, err := leader.CountIfLeader(ctx, "", model)
+	require.NoError(t, err)
+	require.True(t, isLeader)
+	assert.Equal(t, int64(wantTotal), pendingAfter.TaxonomyEmbeddingPending-pendingBefore.TaxonomyEmbeddingPending,
+		"the pending gauge counts what live delivery embeds")
+
+	// Every fixture exhausts its attempts on a transient error. Only the ones owed an embedding are
+	// failures; a blank record's marker is history, as for the text enrichments.
+	for _, seeded := range fixtures {
+		record := records[seeded.id]
+		require.NoError(t, failuresRepo.RecordFailure(ctx, models.EnrichmentFailure{
+			FeedbackRecordID: record.ID,
+			TenantID:         record.TenantID,
+			Enrichment:       models.EnrichmentNameTaxonomyEmbedding,
+			Reason:           models.EnrichmentFailureReasonProviderError,
+			Attempts:         5,
+			ContextKey:       model,
+			SourceUpdatedAt:  &record.UpdatedAt,
+		}))
+	}
+
+	failedAfter, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
+	require.NoError(t, err)
+	assert.Equal(t, int64(wantTotal), transientTaxonomyFailures(failedAfter)-transientTaxonomyFailures(failedBefore),
+		"the failed-records gauge counts every record owed a taxonomy embedding, whatever its field type")
+}
+
+func transientTaxonomyFailures(counts []repository.FailedRecordCount) int64 {
+	for _, count := range counts {
+		if count.Enrichment == models.EnrichmentNameTaxonomyEmbedding && !count.Terminal {
+			return count.Count
+		}
+	}
+
+	return 0
 }
