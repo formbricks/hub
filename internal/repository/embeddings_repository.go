@@ -35,6 +35,13 @@ const (
 		NULLIF(btrim(fr.value_text_translated, ` + trimSpaceCharactersSQL + `), ''),
 		NULLIF(btrim(fr.value_text, ` + trimSpaceCharactersSQL + `), '')
 	)`
+	// taxonomyEmbeddingEligibleTextSQL is the one taxonomy-embedding eligibility rule, the SQL twin
+	// of the live provider's non-empty BuildEmbeddingInputForKind check. It deliberately has no
+	// field_type predicate: the live provider embeds any record carrying text, including the option
+	// labels that choice and matrix expansion write onto categorical rows, and readiness counts them.
+	// Repair, the pending and failed-records gauges, readiness, run input and the backfill command
+	// must all select through it, or records the live path embedded can exhaust their retries and
+	// never be repaired or reported (ENG-2792).
 	taxonomyEmbeddingEligibleTextSQL = taxonomyEmbeddingInputTextSQL + ` IS NOT NULL`
 
 	// hnswEfSearch increases HNSW graph traversal candidates (default 40); higher improves recall.
@@ -301,8 +308,9 @@ func (r *EmbeddingsRepository) ListTenantFeedbackRecordIDsForBackfillByInputKind
 	return r.listFeedbackRecordIDsForBackfillByInputKind(ctx, model, inputKind, tenantID, true, afterID, limit)
 }
 
-// ListPendingTaxonomyEmbeddingIDs returns eligible text records that still lack the exact
-// taxonomy embedding model and do not already have an in-flight embedding job on any queue.
+// ListPendingTaxonomyEmbeddingIDs returns records of any field type eligible for the taxonomy
+// input (taxonomyEmbeddingEligibleTextSQL) that still lack the exact taxonomy embedding model and
+// do not already have an in-flight embedding job on any queue.
 // Terminal failures are excluded: retrying content the provider has conclusively rejected would
 // spend a call on every sweep forever. Non-terminal failures become eligible after retryBefore,
 // preventing the same poison records from monopolizing every bounded sweep. Candidates are
@@ -330,8 +338,7 @@ func (r *EmbeddingsRepository) ListPendingTaxonomyEmbeddingIDs(
 		 AND failure.enrichment = $3
 		 AND failure.context_key = $1
 		 AND failure.source_updated_at = fr.updated_at
-		WHERE fr.field_type = 'text'
-		  AND `+taxonomyEmbeddingEligibleTextSQL+`
+		WHERE `+taxonomyEmbeddingEligibleTextSQL+`
 		  AND NOT EXISTS (
 			SELECT 1 FROM embeddings e
 			WHERE e.feedback_record_id = fr.id AND e.model = $1
@@ -411,10 +418,7 @@ func (r *EmbeddingsRepository) listFeedbackRecordIDsForBackfillByInputKind(
 	afterID uuid.UUID,
 	limit int,
 ) ([]uuid.UUID, error) {
-	eligibility := `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
-	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
-		eligibility = `COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`
-	}
+	eligibility := backfillEligibilitySQL(inputKind)
 
 	tenantClause := ""
 	args := []any{model, afterID, limit}
@@ -516,10 +520,7 @@ func (r *EmbeddingsRepository) countFeedbackRecordsForBackfillByInputKind(
 	tenantID string,
 	tenantScoped bool,
 ) (int, error) {
-	eligibility := `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
-	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
-		eligibility = `COALESCE(NULLIF(btrim(fr.value_text_translated), ''), NULLIF(btrim(fr.value_text), '')) IS NOT NULL`
-	}
+	eligibility := backfillEligibilitySQL(inputKind)
 
 	tenantClause := ""
 	args := []any{model}
@@ -858,4 +859,16 @@ func (r *EmbeddingsRepository) beginNearestTx(ctx context.Context) (pgx.Tx, erro
 	}
 
 	return dbTx, nil
+}
+
+// backfillEligibilitySQL is the backfill command's selection rule for an input kind. The taxonomy
+// kind uses taxonomyEmbeddingEligibleTextSQL so an operator backfill selects exactly what the live
+// provider embeds and the repair sweep repairs: no whitespace-only records it would re-enqueue on
+// every run, no categorical records it would miss.
+func backfillEligibilitySQL(inputKind models.EmbeddingInputKind) string {
+	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
+		return taxonomyEmbeddingEligibleTextSQL
+	}
+
+	return `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
 }
