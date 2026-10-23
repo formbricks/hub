@@ -5,7 +5,7 @@ description: Hub can organize open-text feedback into a hierarchy of topics and 
 
 import { Aside } from "@astrojs/starlight/components";
 
-A **taxonomy** turns a pile of open-text feedback into a browsable tree of topics and subtopics. Hub embeds each text record, hands the vectors to a clustering service, and stores the result as a tree of **nodes** you can read, edit, and count against — so you can see _what_ people are talking about, and _how much_, without tagging anything by hand.
+A **taxonomy** turns a pile of open-text feedback into a browsable tree of topics and subtopics. Hub embeds each record that carries text, hands the vectors to a clustering service, and stores the result as a tree of **nodes** you can read, edit, and count against — so you can see _what_ people are talking about, and _how much_, without tagging anything by hand.
 
 Taxonomies are generated on demand as **runs**. A run reads a defined slice of feedback, produces a tree, and — once it succeeds — becomes the **active** tree for that slice until a newer run replaces it.
 

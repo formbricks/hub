@@ -122,7 +122,8 @@ func (r *TaxonomyRepository) ListFieldOptions(
 	return out, nil
 }
 
-// CountScopeInput counts text records and embeddings for a taxonomy scope.
+// CountScopeInput counts records with taxonomy-eligible text (any field type) and their embeddings
+// for a taxonomy scope.
 func (r *TaxonomyRepository) CountScopeInput(
 	ctx context.Context,
 	scope models.TaxonomyScope,

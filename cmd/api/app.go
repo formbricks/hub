@@ -724,7 +724,8 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
-// taxonomyEmbeddingBacklogModel returns the model whose missing text records should be reported.
+// taxonomyEmbeddingBacklogModel returns the model whose missing embeddings should be reported, for
+// every record with taxonomy-eligible text whatever its field type.
 // Taxonomy embeddings are produced by successful translation writes, so the gauge is absent unless
 // embeddings, translation, and the taxonomy integration are all configured.
 func taxonomyEmbeddingBacklogModel(cfg *config.Config) string {
