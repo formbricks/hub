@@ -24,6 +24,20 @@ import (
 // enrichment failure state. Each exclusion is part of the safety contract: omitting one either
 // duplicates provider work or permanently abandons recoverable records.
 func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
+	// Every exclusion must hold for any field type the live taxonomy path embeds, not only text:
+	// categorical rows carry option labels and are repaired by the same query (ENG-2792).
+	for _, fieldType := range []models.FieldType{models.FieldTypeText, models.FieldTypeCategorical} {
+		t.Run(string(fieldType), func(t *testing.T) {
+			testListPendingTaxonomyEmbeddingIDs(t, fieldType)
+		})
+	}
+}
+
+// testListPendingTaxonomyEmbeddingIDs seeds one record per selection case with the given field type
+// and asserts which ones the repair query returns.
+func testListPendingTaxonomyEmbeddingIDs(t *testing.T, fieldType models.FieldType) {
+	t.Helper()
+
 	ctx := context.Background()
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -31,7 +45,9 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 	db, err := database.NewPostgresPool(ctx, cfg.Database.URL, database.WithPoolConfig(cfg.Database.PoolConfig()))
 	require.NoError(t, err)
 
-	defer db.Close()
+	// Registered before the data cleanup below: cleanups run last-in-first-out, so the
+	// pool closes only after the fixtures are deleted. A deferred Close would run first.
+	t.Cleanup(db.Close)
 
 	embeddingsRepo := repository.NewEmbeddingsRepository(db)
 	failuresRepo := repository.NewEnrichmentFailuresRepository(db)
@@ -58,10 +74,10 @@ func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
 				source_type, source_id, field_id, field_label, field_type,
 				value_text, value_text_translated, tenant_id, submission_id, collected_at
 			)
-			VALUES ('formbricks', $1, 'feedback', 'Feedback', 'text'::field_type_enum,
+			VALUES ('formbricks', $1, 'feedback', 'Feedback', $6::field_type_enum,
 			        $2, $3, $4, $5, '-infinity'::timestamptz)
 			RETURNING id, tenant_id, updated_at`,
-			"source-"+label, valueText, valueTextTranslated, tenantID, "submission-"+uuid.NewString(),
+			"source-"+label, valueText, valueTextTranslated, tenantID, "submission-"+uuid.NewString(), string(fieldType),
 		).Scan(&record.ID, &record.TenantID, &record.UpdatedAt)
 		require.NoError(t, err)
 

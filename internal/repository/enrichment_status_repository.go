@@ -236,16 +236,15 @@ var countEnrichmentStatusSQL = `SELECT ` + enrichmentCountSelect + `,` + failure
 var countEnrichmentBacklogAggregateSQL = `SELECT ` + enrichmentCountSelect + enrichmentCountFrom + `
 	WHERE fr.field_type = 'text'`
 
-// countTaxonomyEmbeddingBacklogAggregateSQL counts text records eligible for the
-// taxonomy-translated input but still missing the exact configured taxonomy model. field_type is
-// load-bearing here: only text records enter the live translation-to-taxonomy pipeline, so counting
-// categorical rows carrying value_text would create a permanent non-zero gauge floor. $1 = taxonomy
-// embedding model.
+// countTaxonomyEmbeddingBacklogAggregateSQL counts records eligible for the taxonomy-translated
+// input but still missing the exact configured taxonomy model. Unlike the text enrichments above
+// it has no field_type predicate: taxonomy eligibility is taxonomyEmbeddingEligibleTextSQL alone,
+// the same rule the live provider, the repair sweep and readiness use, so the gauge reports exactly
+// the backlog the reconciler can drain. $1 = taxonomy embedding model.
 const countTaxonomyEmbeddingBacklogAggregateSQL = `
 	SELECT COUNT(*)
 	FROM feedback_records fr
-	WHERE fr.field_type = 'text'
-	  AND ` + taxonomyEmbeddingEligibleTextSQL + `
+	WHERE ` + taxonomyEmbeddingEligibleTextSQL + `
 	  AND NOT EXISTS (
 		SELECT 1
 		FROM embeddings e
@@ -515,7 +514,10 @@ type FailedRecordCount struct {
 // that counts work nobody will ever do is worse than no gauge: an operator sees failures that the
 // status endpoint reports as zero for the same tenant and has no way to reconcile the two.
 //
-//   - eligibility (enrichmentEligibleText) — a record whose text was blanked is owed nothing
+//   - eligibility — a record whose text was blanked is owed nothing. The text enrichments use
+//     enrichmentEligibleText; taxonomy_embedding uses taxonomyEmbeddingEligibleTextSQL, the rule the
+//     pending gauge above and the repair sweep use, so a categorical record that exhausted its
+//     attempts is counted here as failed, not only there as pending (ENG-2792)
 //   - the tenant switch — sentiment/emotions turned off for a directory means those failures are
 //     not work, they are history
 //
@@ -536,19 +538,20 @@ var countFailedRecordsAggregateSQL = `
 	FROM feedback_record_enrichment_failures f
 	JOIN feedback_records fr ON fr.id = f.feedback_record_id
 	LEFT JOIN tenant_settings ts ON ts.tenant_id = fr.tenant_id
-	WHERE ` + enrichmentEligibleText + `
+	WHERE (` + enrichmentEligibleText + `
 	  AND ((f.enrichment = 'sentiment'   AND fr.sentiment IS NULL AND ` + enrichmentSentimentOn + `)
 	    OR (f.enrichment = 'emotions'    AND fr.emotions_classified_at IS NULL AND fr.emotions IS NULL
 	                                     AND ` + enrichmentEmotionsOn + `)
-	    OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL)
-	    OR (f.enrichment = 'taxonomy_embedding'
+	    OR (f.enrichment = 'translation' AND fr.translation_lang_key IS NULL)))
+	   OR (f.enrichment = 'taxonomy_embedding'
 	        AND $1 <> ''
+	        AND ` + taxonomyEmbeddingEligibleTextSQL + `
 	        AND f.context_key = $1
 	        AND f.source_updated_at = fr.updated_at
 	        AND NOT EXISTS (
 	          SELECT 1 FROM embeddings e
 	          WHERE e.feedback_record_id = fr.id AND e.model = $1
-	        )))
+	        ))
 	GROUP BY f.enrichment, f.terminal`
 
 // CountFailedRecordsAggregate returns the cross-tenant failed-record counts per enrichment.
