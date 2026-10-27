@@ -168,6 +168,10 @@ export default defineConfig({
                       slug: "reference/environment-variables",
                     },
                     { label: "Metrics", slug: "reference/metrics" },
+                    {
+                      label: "TypeScript SDK",
+                      slug: "reference/typescript-sdk",
+                    },
                   ],
                 },
               ],

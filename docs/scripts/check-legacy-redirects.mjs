@@ -1,23 +1,31 @@
 #!/usr/bin/env node
-// Verify that every old Stainless API URL has a built redirect and a real target.
+// Verify that the captured Stainless URL inventory has built redirects and real targets.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dist = process.argv[2] ?? "dist";
+const inventory = JSON.parse(
+  readFileSync("legacy-stainless-routes.json", "utf8"),
+);
 const redirects = JSON.parse(readFileSync("legacy-redirects.json", "utf8"));
 const entries = Object.entries(redirects);
 const errors = [];
 
-if (entries.length < 31) {
-  errors.push(
-    `Expected at least the 31 known Stainless routes; found ${entries.length}.`,
-  );
+if (new Set(inventory).size !== inventory.length) {
+  errors.push("The legacy route inventory contains duplicate paths.");
+}
+for (const source of inventory) {
+  if (!(source in redirects)) errors.push(`Missing redirect for ${source}`);
+}
+for (const [source] of entries) {
+  if (!inventory.includes(source))
+    errors.push(`Uninventoried redirect: ${source}`);
 }
 
 for (const [source, destination] of entries) {
   if (
-    !/^\/api\/resources\/[a-z0-9_/-]+$/.test(source) ||
-    !/^\/api\/operations\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/$/.test(destination)
+    !/^\/api\/(?:resources\/[a-z0-9_/-]+|typescript)$/.test(source) ||
+    !/^\/[a-z0-9_/-]+\/$/.test(destination)
   ) {
     errors.push(`Invalid redirect path: ${source} -> ${destination}`);
     continue;
