@@ -1,0 +1,31 @@
+---
+title: TypeScript SDK
+description: Install and use the official Formbricks Hub TypeScript client.
+---
+
+Install the [`@formbricks/hub`](https://www.npmjs.com/package/@formbricks/hub) client with npm:
+
+```bash
+npm install @formbricks/hub
+```
+
+The client supports Node.js 22 or later and browser runtimes. Set `baseUrl` to the
+origin of your Hub deployment and pass an API key:
+
+```ts
+import { createHubClient, listFeedbackRecords } from "@formbricks/hub";
+
+const client = createHubClient({
+  apiKey: process.env.HUB_API_KEY!,
+  baseUrl: "https://your-hub.example.com",
+});
+
+const { data, error } = await listFeedbackRecords({
+  client,
+  query: { tenant_id: "your-tenant-id", limit: 50 },
+});
+```
+
+See the [SDK README](https://github.com/formbricks/hub/tree/main/sdks/typescript)
+for retries, timeouts, and response handling. The [API reference](/api/) describes
+the available operations.

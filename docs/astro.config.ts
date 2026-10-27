@@ -3,12 +3,14 @@ import starlight from "@astrojs/starlight";
 import starlightOpenAPI, { openAPISidebarGroups } from "starlight-openapi";
 import starlightSidebarTopics from "starlight-sidebar-topics";
 import { posthog } from "./src/integrations/posthog";
+import legacyRedirects from "./legacy-redirects.json";
 
 // https://astro.build/config
 export default defineConfig({
-  // Canonical origin. Required by @astrojs/sitemap, which Starlight enables —
-  // without it the sitemap is silently skipped. Revisit with ENG-2370 (hosting).
+  // Canonical origin. Required by @astrojs/sitemap, which Starlight enables.
   site: "https://hub.formbricks.com",
+  // GitHub Pages serves these as static HTML refresh pages, not HTTP 301s.
+  redirects: legacyRedirects,
   env: {
     schema: {
       PUBLIC_POSTHOG_KEY: envField.string({
@@ -166,6 +168,10 @@ export default defineConfig({
                       slug: "reference/environment-variables",
                     },
                     { label: "Metrics", slug: "reference/metrics" },
+                    {
+                      label: "TypeScript SDK",
+                      slug: "reference/typescript-sdk",
+                    },
                   ],
                 },
               ],
