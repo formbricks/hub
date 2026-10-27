@@ -1,8 +1,8 @@
 name: Docs
 
-# Builds the documentation site in docs/. The API reference is generated from
-# openapi.yaml, so a spec change rebuilds the docs too — this is a second
-# consumer of spec correctness alongside code-quality.yml's Spectral lint.
+# Builds the documentation site in docs/ and publishes the checked artifact to
+# GitHub Pages from main. The API reference is generated from openapi.yaml, so
+# a spec change rebuilds the docs too.
 #
 # The Go workflows (tests.yml, code-quality.yml) are path-filtered to Go and
 # spec files, so a docs-only change does not run them.
@@ -10,13 +10,20 @@ name: Docs
 on:
   pull_request:
     paths:
-      - 'docs/**'
-      - 'openapi.yaml'
-      - '.github/workflows/docs-build.yml'
+      - "docs/**"
+      - "openapi.yaml"
+      - ".github/workflows/docs-build.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "openapi.yaml"
+      - ".github/workflows/docs-build.yml"
+  workflow_dispatch:
 
 concurrency:
-  group: docs-${{ github.head_ref }}
-  cancel-in-progress: true
+  group: docs-${{ github.event_name == 'pull_request' && github.head_ref || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -50,7 +57,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: pnpm
           cache-dependency-path: docs/pnpm-lock.yaml
 
@@ -72,3 +79,31 @@ jobs:
       # hand-checks missed twice.
       - name: Check internal links
         run: pnpm check:links
+
+      - name: Check legacy redirects
+        run: pnpm check:redirects
+
+      # Only a main-branch run can publish. PR builds have read-only permissions
+      # and still exercise the exact same checks before merge.
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
+        with:
+          path: docs/dist
+
+  deploy:
+    name: Deploy docs to GitHub Pages
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

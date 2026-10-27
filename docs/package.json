@@ -9,6 +9,7 @@
     "start": "astro dev",
     "build": "astro build",
     "check:links": "node scripts/check-links.mjs",
+    "check:redirects": "node scripts/check-legacy-redirects.mjs",
     "preview": "astro preview",
     "check": "astro check",
     "astro": "astro",
