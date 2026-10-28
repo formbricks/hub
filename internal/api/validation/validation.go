@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -279,9 +282,41 @@ func (e requestValidationError) As(target any) bool {
 	return true
 }
 
-// DecodeQueryParams decodes URL query parameters into a struct.
-func DecodeQueryParams(r *http.Request, dst any) error {
-	if err := decoder.Decode(dst, r.URL.Query()); err != nil {
+// unknownQueryParamReason is the invalid_params reason for a query parameter the operation does not
+// declare.
+const unknownQueryParamReason = "is not a recognized query parameter for this operation"
+
+// QueryOption adjusts which query parameters DecodeQueryParams accepts.
+type QueryOption func(allowed map[string]struct{})
+
+// WithoutQueryParams rejects parameters the destination struct declares but the operation does not
+// take, for an operation that shares another one's filter struct (count reuses the list filters
+// without their ordering and paging).
+func WithoutQueryParams(names ...string) QueryOption {
+	return func(allowed map[string]struct{}) {
+		for _, name := range names {
+			delete(allowed, name)
+		}
+	}
+}
+
+// DecodeQueryParams decodes URL query parameters into a struct. A parameter that no form tag on
+// the struct declares is rejected rather than ignored: ignoring it answers a narrower question
+// than the caller asked (a misspelled filter, or one only a newer Hub knows, returns every record)
+// with a 200 that looks right.
+func DecodeQueryParams(r *http.Request, dst any, opts ...QueryOption) error {
+	query := r.URL.Query()
+
+	allowed := maps.Clone(declaredQueryParams(reflect.TypeOf(dst)))
+	for _, opt := range opts {
+		opt(allowed)
+	}
+
+	if params := unknownQueryParams(query, allowed); len(params) > 0 {
+		return &QueryDecodeError{err: errUnknownQueryParams, params: params}
+	}
+
+	if err := decoder.Decode(dst, query); err != nil {
 		return newQueryDecodeError(err)
 	}
 
@@ -289,12 +324,110 @@ func DecodeQueryParams(r *http.Request, dst any) error {
 }
 
 // ValidateAndDecodeQueryParams decodes and validates query parameters in one step.
-func ValidateAndDecodeQueryParams(r *http.Request, dst any) error {
-	if err := DecodeQueryParams(r, dst); err != nil {
+func ValidateAndDecodeQueryParams(r *http.Request, dst any, opts ...QueryOption) error {
+	if err := DecodeQueryParams(r, dst, opts...); err != nil {
 		return err
 	}
 
 	return ValidateStruct(dst)
+}
+
+// RejectUnknownQueryParams is DecodeQueryParams' unknown-parameter check for a handler that reads
+// its query parameters by hand: it fails with the same QueryDecodeError when the request carries a
+// parameter outside allowed.
+func RejectUnknownQueryParams(r *http.Request, allowed ...string) error {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = struct{}{}
+	}
+
+	if params := unknownQueryParams(r.URL.Query(), allowedSet); len(params) > 0 {
+		return &QueryDecodeError{err: errUnknownQueryParams, params: params}
+	}
+
+	return nil
+}
+
+var errUnknownQueryParams = errors.New("unknown query parameters")
+
+// declaredQueryParamsCache holds, per destination struct type, the parameter names its form tags
+// declare. Filter structs are a fixed set, so it never grows past them.
+var declaredQueryParamsCache sync.Map
+
+func declaredQueryParams(typ reflect.Type) map[string]struct{} {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	if cached, ok := declaredQueryParamsCache.Load(typ); ok {
+		names, _ := cached.(map[string]struct{})
+
+		return names
+	}
+
+	names := map[string]struct{}{}
+	collectDeclaredQueryParams(typ, names)
+	declaredQueryParamsCache.Store(typ, names)
+
+	return names
+}
+
+// collectDeclaredQueryParams mirrors how go-playground/form names a field: its form tag, else its Go
+// name, with "-" skipped and an untagged embedded struct's fields promoted.
+func collectDeclaredQueryParams(typ reflect.Type, names map[string]struct{}) {
+	if typ.Kind() != reflect.Struct {
+		return
+	}
+
+	for field := range typ.Fields() {
+		tag := field.Tag.Get("form")
+		if tag == "-" {
+			continue
+		}
+
+		name, _, _ := strings.Cut(tag, ",")
+
+		if field.Anonymous && name == "" {
+			embedded := field.Type
+			if embedded.Kind() == reflect.Pointer {
+				embedded = embedded.Elem()
+			}
+
+			collectDeclaredQueryParams(embedded, names)
+
+			continue
+		}
+
+		if !field.IsExported() {
+			continue
+		}
+
+		if name == "" {
+			name = field.Name
+		}
+
+		names[name] = struct{}{}
+	}
+}
+
+// unknownQueryParams returns one invalid param per query key outside allowed, sorted by name. A key
+// is matched on its name before any "[": the decoder reads source_type[0] into source_type, so the
+// indexed form of a declared parameter is declared too.
+func unknownQueryParams(query url.Values, allowed map[string]struct{}) []InvalidParam {
+	var params []InvalidParam
+
+	for key := range query {
+		name, _, _ := strings.Cut(key, "[")
+		if _, ok := allowed[name]; ok {
+			continue
+		}
+
+		params = append(params, InvalidParam{Name: key, Reason: unknownQueryParamReason})
+	}
+
+	sort.Slice(params, func(i, j int) bool { return params[i].Name < params[j].Name })
+
+	return params
 }
 
 func newQueryDecodeError(err error) *QueryDecodeError {

@@ -66,6 +66,12 @@ func (h *TaxonomyHandler) ListFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
 	tenantID := r.URL.Query().Get("tenant_id")
 
 	result, err := h.service.ListFieldOptions(r.Context(), tenantID)
@@ -138,6 +144,12 @@ func (h *TaxonomyHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
 	result, err := h.service.GetRun(r.Context(), runID, r.URL.Query().Get("tenant_id"))
 	if err != nil {
 		respondTaxonomyError(w, r, err)
@@ -169,6 +181,12 @@ func (h *TaxonomyHandler) GetActiveTree(w http.ResponseWriter, r *http.Request) 
 func (h *TaxonomyHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	runID, ok := parseUUIDPathValue(w, r, "run_id")
 	if !ok {
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
 		return
 	}
 
@@ -216,6 +234,12 @@ func (h *TaxonomyHandler) GetFeedbackRecordTaxonomy(w http.ResponseWriter, r *ht
 func (h *TaxonomyHandler) RecordCounts(w http.ResponseWriter, r *http.Request) {
 	runID, ok := parseUUIDPathValue(w, r, "run_id")
 	if !ok {
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
 		return
 	}
 
@@ -318,6 +342,12 @@ func parseUUIDPathValue(w http.ResponseWriter, r *http.Request, name string) (uu
 }
 
 func taxonomyScopeFromQuery(w http.ResponseWriter, r *http.Request) (models.TaxonomyScope, bool) {
+	if err := validation.RejectUnknownQueryParams(r, "scope_type", "tenant_id", "source_type", "source_id", "field_id"); err != nil {
+		response.RespondError(w, r, err)
+
+		return models.TaxonomyScope{}, false
+	}
+
 	scope := models.TaxonomyScope{
 		ScopeType:  models.TaxonomyScopeType(r.URL.Query().Get("scope_type")),
 		TenantID:   r.URL.Query().Get("tenant_id"),

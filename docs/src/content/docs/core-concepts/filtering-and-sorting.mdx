@@ -73,6 +73,31 @@ records whose source type is blank, and it is not an error:
 This holds for every query parameter, not just the repeatable filters, so a UI that always emits its
 whole filter set does not have to strip the empty ones before sending.
 
+### An unknown parameter is rejected
+
+A query parameter the endpoint does not take is a `400` naming it, never ignored. A misspelled
+filter would otherwise come back as a `200` with every record, which looks exactly like a filter
+that matched everything:
+
+```json
+{
+  "status": 400,
+  "code": "validation",
+  "invalid_params": [
+    { "name": "updatd_since", "reason": "is not a recognized query parameter for this operation" }
+  ]
+}
+```
+
+The count endpoint takes the list's filters but not `sort`, `order`, `limit` or `cursor`, which
+cannot change a total, so those are rejected there too.
+
+<Aside type="caution">
+  Hub releases up to 0.14.1 ignore a parameter they do not know. Against one of those, a filter
+  added in a later release is silently dropped: `updated_since` and `updated_until` sent to Hub 0.8.x
+  return every record. Check the Hub version before relying on a newer filter.
+</Aside>
+
 ### What this cannot express
 
 There is no way to OR across *different* fields — "negative sentiment **or** rating ≤ 2" is not
@@ -118,6 +143,12 @@ The two diverge whenever historical data is imported: the feedback was *collecte
 to answer "what did people tell us in this period".
 
 ## Incremental extraction
+
+<Aside type="note">
+  `updated_since`, `updated_until` and `sort=updated_at` need Hub 0.9.0 or later. An older Hub
+  answers `sort=updated_at` with `400` (`must be one of: collected_at created_at`) and ignores the two
+  filters.
+</Aside>
 
 To keep a copy of a tenant's records in sync without re-reading everything, filter on
 `updated_since`. Hub stamps `updated_at` on every write to a record, so one filter picks up both

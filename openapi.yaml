@@ -11,6 +11,10 @@ info:
         with 400 naming the member in invalid_params. Data after the object is rejected with 400 too, with
         the cause in the problem detail. A tenant_id in a request body may not contain U+FFFD, which the decoder
         substitutes for invalid UTF-8 and unpaired surrogates; such a value is rejected with 400.
+        An operation that takes query parameters rejects one it does not declare with 400, naming it in
+        invalid_params, rather than ignoring it: an ignored filter returns more records than the caller
+        asked for, with a 200 that looks right. A repeatable parameter may also be sent in its indexed
+        form (source_type[0]). Hub releases up to 0.14.1 ignored unknown parameters.
         Self-hosted Hub servers advertise their deployed base URL from PUBLIC_BASE_URL so generated SDK clients
         can point to the correct Hub instance.
         Full Documentation: https://hub.formbricks.com
@@ -22,7 +26,7 @@ info:
     license:
         name: Apache-2.0
         url: https://www.apache.org/licenses/LICENSE-2.0
-    version: 1.2.0
+    version: 1.3.0
 servers:
     - url: "{scheme}://{host}{basePath}"
       description: Deployed Formbricks Hub instance (self-hosted or Formbricks Cloud)
@@ -199,9 +203,10 @@ paths:
                                         limit: 100
                 "400":
                     description: |
-                        Bad Request. Returned for an unknown enum value (sentiment, emotions, field_type,
-                        sort, order), an inverted range whose *_min/*_since exceeds its *_max/*_until, a
-                        malformed cursor, or a cursor issued for a different sort/order.
+                        Bad Request. Returned for a query parameter this operation does not declare, an
+                        unknown enum value (sentiment, emotions, field_type, sort, order), an inverted range
+                        whose *_min/*_since exceeds its *_max/*_until, a malformed cursor, or a cursor
+                        issued for a different sort/order.
                     content:
                         application/problem+json:
                             schema:
@@ -231,6 +236,18 @@ paths:
                                         invalid_params:
                                             - name: "cursor"
                                               reason: "was issued for a different sort/order; restart pagination without a cursor, or keep sort and order unchanged"
+                                unknown_parameter:
+                                    summary: A misspelled filter, rejected rather than ignored
+                                    value:
+                                        type: "https://hub.formbricks.com/problems/validation"
+                                        title: "Validation Failed"
+                                        status: 400
+                                        code: "validation"
+                                        detail: "One or more request parameters are invalid"
+                                        request_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+                                        invalid_params:
+                                            - name: "updatd_since"
+                                              reason: "is not a recognized query parameter for this operation"
                 "401":
                     description: Unauthorized (missing or invalid API key)
                     content:
@@ -557,9 +574,10 @@ paths:
                                 $ref: '#/components/schemas/CountFeedbackRecordsOutputBody'
                 "400":
                     description: |
-                        Bad Request. Returned for an unknown enum value (sentiment, emotions, field_type),
-                        an inverted range whose *_min/*_since exceeds its *_max/*_until, or a missing or
-                        blank tenant_id.
+                        Bad Request. Returned for a query parameter this operation does not declare
+                        (sort, order, limit and cursor included: they belong to the list, and cannot change a
+                        count), an unknown enum value (sentiment, emotions, field_type), an inverted range
+                        whose *_min/*_since exceeds its *_max/*_until, or a missing or blank tenant_id.
                     content:
                         application/problem+json:
                             schema:

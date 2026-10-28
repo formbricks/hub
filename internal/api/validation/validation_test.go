@@ -367,6 +367,92 @@ func TestDecodeEnumSliceIndexedFormIsValidated(t *testing.T) {
 	})
 }
 
+func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
+	t.Run("names every unknown parameter, sorted", func(t *testing.T) {
+		var filters models.ListFeedbackRecordsFilters
+
+		// updatd_since is the misspelling that used to return every record, as if no filter had
+		// been sent; zzz stands for a filter only a newer Hub knows.
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/v1/x?tenant_id=t1&zzz=1&updatd_since=2099-01-01T00:00:00Z", http.NoBody)
+
+		err := ValidateAndDecodeQueryParams(req, &filters)
+		require.ErrorIs(t, err, ErrQueryDecodeFailed)
+
+		var queryErr *QueryDecodeError
+		require.ErrorAs(t, err, &queryErr)
+		assert.Equal(t, []InvalidParam{
+			{Name: "updatd_since", Reason: unknownQueryParamReason},
+			{Name: "zzz", Reason: unknownQueryParamReason},
+		}, queryErr.InvalidParams())
+	})
+
+	t.Run("accepts every parameter the struct declares", func(t *testing.T) {
+		var filters models.ListFeedbackRecordsFilters
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/v1/x?tenant_id=t1&updated_since=2026-01-01T00:00:00Z&updated_until=2026-02-01T00:00:00Z"+
+				"&sort=updated_at&order=asc&limit=10&source_type=survey&source_type=chat", http.NoBody)
+
+		require.NoError(t, ValidateAndDecodeQueryParams(req, &filters))
+		require.NotNil(t, filters.UpdatedSince)
+		assert.Equal(t, []string{"survey", "chat"}, filters.SourceType)
+	})
+
+	// The indexed form decodes into the same field, so it stays accepted under its base name.
+	t.Run("accepts the indexed form of a declared parameter", func(t *testing.T) {
+		var filters models.ListFeedbackRecordsFilters
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/v1/x?tenant_id=t1&source_type[0]=survey", http.NoBody)
+
+		require.NoError(t, ValidateAndDecodeQueryParams(req, &filters))
+		assert.Equal(t, []string{"survey"}, filters.SourceType)
+	})
+
+	t.Run("rejects the indexed form of an unknown parameter", func(t *testing.T) {
+		var filters models.ListFeedbackRecordsFilters
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/v1/x?tenant_id=t1&source_typo[0]=survey", http.NoBody)
+
+		var queryErr *QueryDecodeError
+		require.ErrorAs(t, ValidateAndDecodeQueryParams(req, &filters), &queryErr)
+		assert.Equal(t, []InvalidParam{{Name: "source_typo[0]", Reason: unknownQueryParamReason}},
+			queryErr.InvalidParams())
+	})
+
+	t.Run("WithoutQueryParams narrows what the struct accepts", func(t *testing.T) {
+		var filters models.ListFeedbackRecordsFilters
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			"/v1/x?tenant_id=t1&limit=10&cursor=abc", http.NoBody)
+
+		var queryErr *QueryDecodeError
+		require.ErrorAs(t, ValidateAndDecodeQueryParams(req, &filters, WithoutQueryParams("limit", "cursor")), &queryErr)
+		assert.Equal(t, []InvalidParam{
+			{Name: "cursor", Reason: unknownQueryParamReason},
+			{Name: "limit", Reason: unknownQueryParamReason},
+		}, queryErr.InvalidParams())
+	})
+}
+
+func TestRejectUnknownQueryParams(t *testing.T) {
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		"/v1/x?tenant_id=t1&limit=5&min_scor=0.9", http.NoBody)
+
+	err := RejectUnknownQueryParams(req, "tenant_id", "limit", "min_score")
+	require.ErrorIs(t, err, ErrQueryDecodeFailed)
+
+	var queryErr *QueryDecodeError
+	require.ErrorAs(t, err, &queryErr)
+	assert.Equal(t, []InvalidParam{{Name: "min_scor", Reason: unknownQueryParamReason}}, queryErr.InvalidParams())
+
+	require.NoError(t, RejectUnknownQueryParams(
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?tenant_id=t1&limit=5", http.NoBody),
+		"tenant_id", "limit", "min_score"))
+}
+
 func TestNoReplacementChar(t *testing.T) {
 	type request struct {
 		TenantID *string `json:"tenant_id,omitempty" validate:"omitempty,no_replacement_char"`

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/api/response"
+	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/service"
 )
@@ -63,6 +64,9 @@ const (
 	maxSearchLimit     = 100
 )
 
+// searchQueryParams are the query parameters both search operations take.
+var searchQueryParams = []string{"limit", "cursor", "min_score"}
+
 // SemanticSearch handles POST /v1/feedback-records/search/semantic.
 func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -74,6 +78,12 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Semantic search is not available: embeddings are not configured.")
+
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, searchQueryParams...); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -144,6 +154,12 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
+
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, searchQueryParams...); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}
