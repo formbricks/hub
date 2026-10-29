@@ -122,7 +122,7 @@ func TestEmbeddingReconcileSweepTopsUpBoundedRepairQueue(t *testing.T) {
 		assert.Equal(t, ids[index], args.FeedbackRecordID)
 		assert.Equal(t, "taxonomy:model", args.Model)
 		assert.Equal(t, models.EmbeddingInputKindTaxonomyTranslated, args.InputKind)
-		assert.Equal(t, "reconcile", args.ValueTextHash)
+		assert.Equal(t, ValueTextHashRepair, args.ValueTextHash)
 		require.NotNil(t, param.InsertOpts)
 		assert.Equal(t, EmbeddingsReconcileQueueName, param.InsertOpts.Queue)
 		assert.Equal(t, 4, param.InsertOpts.Priority)
@@ -238,6 +238,30 @@ func TestEmbeddingReconcileSweepSharesRoomAcrossTargets(t *testing.T) {
 			{model: "taxonomy:model", inputKind: models.EmbeddingInputKindTaxonomyTranslated, limit: 50},
 		}, repo.listCalls)
 		assert.Equal(t, 100, result.Enqueued)
+	})
+
+	t.Run("a single free slot alternates between targets", func(t *testing.T) {
+		repo := &stubEmbeddingReconcileRepository{depth: 99, idsByModel: map[string][]uuid.UUID{
+			"raw": newIDs(5), "taxonomy:model": newIDs(5),
+		}}
+		reconciler := NewEmbeddingReconcileService(repo, targets, 100, 5, 15*time.Minute)
+		reconciler.SetInserter(&recordingBatchInserter{})
+
+		served := []string{}
+
+		for range 2 {
+			repo.listCalls = nil
+			_, err := reconciler.Sweep(context.Background())
+			require.NoError(t, err)
+
+			for _, call := range repo.listCalls {
+				if call.limit > 0 {
+					served = append(served, call.model)
+				}
+			}
+		}
+
+		assert.ElementsMatch(t, []string{"raw", "taxonomy:model"}, served)
 	})
 
 	t.Run("unused share flows to the next target", func(t *testing.T) {

@@ -41,6 +41,9 @@ type feedbackEmbeddingService interface {
 		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
 		embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
+	EmbeddingIsCurrent(
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+	) (bool, error)
 }
 
 // NewFeedbackEmbeddingWorker creates a worker that fetches the record, calls the embedding client, and stores the result.
@@ -152,7 +155,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 	// stillCurrent lets the repository verify, atomically with the write, that the content this
 	// job embedded is still the record's content — so of two concurrent jobs for one record, the
 	// stale one skips instead of clobbering the newer vector (last-write-wins would attach an old
-	// text's embedding forever; the missing-rows-only backfill cannot repair that). It rebuilds
+	// text's embedding until the repair sweep noticed its source_hash). It rebuilds
 	// through the same capped builder, so the comparison is between the two strings the provider
 	// would actually have been sent.
 	stillCurrent := func(fieldLabel, valueText, valueTextTranslated *string) bool {
@@ -164,6 +167,23 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	if text == "" {
 		return w.handleEmptyText(ctx, job, record, log, start, stillCurrent)
+	}
+
+	// A repair or backfill job that lands after a live job already embedded this content, or a job
+	// re-run after a worker died between the write and River marking it complete, finds the vector
+	// current: skip the provider call. A failed check only costs the call it would have saved.
+	current, err := w.embeddingService.EmbeddingIsCurrent(ctx, args.FeedbackRecordID, args.Model, inputKind)
+	if err != nil {
+		log.Warn("embedding: could not check whether the vector is current, embedding anyway", "error", err)
+	} else if current {
+		if w.metrics != nil {
+			w.metrics.RecordEmbeddingOutcome(ctx, "skipped")
+			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "skipped")
+		}
+
+		log.Info("embedding: vector already current, skipping")
+
+		return nil
 	}
 
 	embedding, err := w.embeddingClient.CreateEmbedding(ctx, text)

@@ -582,6 +582,16 @@ func TestLoad_TaxonomyConfig(t *testing.T) {
 	}
 }
 
+func TestLoad_TaxonomyEmbeddingModelMustDifferFromEmbeddingModel(t *testing.T) {
+	t.Setenv("EMBEDDING_MODEL", "shared-model")
+	t.Setenv("TAXONOMY_EMBEDDING_MODEL", " shared-model ")
+
+	_, err := Load()
+	if !errors.Is(err, ErrTaxonomyEmbeddingModelCollision) {
+		t.Fatalf("Load() error = %v, want ErrTaxonomyEmbeddingModelCollision", err)
+	}
+}
+
 func TestLoad_TenantDataPurgeLockTimeout(t *testing.T) {
 	tests := []struct {
 		name  string

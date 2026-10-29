@@ -143,7 +143,7 @@ func testTaxonomyEmbeddingRecovery(t *testing.T, fieldType models.FieldType, val
 
 	// 1. Live delivery: the taxonomy provider enqueues for this record. This is the eligibility
 	// rule repair has to match.
-	liveEnqueuer := service.NewEmbeddingEnqueuer(riverClient, service.NewEmbeddingProviderForInputKind(
+	liveEnqueuer := service.NewEmbeddingEnqueuer(riverClient, service.NewEmbeddingJobBuilderForInputKind(
 		model, service.EmbeddingsQueueName, maxAttempts, "", 0, nil,
 		models.EmbeddingInputKindTaxonomyTranslated,
 	))
@@ -311,7 +311,7 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 	failedBefore, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
 	require.NoError(t, err)
 
-	liveEnqueuer := service.NewEmbeddingEnqueuer(riverClient, service.NewEmbeddingProviderForInputKind(
+	liveEnqueuer := service.NewEmbeddingEnqueuer(riverClient, service.NewEmbeddingJobBuilderForInputKind(
 		model, service.EmbeddingsQueueName, 5, "", 0, nil,
 		models.EmbeddingInputKindTaxonomyTranslated,
 	))
@@ -409,13 +409,13 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 
 		// The operator backfill must select exactly the same records, and count what it would select.
 		backfillFilter := repository.PendingEmbeddingsFilter{
-			Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, TenantID: tenantID, RetryBefore: time.Now(),
+			Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, RetryBefore: time.Now(),
 		}
-		backfillPage, err := embeddingsRepo.ListPendingEmbeddings(ctx, backfillFilter, 100)
+		backfillPage, err := embeddingsRepo.ListTenantPendingEmbeddings(ctx, tenantID, backfillFilter, 100)
 		require.NoError(t, err)
 		assert.Len(t, backfillPage, readinessWant[tenantID], "backfill selects what live delivery embeds (%s)", fieldType)
 
-		backfillCount, err := embeddingsRepo.CountPendingEmbeddings(ctx, backfillFilter)
+		backfillCount, err := embeddingsRepo.CountTenantPendingEmbeddings(ctx, tenantID, backfillFilter)
 		require.NoError(t, err)
 		assert.Equal(t, readinessWant[tenantID], backfillCount, "backfill counts what it selects (%s)", fieldType)
 	}

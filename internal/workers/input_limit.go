@@ -55,9 +55,5 @@ func trimForProvider(
 // search embedding and the taxonomy's translated-text embedding are separate pipelines that happen
 // to share one worker, so a counter that lumped them together would hide which one is trimming.
 func embeddingEnrichmentName(kind models.EmbeddingInputKind) string {
-	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
-		return models.EnrichmentNameTaxonomyEmbedding
-	}
-
-	return models.EnrichmentNameEmbedding
+	return kind.EnrichmentName()
 }

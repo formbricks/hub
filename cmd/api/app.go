@@ -368,7 +368,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	// best-effort event channel, so a crash or a full channel cannot lose them (ENG-2792).
 	if embeddingProviderName != "" {
 		docPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
-		embeddingProviders := []*service.EmbeddingProvider{service.NewEmbeddingProvider(
+		embeddingProviders := []*service.EmbeddingJobBuilder{service.NewEmbeddingJobBuilder(
 			embeddingModelForDB,
 			service.EmbeddingsQueueName,
 			cfg.Embedding.MaxAttempts,
@@ -378,7 +378,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		)}
 
 		if taxonomyEmbeddingEnqueueModel != "" {
-			embeddingProviders = append(embeddingProviders, service.NewEmbeddingProviderForInputKind(
+			embeddingProviders = append(embeddingProviders, service.NewEmbeddingJobBuilderForInputKind(
 				taxonomyEmbeddingEnqueueModel,
 				service.EmbeddingsQueueName,
 				cfg.Embedding.MaxAttempts,

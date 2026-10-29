@@ -67,7 +67,7 @@ func (m *mockEmbeddingInserter) InsertManyTx(
 
 func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_withValueText_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingJobBuilder("model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	valueText := "Some feedback text"
@@ -97,7 +97,7 @@ func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_withValueText_enqueue
 
 func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_dataIsValueNotPointer_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingJobBuilder("model-name", "embeddings", 3, "", 0, nil)
 
 	// Pass value type (as was happening before the service fix) — provider should skip and not enqueue.
 	event := Event{
@@ -118,7 +118,7 @@ func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_dataIsValueNotPointer
 
 func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_emptyValueText_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingJobBuilder("model-name", "embeddings", 3, "", 0, nil)
 
 	event := Event{
 		ID:        uuid.Must(uuid.NewV7()),
@@ -138,7 +138,7 @@ func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_emptyValueText_skips(
 
 func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordUpdated_valueTextInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingJobBuilder("model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -163,7 +163,7 @@ func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordUpdated_valueTextInChangedFie
 
 func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordUpdated_fieldLabelInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingJobBuilder("model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -188,7 +188,7 @@ func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordUpdated_fieldLabelInChangedFi
 
 func TestEmbeddingEnqueuer_EnqueueTx_TaxonomyTranslatedPrefersTranslatedText(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProviderForInputKind(
+	p := NewEmbeddingJobBuilderForInputKind(
 		"taxonomy:model:translated-v1",
 		"embeddings",
 		3,

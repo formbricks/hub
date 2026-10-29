@@ -17,12 +17,11 @@ const (
 	EnrichmentNameSentiment   = "sentiment"
 	EnrichmentNameEmotions    = "emotions"
 	// EnrichmentNameEmbedding is the raw search embedding — the vector behind semantic search and
-	// similar-feedback. It carries metric labels only: raw embeddings are deliberately outside the
-	// taxonomy progress/reconcile contract, so nothing writes a failure marker for it (the marker
-	// CHECK does not admit this value).
+	// similar-feedback. Its failure markers (migration 028) are bound to a model and a revision, like
+	// the taxonomy embedding's, so the repair sweep can tell transient failures from terminal ones.
 	EnrichmentNameEmbedding = "embedding"
-	// EnrichmentNameTaxonomyEmbedding is the translated-text embedding consumed by taxonomy. It is
-	// the one embedding that does get a marker (migration 024), bound to a model and a revision.
+	// EnrichmentNameTaxonomyEmbedding is the translated-text embedding consumed by taxonomy. Its
+	// markers (migration 024) are bound to a model and a revision.
 	EnrichmentNameTaxonomyEmbedding = "taxonomy_embedding"
 )
 

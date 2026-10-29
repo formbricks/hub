@@ -130,15 +130,16 @@ to a service-account key path when running outside Google Cloud). A custom
 | `EMBEDDING_RECONCILE_ENABLED`     | `false` | Periodically repair embeddings on `hub-worker` (see [Embedding repair](#embedding-repair)). Opt in per deployment.                                                              |
 | `EMBEDDING_RECONCILE_INTERVAL_SECONDS` | `300` | How often the repair sweep runs.                                                                                                                                          |
 | `EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS` | `900` | Cooldown before a record whose attempts ran out on a transient error is retried.                                                                                       |
-| `EMBEDDING_RECONCILE_TARGET_DEPTH` | `100`  | Each sweep tops the `embeddings_reconcile` queue up to this many runnable jobs, shared fairly between the search and taxonomy embeddings.                                         |
+| `EMBEDDING_RECONCILE_TARGET_DEPTH` | `100`  | Each sweep tops the `embeddings_reconcile` queue up to this many runnable jobs, shared fairly between the search and taxonomy embeddings. See [How long recovery takes](#embedding-repair). |
 | `EMBEDDING_RECONCILE_MAX_CONCURRENT` | `1`  | Worker concurrency reserved for repaired records, separate from live embedding work.                                                                                            |
 
 #### Embedding repair
 
 `hub-api` queues a record's embedding jobs in the same transaction that writes it, so a crash
-cannot lose them. What can still leave a record without a current vector is a job that runs out of
-attempts. With `EMBEDDING_RECONCILE_ENABLED=true` and an embedding provider configured, a sweep on
-`hub-worker` (on River's elected leader) re-queues every record whose vector is:
+cannot lose them; if the jobs cannot be queued, the write fails and the client can retry. What can
+still leave a record without a current vector is a job that runs out of attempts. With
+`EMBEDDING_RECONCILE_ENABLED=true` and an embedding provider configured, a sweep on `hub-worker`
+(on River's elected leader) re-queues every record whose vector is:
 
 - **missing**: the record has text but no vector for the current model;
 - **stale**: the text the vector was computed from has changed since (for the taxonomy embedding,
@@ -147,24 +148,41 @@ attempts. With `EMBEDDING_RECONCILE_ENABLED=true` and an embedding provider conf
   the provider.
 
 This covers the search embedding always, and the taxonomy embedding when `TAXONOMY_SERVICE_URL`
-is set. Records whose attempts ran out on a transient error are retried after
-`EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS`; records the provider rejected outright are not retried
-until their content changes.
+is set. A repair job that finds the vector already current (because a live job got there first)
+skips the provider. Records whose attempts ran out on a transient error are retried after
+`EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS`. Records the provider rejected outright are not retried
+until the record is written again (the rejection is tied to the record's revision, so an edit, or
+an enrichment such as translation or sentiment landing on it, makes it eligible once more).
 
-Vectors written before Hub recorded what they were computed from are trusted as current.
+Vectors written before Hub recorded what they were computed from are trusted as current. Changing
+the model's document prefix or `EMBEDDING_MAX_INPUT_BYTES` does not mark existing vectors stale
+either: those are deployment settings, not record content.
+
+**How long recovery takes.** A record whose attempts ran out is re-queued at the first sweep after
+its cooldown. The repair lane is topped up to `EMBEDDING_RECONCILE_TARGET_DEPTH` jobs per sweep,
+shared between the search and taxonomy embeddings, so a backlog of `N` records per model drains in
+about `N ÷ (TARGET_DEPTH ÷ 2)` sweeps once the provider is healthy: with the defaults (100 every
+300 seconds), roughly 600 records an hour per model. A job left `running` by a worker that died is
+not retried until River's stuck-job rescue (`RIVER_RESCUE_STUCK_JOBS_AFTER_SECONDS`, one hour when
+unset), and the sweep leaves that record alone until then; set it a little above
+`EMBEDDING_JOB_TIMEOUT_SECONDS` to shorten that. A provider answering `429` snoozes a job without
+using an attempt for up to an hour from when the job was created, then lets it fail normally. For a
+faster drain, use the backfill below.
 
 For incident recovery, `backfill-embeddings` queues the same work on demand, on the live
-embeddings queue so it drains at full worker concurrency. It selects exactly what the sweep would:
-records with a job already in flight, records the provider rejected outright, and transient
-failures still cooling down are skipped, so running it twice queues nothing the second time.
+embeddings queue so it drains at full worker concurrency. It selects what the sweep would, except
+that it does not wait out the transient-failure cooldown: it is meant to run once the provider has
+recovered. Records with a job already in flight (including the sweep's) and records the provider
+rejected outright are skipped, so running it twice queues nothing the second time.
 
-| Flag                | Description                                                                                         |
-| ------------------- | --------------------------------------------------------------------------------------------------- |
-| `-tenant-id <id>`   | Restrict to one tenant (feedback directory). Without it the backfill runs across the deployment.   |
-| `-taxonomy`         | Backfill the taxonomy embedding instead of the search embedding.                                    |
-| `-max-records <n>`  | Stop after `n` records, to run in bounded batches (for example 100, then 500 at a time).            |
-| `-count-only`       | Print how many records are owed work without queueing anything.                                    |
-| `-stale`            | Also re-embed vectors written before Hub recorded what they were computed from. Needs `-tenant-id`. |
+| Flag                | Description                                                                                                     |
+| ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `-tenant-id <id>`   | Restrict to one tenant (feedback directory). Without it the backfill runs across the deployment.               |
+| `-taxonomy`         | Backfill the taxonomy embedding instead of the search embedding.                                                |
+| `-max-records <n>`  | Stop after `n` records, to run in bounded batches (for example 100, then 500 at a time).                        |
+| `-count-only`       | Print how many records are owed work without queueing anything.                                                 |
+| `-stale`            | Also re-embed vectors written before Hub recorded what they were computed from. Needs `-tenant-id`.             |
+| `-retry-terminal`   | Also retry records the provider rejected outright, once the cause is fixed (say, a lower input cap). Needs `-tenant-id`. |
 
 Each run logs one line when it starts and one when it finishes, with its scope and counts, as the
 record of what was done.

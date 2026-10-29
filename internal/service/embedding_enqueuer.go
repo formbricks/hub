@@ -18,63 +18,55 @@ import (
 // longer has. That is why they leave the best-effort event channel, which the webhook and classify
 // providers still use.
 type EmbeddingEnqueuer struct {
-	inserter  RiverTxBatchInserter
-	providers []*EmbeddingProvider
+	inserter RiverTxBatchInserter
+	builders []*EmbeddingJobBuilder
 }
 
 // NewEmbeddingEnqueuer creates an enqueuer for the given models; typically the raw search model
 // and, when taxonomy is configured, the translated taxonomy model.
-func NewEmbeddingEnqueuer(inserter RiverTxBatchInserter, providers ...*EmbeddingProvider) *EmbeddingEnqueuer {
-	return &EmbeddingEnqueuer{inserter: inserter, providers: providers}
+func NewEmbeddingEnqueuer(inserter RiverTxBatchInserter, builders ...*EmbeddingJobBuilder) *EmbeddingEnqueuer {
+	return &EmbeddingEnqueuer{inserter: inserter, builders: builders}
 }
 
-// EnqueueTx inserts, in tx, every embedding job event owes. An error must abort the write.
+// EnqueueTx inserts, in dbTx, every embedding job event owes. An error must abort the write.
 func (e *EmbeddingEnqueuer) EnqueueTx(ctx context.Context, dbTx pgx.Tx, event Event) error {
-	params := make([]river.InsertManyParams, 0, len(e.providers))
-	owners := make([]*EmbeddingProvider, 0, len(e.providers))
-
-	for _, provider := range e.providers {
-		if job, ok := provider.jobFor(event); ok {
-			params = append(params, job)
-			owners = append(owners, provider)
-		}
-	}
-
-	return e.insert(ctx, dbTx, params, owners, event.ID, recordIDFromEventData(event.Data))
+	return e.insert(ctx, dbTx, event.ID, recordIDFromEventData(event.Data),
+		func(builder *EmbeddingJobBuilder) (river.InsertManyParams, bool) { return builder.jobFor(event) })
 }
 
-// EnqueueTranslationTx inserts, in tx, the taxonomy re-embed a translation write owes: the
+// EnqueueTranslationTx inserts, in dbTx, the taxonomy re-embed a translation write owes: the
 // taxonomy input prefers translated text, so a new (or cleared) translation changes it.
 func (e *EmbeddingEnqueuer) EnqueueTranslationTx(ctx context.Context, dbTx pgx.Tx, feedbackRecordID uuid.UUID) error {
-	params := make([]river.InsertManyParams, 0, 1)
-	owners := make([]*EmbeddingProvider, 0, 1)
+	return e.insert(ctx, dbTx, uuid.Nil, feedbackRecordID,
+		func(builder *EmbeddingJobBuilder) (river.InsertManyParams, bool) {
+			return builder.translationJob(feedbackRecordID)
+		})
+}
 
-	for _, provider := range e.providers {
-		if job, ok := provider.translationJob(feedbackRecordID); ok {
+// insert writes the jobs owed (one per builder that owes one) in one statement. Counters are
+// recorded at insert time: a transaction that later fails to commit overcounts by its jobs, which
+// is rarer and cheaper than threading commit outcomes back here.
+func (e *EmbeddingEnqueuer) insert(
+	ctx context.Context, dbTx pgx.Tx, eventID, feedbackRecordID uuid.UUID,
+	owed func(*EmbeddingJobBuilder) (river.InsertManyParams, bool),
+) error {
+	params := make([]river.InsertManyParams, 0, len(e.builders))
+	owners := make([]*EmbeddingJobBuilder, 0, len(e.builders))
+
+	for _, builder := range e.builders {
+		if job, ok := owed(builder); ok {
 			params = append(params, job)
-			owners = append(owners, provider)
+			owners = append(owners, builder)
 		}
 	}
 
-	return e.insert(ctx, dbTx, params, owners, uuid.Nil, feedbackRecordID)
-}
-
-// insert writes params in one statement. Counters are recorded at insert time: a transaction that
-// later fails to commit overcounts by its jobs, which is rarer and cheaper than threading commit
-// outcomes back here.
-func (e *EmbeddingEnqueuer) insert(
-	ctx context.Context, dbTx pgx.Tx, params []river.InsertManyParams, owners []*EmbeddingProvider,
-	eventID, feedbackRecordID uuid.UUID,
-) error {
 	if len(params) == 0 {
 		return nil
 	}
 
 	if _, err := e.inserter.InsertManyTx(ctx, dbTx, params); err != nil {
 		for _, owner := range owners {
-			if owner.metrics != nil {
-				owner.metrics.RecordProviderError(ctx, "enqueue_failed")
-			}
+			owner.recordEnqueueFailed(ctx)
 		}
 
 		slog.ErrorContext(ctx, "embedding: enqueue failed, write rolled back",
@@ -87,9 +79,7 @@ func (e *EmbeddingEnqueuer) insert(
 	}
 
 	for _, owner := range owners {
-		if owner.metrics != nil {
-			owner.metrics.RecordJobsEnqueued(ctx, 1)
-		}
+		owner.recordEnqueued(ctx)
 	}
 
 	slog.InfoContext(ctx, "embedding: jobs enqueued",

@@ -532,8 +532,8 @@ func TestFeedbackRecordsService_SetTranslation_EnqueuesTaxonomyEmbedding(t *test
 	inserter := &mockEmbeddingInserter{}
 	svc := NewFeedbackRecordsService(&mockFeedbackRecordsRepo{}, nil, "", nil, nil, "", 0, "")
 	svc.SetEmbeddingEnqueuer(NewEmbeddingEnqueuer(inserter,
-		NewEmbeddingProvider("raw-model", "embeddings", 3, "", 0, nil),
-		NewEmbeddingProviderForInputKind("taxonomy:embedding-model:translated-v1", "embeddings", 3, "", 0, nil,
+		NewEmbeddingJobBuilder("raw-model", "embeddings", 3, "", 0, nil),
+		NewEmbeddingJobBuilderForInputKind("taxonomy:embedding-model:translated-v1", "embeddings", 3, "", 0, nil,
 			models.EmbeddingInputKindTaxonomyTranslated),
 	))
 

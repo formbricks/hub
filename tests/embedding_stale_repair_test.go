@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -51,13 +52,13 @@ func newStaleRepairFixtures(t *testing.T) *staleRepairFixtures {
 // collected_at sorts it ahead of anything else in the shared database, so the deployment-wide,
 // oldest-first sweep reaches it within its bound.
 func (f *staleRepairFixtures) seed(
-	t *testing.T, fieldType models.FieldType, valueText, valueTextTranslated *string,
+	ctx context.Context, t *testing.T, fieldType models.FieldType, valueText, valueTextTranslated *string,
 ) *models.FeedbackRecord {
 	t.Helper()
 
 	var record models.FeedbackRecord
 
-	err := f.db.QueryRow(context.Background(), `
+	err := f.db.QueryRow(ctx, `
 		INSERT INTO feedback_records (
 			source_type, field_id, field_label, field_type,
 			value_text, value_text_translated, tenant_id, submission_id, collected_at
@@ -78,14 +79,15 @@ func (f *staleRepairFixtures) exec(t *testing.T, sql string, args ...any) {
 	require.NoError(t, err)
 }
 
-// tenantPendingIDs lists what the repair selection returns for filter, the way the tenant-scoped
-// operator backfill sees it.
+// tenantPendingIDs lists what the repair selection returns for filter in tenantID, the way the
+// tenant-scoped operator backfill sees it.
 func tenantPendingIDs(
-	ctx context.Context, t *testing.T, repo *repository.EmbeddingsRepository, filter repository.PendingEmbeddingsFilter,
+	ctx context.Context, t *testing.T, repo *repository.EmbeddingsRepository, tenantID string,
+	filter repository.PendingEmbeddingsFilter,
 ) []uuid.UUID {
 	t.Helper()
 
-	ids, err := repo.ListPendingEmbeddings(ctx, filter, 1_000)
+	ids, err := repo.ListTenantPendingEmbeddings(ctx, tenantID, filter, 1_000)
 	require.NoError(t, err)
 
 	return ids
@@ -132,43 +134,52 @@ func testListPendingEmbeddingIDsFindsStaleAndOrphanedVectors(
 		require.NoError(t, embeddingsRepo.Upsert(ctx, record.ID, model, kind, unitVector(), nil))
 	}
 
-	missing := fixtures.seed(t, fieldType, text("Missing"), nil)
+	missing := fixtures.seed(ctx, t, fieldType, text("Missing"), nil)
 
-	current := fixtures.seed(t, fieldType, text("Current"), text("Current, translated"))
+	current := fixtures.seed(ctx, t, fieldType, text("Current"), text("Current, translated"))
 	embed(current)
 
-	editedText := fixtures.seed(t, fieldType, text("Before"), nil)
+	editedText := fixtures.seed(ctx, t, fieldType, text("Before"), nil)
 	embed(editedText)
 	fixtures.exec(t, `UPDATE feedback_records SET value_text = 'After', updated_at = NOW() WHERE id = $1`, editedText.ID)
 
-	editedLabel := fixtures.seed(t, fieldType, text("Same answer"), nil)
+	editedLabel := fixtures.seed(ctx, t, fieldType, text("Same answer"), nil)
 	embed(editedLabel)
 	fixtures.exec(t, `UPDATE feedback_records SET field_label = 'A new question', updated_at = NOW() WHERE id = $1`,
 		editedLabel.ID)
 
-	retranslated := fixtures.seed(t, fieldType, text("Bonjour"), text("Hello"))
+	retranslated := fixtures.seed(ctx, t, fieldType, text("Bonjour"), text("Hello"))
 	embed(retranslated)
 	fixtures.exec(t, `UPDATE feedback_records SET value_text_translated = 'Good day', updated_at = NOW() WHERE id = $1`,
 		retranslated.ID)
 
-	enrichedOnly := fixtures.seed(t, fieldType, text("Unchanged"), nil)
+	// The same text moved from one column to the next (a NULL taking its place) is a different
+	// input; the hash must not read the two rows as the same. For the search kind the record has no
+	// text left at all, so it is owed a clear either way.
+	shifted := fixtures.seed(ctx, t, fieldType, text("A"), text("B"))
+	fixtures.exec(t, `UPDATE feedback_records SET field_label = NULL WHERE id = $1`, shifted.ID)
+	embed(shifted)
+	fixtures.exec(t, `UPDATE feedback_records SET field_label = 'A', value_text = NULL, updated_at = NOW() WHERE id = $1`,
+		shifted.ID)
+
+	enrichedOnly := fixtures.seed(ctx, t, fieldType, text("Unchanged"), nil)
 	embed(enrichedOnly)
 	fixtures.exec(t, `UPDATE feedback_records SET sentiment = 'positive', sentiment_score = 0.9, updated_at = NOW()
 		WHERE id = $1`, enrichedOnly.ID)
 
-	emptied := fixtures.seed(t, fieldType, text("Soon gone"), nil)
+	emptied := fixtures.seed(ctx, t, fieldType, text("Soon gone"), nil)
 	embed(emptied)
 	fixtures.exec(t, `UPDATE feedback_records SET value_text = NULL, updated_at = NOW() WHERE id = $1`, emptied.ID)
 
 	// A vector written before source_hash existed is trusted as current, even if it is not.
-	legacy := fixtures.seed(t, fieldType, text("Legacy"), nil)
+	legacy := fixtures.seed(ctx, t, fieldType, text("Legacy"), nil)
 	embed(legacy)
 	fixtures.exec(t, `UPDATE embeddings SET source_hash = NULL WHERE feedback_record_id = $1`, legacy.ID)
 	fixtures.exec(t, `UPDATE feedback_records SET value_text = 'Legacy, edited', updated_at = NOW() WHERE id = $1`,
 		legacy.ID)
 
 	// A terminal failure for the current revision is excluded for this kind, and only this kind.
-	terminal := fixtures.seed(t, fieldType, text("Rejected"), nil)
+	terminal := fixtures.seed(ctx, t, fieldType, text("Rejected"), nil)
 	enrichment := models.EnrichmentNameEmbedding
 
 	otherEnrichment := models.EnrichmentNameTaxonomyEmbedding
@@ -181,18 +192,18 @@ func testListPendingEmbeddingIDsFindsStaleAndOrphanedVectors(
 		Reason: string(huberrors.TerminalReasonLength), Attempts: 1, ContextKey: model, SourceUpdatedAt: &terminal.UpdatedAt,
 	}))
 
-	otherKindTerminal := fixtures.seed(t, fieldType, text("Rejected elsewhere"), nil)
+	otherKindTerminal := fixtures.seed(ctx, t, fieldType, text("Rejected elsewhere"), nil)
 	require.NoError(t, failuresRepo.RecordFailure(ctx, models.EnrichmentFailure{
 		FeedbackRecordID: otherKindTerminal.ID, TenantID: fixtures.tenantID, Enrichment: otherEnrichment,
 		Terminal: true, Reason: string(huberrors.TerminalReasonLength), Attempts: 1, ContextKey: model,
 		SourceUpdatedAt: &otherKindTerminal.UpdatedAt,
 	}))
 
-	ids := tenantPendingIDs(ctx, t, embeddingsRepo, repository.PendingEmbeddingsFilter{
-		Model: model, InputKind: kind, TenantID: fixtures.tenantID, RetryBefore: time.Now().Add(-15 * time.Minute),
+	ids := tenantPendingIDs(ctx, t, embeddingsRepo, fixtures.tenantID, repository.PendingEmbeddingsFilter{
+		Model: model, InputKind: kind, RetryBefore: time.Now().Add(-15 * time.Minute),
 	})
 
-	want := []uuid.UUID{missing.ID, editedText.ID, editedLabel.ID, emptied.ID, otherKindTerminal.ID}
+	want := []uuid.UUID{missing.ID, editedText.ID, editedLabel.ID, emptied.ID, otherKindTerminal.ID, shifted.ID}
 	if kind == models.EmbeddingInputKindTaxonomyTranslated {
 		// Only the taxonomy input reads the translation.
 		want = append(want, retranslated.ID)
@@ -242,8 +253,8 @@ func TestEmbeddingRepairHealsStaleAndOrphanedVectors(t *testing.T) {
 	})
 
 	answer := "Very satisfied"
-	edited := fixtures.seed(t, models.FieldTypeCategorical, &answer, nil)
-	emptied := fixtures.seed(t, models.FieldTypeCategorical, &answer, nil)
+	edited := fixtures.seed(ctx, t, models.FieldTypeCategorical, &answer, nil)
+	emptied := fixtures.seed(ctx, t, models.FieldTypeCategorical, &answer, nil)
 
 	for _, target := range targets {
 		for _, record := range []*models.FeedbackRecord{edited, emptied} {
@@ -271,8 +282,8 @@ func TestEmbeddingRepairHealsStaleAndOrphanedVectors(t *testing.T) {
 	assert.Zero(t, vectors, "a record with no text keeps no vector of the text it had")
 
 	for _, target := range targets {
-		ids := tenantPendingIDs(ctx, t, embeddingsRepo, repository.PendingEmbeddingsFilter{
-			Model: target.Model, InputKind: target.InputKind, TenantID: fixtures.tenantID, RetryBefore: time.Now(),
+		ids := tenantPendingIDs(ctx, t, embeddingsRepo, fixtures.tenantID, repository.PendingEmbeddingsFilter{
+			Model: target.Model, InputKind: target.InputKind, RetryBefore: time.Now(),
 		})
 		assert.Empty(t, ids, "nothing is left to repair for %s", target.InputKind)
 	}
@@ -335,4 +346,69 @@ func runRepairJobs(
 	}
 
 	return len(jobs)
+}
+
+// failingFailureRecorder loses every failure-marker write, as a database blip at the worst moment.
+type failingFailureRecorder struct{}
+
+func (failingFailureRecorder) RecordFailure(context.Context, models.EnrichmentFailure) error {
+	return errors.New("marker write lost")
+}
+
+// TestEmbeddingWorkerCrashBoundaries covers the worker side of ENG-2792's crash boundaries:
+//
+//   - died after the provider call, before the write: River re-runs the job (stuck-job rescue) and
+//     it embeds normally; nothing was written, so nothing is out of step;
+//   - died after the write, before River marked the job complete: the re-run finds the vector
+//     current and skips the provider, so it costs no second call and leaves one vector;
+//   - the failure marker of an exhausted job was never written: the record is still selected for
+//     repair, with no cooldown to wait out.
+func TestEmbeddingWorkerCrashBoundaries(t *testing.T) {
+	ctx := context.Background()
+	fixtures := newStaleRepairFixtures(t)
+	db := fixtures.db
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	recordsService := service.NewFeedbackRecordsService(
+		repository.NewFeedbackRecordsRepository(db), embeddingsRepo, "", nil, nil, service.EmbeddingsQueueName, 5, "")
+	model := "crash-" + uuid.NewString()
+	answer := "Very satisfied"
+
+	job := func(recordID uuid.UUID, attempt int) *river.Job[service.FeedbackEmbeddingArgs] {
+		return &river.Job[service.FeedbackEmbeddingArgs]{
+			JobRow: &rivertype.JobRow{Attempt: attempt, MaxAttempts: 5, CreatedAt: time.Now()},
+			Args: service.FeedbackEmbeddingArgs{
+				FeedbackRecordID: recordID, Model: model, InputKind: models.EmbeddingInputKindRaw, ValueTextHash: "live",
+			},
+		}
+	}
+
+	t.Run("re-run after the write costs no provider call", func(t *testing.T) {
+		record := fixtures.seed(ctx, t, models.FieldTypeCategorical, &answer, nil)
+		provider := &countingEmbeddingClient{}
+		worker := workers.NewFeedbackEmbeddingWorker(recordsService, provider, "", nil)
+
+		require.NoError(t, worker.Work(ctx, job(record.ID, 1)))
+		require.NoError(t, worker.Work(ctx, job(record.ID, 2)), "River re-runs a job it never saw complete")
+
+		assert.Equal(t, 1, provider.calls)
+
+		var vectors int
+		require.NoError(t, db.QueryRow(ctx, `SELECT COUNT(*) FROM embeddings WHERE feedback_record_id = $1 AND model = $2`,
+			record.ID, model).Scan(&vectors))
+		assert.Equal(t, 1, vectors)
+	})
+
+	t.Run("a lost failure marker leaves the record repairable", func(t *testing.T) {
+		record := fixtures.seed(ctx, t, models.FieldTypeCategorical, &answer, nil)
+		provider := &scriptedEmbeddingClient{err: errors.New("provider unavailable")}
+		worker := workers.NewFeedbackEmbeddingWorkerWithOptions(
+			recordsService, provider, "", nil, time.Minute, failingFailureRecorder{}, nil, 0, nil)
+
+		require.Error(t, worker.Work(ctx, job(record.ID, 5)), "the final attempt fails")
+
+		ids := tenantPendingIDs(ctx, t, embeddingsRepo, fixtures.tenantID, repository.PendingEmbeddingsFilter{
+			Model: model, InputKind: models.EmbeddingInputKindRaw, RetryBefore: time.Now().Add(-15 * time.Minute),
+		})
+		assert.Contains(t, ids, record.ID)
+	})
 }

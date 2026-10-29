@@ -1,6 +1,7 @@
-// backfill-embeddings enqueues River embedding jobs for feedback records that have
-// non-empty value_text and null embedding. Run this when the API server is not
-// handling backfill (e.g. one-off or scheduled). hub-worker processes the jobs.
+// backfill-embeddings enqueues River embedding jobs for the feedback records whose embedding is
+// missing, stale or orphaned: the same selection as the repair sweep (EMBEDDING_RECONCILE_*), on
+// demand and at full worker concurrency, for incident recovery or a deployment without the sweep.
+// hub-worker processes the jobs.
 //
 // With -prune-stale-models it instead deletes embedding rows left behind by previous
 // EMBEDDING_MODEL values. Run the prune only AFTER a model migration's backfill has
@@ -14,7 +15,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/riverqueue/river"
@@ -57,6 +57,8 @@ func run() int {
 	maxRecords := flag.Int("max-records", 0, "maximum candidates to enqueue; 0 means unlimited")
 	stale := flag.Bool("stale", false,
 		"also re-embed vectors written before Hub recorded what they were computed from (requires -tenant-id)")
+	retryTerminal := flag.Bool("retry-terminal", false,
+		"also retry records the provider rejected outright, once the cause is fixed (requires -tenant-id)")
 
 	flag.Parse()
 
@@ -66,13 +68,14 @@ func run() int {
 		return exitFailure
 	}
 
-	if *stale && *tenantID == "" {
-		slog.Error("-stale requires -tenant-id: it can select every vector a tenant has")
+	if (*stale || *retryTerminal) && *tenantID == "" {
+		slog.Error("-stale and -retry-terminal require -tenant-id: they can select every vector a tenant has")
 
 		return exitFailure
 	}
 
-	if *pruneStaleModels && (*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0 || *stale) {
+	if *pruneStaleModels &&
+		(*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0 || *stale || *retryTerminal) {
 		slog.Error("-prune-stale-models cannot be combined with backfill scope or preview flags")
 
 		return exitFailure
@@ -184,30 +187,35 @@ func run() int {
 	}
 
 	params := service.EmbeddingBackfillParams{
-		Model:         targetModel,
-		InputKind:     inputKind,
-		TenantID:      *tenantID,
-		MaxRecords:    *maxRecords,
-		IncludeLegacy: *stale,
-		RetryAfter:    cfg.Embedding.ReconcileRetryAfter.Duration(),
+		Model:           targetModel,
+		InputKind:       inputKind,
+		TenantID:        *tenantID,
+		MaxRecords:      *maxRecords,
+		IncludeLegacy:   *stale,
+		IncludeTerminal: *retryTerminal,
 	}
+
+	feedbackRecordsService := service.NewFeedbackRecordsService(
+		repo,
+		embeddingsRepo,
+		embeddingModelForDB,
+		nil,
+		nil, // inserter set below after River client is created
+		service.EmbeddingsQueueName,
+		maxAttempts,
+		"", // translation default unused: embeddings backfill only
+	)
 
 	// The Hub has no audit store; this line and the completion line are the record of who changed
 	// what (the operator's exec session is the who). Records are identified by count, never content.
 	scope := []any{
 		"model", targetModel, "input_kind", inputKind, "tenant_id", *tenantID,
-		"max_records", *maxRecords, "stale", *stale, "count_only", *countOnly,
+		"max_records", *maxRecords, "stale", *stale, "retry_terminal", *retryTerminal, "count_only", *countOnly,
 	}
 	slog.Info("Embedding backfill started", scope...) // #nosec G706 -- values are structured log attributes
 
 	if *countOnly {
-		count, countErr := embeddingsRepo.CountPendingEmbeddings(ctx, repository.PendingEmbeddingsFilter{
-			Model:         params.Model,
-			InputKind:     params.InputKind,
-			TenantID:      params.TenantID,
-			RetryBefore:   time.Now().Add(-params.RetryAfter),
-			IncludeLegacy: params.IncludeLegacy,
-		})
+		count, countErr := feedbackRecordsService.CountEmbeddingBackfill(ctx, params)
 		if countErr != nil {
 			slog.Error("Backfill count failed", "error", countErr)
 
@@ -224,17 +232,6 @@ func run() int {
 
 		return exitSuccess
 	}
-
-	feedbackRecordsService := service.NewFeedbackRecordsService(
-		repo,
-		embeddingsRepo,
-		embeddingModelForDB,
-		nil,
-		nil, // inserter set below after River client is created
-		service.EmbeddingsQueueName,
-		maxAttempts,
-		"", // translation default unused: embeddings backfill only
-	)
 
 	embeddingClient, err := service.NewEmbeddingClient(ctx, embeddingCfg)
 	if err != nil {

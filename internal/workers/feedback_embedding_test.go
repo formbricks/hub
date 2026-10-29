@@ -74,6 +74,8 @@ type mockEmbeddingService struct {
 	setCalls        int
 	setEmbeddingNil bool
 	setInputKind    models.EmbeddingInputKind
+	current         bool  // EmbeddingIsCurrent answer
+	currentErr      error // EmbeddingIsCurrent error
 	// stillCurrent is the supersession guard the worker passed to SetEmbedding, kept so a test can
 	// ask it directly whether a given content is still current.
 	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool
@@ -81,6 +83,12 @@ type mockEmbeddingService struct {
 
 func (m *mockEmbeddingService) GetFeedbackRecord(_ context.Context, _ uuid.UUID) (*models.FeedbackRecord, error) {
 	return m.record, m.getErr
+}
+
+func (m *mockEmbeddingService) EmbeddingIsCurrent(
+	context.Context, uuid.UUID, string, models.EmbeddingInputKind,
+) (bool, error) {
+	return m.current, m.currentErr
 }
 
 func (m *mockEmbeddingService) SetEmbedding(
@@ -543,4 +551,27 @@ func TestFeedbackEmbeddingWorker_SupersessionGuardUsesTheCappedText(t *testing.T
 	changedHead := strings.Repeat("b", 100) + "tail"
 	assert.False(t, svc.stillCurrent(record.FieldLabel, &changedHead, nil),
 		"a change inside the capped prefix supersedes it")
+}
+
+// TestFeedbackEmbeddingWorkerSkipsCurrentVector: a repair or backfill job that lands after a live
+// job already embedded this content, or a job re-run after a crash between the write and River
+// completing it, must not spend a provider call (ENG-2792). A failed check must not block the job.
+func TestFeedbackEmbeddingWorkerSkipsCurrentVector(t *testing.T) {
+	t.Run("current vector: no provider call, no write", func(t *testing.T) {
+		svc := &mockEmbeddingService{record: textRecord("Great"), current: true}
+		client := &mockEmbeddingClient{embedding: []float32{0.1}}
+
+		require.NoError(t, NewFeedbackEmbeddingWorker(svc, client, "", nil).Work(context.Background(), embeddingJob()))
+		assert.Empty(t, client.input, "the provider must not be called")
+		assert.Zero(t, svc.setCalls)
+	})
+
+	t.Run("failed check: embeds anyway", func(t *testing.T) {
+		svc := &mockEmbeddingService{record: textRecord("Great"), currentErr: errors.New("db blip")}
+		client := &mockEmbeddingClient{embedding: []float32{0.1}}
+
+		require.NoError(t, NewFeedbackEmbeddingWorker(svc, client, "", nil).Work(context.Background(), embeddingJob()))
+		assert.NotEmpty(t, client.input)
+		assert.Equal(t, 1, svc.setCalls)
+	})
 }

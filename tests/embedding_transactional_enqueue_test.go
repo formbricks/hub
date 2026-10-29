@@ -56,7 +56,7 @@ type transactionalEnqueueEnv struct {
 	tenantID  string
 	rawModel  string
 	taxModel  string
-	providers []*service.EmbeddingProvider
+	providers []*service.EmbeddingJobBuilder
 }
 
 func newTransactionalEnqueueEnv(t *testing.T) *transactionalEnqueueEnv {
@@ -72,9 +72,9 @@ func newTransactionalEnqueueEnv(t *testing.T) *transactionalEnqueueEnv {
 		rawModel: "raw-" + uuid.NewString(),
 		taxModel: "taxonomy:" + uuid.NewString() + ":translated-v1",
 	}
-	env.providers = []*service.EmbeddingProvider{
-		service.NewEmbeddingProvider(env.rawModel, service.EmbeddingsQueueName, 5, "", 0, nil),
-		service.NewEmbeddingProviderForInputKind(env.taxModel, service.EmbeddingsQueueName, 5, "", 0, nil,
+	env.providers = []*service.EmbeddingJobBuilder{
+		service.NewEmbeddingJobBuilder(env.rawModel, service.EmbeddingsQueueName, 5, "", 0, nil),
+		service.NewEmbeddingJobBuilderForInputKind(env.taxModel, service.EmbeddingsQueueName, 5, "", 0, nil,
 			models.EmbeddingInputKindTaxonomyTranslated),
 	}
 

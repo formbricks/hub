@@ -168,8 +168,8 @@ func (e *TranslationSupersededError) Is(target error) bool {
 
 // ErrEmbeddingSuperseded is the sentinel for an embedding write skipped because the record's
 // value_text/field_label changed between the job reading the record and writing the vector —
-// a newer job owns the row, and letting the stale vector land last would permanently attach an
-// old text's embedding to the record (the missing-rows-only backfill can never repair that).
+// a newer job owns the row, and letting the stale vector land last would attach an old text's
+// embedding to the record until the repair sweep noticed (and paid to redo) it.
 // A benign no-op, not a failure: callers should record it as skipped rather than retry.
 var ErrEmbeddingSuperseded = &EmbeddingSupersededError{}
 

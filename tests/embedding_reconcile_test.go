@@ -20,22 +20,23 @@ import (
 	"github.com/formbricks/hub/pkg/database"
 )
 
-// TestListPendingTaxonomyEmbeddingIDs exercises the real repair-selection query against River and
+// TestListPendingEmbeddingIDsAppliesFailureAndJobRules exercises the real repair-selection query,
+// for the taxonomy embedding, against River and
 // enrichment failure state. Each exclusion is part of the safety contract: omitting one either
 // duplicates provider work or permanently abandons recoverable records.
-func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
+func TestListPendingEmbeddingIDsAppliesFailureAndJobRules(t *testing.T) {
 	// Every exclusion must hold for any field type the live taxonomy path embeds, not only text:
 	// categorical rows carry option labels and are repaired by the same query (ENG-2792).
 	for _, fieldType := range []models.FieldType{models.FieldTypeText, models.FieldTypeCategorical} {
 		t.Run(string(fieldType), func(t *testing.T) {
-			testListPendingTaxonomyEmbeddingIDs(t, fieldType)
+			testListPendingEmbeddingIDsAppliesFailureAndJobRules(t, fieldType)
 		})
 	}
 }
 
-// testListPendingTaxonomyEmbeddingIDs seeds one record per selection case with the given field type
+// testListPendingEmbeddingIDsAppliesFailureAndJobRules seeds one record per selection case with the given field type
 // and asserts which ones the repair query returns.
-func testListPendingTaxonomyEmbeddingIDs(t *testing.T, fieldType models.FieldType) {
+func testListPendingEmbeddingIDsAppliesFailureAndJobRules(t *testing.T, fieldType models.FieldType) {
 	t.Helper()
 
 	ctx := context.Background()

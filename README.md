@@ -118,7 +118,7 @@ changes. To (re)enrich an existing backlog, run the matching one-off backfill; i
 enqueues jobs for the affected records and `hub-worker` processes them:
 
 ```bash
-make run-backfill-embeddings                # records with no embedding
+make run-backfill-embeddings                # missing, stale or orphaned embeddings
 make run-backfill-translations              # records missing/stale in their tenant's target language
 make run-backfill-classify TYPE=sentiment   # records with sentiment IS NULL
 make run-backfill-classify TYPE=emotions    # records with emotions IS NULL

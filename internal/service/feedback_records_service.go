@@ -86,6 +86,14 @@ type EmbeddingsRepository interface {
 		stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
 	ListPendingEmbeddings(ctx context.Context, filter repository.PendingEmbeddingsFilter, limit int) ([]uuid.UUID, error)
+	ListTenantPendingEmbeddings(
+		ctx context.Context, tenantID string, filter repository.PendingEmbeddingsFilter, limit int,
+	) ([]uuid.UUID, error)
+	CountPendingEmbeddings(ctx context.Context, filter repository.PendingEmbeddingsFilter) (int, error)
+	CountTenantPendingEmbeddings(ctx context.Context, tenantID string, filter repository.PendingEmbeddingsFilter) (int, error)
+	EmbeddingIsCurrent(
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+	) (bool, error)
 }
 
 // EnrichmentClearMetrics records enrichment outputs nulled by an edit's eager-clear, labeled by
@@ -609,8 +617,9 @@ type EmbeddingBackfillParams struct {
 	// IncludeLegacy also re-embeds vectors written before Hub recorded what they were computed
 	// from. Tenant-scoped only: it can select every vector a tenant has.
 	IncludeLegacy bool
-	// RetryAfter is the transient-failure cooldown, as for the repair sweep.
-	RetryAfter time.Duration
+	// IncludeTerminal also retries records the provider rejected outright, for after the reason
+	// was fixed (a lower input cap, say). Tenant-scoped only.
+	IncludeTerminal bool
 }
 
 // EmbeddingBackfillResult reports what a backfill did.
@@ -621,13 +630,61 @@ type EmbeddingBackfillResult struct {
 	Enqueued int
 }
 
+// filter is the selection a backfill makes. Unlike the sweep it has no transient-failure cooldown:
+// an operator runs it once the provider has recovered, and waiting out the cooldown then would
+// hide exactly the records the incident left behind. Re-runs stay idempotent through the
+// in-flight dedupe.
+func (p EmbeddingBackfillParams) filter(now time.Time) repository.PendingEmbeddingsFilter {
+	return repository.PendingEmbeddingsFilter{
+		Model:           p.Model,
+		InputKind:       models.NormalizeEmbeddingInputKind(p.InputKind),
+		RetryBefore:     now,
+		IncludeLegacy:   p.IncludeLegacy,
+		IncludeTerminal: p.IncludeTerminal,
+	}
+}
+
+func (p EmbeddingBackfillParams) validate() error {
+	if (p.IncludeLegacy || p.IncludeTerminal) && p.TenantID == "" {
+		return ErrMissingTenantID
+	}
+
+	return nil
+}
+
+// CountEmbeddingBackfill counts what BackfillEmbeddings would select (before MaxRecords).
+func (s *FeedbackRecordsService) CountEmbeddingBackfill(ctx context.Context, params EmbeddingBackfillParams) (int, error) {
+	if err := params.validate(); err != nil {
+		return 0, err
+	}
+
+	filter := params.filter(time.Now())
+
+	var (
+		count int
+		err   error
+	)
+
+	if params.TenantID == "" {
+		count, err = s.embeddingsRepo.CountPendingEmbeddings(ctx, filter)
+	} else {
+		count, err = s.embeddingsRepo.CountTenantPendingEmbeddings(ctx, params.TenantID, filter)
+	}
+
+	if err != nil {
+		return 0, fmt.Errorf("count embedding backfill: %w", err)
+	}
+
+	return count, nil
+}
+
 // BackfillEmbeddings queues an embedding job for every record owed one under params, on the live
-// embeddings queue so incident recovery runs at full worker concurrency. It selects exactly what
-// the repair sweep would (repository.PendingEmbeddingsFilter): missing, stale and orphaned
-// vectors, skipping records with a job already in flight on any queue, terminal failures, and
-// transient failures still cooling down. One ordered pass in keyset pages, so the full set is
-// never materialized and records whose job finishes mid-run are not visited twice. The sweep
-// goes oldest first; this pass goes in id order, which is all a single pass needs.
+// embeddings queue so incident recovery runs at full worker concurrency. It selects what the repair
+// sweep would (repository.PendingEmbeddingsFilter): missing, stale and orphaned vectors, skipping
+// records with a job already in flight on any queue and terminal failures, but not waiting out the
+// transient-failure cooldown (see filter). Its jobs share the sweep's unique key, so the two never
+// queue the same repair twice. One pass in id-ordered keyset pages, so the full set is never
+// materialized and records whose job finishes mid-run are not visited twice.
 func (s *FeedbackRecordsService) BackfillEmbeddings(
 	ctx context.Context, params EmbeddingBackfillParams,
 ) (EmbeddingBackfillResult, error) {
@@ -637,18 +694,11 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(
 		return result, ErrEmbeddingBackfillNotConfigured
 	}
 
-	if params.IncludeLegacy && params.TenantID == "" {
-		return result, ErrMissingTenantID
+	if err := params.validate(); err != nil {
+		return result, err
 	}
 
-	inputKind := models.NormalizeEmbeddingInputKind(params.InputKind)
-	filter := repository.PendingEmbeddingsFilter{
-		Model:         params.Model,
-		InputKind:     inputKind,
-		TenantID:      params.TenantID,
-		RetryBefore:   time.Now().Add(-params.RetryAfter),
-		IncludeLegacy: params.IncludeLegacy,
-	}
+	filter := params.filter(time.Now())
 	opts := &river.InsertOpts{
 		Queue:       s.embeddingQueueName,
 		MaxAttempts: s.embeddingMaxAttempts,
@@ -665,9 +715,9 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(
 			break
 		}
 
-		page, err := s.embeddingsRepo.ListPendingEmbeddings(ctx, filter, pageSize)
+		page, err := s.listEmbeddingBackfillPage(ctx, params.TenantID, filter, pageSize)
 		if err != nil {
-			return result, fmt.Errorf("list records for embedding backfill: %w", err)
+			return result, err
 		}
 
 		if len(page) == 0 {
@@ -679,9 +729,9 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(
 			jobs = append(jobs, river.InsertManyParams{
 				Args: FeedbackEmbeddingArgs{
 					FeedbackRecordID: id,
-					Model:            params.Model,
-					InputKind:        inputKind,
-					ValueTextHash:    "backfill:" + string(inputKind),
+					Model:            filter.Model,
+					InputKind:        filter.InputKind,
+					ValueTextHash:    ValueTextHashRepair,
 				},
 				InsertOpts: opts,
 			})
@@ -708,6 +758,41 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(
 	}
 
 	return result, nil
+}
+
+//nolint:funcorder // scoped helper stays with the public backfill entry points
+func (s *FeedbackRecordsService) listEmbeddingBackfillPage(
+	ctx context.Context, tenantID string, filter repository.PendingEmbeddingsFilter, limit int,
+) ([]uuid.UUID, error) {
+	var (
+		page []uuid.UUID
+		err  error
+	)
+
+	if tenantID == "" {
+		page, err = s.embeddingsRepo.ListPendingEmbeddings(ctx, filter, limit)
+	} else {
+		page, err = s.embeddingsRepo.ListTenantPendingEmbeddings(ctx, tenantID, filter, limit)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("list records for embedding backfill: %w", err)
+	}
+
+	return page, nil
+}
+
+// EmbeddingIsCurrent reports whether the record already has a vector for model built from its
+// current content (internal use by the embeddings worker, to skip a provider call).
+func (s *FeedbackRecordsService) EmbeddingIsCurrent(
+	ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+) (bool, error) {
+	current, err := s.embeddingsRepo.EmbeddingIsCurrent(ctx, feedbackRecordID, model, inputKind)
+	if err != nil {
+		return false, fmt.Errorf("check embedding is current: %w", err)
+	}
+
+	return current, nil
 }
 
 // BackfillTranslations enqueues a translation job for every feedback record that needs

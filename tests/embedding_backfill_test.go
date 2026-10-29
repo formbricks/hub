@@ -91,13 +91,13 @@ func TestListPendingEmbeddings_KeysetPagination(t *testing.T) {
 
 	seen := map[uuid.UUID]bool{}
 	filter := repository.PendingEmbeddingsFilter{
-		Model: model, InputKind: models.EmbeddingInputKindRaw, TenantID: tenant, RetryBefore: time.Now(),
+		Model: model, InputKind: models.EmbeddingInputKindRaw, RetryBefore: time.Now(),
 	}
 
 	var prev uuid.UUID
 
 	for {
-		page, err := embeddingsRepo.ListPendingEmbeddings(ctx, filter, 2)
+		page, err := embeddingsRepo.ListTenantPendingEmbeddings(ctx, tenant, filter, 2)
 		require.NoError(t, err)
 		require.LessOrEqual(t, len(page), 2, "LIMIT bounds the page size")
 
@@ -251,14 +251,17 @@ func TestTenantEmbeddingBackfillStaysInsideTenant(t *testing.T) {
 	assert.False(t, exists, "an unknown tenant ID is distinguishable from a fully backfilled tenant")
 
 	filter := repository.PendingEmbeddingsFilter{
-		Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, TenantID: tenantA, RetryBefore: time.Now(),
+		Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, RetryBefore: time.Now(),
 	}
 
-	count, err := embeddingsRepo.CountPendingEmbeddings(ctx, filter)
+	count, err := embeddingsRepo.CountTenantPendingEmbeddings(ctx, tenantA, filter)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 
-	page, err := embeddingsRepo.ListPendingEmbeddings(ctx, filter, 10)
+	_, err = embeddingsRepo.ListTenantPendingEmbeddings(ctx, "", filter, 10)
+	require.Error(t, err, "the tenant entry point refuses an empty tenant rather than widening to all")
+
+	page, err := embeddingsRepo.ListTenantPendingEmbeddings(ctx, tenantA, filter, 10)
 	require.NoError(t, err)
 	require.Len(t, page, 2)
 
@@ -402,6 +405,12 @@ func TestEmbeddingBackfillSelectsWhatTheSweepWould(t *testing.T) {
 	failuresRepo := repository.NewEnrichmentFailuresRepository(db)
 	model := "backfill-dedupe-" + uuid.NewString()
 
+	// By model as well as by tenant: a regression that widened the backfill beyond its tenant would
+	// otherwise leave jobs for the whole shared database behind.
+	t.Cleanup(func() {
+		_, _ = db.Exec(context.Background(), `DELETE FROM river_job WHERE args->>'model' = $1`, model)
+	})
+
 	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{})
 	require.NoError(t, err)
 
@@ -410,31 +419,45 @@ func TestEmbeddingBackfillSelectsWhatTheSweepWould(t *testing.T) {
 		service.EmbeddingsQueueName, 5, "")
 
 	text := func(value string) *string { return &value }
-	missing := fixtures.seed(t, models.FieldTypeCategorical, text("Missing"), nil)
+	missing := fixtures.seed(ctx, t, models.FieldTypeCategorical, text("Missing"), nil)
 
-	inFlight := fixtures.seed(t, models.FieldTypeCategorical, text("Live job queued"), nil)
+	inFlight := fixtures.seed(ctx, t, models.FieldTypeCategorical, text("Live job queued"), nil)
 	_, err = riverClient.Insert(ctx, service.FeedbackEmbeddingArgs{
 		FeedbackRecordID: inFlight.ID, Model: model, InputKind: models.EmbeddingInputKindRaw, ValueTextHash: "live",
 	}, &river.InsertOpts{Queue: service.EmbeddingsQueueName})
 	require.NoError(t, err)
 
-	rejected := fixtures.seed(t, models.FieldTypeCategorical, text("Rejected"), nil)
+	rejected := fixtures.seed(ctx, t, models.FieldTypeCategorical, text("Rejected"), nil)
 	require.NoError(t, failuresRepo.RecordFailure(ctx, models.EnrichmentFailure{
 		FeedbackRecordID: rejected.ID, TenantID: fixtures.tenantID, Enrichment: models.EnrichmentNameEmbedding,
 		Terminal: true, Reason: string(huberrors.TerminalReasonLength), Attempts: 1, ContextKey: model,
 		SourceUpdatedAt: &rejected.UpdatedAt,
 	}))
 
-	stale := fixtures.seed(t, models.FieldTypeCategorical, text("Before"), nil)
+	stale := fixtures.seed(ctx, t, models.FieldTypeCategorical, text("Before"), nil)
 	require.NoError(t, embeddingsRepo.Upsert(ctx, stale.ID, model, models.EmbeddingInputKindRaw, unitVector(), nil))
 	fixtures.exec(t, `UPDATE feedback_records SET value_text = 'After' WHERE id = $1`, stale.ID)
 
-	legacy := fixtures.seed(t, models.FieldTypeCategorical, text("Legacy"), nil)
+	legacy := fixtures.seed(ctx, t, models.FieldTypeCategorical, text("Legacy"), nil)
 	require.NoError(t, embeddingsRepo.Upsert(ctx, legacy.ID, model, models.EmbeddingInputKindRaw, unitVector(), nil))
 	fixtures.exec(t, `UPDATE embeddings SET source_hash = NULL WHERE feedback_record_id = $1`, legacy.ID)
 
+	// Its attempts ran out on a transient error a moment ago, as in an incident the operator is
+	// recovering from: the sweep waits out the cooldown, the backfill must not.
+	cooling := fixtures.seed(ctx, t, models.FieldTypeCategorical, text("Just failed"), nil)
+	require.NoError(t, failuresRepo.RecordFailure(ctx, models.EnrichmentFailure{
+		FeedbackRecordID: cooling.ID, TenantID: fixtures.tenantID, Enrichment: models.EnrichmentNameEmbedding,
+		Terminal: false, Reason: models.EnrichmentFailureReasonProviderError, Attempts: 5, ContextKey: model,
+		SourceUpdatedAt: &cooling.UpdatedAt,
+	}))
+
+	sweepIDs, err := embeddingsRepo.ListPendingEmbeddingIDs(
+		ctx, model, models.EmbeddingInputKindRaw, time.Now().Add(-15*time.Minute), 10_000)
+	require.NoError(t, err)
+	require.NotContains(t, sweepIDs, cooling.ID, "precondition: the sweep is still cooling it down")
+
 	params := service.EmbeddingBackfillParams{
-		Model: model, InputKind: models.EmbeddingInputKindRaw, TenantID: fixtures.tenantID, RetryAfter: 15 * time.Minute,
+		Model: model, InputKind: models.EmbeddingInputKindRaw, TenantID: fixtures.tenantID,
 	}
 
 	queued := func() []uuid.UUID {
@@ -443,16 +466,35 @@ func TestEmbeddingBackfillSelectsWhatTheSweepWould(t *testing.T) {
 		var ids []uuid.UUID
 		require.NoError(t, db.QueryRow(ctx, `
 			SELECT COALESCE(array_agg((args->>'feedback_record_id')::uuid), '{}') FROM river_job
-			WHERE args->>'model' = $1 AND args->>'value_text_hash' LIKE 'backfill:%'`, model).Scan(&ids))
+			WHERE args->>'model' = $1 AND args->>'value_text_hash' = $2`, model, service.ValueTextHashRepair).Scan(&ids))
 
 		return ids
 	}
 
 	result, err := svc.BackfillEmbeddings(ctx, params)
 	require.NoError(t, err)
-	assert.Equal(t, service.EmbeddingBackfillResult{Selected: 2, Enqueued: 2}, result)
-	assert.ElementsMatch(t, []uuid.UUID{missing.ID, stale.ID}, queued(),
+	assert.Equal(t, service.EmbeddingBackfillResult{Selected: 3, Enqueued: 3}, result)
+	assert.ElementsMatch(t, []uuid.UUID{missing.ID, stale.ID, cooling.ID}, queued(),
 		"not the record with a live job in flight, not the rejected one, not the trusted legacy vector")
+
+	count, err := svc.CountEmbeddingBackfill(ctx, params)
+	require.NoError(t, err)
+	assert.Zero(t, count, "-count-only agrees: everything owed is now in flight")
+
+	// The sweep's repair for the same record is the same River unique key, so even a sweep that
+	// selected it before the backfill's insert landed could not queue it twice.
+	sweepRepair, err := riverClient.Insert(ctx, service.FeedbackEmbeddingArgs{
+		FeedbackRecordID: missing.ID, Model: model, InputKind: models.EmbeddingInputKindRaw,
+		ValueTextHash: service.ValueTextHashRepair,
+	}, &river.InsertOpts{
+		Queue: service.EmbeddingsReconcileQueueName,
+		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRetryable,
+			rivertype.JobStateRunning, rivertype.JobStateScheduled,
+		}},
+	})
+	require.NoError(t, err)
+	assert.True(t, sweepRepair.UniqueSkippedAsDuplicate)
 
 	result, err = svc.BackfillEmbeddings(ctx, params)
 	require.NoError(t, err)
@@ -461,12 +503,26 @@ func TestEmbeddingBackfillSelectsWhatTheSweepWould(t *testing.T) {
 	// Finish the backfill jobs without fixing the records: a later run must not be swallowed by
 	// River's completed-state uniqueness.
 	_, err = db.Exec(ctx, `UPDATE river_job SET state = 'completed', finalized_at = NOW()
-		WHERE args->>'model' = $1 AND args->>'value_text_hash' LIKE 'backfill:%'`, model)
+		WHERE args->>'model' = $1 AND args->>'value_text_hash' = $2`, model, service.ValueTextHashRepair)
 	require.NoError(t, err)
 
 	params.IncludeLegacy = true
 	result, err = svc.BackfillEmbeddings(ctx, params)
 	require.NoError(t, err)
-	assert.Equal(t, 3, result.Enqueued, "-stale re-verifies the legacy vector; completed jobs block nothing")
+	assert.Equal(t, 4, result.Enqueued, "-stale re-verifies the legacy vector; completed jobs block nothing")
 	assert.Contains(t, queued(), legacy.ID)
+	assert.NotContains(t, queued(), rejected.ID)
+
+	// -retry-terminal, for after the cause of a rejection was fixed.
+	params.IncludeLegacy = false
+	params.IncludeTerminal = true
+	result, err = svc.BackfillEmbeddings(ctx, params)
+	require.NoError(t, err)
+	assert.Equal(t, service.EmbeddingBackfillResult{Selected: 1, Enqueued: 1}, result)
+	assert.Contains(t, queued(), rejected.ID)
+
+	_, err = svc.BackfillEmbeddings(ctx, service.EmbeddingBackfillParams{
+		Model: model, InputKind: models.EmbeddingInputKindRaw, IncludeTerminal: true,
+	})
+	require.ErrorIs(t, err, service.ErrMissingTenantID, "retrying rejected records is tenant-scoped only")
 }

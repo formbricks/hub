@@ -365,7 +365,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	if translationRecordsService != nil && taxonomyEmbeddingEnqueueModel != "" {
 		translationRecordsService.SetEmbeddingEnqueuer(service.NewEmbeddingEnqueuer(
 			riverClient,
-			service.NewEmbeddingProviderForInputKind(
+			service.NewEmbeddingJobBuilderForInputKind(
 				taxonomyEmbeddingEnqueueModel,
 				service.EmbeddingsQueueName,
 				cfg.Embedding.MaxAttempts,

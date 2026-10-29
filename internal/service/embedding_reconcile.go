@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +45,10 @@ type EmbeddingReconcileService struct {
 	targetDepth int
 	maxAttempts int
 	retryAfter  time.Duration
+	// first rotates which target is served first, so a lane that hovers one short of its target
+	// depth cannot hand its single slot to the same target every time.
+	mu    sync.Mutex
+	first int
 }
 
 // NewEmbeddingReconcileService creates a level-triggered embedding reconciler for targets, in
@@ -82,8 +87,9 @@ type EmbeddingReconcileResult struct {
 // transient failures before making them eligible again.
 //
 // The room is shared fairly: each target may claim an equal share of what is left, and a target
-// with less backlog than its share leaves the rest to the targets after it. So a large taxonomy
-// backlog cannot starve search-embedding repair, or the reverse.
+// with less backlog than its share leaves the rest to the targets after it. The first target
+// rotates between sweeps. So a large taxonomy backlog cannot starve search-embedding repair, or
+// the reverse.
 func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconcileResult, error) {
 	result := EmbeddingReconcileResult{}
 	if s.inserter == nil {
@@ -107,7 +113,15 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 	retryBefore := time.Now().Add(-s.retryAfter)
 	params := make([]river.InsertManyParams, 0, room)
 
-	for i, target := range s.targets {
+	if len(s.targets) == 0 {
+		return result, nil
+	}
+
+	first := s.nextFirstTarget()
+
+	for i := range s.targets {
+		target := s.targets[(first+i)%len(s.targets)]
+
 		share := room / (len(s.targets) - i)
 		if share <= 0 {
 			continue
@@ -151,15 +165,27 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 	return result, nil
 }
 
-// repairJob is one record's repair. Unique across the in-flight states so a sweep racing another
-// sweep or a backfill cannot queue the same repair twice.
+// nextFirstTarget returns the target this sweep serves first and advances the rotation.
+func (s *EmbeddingReconcileService) nextFirstTarget() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	first := s.first
+	s.first = (s.first + 1) % len(s.targets)
+
+	return first
+}
+
+// repairJob is one record's repair. Unique across the in-flight states, and sharing its unique key
+// with the operator backfill's jobs, so neither another sweep nor a concurrent backfill can queue
+// the same repair twice.
 func (s *EmbeddingReconcileService) repairJob(target EmbeddingReconcileTarget, id uuid.UUID) river.InsertManyParams {
 	return river.InsertManyParams{
 		Args: FeedbackEmbeddingArgs{
 			FeedbackRecordID: id,
 			Model:            target.Model,
 			InputKind:        models.NormalizeEmbeddingInputKind(target.InputKind),
-			ValueTextHash:    "reconcile",
+			ValueTextHash:    ValueTextHashRepair,
 		},
 		InsertOpts: &river.InsertOpts{
 			Queue:       EmbeddingsReconcileQueueName,

@@ -101,7 +101,7 @@ func rollbackQuietly(ctx context.Context, tx pgx.Tx, msg string) {
 // embeddingEligibleTextSQL returns the eligibility rule for an input kind: the records whose
 // embedding input is non-empty, so the live provider embeds them.
 func embeddingEligibleTextSQL(kind models.EmbeddingInputKind) string {
-	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
+	if kind.ReadsTranslation() {
 		return taxonomyEmbeddingEligibleTextSQL
 	}
 
@@ -114,12 +114,14 @@ func embeddingEligibleTextSQL(kind models.EmbeddingInputKind) string {
 // it for the row it has just locked and checked; the repair sweep recomputes it to find vectors
 // whose record has since changed. One definition serves both, so they cannot drift.
 //
-// Each column is length-prefixed so no value can shift a boundary into its neighbour, and NULL
-// stays distinct from an empty string (concat_ws skips NULLs). A difference that does not change
-// the built input (say, trailing whitespace) costs one redundant re-embed, never a missed one.
+// Each column is length-prefixed (-1 for NULL) so no value can shift a boundary into its neighbour
+// and NULL stays distinct from an empty string. A difference that does not change the built input
+// (say, trailing whitespace) costs one redundant re-embed, never a missed one. The model's document
+// prefix and EMBEDDING_MAX_INPUT_BYTES are deployment settings, not record content, and are not
+// covered: changing either does not mark existing vectors stale.
 func embeddingSourceHashSQL(kind models.EmbeddingInputKind) string {
 	columns := []string{"fr.field_label", "fr.value_text"}
-	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
+	if kind.ReadsTranslation() {
 		columns = append(columns, "fr.value_text_translated")
 	}
 
@@ -127,7 +129,7 @@ func embeddingSourceHashSQL(kind models.EmbeddingInputKind) string {
 
 	parts := make([]string, 0, partsPerColumn*len(columns))
 	for _, column := range columns {
-		parts = append(parts, "octet_length("+column+")", column)
+		parts = append(parts, "coalesce(octet_length("+column+"), -1)", column)
 	}
 
 	return "sha256(convert_to(concat_ws(chr(31), " + strings.Join(parts, ", ") + "), 'UTF8'))"
@@ -313,25 +315,29 @@ func normalizeEmbeddingModels(models []string) []string {
 }
 
 // PendingEmbeddingsFilter selects the records whose embedding for Model is owed repair. The
-// repair sweep and the operator backfill both select through it, so they cannot drift apart.
+// repair sweep and the operator backfill both select through it, so they cannot drift apart. The
+// tenant scope is not part of it: callers pick a deployment-wide or a tenant entry point.
 type PendingEmbeddingsFilter struct {
 	Model     string
 	InputKind models.EmbeddingInputKind
-	// TenantID restricts the selection to one tenant; empty selects across the deployment.
-	TenantID string
 	// RetryBefore: a record whose last attempt failed transiently after this is cooling down.
 	RetryBefore time.Time
 	// IncludeLegacy also selects vectors written before source_hash existed, so an operator can
 	// re-verify one tenant's older vectors. The sweep never does: legacy vectors are trusted.
 	IncludeLegacy bool
+	// IncludeTerminal also selects records whose current revision the provider rejected outright,
+	// for an operator who has changed what made it reject them (a lower input cap, a relaxed
+	// policy). The sweep never does: it would spend a call on every pass forever.
+	IncludeTerminal bool
 	// AfterID continues a single pass in id order after this record; uuid.Nil starts at the
 	// beginning. Ids are server-assigned UUIDv7s, so unlike collected_at (client-supplied, and
 	// unbounded in the database) they always make a usable cursor.
 	AfterID uuid.UUID
 }
 
-// pendingEmbeddingsSQL builds the pending-set query for an input kind, with columns as its select
-// list and tail appended after the WHERE clause. It selects records whose vector for the model is:
+// pendingEmbeddingsQuery builds the pending-set query for filter, restricted to tenantID when it is
+// non-nil, with columns as its select list and orderBy/limit appended (orderBy "" counts instead).
+// It selects records whose vector for the model is:
 //
 //   - missing: eligible for the input kind (embeddingEligibleTextSQL) and no vector;
 //   - stale: a vector whose source_hash no longer matches the record's content
@@ -340,14 +346,33 @@ type PendingEmbeddingsFilter struct {
 //   - orphaned: a vector although the record no longer has any text. The worker clears it;
 //
 // and that have no embedding job in flight on any queue. Terminal failures for the current model
-// and revision are excluded: retrying content the provider has conclusively rejected would spend a
-// call on every pass forever. Non-terminal failures become eligible after the cooldown, so the same
-// poison records cannot monopolize every bounded sweep.
-//
-// Parameters: $1 model, $2 input kind, $3 failure-marker enrichment, $4 retry-before, $5 tenant
-// (empty for all), $6 include legacy, $7 the id to continue after (uuid.Nil to start).
-func pendingEmbeddingsSQL(kind models.EmbeddingInputKind, columns, tail string) string {
+// and revision are excluded (unless the filter includes them): retrying content the provider has
+// conclusively rejected would spend a call on every pass forever. Non-terminal failures become
+// eligible after RetryBefore, so the same poison records cannot monopolize every bounded sweep.
+// Every fragment is a compile-time constant; values travel as parameters.
+func pendingEmbeddingsQuery(
+	filter PendingEmbeddingsFilter, tenantID *string, columns, orderBy string, limit int,
+) (string, []any) {
+	kind := models.NormalizeEmbeddingInputKind(filter.InputKind)
 	eligible := embeddingEligibleTextSQL(kind)
+	args := []any{
+		filter.Model, kind, kind.EnrichmentName(), filter.RetryBefore,
+		filter.IncludeLegacy, filter.IncludeTerminal, filter.AfterID,
+	}
+
+	tenantPredicate := ""
+
+	if tenantID != nil {
+		args = append(args, *tenantID)
+		tenantPredicate = fmt.Sprintf("\n\t\t  AND fr.tenant_id = $%d", len(args))
+	}
+
+	tail := ""
+
+	if orderBy != "" {
+		args = append(args, limit)
+		tail = fmt.Sprintf("\n\t\tORDER BY %s\n\t\tLIMIT $%d", orderBy, len(args))
+	}
 
 	return `
 		SELECT ` + columns + `
@@ -359,17 +384,16 @@ func pendingEmbeddingsSQL(kind models.EmbeddingInputKind, columns, tail string) 
 		 AND failure.enrichment = $3
 		 AND failure.context_key = $1
 		 AND failure.source_updated_at = fr.updated_at
-		WHERE ($5 = '' OR fr.tenant_id = $5)
-		  AND fr.id > $7
+		WHERE fr.id > $7` + tenantPredicate + `
 		  AND (
 			(` + eligible + ` AND (
 			  e.feedback_record_id IS NULL
 			  OR (e.source_hash IS NOT NULL AND e.source_hash <> ` + embeddingSourceHashSQL(kind) + `)
-			  OR ($6 AND e.source_hash IS NULL)
+			  OR ($5 AND e.source_hash IS NULL)
 			))
 			OR (e.feedback_record_id IS NOT NULL AND NOT (` + eligible + `))
 		  )
-		  AND (failure.feedback_record_id IS NULL OR (
+		  AND (failure.feedback_record_id IS NULL OR $6 OR (
 		    NOT failure.terminal AND failure.failed_at <= $4
 		  ))
 		  AND NOT EXISTS (
@@ -384,21 +408,11 @@ func pendingEmbeddingsSQL(kind models.EmbeddingInputKind, columns, tail string) 
 				'model', $1::text,
 				'input_kind', $2::text
 			  )
-		  )` + tail
-}
-
-// pendingEmbeddingsArgs binds a filter to pendingEmbeddingsSQL's parameters.
-func pendingEmbeddingsArgs(filter PendingEmbeddingsFilter) []any {
-	kind := models.NormalizeEmbeddingInputKind(filter.InputKind)
-
-	return []any{
-		filter.Model, kind, embeddingFailureEnrichment(kind), filter.RetryBefore,
-		filter.TenantID, filter.IncludeLegacy, filter.AfterID,
-	}
+		  )` + tail, args
 }
 
 // ListPendingEmbeddingIDs returns up to limit records owed repair for model, deployment-wide and
-// oldest first (see pendingEmbeddingsSQL), for the repair sweep. Oldest first lets successive
+// oldest first (see pendingEmbeddingsQuery), for the repair sweep. Oldest first lets successive
 // sweeps advance through a backlog rather than reselecting whichever tenant is ingesting.
 //
 // The ordered eligibility scan is deliberately deployment-wide rather than tenant-scoped: the
@@ -415,33 +429,79 @@ func (r *EmbeddingsRepository) ListPendingEmbeddingIDs(
 ) ([]uuid.UUID, error) {
 	return r.listPendingEmbeddingIDs(ctx, PendingEmbeddingsFilter{
 		Model: model, InputKind: inputKind, RetryBefore: retryBefore,
-	}, "fr.collected_at, fr.id", limit)
+	}, nil, "fr.collected_at, fr.id", limit)
 }
 
-// ListPendingEmbeddings returns up to limit records owed repair under filter, in id order, so a
-// caller can page through the whole set in one pass by passing the last id back as AfterID.
+// ListPendingEmbeddings returns up to limit records owed repair under filter across the
+// deployment, in id order, so the operator backfill can page through the whole set in one pass by
+// passing the last id back as AfterID.
 func (r *EmbeddingsRepository) ListPendingEmbeddings(
 	ctx context.Context, filter PendingEmbeddingsFilter, limit int,
 ) ([]uuid.UUID, error) {
-	return r.listPendingEmbeddingIDs(ctx, filter, "fr.id", limit)
+	return r.listPendingEmbeddingIDs(ctx, filter, nil, "fr.id", limit)
 }
 
-//nolint:funcorder // scoped helper stays with the public pending-set methods
+// ListTenantPendingEmbeddings is ListPendingEmbeddings for one tenant (a feedback directory).
+func (r *EmbeddingsRepository) ListTenantPendingEmbeddings(
+	ctx context.Context, tenantID string, filter PendingEmbeddingsFilter, limit int,
+) ([]uuid.UUID, error) {
+	if tenantID == "" {
+		return nil, errEmbeddingBackfillTenantRequired
+	}
+
+	return r.listPendingEmbeddingIDs(ctx, filter, &tenantID, "fr.id", limit)
+}
+
+// CountPendingEmbeddings counts the records owed repair under filter across the deployment.
+func (r *EmbeddingsRepository) CountPendingEmbeddings(ctx context.Context, filter PendingEmbeddingsFilter) (int, error) {
+	return r.countPendingEmbeddings(ctx, filter, nil)
+}
+
+// CountTenantPendingEmbeddings counts one tenant's records owed repair under filter.
+func (r *EmbeddingsRepository) CountTenantPendingEmbeddings(
+	ctx context.Context, tenantID string, filter PendingEmbeddingsFilter,
+) (int, error) {
+	if tenantID == "" {
+		return 0, errEmbeddingBackfillTenantRequired
+	}
+
+	return r.countPendingEmbeddings(ctx, filter, &tenantID)
+}
+
+// EmbeddingIsCurrent reports whether the record already has a vector for model built from its
+// current content. The worker asks before calling the provider, so a repair or backfill job that
+// lands after a live job (or a re-run after a crash) costs one indexed lookup, not a provider call.
+// A legacy vector (no source_hash) is never current here: re-embedding it is what records the hash.
+func (r *EmbeddingsRepository) EmbeddingIsCurrent(
+	ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+) (bool, error) {
+	var current bool
+	if err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM embeddings e
+			JOIN feedback_records fr ON fr.id = e.feedback_record_id
+			WHERE e.feedback_record_id = $1 AND e.model = $2
+			  AND e.source_hash = `+embeddingSourceHashSQL(inputKind)+`
+		)`, feedbackRecordID, model,
+	).Scan(&current); err != nil {
+		return false, fmt.Errorf("check embedding is current: %w", err)
+	}
+
+	return current, nil
+}
+
+//nolint:funcorder // scoped helpers stay with the public pending-set methods
 func (r *EmbeddingsRepository) listPendingEmbeddingIDs(
-	ctx context.Context, filter PendingEmbeddingsFilter, orderBy string, limit int,
+	ctx context.Context, filter PendingEmbeddingsFilter, tenantID *string, orderBy string, limit int,
 ) ([]uuid.UUID, error) {
 	if limit <= 0 {
 		return []uuid.UUID{}, nil
 	}
 
-	kind := models.NormalizeEmbeddingInputKind(filter.InputKind)
+	query, args := pendingEmbeddingsQuery(filter, tenantID, "fr.id", orderBy, limit)
 
-	rows, err := r.db.Query(ctx,
-		pendingEmbeddingsSQL(kind, "fr.id", `
-		ORDER BY `+orderBy+`
-		LIMIT $8`),
-		append(pendingEmbeddingsArgs(filter), limit)...,
-	)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list pending embeddings: %w", err)
 	}
@@ -454,28 +514,19 @@ func (r *EmbeddingsRepository) listPendingEmbeddingIDs(
 	return ids, nil
 }
 
-// CountPendingEmbeddings counts the records owed repair under filter (AfterID is ignored).
-func (r *EmbeddingsRepository) CountPendingEmbeddings(ctx context.Context, filter PendingEmbeddingsFilter) (int, error) {
+//nolint:funcorder // scoped helpers stay with the public pending-set methods
+func (r *EmbeddingsRepository) countPendingEmbeddings(
+	ctx context.Context, filter PendingEmbeddingsFilter, tenantID *string,
+) (int, error) {
 	filter.AfterID = uuid.Nil
-	kind := models.NormalizeEmbeddingInputKind(filter.InputKind)
+	query, args := pendingEmbeddingsQuery(filter, tenantID, "COUNT(*)::int", "", 0)
 
 	var count int
-	if err := r.db.QueryRow(ctx,
-		pendingEmbeddingsSQL(kind, "COUNT(*)::int", ""), pendingEmbeddingsArgs(filter)...,
-	).Scan(&count); err != nil {
+	if err := r.db.QueryRow(ctx, query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count pending embeddings: %w", err)
 	}
 
 	return count, nil
-}
-
-// embeddingFailureEnrichment is the failure-marker name an input kind's failures are recorded under.
-func embeddingFailureEnrichment(kind models.EmbeddingInputKind) string {
-	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
-		return models.EnrichmentNameTaxonomyEmbedding
-	}
-
-	return models.EnrichmentNameEmbedding
 }
 
 // CountRunnableEmbeddingJobs returns the current runnable depth of one embedding queue. Retryable
@@ -498,7 +549,7 @@ func (r *EmbeddingsRepository) CountRunnableEmbeddingJobs(ctx context.Context, q
 
 // TenantExistsForEmbeddingBackfill reports whether Hub knows the tenant through feedback records
 // or tenant settings. Hub has no authoritative tenants table, so checking both data sources lets the
-// operator distinguish a likely typo from an existing tenant with no eligible missing embeddings.
+// operator distinguish a likely typo from an existing tenant with nothing left to repair.
 func (r *EmbeddingsRepository) TenantExistsForEmbeddingBackfill(ctx context.Context, tenantID string) (bool, error) {
 	if tenantID == "" {
 		return false, errEmbeddingBackfillTenantRequired
