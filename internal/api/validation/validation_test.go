@@ -1,8 +1,10 @@
 package validation
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -382,8 +384,8 @@ func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
 		var queryErr *QueryDecodeError
 		require.ErrorAs(t, err, &queryErr)
 		assert.Equal(t, []InvalidParam{
-			{Name: "updatd_since", Reason: unknownQueryParamReason},
-			{Name: "zzz", Reason: unknownQueryParamReason},
+			{Name: "updatd_since", Reason: ReasonUnknownQueryParam},
+			{Name: "zzz", Reason: ReasonUnknownQueryParam},
 		}, queryErr.InvalidParams())
 	})
 
@@ -418,8 +420,47 @@ func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
 
 		var queryErr *QueryDecodeError
 		require.ErrorAs(t, ValidateAndDecodeQueryParams(req, &filters), &queryErr)
-		assert.Equal(t, []InvalidParam{{Name: "source_typo[0]", Reason: unknownQueryParamReason}},
+		assert.Equal(t, []InvalidParam{{Name: "source_typo[0]", Reason: ReasonUnknownQueryParam}},
 			queryErr.InvalidParams())
+	})
+
+	// The decoder reads name[<index>] only into a slice field and silently ignores every other
+	// bracketed key, so each of these must be refused rather than accepted under its base name.
+	// tenant_id[0] alone is the dangerous one: it leaves the tenant unset.
+	t.Run("rejects bracketed keys the decoder would ignore", func(t *testing.T) {
+		for _, key := range []string{
+			"tenant_id[0]", "updated_since[0]", "sort[0]", "limit[0]",
+			"source_type[]", "source_type[a]", "source_type[0][1]", "source_type[0]x", "source_type[0",
+		} {
+			var filters models.ListFeedbackRecordsFilters
+
+			query := url.Values{"tenant_id": {"t1"}, key: {"2026-01-01T00:00:00Z"}}
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?"+query.Encode(), http.NoBody)
+
+			var queryErr *QueryDecodeError
+			require.ErrorAsf(t, ValidateAndDecodeQueryParams(req, &filters), &queryErr, "key %q", key)
+			assert.Equal(t, []InvalidParam{{Name: key, Reason: ReasonUnknownQueryParam}}, queryErr.InvalidParams())
+		}
+	})
+
+	t.Run("bounds what it echoes back", func(t *testing.T) {
+		var filters models.ListFeedbackRecordsFilters
+
+		query := url.Values{"tenant_id": {"t1"}, strings.Repeat("k", 500): {"1"}}
+		for i := range 30 {
+			query.Set(fmt.Sprintf("x%02d", i), "1")
+		}
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?"+query.Encode(), http.NoBody)
+
+		var queryErr *QueryDecodeError
+		require.ErrorAs(t, ValidateAndDecodeQueryParams(req, &filters), &queryErr)
+
+		params := queryErr.InvalidParams()
+		require.Len(t, params, maxReportedQueryParams+1)
+		assert.Equal(t, strings.Repeat("k", maxReportedQueryParamRunes)+"…", params[0].Name)
+		assert.Equal(t, InvalidParam{Name: "query", Reason: "has 11 more unrecognized parameters, not listed"},
+			params[maxReportedQueryParams])
 	})
 
 	t.Run("WithoutQueryParams narrows what the struct accepts", func(t *testing.T) {
@@ -431,8 +472,8 @@ func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
 		var queryErr *QueryDecodeError
 		require.ErrorAs(t, ValidateAndDecodeQueryParams(req, &filters, WithoutQueryParams("limit", "cursor")), &queryErr)
 		assert.Equal(t, []InvalidParam{
-			{Name: "cursor", Reason: unknownQueryParamReason},
-			{Name: "limit", Reason: unknownQueryParamReason},
+			{Name: "cursor", Reason: ReasonUnknownQueryParam},
+			{Name: "limit", Reason: ReasonUnknownQueryParam},
 		}, queryErr.InvalidParams())
 	})
 }
@@ -446,11 +487,17 @@ func TestRejectUnknownQueryParams(t *testing.T) {
 
 	var queryErr *QueryDecodeError
 	require.ErrorAs(t, err, &queryErr)
-	assert.Equal(t, []InvalidParam{{Name: "min_scor", Reason: unknownQueryParamReason}}, queryErr.InvalidParams())
+	assert.Equal(t, []InvalidParam{{Name: "min_scor", Reason: ReasonUnknownQueryParam}}, queryErr.InvalidParams())
 
 	require.NoError(t, RejectUnknownQueryParams(
 		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?tenant_id=t1&limit=5", http.NoBody),
 		"tenant_id", "limit", "min_score"))
+
+	// Query().Get reads only the exact name, so no indexed form is accepted for these handlers.
+	require.ErrorAs(t, RejectUnknownQueryParams(
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?min_score[0]=0.9", http.NoBody),
+		"tenant_id", "limit", "min_score"), &queryErr)
+	assert.Equal(t, []InvalidParam{{Name: "min_score[0]", Reason: ReasonUnknownQueryParam}}, queryErr.InvalidParams())
 }
 
 func TestNoReplacementChar(t *testing.T) {

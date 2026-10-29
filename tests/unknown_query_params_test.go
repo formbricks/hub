@@ -125,3 +125,62 @@ func TestUnknownQueryParamsAreRejected(t *testing.T) {
 		assert.Equal(t, []string{"enabledd"}, invalidParamNames(problem))
 	})
 }
+
+// The decoder reads an indexed key only into a slice field, so tenant_id[0] used to be dropped and
+// leave the tenant unset: DELETE ?user_id=u&tenant_id[0]=A then deleted u's records in every tenant,
+// as the documented no-tenant form does. It must be refused, with nothing deleted anywhere.
+func TestDeleteByUserRefusesIndexedTenant(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	userID := "indexed-tenant-user-" + uuid.NewString()
+	tenants := []string{"indexed-tenant-a-" + uuid.NewString(), "indexed-tenant-b-" + uuid.NewString()}
+
+	send := func(t *testing.T, method, target, body string) (int, []byte) {
+		t.Helper()
+
+		req, err := http.NewRequestWithContext(context.Background(), method, server.URL+target, bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+
+		defer func() { require.NoError(t, resp.Body.Close()) }()
+
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+
+		return resp.StatusCode, raw
+	}
+
+	for _, tenant := range tenants {
+		status, _ := send(t, http.MethodPost, "/v1/feedback-records", fmt.Sprintf(
+			`{"source_type":"survey","field_id":"q1","field_type":"text","value_text":"x","submission_id":%q,"tenant_id":%q,"user_id":%q}`,
+			uuid.NewString(), tenant, userID))
+		require.Equal(t, http.StatusCreated, status)
+	}
+
+	// Raw query: url.Values would percent-encode the brackets, which the server decodes the same way,
+	// but spelling them out keeps the request identical to what a client sends.
+	status, raw := send(t, http.MethodDelete,
+		"/v1/feedback-records?user_id="+url.QueryEscape(userID)+"&tenant_id[0]="+url.QueryEscape(tenants[0]), "")
+	require.Equal(t, http.StatusBadRequest, status, string(raw))
+
+	var problem response.ProblemDetails
+	require.NoError(t, json.Unmarshal(raw, &problem))
+	require.Len(t, problem.InvalidParams, 1)
+	assert.Equal(t, "tenant_id[0]", problem.InvalidParams[0].Name)
+
+	for _, tenant := range tenants {
+		status, raw := send(t, http.MethodGet, "/v1/feedback-records/count?tenant_id="+url.QueryEscape(tenant)+
+			"&user_id="+url.QueryEscape(userID), "")
+		require.Equal(t, http.StatusOK, status)
+
+		var count models.CountFeedbackRecordsResponse
+		require.NoError(t, json.Unmarshal(raw, &count))
+		assert.Equal(t, int64(1), count.Count, "tenant %s lost its record", tenant)
+	}
+}
