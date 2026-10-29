@@ -153,6 +153,22 @@ until their content changes.
 
 Vectors written before Hub recorded what they were computed from are trusted as current.
 
+For incident recovery, `backfill-embeddings` queues the same work on demand, on the live
+embeddings queue so it drains at full worker concurrency. It selects exactly what the sweep would:
+records with a job already in flight, records the provider rejected outright, and transient
+failures still cooling down are skipped, so running it twice queues nothing the second time.
+
+| Flag                | Description                                                                                         |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| `-tenant-id <id>`   | Restrict to one tenant (feedback directory). Without it the backfill runs across the deployment.   |
+| `-taxonomy`         | Backfill the taxonomy embedding instead of the search embedding.                                    |
+| `-max-records <n>`  | Stop after `n` records, to run in bounded batches (for example 100, then 500 at a time).            |
+| `-count-only`       | Print how many records are owed work without queueing anything.                                    |
+| `-stale`            | Also re-embed vectors written before Hub recorded what they were computed from. Needs `-tenant-id`. |
+
+Each run logs one line when it starts and one when it finishes, with its scope and counts, as the
+record of what was done.
+
 ### Translation
 
 | Variable                            | Default | Description                                                                                                                                            |

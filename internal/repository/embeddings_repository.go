@@ -312,100 +312,45 @@ func normalizeEmbeddingModels(models []string) []string {
 	return out
 }
 
-// ListFeedbackRecordIDsForBackfill returns one keyset page (fr.id > afterID, ordered by id,
-// at most limit rows) of feedback-record IDs that have non-empty value_text and no row in
-// embeddings for the given model (so they need an embedding for that model). Pass uuid.Nil
-// as afterID for the first page.
-func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfill(
-	ctx context.Context, model string, afterID uuid.UUID, limit int,
-) ([]uuid.UUID, error) {
-	return r.ListFeedbackRecordIDsForBackfillByInputKind(ctx, model, models.EmbeddingInputKindRaw, afterID, limit)
+// PendingEmbeddingsFilter selects the records whose embedding for Model is owed repair. The
+// repair sweep and the operator backfill both select through it, so they cannot drift apart.
+type PendingEmbeddingsFilter struct {
+	Model     string
+	InputKind models.EmbeddingInputKind
+	// TenantID restricts the selection to one tenant; empty selects across the deployment.
+	TenantID string
+	// RetryBefore: a record whose last attempt failed transiently after this is cooling down.
+	RetryBefore time.Time
+	// IncludeLegacy also selects vectors written before source_hash existed, so an operator can
+	// re-verify one tenant's older vectors. The sweep never does: legacy vectors are trusted.
+	IncludeLegacy bool
+	// AfterID continues a single pass in id order after this record; uuid.Nil starts at the
+	// beginning. Ids are server-assigned UUIDv7s, so unlike collected_at (client-supplied, and
+	// unbounded in the database) they always make a usable cursor.
+	AfterID uuid.UUID
 }
 
-// ListFeedbackRecordIDsForBackfillByInputKind returns feedback-record IDs missing an embedding
-// for model and eligible for the requested embedding input kind.
-func (r *EmbeddingsRepository) ListFeedbackRecordIDsForBackfillByInputKind(
-	ctx context.Context,
-	model string,
-	inputKind models.EmbeddingInputKind,
-	afterID uuid.UUID,
-	limit int,
-) ([]uuid.UUID, error) {
-	return r.listFeedbackRecordIDsForBackfillByInputKind(ctx, model, inputKind, "", false, afterID, limit)
-}
-
-// ListTenantFeedbackRecordIDsForBackfillByInputKind returns one tenant's feedback-record IDs that
-// are missing an embedding for model and eligible for the requested input kind.
-func (r *EmbeddingsRepository) ListTenantFeedbackRecordIDsForBackfillByInputKind(
-	ctx context.Context,
-	tenantID string,
-	model string,
-	inputKind models.EmbeddingInputKind,
-	afterID uuid.UUID,
-	limit int,
-) ([]uuid.UUID, error) {
-	if tenantID == "" {
-		return nil, errEmbeddingBackfillTenantRequired
-	}
-
-	return r.listFeedbackRecordIDsForBackfillByInputKind(ctx, model, inputKind, tenantID, true, afterID, limit)
-}
-
-// ListPendingEmbeddingIDs returns the records whose embedding for model is owed repair and that
-// have no embedding job in flight on any queue:
+// pendingEmbeddingsSQL builds the pending-set query for an input kind, with columns as its select
+// list and tail appended after the WHERE clause. It selects records whose vector for the model is:
 //
-//   - missing: eligible for the input kind (embeddingEligibleTextSQL) and no vector for model;
+//   - missing: eligible for the input kind (embeddingEligibleTextSQL) and no vector;
 //   - stale: a vector whose source_hash no longer matches the record's content
-//     (embeddingSourceHashSQL). A NULL hash predates hashing and is trusted as current;
-//   - orphaned: a vector although the record no longer has any text. The worker clears it.
+//     (embeddingSourceHashSQL). A NULL hash predates hashing and is trusted as current unless the
+//     filter includes legacy vectors;
+//   - orphaned: a vector although the record no longer has any text. The worker clears it;
 //
-// Terminal failures for the current model and revision are excluded: retrying content the provider
-// has conclusively rejected would spend a call on every sweep forever. Non-terminal failures become
-// eligible after retryBefore, so the same poison records cannot monopolize every bounded sweep.
-// Candidates are ordered oldest first so successful/cooldown-filtered sweeps advance through the
-// backlog rather than repeatedly selecting whichever tenant is ingesting the newest records.
+// and that have no embedding job in flight on any queue. Terminal failures for the current model
+// and revision are excluded: retrying content the provider has conclusively rejected would spend a
+// call on every pass forever. Non-terminal failures become eligible after the cooldown, so the same
+// poison records cannot monopolize every bounded sweep.
 //
-// The ordered eligibility scan is deliberately deployment-wide rather than tenant-scoped: the
-// repair lane must make progress without requiring tenant discovery or allowing a busy tenant to
-// monopolize it. Its operational impact is bounded by the five-minute sweep cadence and two-minute
-// worker deadline, while the LIMIT bounds returned rows and queued work (not scan cost). Hashing
-// every embedded record's content is part of that scan. Measured at 200k records with vectors for
-// both models: ~500 ms per model when nothing is owed (the full scan; the missing-only query it
-// replaced took ~185 ms), ~8 ms with a 1% backlog. A cheaper prefilter on updated_at is not safe:
-// an edit whose transaction started before a vector's write but committed after it carries the
-// older timestamp. Changing the access path requires production-scale query-plan evidence.
-func (r *EmbeddingsRepository) ListPendingEmbeddingIDs(
-	ctx context.Context, model string, inputKind models.EmbeddingInputKind, retryBefore time.Time, limit int,
-) ([]uuid.UUID, error) {
-	return r.listPendingEmbeddingIDs(ctx, model, inputKind, "", retryBefore, limit)
-}
+// Parameters: $1 model, $2 input kind, $3 failure-marker enrichment, $4 retry-before, $5 tenant
+// (empty for all), $6 include legacy, $7 the id to continue after (uuid.Nil to start).
+func pendingEmbeddingsSQL(kind models.EmbeddingInputKind, columns, tail string) string {
+	eligible := embeddingEligibleTextSQL(kind)
 
-// ListTenantPendingEmbeddingIDs is ListPendingEmbeddingIDs restricted to one tenant: the operator
-// repair path (backfill-embeddings -tenant-id) selects exactly what the sweep would.
-func (r *EmbeddingsRepository) ListTenantPendingEmbeddingIDs(
-	ctx context.Context, tenantID, model string, inputKind models.EmbeddingInputKind, retryBefore time.Time, limit int,
-) ([]uuid.UUID, error) {
-	if tenantID == "" {
-		return nil, errEmbeddingBackfillTenantRequired
-	}
-
-	return r.listPendingEmbeddingIDs(ctx, model, inputKind, tenantID, retryBefore, limit)
-}
-
-//nolint:funcorder // scoped helper stays with the public pending-set methods
-func (r *EmbeddingsRepository) listPendingEmbeddingIDs(
-	ctx context.Context, model string, inputKind models.EmbeddingInputKind, tenantID string,
-	retryBefore time.Time, limit int,
-) ([]uuid.UUID, error) {
-	if limit <= 0 {
-		return []uuid.UUID{}, nil
-	}
-
-	inputKind = models.NormalizeEmbeddingInputKind(inputKind)
-	eligible := embeddingEligibleTextSQL(inputKind)
-
-	rows, err := r.db.Query(ctx, `
-		SELECT fr.id
+	return `
+		SELECT ` + columns + `
 		FROM feedback_records fr
 		LEFT JOIN embeddings e
 		  ON e.feedback_record_id = fr.id AND e.model = $1
@@ -414,13 +359,15 @@ func (r *EmbeddingsRepository) listPendingEmbeddingIDs(
 		 AND failure.enrichment = $3
 		 AND failure.context_key = $1
 		 AND failure.source_updated_at = fr.updated_at
-		WHERE ($6 = '' OR fr.tenant_id = $6)
+		WHERE ($5 = '' OR fr.tenant_id = $5)
+		  AND fr.id > $7
 		  AND (
-			(`+eligible+` AND (
+			(` + eligible + ` AND (
 			  e.feedback_record_id IS NULL
-			  OR (e.source_hash IS NOT NULL AND e.source_hash <> `+embeddingSourceHashSQL(inputKind)+`)
+			  OR (e.source_hash IS NOT NULL AND e.source_hash <> ` + embeddingSourceHashSQL(kind) + `)
+			  OR ($6 AND e.source_hash IS NULL)
 			))
-			OR (e.feedback_record_id IS NOT NULL AND NOT (`+eligible+`))
+			OR (e.feedback_record_id IS NOT NULL AND NOT (` + eligible + `))
 		  )
 		  AND (failure.feedback_record_id IS NULL OR (
 		    NOT failure.terminal AND failure.failed_at <= $4
@@ -437,37 +384,89 @@ func (r *EmbeddingsRepository) listPendingEmbeddingIDs(
 				'model', $1::text,
 				'input_kind', $2::text
 			  )
-		  )
-		ORDER BY fr.collected_at, fr.id
-		LIMIT $5`,
-		model,
-		inputKind,
-		embeddingFailureEnrichment(inputKind),
-		retryBefore,
-		limit,
-		tenantID,
+		  )` + tail
+}
+
+// pendingEmbeddingsArgs binds a filter to pendingEmbeddingsSQL's parameters.
+func pendingEmbeddingsArgs(filter PendingEmbeddingsFilter) []any {
+	kind := models.NormalizeEmbeddingInputKind(filter.InputKind)
+
+	return []any{
+		filter.Model, kind, embeddingFailureEnrichment(kind), filter.RetryBefore,
+		filter.TenantID, filter.IncludeLegacy, filter.AfterID,
+	}
+}
+
+// ListPendingEmbeddingIDs returns up to limit records owed repair for model, deployment-wide and
+// oldest first (see pendingEmbeddingsSQL), for the repair sweep. Oldest first lets successive
+// sweeps advance through a backlog rather than reselecting whichever tenant is ingesting.
+//
+// The ordered eligibility scan is deliberately deployment-wide rather than tenant-scoped: the
+// repair lane must make progress without requiring tenant discovery or allowing a busy tenant to
+// monopolize it. Its operational impact is bounded by the five-minute sweep cadence and two-minute
+// worker deadline, while the LIMIT bounds returned rows and queued work (not scan cost). Hashing
+// every embedded record's content is part of that scan. Measured at 200k records with vectors for
+// both models: ~500 ms per model when nothing is owed (the full scan; the missing-only query it
+// replaced took ~185 ms), ~8 ms with a 1% backlog. A cheaper prefilter on updated_at is not safe:
+// an edit whose transaction started before a vector's write but committed after it carries the
+// older timestamp. Changing the access path requires production-scale query-plan evidence.
+func (r *EmbeddingsRepository) ListPendingEmbeddingIDs(
+	ctx context.Context, model string, inputKind models.EmbeddingInputKind, retryBefore time.Time, limit int,
+) ([]uuid.UUID, error) {
+	return r.listPendingEmbeddingIDs(ctx, PendingEmbeddingsFilter{
+		Model: model, InputKind: inputKind, RetryBefore: retryBefore,
+	}, "fr.collected_at, fr.id", limit)
+}
+
+// ListPendingEmbeddings returns up to limit records owed repair under filter, in id order, so a
+// caller can page through the whole set in one pass by passing the last id back as AfterID.
+func (r *EmbeddingsRepository) ListPendingEmbeddings(
+	ctx context.Context, filter PendingEmbeddingsFilter, limit int,
+) ([]uuid.UUID, error) {
+	return r.listPendingEmbeddingIDs(ctx, filter, "fr.id", limit)
+}
+
+//nolint:funcorder // scoped helper stays with the public pending-set methods
+func (r *EmbeddingsRepository) listPendingEmbeddingIDs(
+	ctx context.Context, filter PendingEmbeddingsFilter, orderBy string, limit int,
+) ([]uuid.UUID, error) {
+	if limit <= 0 {
+		return []uuid.UUID{}, nil
+	}
+
+	kind := models.NormalizeEmbeddingInputKind(filter.InputKind)
+
+	rows, err := r.db.Query(ctx,
+		pendingEmbeddingsSQL(kind, "fr.id", `
+		ORDER BY `+orderBy+`
+		LIMIT $8`),
+		append(pendingEmbeddingsArgs(filter), limit)...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list pending embedding ids: %w", err)
-	}
-	defer rows.Close()
-
-	ids := make([]uuid.UUID, 0, limit)
-
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan pending embedding id: %w", err)
-		}
-
-		ids = append(ids, id)
+		return nil, fmt.Errorf("list pending embeddings: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate pending embedding ids: %w", err)
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, fmt.Errorf("scan pending embeddings: %w", err)
 	}
 
 	return ids, nil
+}
+
+// CountPendingEmbeddings counts the records owed repair under filter (AfterID is ignored).
+func (r *EmbeddingsRepository) CountPendingEmbeddings(ctx context.Context, filter PendingEmbeddingsFilter) (int, error) {
+	filter.AfterID = uuid.Nil
+	kind := models.NormalizeEmbeddingInputKind(filter.InputKind)
+
+	var count int
+	if err := r.db.QueryRow(ctx,
+		pendingEmbeddingsSQL(kind, "COUNT(*)::int", ""), pendingEmbeddingsArgs(filter)...,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count pending embeddings: %w", err)
+	}
+
+	return count, nil
 }
 
 // embeddingFailureEnrichment is the failure-marker name an input kind's failures are recorded under.
@@ -497,87 +496,6 @@ func (r *EmbeddingsRepository) CountRunnableEmbeddingJobs(ctx context.Context, q
 	return count, nil
 }
 
-//nolint:funcorder // scoped helper stays with the public backfill methods
-func (r *EmbeddingsRepository) listFeedbackRecordIDsForBackfillByInputKind(
-	ctx context.Context,
-	model string,
-	inputKind models.EmbeddingInputKind,
-	tenantID string,
-	tenantScoped bool,
-	afterID uuid.UUID,
-	limit int,
-) ([]uuid.UUID, error) {
-	eligibility := backfillEligibilitySQL(inputKind)
-
-	tenantClause := ""
-	args := []any{model, afterID, limit}
-
-	if tenantScoped {
-		tenantClause = "AND fr.tenant_id = $4"
-
-		args = append(args, tenantID)
-	}
-
-	query := `
-		SELECT fr.id FROM feedback_records fr
-		WHERE ` + eligibility + `
-		  AND fr.id > $2
-		  ` + tenantClause + `
-		  AND NOT EXISTS (
-		    SELECT 1 FROM embeddings e
-		    WHERE e.feedback_record_id = fr.id AND e.model = $1
-		  )
-		ORDER BY fr.id
-		LIMIT $3
-	`
-
-	rows, err := r.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list feedback record ids for backfill: %w", err)
-	}
-	defer rows.Close()
-
-	var ids []uuid.UUID
-
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan feedback record id: %w", err)
-		}
-
-		ids = append(ids, id)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating backfill ids: %w", err)
-	}
-
-	return ids, nil
-}
-
-// CountFeedbackRecordsForBackfillByInputKind counts globally eligible records missing model.
-func (r *EmbeddingsRepository) CountFeedbackRecordsForBackfillByInputKind(
-	ctx context.Context,
-	model string,
-	inputKind models.EmbeddingInputKind,
-) (int, error) {
-	return r.countFeedbackRecordsForBackfillByInputKind(ctx, model, inputKind, "", false)
-}
-
-// CountTenantFeedbackRecordsForBackfillByInputKind counts one tenant's eligible records missing model.
-func (r *EmbeddingsRepository) CountTenantFeedbackRecordsForBackfillByInputKind(
-	ctx context.Context,
-	tenantID string,
-	model string,
-	inputKind models.EmbeddingInputKind,
-) (int, error) {
-	if tenantID == "" {
-		return 0, errEmbeddingBackfillTenantRequired
-	}
-
-	return r.countFeedbackRecordsForBackfillByInputKind(ctx, model, inputKind, tenantID, true)
-}
-
 // TenantExistsForEmbeddingBackfill reports whether Hub knows the tenant through feedback records
 // or tenant settings. Hub has no authoritative tenants table, so checking both data sources lets the
 // operator distinguish a likely typo from an existing tenant with no eligible missing embeddings.
@@ -599,43 +517,6 @@ func (r *EmbeddingsRepository) TenantExistsForEmbeddingBackfill(ctx context.Cont
 	}
 
 	return exists, nil
-}
-
-//nolint:funcorder // scoped helper stays with the public backfill methods
-func (r *EmbeddingsRepository) countFeedbackRecordsForBackfillByInputKind(
-	ctx context.Context,
-	model string,
-	inputKind models.EmbeddingInputKind,
-	tenantID string,
-	tenantScoped bool,
-) (int, error) {
-	eligibility := backfillEligibilitySQL(inputKind)
-
-	tenantClause := ""
-	args := []any{model}
-
-	if tenantScoped {
-		tenantClause = "AND fr.tenant_id = $2"
-
-		args = append(args, tenantID)
-	}
-
-	query := `
-		SELECT count(*) FROM feedback_records fr
-		WHERE ` + eligibility + `
-		  ` + tenantClause + `
-		  AND NOT EXISTS (
-		    SELECT 1 FROM embeddings e
-		    WHERE e.feedback_record_id = fr.id AND e.model = $1
-		  )
-	`
-
-	var count int
-	if err := r.db.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("count feedback records for embedding backfill: %w", err)
-	}
-
-	return count, nil
 }
 
 // ErrEmbeddingNotFound is returned when no embedding row exists for the given feedback record and model.
@@ -948,16 +829,4 @@ func (r *EmbeddingsRepository) beginNearestTx(ctx context.Context) (pgx.Tx, erro
 	}
 
 	return dbTx, nil
-}
-
-// backfillEligibilitySQL is the backfill command's selection rule for an input kind. The taxonomy
-// kind uses taxonomyEmbeddingEligibleTextSQL so an operator backfill selects exactly what the live
-// provider embeds and the repair sweep repairs: no whitespace-only records it would re-enqueue on
-// every run, no categorical records it would miss.
-func backfillEligibilitySQL(inputKind models.EmbeddingInputKind) string {
-	if models.NormalizeEmbeddingInputKind(inputKind) == models.EmbeddingInputKindTaxonomyTranslated {
-		return taxonomyEmbeddingEligibleTextSQL
-	}
-
-	return rawEmbeddingEligibleTextSQL
 }

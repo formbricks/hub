@@ -78,6 +78,19 @@ func (f *staleRepairFixtures) exec(t *testing.T, sql string, args ...any) {
 	require.NoError(t, err)
 }
 
+// tenantPendingIDs lists what the repair selection returns for filter, the way the tenant-scoped
+// operator backfill sees it.
+func tenantPendingIDs(
+	ctx context.Context, t *testing.T, repo *repository.EmbeddingsRepository, filter repository.PendingEmbeddingsFilter,
+) []uuid.UUID {
+	t.Helper()
+
+	ids, err := repo.ListPendingEmbeddings(ctx, filter, 1_000)
+	require.NoError(t, err)
+
+	return ids
+}
+
 func unitVector() []float32 {
 	vector := make([]float32, models.EmbeddingVectorDimensions)
 	vector[0] = 1
@@ -175,9 +188,9 @@ func testListPendingEmbeddingIDsFindsStaleAndOrphanedVectors(
 		SourceUpdatedAt: &otherKindTerminal.UpdatedAt,
 	}))
 
-	ids, err := embeddingsRepo.ListTenantPendingEmbeddingIDs(
-		ctx, fixtures.tenantID, model, kind, time.Now().Add(-15*time.Minute), 1_000)
-	require.NoError(t, err)
+	ids := tenantPendingIDs(ctx, t, embeddingsRepo, repository.PendingEmbeddingsFilter{
+		Model: model, InputKind: kind, TenantID: fixtures.tenantID, RetryBefore: time.Now().Add(-15 * time.Minute),
+	})
 
 	want := []uuid.UUID{missing.ID, editedText.ID, editedLabel.ID, emptied.ID, otherKindTerminal.ID}
 	if kind == models.EmbeddingInputKindTaxonomyTranslated {
@@ -258,9 +271,9 @@ func TestEmbeddingRepairHealsStaleAndOrphanedVectors(t *testing.T) {
 	assert.Zero(t, vectors, "a record with no text keeps no vector of the text it had")
 
 	for _, target := range targets {
-		ids, err := embeddingsRepo.ListTenantPendingEmbeddingIDs(
-			ctx, fixtures.tenantID, target.Model, target.InputKind, time.Now(), 1_000)
-		require.NoError(t, err)
+		ids := tenantPendingIDs(ctx, t, embeddingsRepo, repository.PendingEmbeddingsFilter{
+			Model: target.Model, InputKind: target.InputKind, TenantID: fixtures.tenantID, RetryBefore: time.Now(),
+		})
 		assert.Empty(t, ids, "nothing is left to repair for %s", target.InputKind)
 	}
 

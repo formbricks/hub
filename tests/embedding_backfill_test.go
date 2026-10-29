@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,15 +27,21 @@ type countingEmbeddingInserter struct {
 	args []service.FeedbackEmbeddingArgs
 }
 
-func (c *countingEmbeddingInserter) Insert(
-	_ context.Context, args river.JobArgs, _ *river.InsertOpts,
-) (*rivertype.JobInsertResult, error) {
-	if a, ok := args.(service.FeedbackEmbeddingArgs); ok {
-		c.ids = append(c.ids, a.FeedbackRecordID)
-		c.args = append(c.args, a)
+func (c *countingEmbeddingInserter) InsertMany(
+	_ context.Context, params []river.InsertManyParams,
+) ([]*rivertype.JobInsertResult, error) {
+	results := make([]*rivertype.JobInsertResult, 0, len(params))
+
+	for _, param := range params {
+		if a, ok := param.Args.(service.FeedbackEmbeddingArgs); ok {
+			c.ids = append(c.ids, a.FeedbackRecordID)
+			c.args = append(c.args, a)
+		}
+
+		results = append(results, &rivertype.JobInsertResult{})
 	}
 
-	return &rivertype.JobInsertResult{}, nil
+	return results, nil
 }
 
 func embeddingBackfillRepos(t *testing.T) (*repository.FeedbackRecordsRepository, *repository.EmbeddingsRepository) {
@@ -51,11 +59,11 @@ func embeddingBackfillRepos(t *testing.T) (*repository.FeedbackRecordsRepository
 	return repository.NewFeedbackRecordsRepository(db), repository.NewEmbeddingsRepository(db)
 }
 
-// TestListFeedbackRecordIDsForBackfill_KeysetPagination locks the new keyset behavior of the
-// embedding backfill query: each page is bounded by the limit, ids are returned strictly
-// ascending with no id on two pages, and paging from uuid.Nil eventually returns every record
-// that needs an embedding. A fresh model is used so the created records are all eligible.
-func TestListFeedbackRecordIDsForBackfill_KeysetPagination(t *testing.T) {
+// TestListPendingEmbeddings_KeysetPagination locks the single-pass paging the backfill relies on:
+// each page is bounded by the limit, ids come strictly ascending with none on two pages, and paging
+// from uuid.Nil returns every record that needs an embedding.
+// A fresh model is used so the created records are all eligible.
+func TestListPendingEmbeddings_KeysetPagination(t *testing.T) {
 	ctx := context.Background()
 	feedbackRepo, embeddingsRepo := embeddingBackfillRepos(t)
 
@@ -82,14 +90,14 @@ func TestListFeedbackRecordIDsForBackfill_KeysetPagination(t *testing.T) {
 	}
 
 	seen := map[uuid.UUID]bool{}
-	afterID := uuid.Nil
+	filter := repository.PendingEmbeddingsFilter{
+		Model: model, InputKind: models.EmbeddingInputKindRaw, TenantID: tenant, RetryBefore: time.Now(),
+	}
 
 	var prev uuid.UUID
 
-	hasPrev := false
-
 	for {
-		page, err := embeddingsRepo.ListFeedbackRecordIDsForBackfill(ctx, model, afterID, 2)
+		page, err := embeddingsRepo.ListPendingEmbeddings(ctx, filter, 2)
 		require.NoError(t, err)
 		require.LessOrEqual(t, len(page), 2, "LIMIT bounds the page size")
 
@@ -98,18 +106,14 @@ func TestListFeedbackRecordIDsForBackfill_KeysetPagination(t *testing.T) {
 		}
 
 		for _, id := range page {
-			require.False(t, seen[id], "an id must not appear on two pages")
+			require.False(t, seen[id], "a record must not appear on two pages")
 			seen[id] = true
 
-			if hasPrev {
-				require.Negativef(t, bytes.Compare(prev[:], id[:]), "ids are returned strictly ascending")
-			}
-
+			require.Negativef(t, bytes.Compare(prev[:], id[:]), "ids are returned strictly ascending")
 			prev = id
-			hasPrev = true
 		}
 
-		afterID = page[len(page)-1]
+		filter.AfterID = prev
 
 		if len(page) < 2 {
 			break
@@ -150,9 +154,11 @@ func TestBackfillEmbeddings_StreamsAllEligible(t *testing.T) {
 	inserter := &countingEmbeddingInserter{}
 	svc := service.NewFeedbackRecordsService(feedbackRepo, embeddingsRepo, model, nil, inserter, "embeddings", 3, "")
 
-	enqueued, err := svc.BackfillEmbeddings(ctx, model)
+	result, err := svc.BackfillEmbeddings(ctx, service.EmbeddingBackfillParams{
+		Model: model, InputKind: models.EmbeddingInputKindRaw,
+	})
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, enqueued, len(mine))
+	require.GreaterOrEqual(t, result.Enqueued, len(mine))
 
 	got := map[uuid.UUID]bool{}
 	for _, id := range inserter.ids {
@@ -185,9 +191,11 @@ func TestBackfillEmbeddings_TaxonomyInputKind(t *testing.T) {
 	inserter := &countingEmbeddingInserter{}
 	svc := service.NewFeedbackRecordsService(feedbackRepo, embeddingsRepo, model, nil, inserter, "embeddings", 3, "")
 
-	enqueued, err := svc.BackfillEmbeddingsWithInputKind(ctx, model, models.EmbeddingInputKindTaxonomyTranslated)
+	result, err := svc.BackfillEmbeddings(ctx, service.EmbeddingBackfillParams{
+		Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, TenantID: tenant,
+	})
 	require.NoError(t, err)
-	require.Positive(t, enqueued)
+	require.Positive(t, result.Enqueued)
 
 	found := false
 
@@ -242,13 +250,15 @@ func TestTenantEmbeddingBackfillStaysInsideTenant(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, exists, "an unknown tenant ID is distinguishable from a fully backfilled tenant")
 
-	count, err := embeddingsRepo.CountTenantFeedbackRecordsForBackfillByInputKind(
-		ctx, tenantA, model, models.EmbeddingInputKindTaxonomyTranslated)
+	filter := repository.PendingEmbeddingsFilter{
+		Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, TenantID: tenantA, RetryBefore: time.Now(),
+	}
+
+	count, err := embeddingsRepo.CountPendingEmbeddings(ctx, filter)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 
-	page, err := embeddingsRepo.ListTenantFeedbackRecordIDsForBackfillByInputKind(
-		ctx, tenantA, model, models.EmbeddingInputKindTaxonomyTranslated, uuid.Nil, 10)
+	page, err := embeddingsRepo.ListPendingEmbeddings(ctx, filter, 10)
 	require.NoError(t, err)
 	require.Len(t, page, 2)
 
@@ -259,17 +269,19 @@ func TestTenantEmbeddingBackfillStaysInsideTenant(t *testing.T) {
 
 	inserter := &countingEmbeddingInserter{}
 	svc := service.NewFeedbackRecordsService(feedbackRepo, embeddingsRepo, model, nil, inserter, "embeddings", 3, "")
-	enqueued, err := svc.BackfillTenantEmbeddingsWithInputKind(
-		ctx, tenantA, model, models.EmbeddingInputKindTaxonomyTranslated, 1)
+	result, err := svc.BackfillEmbeddings(ctx, service.EmbeddingBackfillParams{
+		Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, TenantID: tenantA, MaxRecords: 1,
+	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, enqueued, "maxRecords must bound the canary")
+	assert.Equal(t, 1, result.Enqueued, "maxRecords must bound the canary")
 	require.Len(t, inserter.ids, 1)
 	assert.True(t, aIDs[inserter.ids[0]], "tenant-scoped service must enqueue only tenant A")
 	assert.NotEqual(t, bID, inserter.ids[0])
 
-	_, err = svc.BackfillTenantEmbeddingsWithInputKind(
-		ctx, "", model, models.EmbeddingInputKindTaxonomyTranslated, 0)
-	require.ErrorIs(t, err, service.ErrMissingTenantID)
+	_, err = svc.BackfillEmbeddings(ctx, service.EmbeddingBackfillParams{
+		Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, IncludeLegacy: true,
+	})
+	require.ErrorIs(t, err, service.ErrMissingTenantID, "re-verifying legacy vectors is tenant-scoped only")
 }
 
 // TestEmbeddingsUpsert_StaleWriteGuard locks the concurrent-jobs guard: an upsert (or clear)
@@ -375,4 +387,86 @@ func TestDeleteEmbeddingsForOtherModels(t *testing.T) {
 		_, err := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, id, staleModel)
 		require.ErrorIs(t, err, repository.ErrEmbeddingNotFound, "stale-model rows must be gone")
 	}
+}
+
+// TestEmbeddingBackfillSelectsWhatTheSweepWould drives the operator backfill against real River
+// (ENG-2792). Before, it queued a second job for a record whose live job was still in flight,
+// retried records the provider had rejected outright, never saw stale vectors, and a re-run within
+// 24 hours silently skipped records whose earlier backfill job had completed. Now it selects
+// through the same query as the repair sweep, and an identical re-run queues nothing.
+func TestEmbeddingBackfillSelectsWhatTheSweepWould(t *testing.T) {
+	ctx := context.Background()
+	fixtures := newStaleRepairFixtures(t)
+	db := fixtures.db
+	embeddingsRepo := repository.NewEmbeddingsRepository(db)
+	failuresRepo := repository.NewEnrichmentFailuresRepository(db)
+	model := "backfill-dedupe-" + uuid.NewString()
+
+	riverClient, err := river.NewClient(riverpgxv5.New(db), &river.Config{})
+	require.NoError(t, err)
+
+	svc := service.NewFeedbackRecordsService(
+		repository.NewFeedbackRecordsRepository(db), embeddingsRepo, model, nil, riverClient,
+		service.EmbeddingsQueueName, 5, "")
+
+	text := func(value string) *string { return &value }
+	missing := fixtures.seed(t, models.FieldTypeCategorical, text("Missing"), nil)
+
+	inFlight := fixtures.seed(t, models.FieldTypeCategorical, text("Live job queued"), nil)
+	_, err = riverClient.Insert(ctx, service.FeedbackEmbeddingArgs{
+		FeedbackRecordID: inFlight.ID, Model: model, InputKind: models.EmbeddingInputKindRaw, ValueTextHash: "live",
+	}, &river.InsertOpts{Queue: service.EmbeddingsQueueName})
+	require.NoError(t, err)
+
+	rejected := fixtures.seed(t, models.FieldTypeCategorical, text("Rejected"), nil)
+	require.NoError(t, failuresRepo.RecordFailure(ctx, models.EnrichmentFailure{
+		FeedbackRecordID: rejected.ID, TenantID: fixtures.tenantID, Enrichment: models.EnrichmentNameEmbedding,
+		Terminal: true, Reason: string(huberrors.TerminalReasonLength), Attempts: 1, ContextKey: model,
+		SourceUpdatedAt: &rejected.UpdatedAt,
+	}))
+
+	stale := fixtures.seed(t, models.FieldTypeCategorical, text("Before"), nil)
+	require.NoError(t, embeddingsRepo.Upsert(ctx, stale.ID, model, models.EmbeddingInputKindRaw, unitVector(), nil))
+	fixtures.exec(t, `UPDATE feedback_records SET value_text = 'After' WHERE id = $1`, stale.ID)
+
+	legacy := fixtures.seed(t, models.FieldTypeCategorical, text("Legacy"), nil)
+	require.NoError(t, embeddingsRepo.Upsert(ctx, legacy.ID, model, models.EmbeddingInputKindRaw, unitVector(), nil))
+	fixtures.exec(t, `UPDATE embeddings SET source_hash = NULL WHERE feedback_record_id = $1`, legacy.ID)
+
+	params := service.EmbeddingBackfillParams{
+		Model: model, InputKind: models.EmbeddingInputKindRaw, TenantID: fixtures.tenantID, RetryAfter: 15 * time.Minute,
+	}
+
+	queued := func() []uuid.UUID {
+		t.Helper()
+
+		var ids []uuid.UUID
+		require.NoError(t, db.QueryRow(ctx, `
+			SELECT COALESCE(array_agg((args->>'feedback_record_id')::uuid), '{}') FROM river_job
+			WHERE args->>'model' = $1 AND args->>'value_text_hash' LIKE 'backfill:%'`, model).Scan(&ids))
+
+		return ids
+	}
+
+	result, err := svc.BackfillEmbeddings(ctx, params)
+	require.NoError(t, err)
+	assert.Equal(t, service.EmbeddingBackfillResult{Selected: 2, Enqueued: 2}, result)
+	assert.ElementsMatch(t, []uuid.UUID{missing.ID, stale.ID}, queued(),
+		"not the record with a live job in flight, not the rejected one, not the trusted legacy vector")
+
+	result, err = svc.BackfillEmbeddings(ctx, params)
+	require.NoError(t, err)
+	assert.Equal(t, service.EmbeddingBackfillResult{}, result, "an identical re-run queues nothing")
+
+	// Finish the backfill jobs without fixing the records: a later run must not be swallowed by
+	// River's completed-state uniqueness.
+	_, err = db.Exec(ctx, `UPDATE river_job SET state = 'completed', finalized_at = NOW()
+		WHERE args->>'model' = $1 AND args->>'value_text_hash' LIKE 'backfill:%'`, model)
+	require.NoError(t, err)
+
+	params.IncludeLegacy = true
+	result, err = svc.BackfillEmbeddings(ctx, params)
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.Enqueued, "-stale re-verifies the legacy vector; completed jobs block nothing")
+	assert.Contains(t, queued(), legacy.ID)
 }

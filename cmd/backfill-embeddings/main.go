@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/riverqueue/river"
@@ -52,8 +53,10 @@ func run() int {
 	taxonomyMode := flag.Bool("taxonomy", false,
 		"backfill taxonomy embeddings from translated text using TAXONOMY_EMBEDDING_MODEL or taxonomy:<EMBEDDING_MODEL>:translated-v1")
 	tenantID := flag.String("tenant-id", "", "restrict the backfill to one tenant ID")
-	countOnly := flag.Bool("count-only", false, "count eligible missing embeddings without enqueueing jobs")
+	countOnly := flag.Bool("count-only", false, "count records owed an embedding without enqueueing jobs")
 	maxRecords := flag.Int("max-records", 0, "maximum candidates to enqueue; 0 means unlimited")
+	stale := flag.Bool("stale", false,
+		"also re-embed vectors written before Hub recorded what they were computed from (requires -tenant-id)")
 
 	flag.Parse()
 
@@ -63,7 +66,13 @@ func run() int {
 		return exitFailure
 	}
 
-	if *pruneStaleModels && (*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0) {
+	if *stale && *tenantID == "" {
+		slog.Error("-stale requires -tenant-id: it can select every vector a tenant has")
+
+		return exitFailure
+	}
+
+	if *pruneStaleModels && (*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0 || *stale) {
 		slog.Error("-prune-stale-models cannot be combined with backfill scope or preview flags")
 
 		return exitFailure
@@ -174,17 +183,33 @@ func run() int {
 		}
 	}
 
-	if *countOnly {
-		var count int
-		if *tenantID == "" {
-			count, err = embeddingsRepo.CountFeedbackRecordsForBackfillByInputKind(ctx, targetModel, inputKind)
-		} else {
-			count, err = embeddingsRepo.CountTenantFeedbackRecordsForBackfillByInputKind(
-				ctx, *tenantID, targetModel, inputKind)
-		}
+	params := service.EmbeddingBackfillParams{
+		Model:         targetModel,
+		InputKind:     inputKind,
+		TenantID:      *tenantID,
+		MaxRecords:    *maxRecords,
+		IncludeLegacy: *stale,
+		RetryAfter:    cfg.Embedding.ReconcileRetryAfter.Duration(),
+	}
 
-		if err != nil {
-			slog.Error("Backfill count failed", "error", err)
+	// The Hub has no audit store; this line and the completion line are the record of who changed
+	// what (the operator's exec session is the who). Records are identified by count, never content.
+	scope := []any{
+		"model", targetModel, "input_kind", inputKind, "tenant_id", *tenantID,
+		"max_records", *maxRecords, "stale", *stale, "count_only", *countOnly,
+	}
+	slog.Info("Embedding backfill started", scope...) // #nosec G706 -- values are structured log attributes
+
+	if *countOnly {
+		count, countErr := embeddingsRepo.CountPendingEmbeddings(ctx, repository.PendingEmbeddingsFilter{
+			Model:         params.Model,
+			InputKind:     params.InputKind,
+			TenantID:      params.TenantID,
+			RetryBefore:   time.Now().Add(-params.RetryAfter),
+			IncludeLegacy: params.IncludeLegacy,
+		})
+		if countErr != nil {
+			slog.Error("Backfill count failed", "error", countErr)
 
 			return exitFailure
 		}
@@ -194,7 +219,7 @@ func run() int {
 			selected = *maxRecords
 		}
 
-		fmt.Printf("Found %d eligible missing embedding(s) for model %q; %d would be selected.\n",
+		fmt.Printf("Found %d record(s) owed an embedding for model %q; %d would be selected.\n",
 			count, targetModel, selected)
 
 		return exitSuccess
@@ -249,35 +274,19 @@ func run() int {
 
 	feedbackRecordsService.SetEmbeddingInserter(riverClient)
 
-	var enqueued int
-	if *tenantID == "" {
-		enqueued, err = feedbackRecordsService.BackfillEmbeddingsWithInputKindLimit(
-			ctx, targetModel, inputKind, *maxRecords)
-	} else {
-		enqueued, err = feedbackRecordsService.BackfillTenantEmbeddingsWithInputKind(
-			ctx, *tenantID, targetModel, inputKind, *maxRecords)
-	}
-
+	result, err := feedbackRecordsService.BackfillEmbeddings(ctx, params)
 	if err != nil {
-		slog.Error("Backfill failed", "error", err)
+		slog.Error("Backfill failed", append(scope, "error", err,
+			"selected_before_failure", result.Selected, "enqueued_before_failure", result.Enqueued)...)
 
 		return exitFailure
 	}
 
-	logAttrs := []any{
-		"enqueued", enqueued,
-		"model", targetModel,
-		"input_kind", inputKind,
-		"tenant_scoped", *tenantID != "",
-		"max_records", *maxRecords,
-	}
-	if *tenantID != "" {
-		logAttrs = append(logAttrs, "tenant_id", *tenantID)
-	}
+	// #nosec G706 -- values are structured log attributes
+	slog.Info("Embedding backfill complete", append(scope, "selected", result.Selected, "enqueued", result.Enqueued)...)
 
-	slog.Info("Backfill complete", logAttrs...) // #nosec G706 -- values are structured log attributes
-
-	fmt.Printf("Enqueued %d embedding job(s) for model %q.\n", enqueued, targetModel)
+	fmt.Printf("Selected %d record(s) and enqueued %d embedding job(s) for model %q; the rest were already queued.\n",
+		result.Selected, result.Enqueued, targetModel)
 
 	return exitSuccess
 }

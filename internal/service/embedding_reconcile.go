@@ -165,16 +165,23 @@ func (s *EmbeddingReconcileService) repairJob(target EmbeddingReconcileTarget, i
 			Queue:       EmbeddingsReconcileQueueName,
 			Priority:    embeddingRepairPriority,
 			MaxAttempts: s.maxAttempts,
-			UniqueOpts: river.UniqueOpts{
-				ByArgs: true,
-				ByState: []rivertype.JobState{
-					rivertype.JobStateAvailable,
-					rivertype.JobStatePending,
-					rivertype.JobStateRetryable,
-					rivertype.JobStateRunning,
-					rivertype.JobStateScheduled,
-				},
-			},
+			UniqueOpts:  inFlightUniqueOpts(),
+		},
+	}
+}
+
+// inFlightUniqueOpts dedupes a repair or backfill job against the same job still in flight, and
+// only that: a completed job must not swallow a later repair of the same record, which River's
+// default unique states (they include completed) would do for as long as the row is retained.
+func inFlightUniqueOpts() river.UniqueOpts {
+	return river.UniqueOpts{
+		ByArgs: true,
+		ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable,
+			rivertype.JobStatePending,
+			rivertype.JobStateRetryable,
+			rivertype.JobStateRunning,
+			rivertype.JobStateScheduled,
 		},
 	}
 }

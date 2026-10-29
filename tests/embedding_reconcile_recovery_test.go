@@ -408,13 +408,14 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 		assert.Equal(t, readinessWant[tenantID], recordCount, "readiness counts what live delivery embeds (%s)", fieldType)
 
 		// The operator backfill must select exactly the same records, and count what it would select.
-		backfillIDs, err := embeddingsRepo.ListTenantFeedbackRecordIDsForBackfillByInputKind(
-			ctx, tenantID, model, models.EmbeddingInputKindTaxonomyTranslated, uuid.Nil, 100)
+		backfillFilter := repository.PendingEmbeddingsFilter{
+			Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated, TenantID: tenantID, RetryBefore: time.Now(),
+		}
+		backfillPage, err := embeddingsRepo.ListPendingEmbeddings(ctx, backfillFilter, 100)
 		require.NoError(t, err)
-		assert.Len(t, backfillIDs, readinessWant[tenantID], "backfill selects what live delivery embeds (%s)", fieldType)
+		assert.Len(t, backfillPage, readinessWant[tenantID], "backfill selects what live delivery embeds (%s)", fieldType)
 
-		backfillCount, err := embeddingsRepo.CountTenantFeedbackRecordsForBackfillByInputKind(
-			ctx, tenantID, model, models.EmbeddingInputKindTaxonomyTranslated)
+		backfillCount, err := embeddingsRepo.CountPendingEmbeddings(ctx, backfillFilter)
 		require.NoError(t, err)
 		assert.Equal(t, readinessWant[tenantID], backfillCount, "backfill counts what it selects (%s)", fieldType)
 	}
