@@ -345,7 +345,7 @@ func TestStaleMarkerStopsCountingWhenTheRecordMovesOn(t *testing.T) {
 	// 2. It later succeeded. No cleanup write — that is the design — so the marker is still there.
 	translated := "übersetzt"
 	require.NoError(t, frepo.SetTranslation(ctx, record.ID, &translated, "de-DE", "",
-		func(*string) bool { return true }))
+		func(*string) bool { return true }, nil))
 
 	counts, err = statusRepo.CountEnrichmentStatus(ctx, tenant, "")
 	require.NoError(t, err)

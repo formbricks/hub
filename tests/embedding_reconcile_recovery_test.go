@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -44,6 +45,20 @@ func (c *scriptedEmbeddingClient) CreateEmbedding(context.Context, string) ([]fl
 // CreateEmbeddingForQuery behaves exactly like CreateEmbedding.
 func (c *scriptedEmbeddingClient) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
 	return c.CreateEmbedding(ctx, input)
+}
+
+// enqueueLiveEmbeddings runs the live embedding enqueue the way a record write does: inside a
+// transaction that commits.
+func enqueueLiveEmbeddings(
+	ctx context.Context, t *testing.T, db *pgxpool.Pool, enqueuer *service.EmbeddingEnqueuer, event service.Event,
+) {
+	t.Helper()
+
+	tx, err := db.Begin(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, enqueuer.EnqueueTx(ctx, tx, event))
+	require.NoError(t, tx.Commit(ctx))
 }
 
 // TestTaxonomyEmbeddingRecoversAfterTransientExhaustion reproduces the 22 October 2026 EU incident
@@ -128,11 +143,11 @@ func testTaxonomyEmbeddingRecovery(t *testing.T, fieldType models.FieldType, val
 
 	// 1. Live delivery: the taxonomy provider enqueues for this record. This is the eligibility
 	// rule repair has to match.
-	liveProvider := service.NewEmbeddingProviderForInputKind(
-		riverClient, model, service.EmbeddingsQueueName, maxAttempts, "", 0, nil,
+	liveEnqueuer := service.NewEmbeddingEnqueuer(riverClient, service.NewEmbeddingProviderForInputKind(
+		model, service.EmbeddingsQueueName, maxAttempts, "", 0, nil,
 		models.EmbeddingInputKindTaxonomyTranslated,
-	)
-	liveProvider.PublishEvent(ctx, service.Event{
+	))
+	enqueueLiveEmbeddings(ctx, t, db, liveEnqueuer, service.Event{
 		ID: uuid.Must(uuid.NewV7()), Type: datatypes.FeedbackRecordCreated, Timestamp: time.Now(), Data: record,
 	})
 
@@ -294,10 +309,10 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 	failedBefore, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
 	require.NoError(t, err)
 
-	liveProvider := service.NewEmbeddingProviderForInputKind(
-		riverClient, model, service.EmbeddingsQueueName, 5, "", 0, nil,
+	liveEnqueuer := service.NewEmbeddingEnqueuer(riverClient, service.NewEmbeddingProviderForInputKind(
+		model, service.EmbeddingsQueueName, 5, "", 0, nil,
 		models.EmbeddingInputKindTaxonomyTranslated,
-	)
+	))
 
 	type fixture struct {
 		id       uuid.UUID
@@ -331,7 +346,7 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 
 			records[id] = record
 
-			liveProvider.PublishEvent(ctx, service.Event{
+			enqueueLiveEmbeddings(ctx, t, db, liveEnqueuer, service.Event{
 				ID: uuid.Must(uuid.NewV7()), Type: datatypes.FeedbackRecordCreated, Timestamp: time.Now(), Data: record,
 			})
 

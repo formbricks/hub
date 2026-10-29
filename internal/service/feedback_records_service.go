@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/pkg/cursor"
 )
 
@@ -43,17 +45,19 @@ const uniqueByPeriodEmbedding = 24 * time.Hour
 
 // FeedbackRecordsRepository defines the interface for feedback records data access.
 type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesive feedback-record data-access boundary.
-	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	Create(
+		ctx context.Context, req *models.CreateFeedbackRecordRequest, hook repository.RecordWriteHook,
+	) (*models.FeedbackRecord, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, bool, error)
 	ListAfterCursor(
 		ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
 	) ([]models.FeedbackRecord, bool, error)
-	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
+	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest, hook repository.RecordWriteHook,
 	) (updated, previous *models.FeedbackRecord, err error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
-		stillCurrent func(valueText *string) bool) error
+		stillCurrent func(valueText *string) bool, hook repository.RecordWriteHook) error
 	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
 		stillCurrent func(valueText *string) bool) error
 	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
@@ -106,8 +110,8 @@ type FeedbackRecordsService struct {
 	repo                   FeedbackRecordsRepository
 	embeddingsRepo         EmbeddingsRepository
 	embeddingModel         string
-	taxonomyEmbeddingModel string
 	publisher              MessagePublisher
+	embeddingEnqueuer      *EmbeddingEnqueuer
 	embeddingInserter      RiverJobInserter
 	embeddingQueueName     string
 	embeddingMaxAttempts   int
@@ -145,15 +149,17 @@ func NewFeedbackRecordsService(
 	}
 }
 
-// SetEmbeddingInserter sets the River inserter for embedding jobs (e.g. after River client is created).
-// This allows a single service instance to be used by both handlers and the embedding worker.
+// SetEmbeddingInserter sets the River inserter the embedding backfill uses (e.g. after the River
+// client is created).
 func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter RiverJobInserter) {
 	s.embeddingInserter = inserter
 }
 
-// SetTaxonomyEmbeddingModel sets the model key used for taxonomy-specific translated embeddings.
-func (s *FeedbackRecordsService) SetTaxonomyEmbeddingModel(model string) {
-	s.taxonomyEmbeddingModel = strings.TrimSpace(model)
+// SetEmbeddingEnqueuer makes record creates, edits and translation writes enqueue the embedding
+// jobs they owe inside their own transaction. nil (the default) enqueues none, for processes that
+// do not embed.
+func (s *FeedbackRecordsService) SetEmbeddingEnqueuer(enqueuer *EmbeddingEnqueuer) {
+	s.embeddingEnqueuer = enqueuer
 }
 
 // SetEnrichmentClearMetrics enables the eager-clear counter. Wire it on the API service instance
@@ -174,13 +180,18 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(
 	normalizedReq := *req
 	normalizedReq.TenantID = normalizedTenantID
 
-	record, err := s.repo.Create(ctx, &normalizedReq)
+	// One event ID for the transactional embedding jobs and the published event, so every job and
+	// webhook delivery this create causes correlates.
+	event := NewEvent(datatypes.FeedbackRecordCreated, nil, nil)
+
+	record, err := s.repo.Create(ctx, &normalizedReq, s.embeddingWriteHook(event, nil))
 	if err != nil {
 		return nil, fmt.Errorf("create feedback record: %w", err)
 	}
 
 	if s.publisher != nil {
-		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, record)
+		event.Data = record
+		s.publisher.Publish(ctx, event)
 	}
 
 	return record, nil
@@ -212,14 +223,17 @@ func (s *FeedbackRecordsService) SetTranslation(
 		return ErrTranslationLangKeyRequired
 	}
 
-	if err := s.repo.SetTranslation(
-		ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang, stillCurrent,
-	); err != nil {
-		return fmt.Errorf("set feedback record translation: %w", err)
+	var hook repository.RecordWriteHook
+	if s.embeddingEnqueuer != nil {
+		hook = func(ctx context.Context, dbTx pgx.Tx, _, _ *models.FeedbackRecord) error {
+			return s.embeddingEnqueuer.EnqueueTranslationTx(ctx, dbTx, feedbackRecordID)
+		}
 	}
 
-	if err := s.enqueueTaxonomyEmbedding(ctx, feedbackRecordID); err != nil {
-		return err
+	if err := s.repo.SetTranslation(
+		ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang, stillCurrent, hook,
+	); err != nil {
+		return fmt.Errorf("set feedback record translation: %w", err)
 	}
 
 	return nil
@@ -423,7 +437,17 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 	// event carries the fields that ACTUALLY changed: an integration idempotently re-PATCHing the
 	// same values must not re-fire webhooks or re-run every LLM enrichment, and the diff is
 	// computed against state consistent with the write (no pre-lock snapshot race).
-	record, previous, err := s.repo.Update(ctx, id, req)
+	changedFields := func(previous *models.FeedbackRecord) []string {
+		if previous == nil {
+			return req.ChangedFields()
+		}
+
+		return req.FieldsChangedFrom(previous)
+	}
+
+	event := NewEvent(datatypes.FeedbackRecordUpdated, nil, nil)
+
+	record, previous, err := s.repo.Update(ctx, id, req, s.embeddingWriteHook(event, changedFields))
 	if err != nil {
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
@@ -431,15 +455,12 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 	// A no-op update (no fields set, or every set field equal to its current value) must not
 	// publish an "updated" event: firing tenant-owned side effects for a nothing-changed write
 	// would re-trigger webhooks and enrichment for free — including while the tenant is under a
-	// data purge.
+	// data purge. The embedding hook applies the same rule inside the transaction.
 	if s.publisher != nil {
-		changed := req.ChangedFields()
-		if previous != nil {
-			changed = req.FieldsChangedFrom(previous)
-		}
-
-		if len(changed) > 0 {
-			s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, changed)
+		if changed := changedFields(previous); len(changed) > 0 {
+			event.Data = record
+			event.ChangedFields = changed
+			s.publisher.Publish(ctx, event)
 		}
 	}
 
@@ -773,25 +794,29 @@ func (s *FeedbackRecordsService) BackfillTranslationsForTenant(
 		})
 }
 
-func (s *FeedbackRecordsService) enqueueTaxonomyEmbedding(ctx context.Context, feedbackRecordID uuid.UUID) error {
-	if s.embeddingInserter == nil || s.embeddingQueueName == "" || s.taxonomyEmbeddingModel == "" {
+// embeddingWriteHook returns the hook that enqueues event's embedding jobs inside the write's
+// transaction, or nil when this process does not embed. changedFields derives the update's changed
+// fields from the row the write replaced; nil for a create.
+func (s *FeedbackRecordsService) embeddingWriteHook(
+	event Event, changedFields func(previous *models.FeedbackRecord) []string,
+) repository.RecordWriteHook {
+	if s.embeddingEnqueuer == nil {
 		return nil
 	}
 
-	_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
-		FeedbackRecordID: feedbackRecordID,
-		Model:            s.taxonomyEmbeddingModel,
-		InputKind:        models.EmbeddingInputKindTaxonomyTranslated,
-		ValueTextHash:    "translation",
-	}, &river.InsertOpts{
-		Queue:       s.embeddingQueueName,
-		MaxAttempts: s.embeddingMaxAttempts,
-	})
-	if err != nil {
-		return fmt.Errorf("enqueue taxonomy embedding after translation write: %w", err)
-	}
+	return func(ctx context.Context, dbTx pgx.Tx, written, previous *models.FeedbackRecord) error {
+		owed := event
+		owed.Data = written
 
-	return nil
+		if changedFields != nil {
+			owed.ChangedFields = changedFields(previous)
+			if len(owed.ChangedFields) == 0 {
+				return nil
+			}
+		}
+
+		return s.embeddingEnqueuer.EnqueueTx(ctx, dbTx, owed)
+	}
 }
 
 // backfillTranslationsPaged enqueues a translation job for every target produced by

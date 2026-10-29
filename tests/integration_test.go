@@ -1527,7 +1527,7 @@ func TestFeedbackRecordsRepository_DeleteByUser(t *testing.T) {
 	}
 	valueNumber1 := 1.0
 	req1.ValueNumber = &valueNumber1
-	rec1, err := repo.Create(ctx, req1)
+	rec1, err := repo.Create(ctx, req1, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, rec1.ID)
 
@@ -1541,7 +1541,7 @@ func TestFeedbackRecordsRepository_DeleteByUser(t *testing.T) {
 	}
 	valueNumber2 := 2.0
 	req2.ValueNumber = &valueNumber2
-	rec2, err := repo.Create(ctx, req2)
+	rec2, err := repo.Create(ctx, req2, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, rec2.ID)
 
@@ -1555,7 +1555,7 @@ func TestFeedbackRecordsRepository_DeleteByUser(t *testing.T) {
 		ValueText:    &valueText,
 		UserID:       &userID,
 	}
-	rec3, err := repo.Create(ctx, req3)
+	rec3, err := repo.Create(ctx, req3, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, rec3.ID)
 

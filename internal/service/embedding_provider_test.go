@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/stretchr/testify/assert"
@@ -45,9 +46,28 @@ func (m *mockEmbeddingInserter) Insert(
 	return &rivertype.JobInsertResult{Job: &rivertype.JobRow{ID: 1}}, nil
 }
 
-func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqueues(t *testing.T) {
+// InsertManyTx records each job as an insert call, so the enqueuer's tests share the
+// single-insert assertions.
+func (m *mockEmbeddingInserter) InsertManyTx(
+	ctx context.Context, _ pgx.Tx, params []river.InsertManyParams,
+) ([]*rivertype.JobInsertResult, error) {
+	results := make([]*rivertype.JobInsertResult, 0, len(params))
+
+	for _, param := range params {
+		result, err := m.Insert(ctx, param.Args, param.InsertOpts)
+		if err != nil {
+			return nil, err
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_withValueText_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	valueText := "Some feedback text"
@@ -62,7 +82,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 		},
 	}
 
-	p.PublishEvent(context.Background(), event)
+	require.NoError(t, NewEmbeddingEnqueuer(inserter, p).EnqueueTx(context.Background(), nil, event))
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
@@ -75,9 +95,9 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_withValueText_enqu
 	assert.Equal(t, 3, inserter.insertCalls[0].opts.MaxAttempts)
 }
 
-func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPointer_skips(t *testing.T) {
+func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_dataIsValueNotPointer_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
 
 	// Pass value type (as was happening before the service fix) — provider should skip and not enqueue.
 	event := Event{
@@ -91,14 +111,14 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_dataIsValueNotPoin
 		},
 	}
 
-	p.PublishEvent(context.Background(), event)
+	require.NoError(t, NewEmbeddingEnqueuer(inserter, p).EnqueueTx(context.Background(), nil, event))
 
 	assert.Empty(t, inserter.insertCalls, "provider should skip when event.Data is value, not *FeedbackRecord")
 }
 
-func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_skips(t *testing.T) {
+func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordCreated_emptyValueText_skips(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
 
 	event := Event{
 		ID:        uuid.Must(uuid.NewV7()),
@@ -111,14 +131,14 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordCreated_emptyValueText_ski
 		},
 	}
 
-	p.PublishEvent(context.Background(), event)
+	require.NoError(t, NewEmbeddingEnqueuer(inserter, p).EnqueueTx(context.Background(), nil, event))
 
 	assert.Empty(t, inserter.insertCalls)
 }
 
-func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChangedFields_enqueues(t *testing.T) {
+func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordUpdated_valueTextInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -133,7 +153,7 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChanged
 		},
 	}
 
-	p.PublishEvent(context.Background(), event)
+	require.NoError(t, NewEmbeddingEnqueuer(inserter, p).EnqueueTx(context.Background(), nil, event))
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
@@ -141,9 +161,9 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_valueTextInChanged
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash)
 }
 
-func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_fieldLabelInChangedFields_enqueues(t *testing.T) {
+func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordUpdated_fieldLabelInChangedFields_enqueues(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	p := NewEmbeddingProvider(inserter, "model-name", "embeddings", 3, "", 0, nil)
+	p := NewEmbeddingProvider("model-name", "embeddings", 3, "", 0, nil)
 
 	recordID := uuid.Must(uuid.NewV7())
 	event := Event{
@@ -159,17 +179,16 @@ func TestEmbeddingProvider_PublishEvent_FeedbackRecordUpdated_fieldLabelInChange
 		},
 	}
 
-	p.PublishEvent(context.Background(), event)
+	require.NoError(t, NewEmbeddingEnqueuer(inserter, p).EnqueueTx(context.Background(), nil, event))
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash)
 }
 
-func TestEmbeddingProvider_PublishEvent_TaxonomyTranslatedPrefersTranslatedText(t *testing.T) {
+func TestEmbeddingEnqueuer_EnqueueTx_TaxonomyTranslatedPrefersTranslatedText(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
 	p := NewEmbeddingProviderForInputKind(
-		inserter,
 		"taxonomy:model:translated-v1",
 		"embeddings",
 		3,
@@ -196,7 +215,7 @@ func TestEmbeddingProvider_PublishEvent_TaxonomyTranslatedPrefersTranslatedText(
 		},
 	}
 
-	p.PublishEvent(context.Background(), event)
+	require.NoError(t, NewEmbeddingEnqueuer(inserter, p).EnqueueTx(context.Background(), nil, event))
 
 	require.Len(t, inserter.insertCalls, 1)
 	assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)

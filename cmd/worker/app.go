@@ -270,7 +270,6 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			cfg.Embedding.MaxAttempts,
 			cfg.Translation.DefaultLanguage,
 		)
-		translationRecordsService.SetTaxonomyEmbeddingModel(taxonomyEmbeddingEnqueueModel)
 
 		deps.TranslationService = translationRecordsService
 		deps.TranslationClient = translationClient
@@ -359,8 +358,21 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		return nil, fmt.Errorf("create River client: %w", err)
 	}
 
-	if translationRecordsService != nil {
-		translationRecordsService.SetEmbeddingInserter(riverClient)
+	// A translation write enqueues its taxonomy re-embed in the same transaction (ENG-2792). Only
+	// the job's model, queue and attempts matter here: the worker reads the record's content.
+	if translationRecordsService != nil && taxonomyEmbeddingEnqueueModel != "" {
+		translationRecordsService.SetEmbeddingEnqueuer(service.NewEmbeddingEnqueuer(
+			riverClient,
+			service.NewEmbeddingProviderForInputKind(
+				taxonomyEmbeddingEnqueueModel,
+				service.EmbeddingsQueueName,
+				cfg.Embedding.MaxAttempts,
+				"",
+				0,
+				nil,
+				models.EmbeddingInputKindTaxonomyTranslated,
+			),
+		))
 	}
 
 	if reconcileService != nil {

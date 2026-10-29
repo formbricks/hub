@@ -82,7 +82,7 @@ func TestListTranslationBackfillTargetsForTenant(t *testing.T) {
 			ValueText:    &valueText,
 			TenantID:     tenantID,
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		return rec
@@ -96,7 +96,7 @@ func TestListTranslationBackfillTargetsForTenant(t *testing.T) {
 	// Tenant A: one already translated to the current target (de-DE) → must be excluded.
 	recCurrent := makeText(tenantA, "current")
 	currentTranslation := "Aktuell"
-	require.NoError(t, repo.SetTranslation(ctx, recCurrent.ID, &currentTranslation, "de-DE", "", nil))
+	require.NoError(t, repo.SetTranslation(ctx, recCurrent.ID, &currentTranslation, "de-DE", "", nil, nil))
 
 	// Tenant B: one untranslated record → must never appear for tenant A.
 	recB := makeText(tenantB, "bee")
@@ -157,7 +157,7 @@ func TestListTranslationBackfillTargetsForTenant_UsesDefaultLanguage(t *testing.
 			ValueText:    &valueText,
 			TenantID:     tenant,
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		return rec
@@ -170,7 +170,7 @@ func TestListTranslationBackfillTargetsForTenant_UsesDefaultLanguage(t *testing.
 	// Seed the stale record's translation to its former target — de-DE is the effective target
 	// for this write because we pass de-DE as the default.
 	oldTranslation := "Eins (alt)"
-	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &oldTranslation, "de-DE", "de-DE", nil))
+	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &oldTranslation, "de-DE", "de-DE", nil, nil))
 
 	// With no default configured, a tenant with no target has no effective target → no targets.
 	none, err := repo.ListTranslationBackfillTargetsForTenant(ctx, tenant, uuid.Nil, 100, "")
@@ -206,7 +206,7 @@ func TestBackfillTranslationsForTenant_Isolation(t *testing.T) {
 			ValueText:    &valueText,
 			TenantID:     tenantID,
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		return rec
@@ -249,7 +249,7 @@ func TestTenantTranslationBackfillWorker_Work(t *testing.T) {
 			ValueText:    &valueText,
 			TenantID:     tenantID,
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		return rec
@@ -314,7 +314,7 @@ func TestListTranslationBackfillTargetsSkipsTerminalRecords(t *testing.T) {
 			ValueText:    &valueText,
 			TenantID:     tenantA,
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		return rec
@@ -389,7 +389,7 @@ func TestTenantTranslationBackfillWorkerUsesTheReconcileLane(t *testing.T) {
 		ValueText:    &valueText,
 		TenantID:     tenantA,
 		SubmissionID: testTenantID("sub"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{})

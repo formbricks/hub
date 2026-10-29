@@ -57,7 +57,7 @@ func TestSemanticSearch_NearestFeedbackRecords(t *testing.T) {
 			ValueText:    &valueText,
 			TenantID:     tenantID,
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, createErr)
 		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, searchTestModel, searchVec(closeness), nil))
 

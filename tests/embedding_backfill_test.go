@@ -70,7 +70,7 @@ func TestListFeedbackRecordIDsForBackfill_KeysetPagination(t *testing.T) {
 			FieldID:      "q1",
 			FieldType:    models.FieldTypeText,
 			ValueText:    &value,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		return rec.ID
@@ -139,7 +139,7 @@ func TestBackfillEmbeddings_StreamsAllEligible(t *testing.T) {
 			FieldID:      "q1",
 			FieldType:    models.FieldTypeText,
 			ValueText:    &value,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		return rec.ID
@@ -179,7 +179,7 @@ func TestBackfillEmbeddings_TaxonomyInputKind(t *testing.T) {
 		FieldID:      "q1",
 		FieldType:    models.FieldTypeText,
 		ValueText:    &value,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	inserter := &countingEmbeddingInserter{}
@@ -222,7 +222,7 @@ func TestTenantEmbeddingBackfillStaysInsideTenant(t *testing.T) {
 			FieldID:      "q1",
 			FieldType:    models.FieldTypeText,
 			ValueText:    &value,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		return record.ID
@@ -290,7 +290,7 @@ func TestEmbeddingsUpsert_StaleWriteGuard(t *testing.T) {
 		FieldID:      "q1",
 		FieldType:    models.FieldTypeText,
 		ValueText:    &text,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	embedding := make([]float32, models.EmbeddingVectorDimensions)
@@ -347,7 +347,7 @@ func TestDeleteEmbeddingsForOtherModels(t *testing.T) {
 			FieldID:      "q1",
 			FieldType:    models.FieldTypeText,
 			ValueText:    &text,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, currentModel, embedding, nil))

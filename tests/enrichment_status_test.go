@@ -163,7 +163,7 @@ func TestCountEnrichmentStatus(t *testing.T) {
 		// record would keep counting as classified while its emotions are gone.
 		newText := "completely different text now"
 		_, _, err = frepo.Update(ctx, classifiedWithLabels.ID,
-			&models.UpdateFeedbackRecordRequest{ValueText: &newText})
+			&models.UpdateFeedbackRecordRequest{ValueText: &newText}, nil)
 		require.NoError(t, err)
 
 		afterEdit, err := statusRepo.CountEnrichmentStatus(ctx, tenant, "")
@@ -217,7 +217,7 @@ func seedEnrichmentRecord(
 		ValueText:    &vt,
 		TenantID:     tenant,
 		SubmissionID: testTenantID("sub"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	return rec

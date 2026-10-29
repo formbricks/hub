@@ -48,7 +48,7 @@ Enrichment-wide instruments:
 
 | Metric                                           | Type      | Labels  | Description                                                                                                            |
 | ------------------------------------------------ | --------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `hub_events_discarded_total`                     | counter   | —       | Events dropped because the in-memory fan-out channel was full. Should be ~0; a rise means the publisher can't keep up. |
+| `hub_events_discarded_total`                     | counter   | —       | Events dropped because the in-memory fan-out channel was full. Should be ~0; a rise means the publisher can't keep up. Embedding jobs never go through this channel. |
 | `hub_message_publisher_fan_out_duration_seconds` | histogram | —       | Time to fan one event out to all providers.                                                                            |
 | `hub_event_channel_depth`                        | gauge     | —       | Current depth of the event fan-out channel.                                                                            |
 | `hub_river_queue_depth`                          | gauge     | `queue` | Waiting River jobs per queue (available / retryable / scheduled).                                                      |
