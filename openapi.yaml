@@ -216,7 +216,7 @@ paths:
                                     summary: A range filter supplied backwards
                                     value:
                                         type: "https://hub.formbricks.com/problems/validation"
-                                        title: "Validation Failed"
+                                        title: "Validation Error"
                                         status: 400
                                         code: "validation"
                                         detail: "One or more request parameters are invalid"
@@ -228,7 +228,7 @@ paths:
                                     summary: A cursor carried across a change of ordering
                                     value:
                                         type: "https://hub.formbricks.com/problems/validation"
-                                        title: "Validation Failed"
+                                        title: "Validation Error"
                                         status: 400
                                         code: "validation"
                                         detail: "One or more request parameters are invalid"
@@ -240,7 +240,7 @@ paths:
                                     summary: A misspelled filter, rejected rather than ignored
                                     value:
                                         type: "https://hub.formbricks.com/problems/validation"
-                                        title: "Validation Failed"
+                                        title: "Validation Error"
                                         status: 400
                                         code: "validation"
                                         detail: "One or more request parameters are invalid"
@@ -587,7 +587,7 @@ paths:
                                     summary: A range filter supplied backwards
                                     value:
                                         type: "https://hub.formbricks.com/problems/validation"
-                                        title: "Validation Failed"
+                                        title: "Validation Error"
                                         status: 400
                                         code: "validation"
                                         detail: "One or more request parameters are invalid"
