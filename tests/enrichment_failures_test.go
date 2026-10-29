@@ -503,7 +503,8 @@ func TestCountFailedRecordsAggregateIncludesOnlyCurrentTaxonomyEmbeddingFailures
 
 	embedding := make([]float32, models.EmbeddingVectorDimensions)
 	embedding[0] = 0.25
-	require.NoError(t, embeddingsRepo.Upsert(ctx, record.ID, model, embedding, nil))
+	require.NoError(t, embeddingsRepo.Upsert(
+		ctx, record.ID, model, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
 
 	afterSuccess, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
 	require.NoError(t, err)

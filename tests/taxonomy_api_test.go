@@ -793,7 +793,8 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 
 		embedding := make([]float32, models.EmbeddingVectorDimensions)
 		embedding[0] = 0.25
-		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, recordID, taxonomyEmbeddingModel, embedding, nil))
+		require.NoError(t, harness.embeddingsRepo.Upsert(
+			ctx, recordID, taxonomyEmbeddingModel, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
 
 		runID := startRunForScope(ctx, t, harness, scope)
 		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"
@@ -838,8 +839,10 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 
 		embedding := make([]float32, models.EmbeddingVectorDimensions)
 		embedding[0] = 0.25
-		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, validID, taxonomyEmbeddingModel, embedding, nil))
-		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, blankID, taxonomyEmbeddingModel, embedding, nil))
+		require.NoError(t, harness.embeddingsRepo.Upsert(
+			ctx, validID, taxonomyEmbeddingModel, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
+		require.NoError(t, harness.embeddingsRepo.Upsert(
+			ctx, blankID, taxonomyEmbeddingModel, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
 
 		recordCount, embeddingCount, _, err := harness.repo.CountScopeInput(ctx, scope, taxonomyEmbeddingModel)
 		require.NoError(t, err)
@@ -876,7 +879,8 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 
 		embedding := make([]float32, models.EmbeddingVectorDimensions)
 		embedding[0] = 0.25
-		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, recordID, taxonomyEmbeddingModel, embedding, nil))
+		require.NoError(t, harness.embeddingsRepo.Upsert(
+			ctx, recordID, taxonomyEmbeddingModel, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
 
 		recordCount, embeddingCount, _, err := harness.repo.CountScopeInput(ctx, scope, taxonomyEmbeddingModel)
 		require.NoError(t, err)
@@ -928,7 +932,8 @@ func TestTaxonomyAPI_InternalServiceEndpoints(t *testing.T) {
 
 		embedding := make([]float32, models.EmbeddingVectorDimensions)
 		embedding[0] = 0.25
-		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, blankID, taxonomyEmbeddingModel, embedding, nil))
+		require.NoError(t, harness.embeddingsRepo.Upsert(
+			ctx, blankID, taxonomyEmbeddingModel, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
 
 		runID := startRunForScope(ctx, t, harness, directoryScope)
 		inputURL := harness.server.URL + "/internal/v1/taxonomy/runs/" + runID.String() + "/input"

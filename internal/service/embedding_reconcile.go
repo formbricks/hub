@@ -19,36 +19,45 @@ var ErrEmbeddingReconcileInserterUnset = errors.New("embedding reconcile: insert
 
 const embeddingRepairPriority = 4
 
-// EmbeddingReconcileRepository is the data boundary needed by the taxonomy embedding sweep.
+// EmbeddingReconcileRepository is the data boundary needed by the embedding repair sweep.
 type EmbeddingReconcileRepository interface {
-	ListPendingTaxonomyEmbeddingIDs(
-		ctx context.Context, model string, retryBefore time.Time, limit int,
+	ListPendingEmbeddingIDs(
+		ctx context.Context, model string, inputKind models.EmbeddingInputKind, retryBefore time.Time, limit int,
 	) ([]uuid.UUID, error)
 	CountRunnableEmbeddingJobs(ctx context.Context, queue string) (int, error)
 }
 
+// EmbeddingReconcileTarget is one embedding the sweep keeps complete: a model and the input kind
+// its vectors are built from.
+type EmbeddingReconcileTarget struct {
+	Model     string
+	InputKind models.EmbeddingInputKind
+}
+
 // EmbeddingReconcileService keeps the low-priority repair lane topped up without materializing the
-// complete deployment backlog or crowding live embedding work.
+// complete deployment backlog or crowding live embedding work. It repairs missing, stale and
+// orphaned vectors for every target (see ListPendingEmbeddingIDs).
 type EmbeddingReconcileService struct {
 	repo        EmbeddingReconcileRepository
 	inserter    RiverBatchInserter
-	model       string
+	targets     []EmbeddingReconcileTarget
 	targetDepth int
 	maxAttempts int
 	retryAfter  time.Duration
 }
 
-// NewEmbeddingReconcileService creates a level-triggered taxonomy embedding reconciler.
+// NewEmbeddingReconcileService creates a level-triggered embedding reconciler for targets, in
+// sweep order.
 func NewEmbeddingReconcileService(
 	repo EmbeddingReconcileRepository,
-	model string,
+	targets []EmbeddingReconcileTarget,
 	targetDepth int,
 	maxAttempts int,
 	retryAfter time.Duration,
 ) *EmbeddingReconcileService {
 	return &EmbeddingReconcileService{
 		repo:        repo,
-		model:       model,
+		targets:     targets,
 		targetDepth: targetDepth,
 		maxAttempts: maxAttempts,
 		retryAfter:  retryAfter,
@@ -68,9 +77,13 @@ type EmbeddingReconcileResult struct {
 	AtTarget bool
 }
 
-// Sweep tops the repair queue up to targetDepth with records that are still missing their current
-// taxonomy embedding. The query excludes active jobs across all queues and terminal failures,
-// and cools transient failures before making them eligible again.
+// Sweep tops the repair queue up to targetDepth with records whose vectors are missing, stale or
+// orphaned. The query excludes active jobs across all queues and terminal failures, and cools
+// transient failures before making them eligible again.
+//
+// The room is shared fairly: each target may claim an equal share of what is left, and a target
+// with less backlog than its share leaves the rest to the targets after it. So a large taxonomy
+// backlog cannot starve search-embedding repair, or the reverse.
 func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconcileResult, error) {
 	result := EmbeddingReconcileResult{}
 	if s.inserter == nil {
@@ -91,47 +104,36 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 		return result, nil
 	}
 
-	ids, err := s.repo.ListPendingTaxonomyEmbeddingIDs(ctx, s.model, time.Now().Add(-s.retryAfter), room)
-	if err != nil {
-		return result, fmt.Errorf("list pending taxonomy embeddings: %w", err)
+	retryBefore := time.Now().Add(-s.retryAfter)
+	params := make([]river.InsertManyParams, 0, room)
+
+	for i, target := range s.targets {
+		share := room / (len(s.targets) - i)
+		if share <= 0 {
+			continue
+		}
+
+		ids, err := s.repo.ListPendingEmbeddingIDs(ctx, target.Model, target.InputKind, retryBefore, share)
+		if err != nil {
+			return result, fmt.Errorf("list pending embeddings for %s: %w", target.InputKind, err)
+		}
+
+		room -= len(ids)
+
+		for _, id := range ids {
+			params = append(params, s.repairJob(target, id))
+		}
 	}
 
-	result.Found = len(ids)
+	result.Found = len(params)
 
-	if len(ids) == 0 {
+	if len(params) == 0 {
 		return result, nil
-	}
-
-	params := make([]river.InsertManyParams, 0, len(ids))
-	for _, id := range ids {
-		params = append(params, river.InsertManyParams{
-			Args: FeedbackEmbeddingArgs{
-				FeedbackRecordID: id,
-				Model:            s.model,
-				InputKind:        models.EmbeddingInputKindTaxonomyTranslated,
-				ValueTextHash:    "reconcile",
-			},
-			InsertOpts: &river.InsertOpts{
-				Queue:       EmbeddingsReconcileQueueName,
-				Priority:    embeddingRepairPriority,
-				MaxAttempts: s.maxAttempts,
-				UniqueOpts: river.UniqueOpts{
-					ByArgs: true,
-					ByState: []rivertype.JobState{
-						rivertype.JobStateAvailable,
-						rivertype.JobStatePending,
-						rivertype.JobStateRetryable,
-						rivertype.JobStateRunning,
-						rivertype.JobStateScheduled,
-					},
-				},
-			},
-		})
 	}
 
 	results, err := s.inserter.InsertMany(ctx, params)
 	if err != nil {
-		return result, fmt.Errorf("enqueue taxonomy embedding repairs: %w", err)
+		return result, fmt.Errorf("enqueue embedding repairs: %w", err)
 	}
 
 	for _, inserted := range results {
@@ -147,4 +149,32 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 	)
 
 	return result, nil
+}
+
+// repairJob is one record's repair. Unique across the in-flight states so a sweep racing another
+// sweep or a backfill cannot queue the same repair twice.
+func (s *EmbeddingReconcileService) repairJob(target EmbeddingReconcileTarget, id uuid.UUID) river.InsertManyParams {
+	return river.InsertManyParams{
+		Args: FeedbackEmbeddingArgs{
+			FeedbackRecordID: id,
+			Model:            target.Model,
+			InputKind:        models.NormalizeEmbeddingInputKind(target.InputKind),
+			ValueTextHash:    "reconcile",
+		},
+		InsertOpts: &river.InsertOpts{
+			Queue:       EmbeddingsReconcileQueueName,
+			Priority:    embeddingRepairPriority,
+			MaxAttempts: s.maxAttempts,
+			UniqueOpts: river.UniqueOpts{
+				ByArgs: true,
+				ByState: []rivertype.JobState{
+					rivertype.JobStateAvailable,
+					rivertype.JobStatePending,
+					rivertype.JobStateRetryable,
+					rivertype.JobStateRunning,
+					rivertype.JobStateScheduled,
+				},
+			},
+		},
+	}
 }

@@ -220,16 +220,18 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		deps.EmbeddingMetrics = embeddingMetrics
 
 		if embeddingReconcileConfigured(cfg) {
+			targets := embeddingReconcileTargets(cfg, embeddingModel, taxonomyEmbeddingModel)
 			embeddingReconcileService = service.NewEmbeddingReconcileService(
 				embeddingsRepo,
-				taxonomyEmbeddingModel,
+				targets,
 				cfg.Embedding.ReconcileTargetDepth,
 				cfg.Embedding.MaxAttempts,
 				cfg.Embedding.ReconcileRetryAfter.Duration(),
 			)
 			deps.EmbeddingReconcileSweeper = embeddingReconcileService
 
-			slog.Info("taxonomy embedding reconciliation configured",
+			slog.Info("embedding reconciliation configured",
+				"targets", len(targets),
 				"interval", cfg.Embedding.ReconcileInterval.Duration(),
 				"retry_after", cfg.Embedding.ReconcileRetryAfter.Duration(),
 				"target_depth", cfg.Embedding.ReconcileTargetDepth,
@@ -464,14 +466,31 @@ func newRiverConfig(
 	return riverCfg, riverLogs
 }
 
-// embeddingReconcileConfigured keeps automatic repair aligned with the taxonomy embedding
-// backlog contract: embeddings and taxonomy must be configured before the worker spends provider
-// calls creating taxonomy-only vectors. Translation is intentionally not a gate because taxonomy
-// input falls back to the source text when a deployment does not translate records.
+// embeddingReconcileConfigured reports whether automatic embedding repair runs: it is opt-in and
+// needs an embedding provider and model.
 func embeddingReconcileConfigured(cfg *config.Config) bool {
 	return cfg.Embedding.ReconcileEnabled &&
-		cfg.Embedding.Provider != "" && cfg.Embedding.Model != "" &&
-		cfg.Taxonomy.ServiceURL != ""
+		cfg.Embedding.Provider != "" && cfg.Embedding.Model != ""
+}
+
+// embeddingReconcileTargets lists the embeddings the sweep keeps complete: the raw search embedding
+// always, and the taxonomy embedding when taxonomy is configured, so the worker never spends
+// provider calls on taxonomy-only vectors nothing will read. Translation is intentionally not a
+// gate: taxonomy input falls back to the source text when a deployment does not translate.
+func embeddingReconcileTargets(
+	cfg *config.Config, embeddingModel, taxonomyEmbeddingModel string,
+) []service.EmbeddingReconcileTarget {
+	targets := []service.EmbeddingReconcileTarget{
+		{Model: embeddingModel, InputKind: models.EmbeddingInputKindRaw},
+	}
+
+	if cfg.Taxonomy.ServiceURL != "" && taxonomyEmbeddingModel != "" {
+		targets = append(targets, service.EmbeddingReconcileTarget{
+			Model: taxonomyEmbeddingModel, InputKind: models.EmbeddingInputKindTaxonomyTranslated,
+		})
+	}
+
+	return targets
 }
 
 // embeddingProviderAndModel returns (canonical provider, model) when embeddings are enabled

@@ -297,7 +297,7 @@ func TestEmbeddingsUpsert_StaleWriteGuard(t *testing.T) {
 	embedding[0] = 0.5
 
 	// A stale job (its content no longer matches the row) is skipped and writes nothing.
-	staleErr := embeddingsRepo.Upsert(ctx, rec.ID, model, embedding,
+	staleErr := embeddingsRepo.Upsert(ctx, rec.ID, model, models.EmbeddingInputKindRaw, embedding,
 		func(_, valueText, _ *string) bool { return valueText != nil && *valueText == "older text" })
 	require.ErrorIs(t, staleErr, huberrors.ErrEmbeddingSuperseded)
 
@@ -305,7 +305,7 @@ func TestEmbeddingsUpsert_StaleWriteGuard(t *testing.T) {
 	require.ErrorIs(t, getErr, repository.ErrEmbeddingNotFound, "the stale upsert must not write")
 
 	// The job holding the current content writes normally.
-	require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, model, embedding,
+	require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, model, models.EmbeddingInputKindRaw, embedding,
 		func(_, valueText, _ *string) bool { return valueText != nil && *valueText == text }))
 
 	stored, err := embeddingsRepo.GetEmbeddingByFeedbackRecordAndModel(ctx, rec.ID, model)
@@ -350,9 +350,9 @@ func TestDeleteEmbeddingsForOtherModels(t *testing.T) {
 		}, nil)
 		require.NoError(t, err)
 
-		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, currentModel, embedding, nil))
-		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, currentTaxonomyModel, embedding, nil))
-		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, staleModel, embedding, nil))
+		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, currentModel, models.EmbeddingInputKindRaw, embedding, nil))
+		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, currentTaxonomyModel, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
+		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, staleModel, models.EmbeddingInputKindRaw, embedding, nil))
 
 		keep = append(keep, rec.ID)
 		drop = append(drop, rec.ID)

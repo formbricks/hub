@@ -43,6 +43,9 @@ const (
 	// must all select through it, or records the live path embedded can exhaust their retries and
 	// never be repaired or reported (ENG-2792).
 	taxonomyEmbeddingEligibleTextSQL = taxonomyEmbeddingInputTextSQL + ` IS NOT NULL`
+	// rawEmbeddingEligibleTextSQL is the raw (search) embedding's eligibility rule, the SQL twin of
+	// the live provider's non-empty BuildEmbeddingInput check: non-blank value_text, any field type.
+	rawEmbeddingEligibleTextSQL = `NULLIF(btrim(fr.value_text, ` + trimSpaceCharactersSQL + `), '') IS NOT NULL`
 
 	// hnswEfSearch increases HNSW graph traversal candidates (default 40); higher improves recall.
 	hnswEfSearch = 200
@@ -95,19 +98,55 @@ func rollbackQuietly(ctx context.Context, tx pgx.Tx, msg string) {
 	}
 }
 
-// Upsert inserts or updates the embedding for (feedback_record_id, model). On conflict updates embedding and updated_at.
-// Uses halfvec storage (2 bytes per dimension); pgvector-go converts float32 to float16 when encoding.
-// embedding must have length models.EmbeddingVectorDimensions (fixed 768).
+// embeddingEligibleTextSQL returns the eligibility rule for an input kind: the records whose
+// embedding input is non-empty, so the live provider embeds them.
+func embeddingEligibleTextSQL(kind models.EmbeddingInputKind) string {
+	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
+		return taxonomyEmbeddingEligibleTextSQL
+	}
+
+	return rawEmbeddingEligibleTextSQL
+}
+
+// embeddingSourceHashSQL returns the expression (over feedback_records aliased fr) that
+// fingerprints the columns an input kind's embedding input is built from: field_label and
+// value_text for the raw kind, plus value_text_translated for the taxonomy kind. The upsert stores
+// it for the row it has just locked and checked; the repair sweep recomputes it to find vectors
+// whose record has since changed. One definition serves both, so they cannot drift.
+//
+// Each column is length-prefixed so no value can shift a boundary into its neighbour, and NULL
+// stays distinct from an empty string (concat_ws skips NULLs). A difference that does not change
+// the built input (say, trailing whitespace) costs one redundant re-embed, never a missed one.
+func embeddingSourceHashSQL(kind models.EmbeddingInputKind) string {
+	columns := []string{"fr.field_label", "fr.value_text"}
+	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
+		columns = append(columns, "fr.value_text_translated")
+	}
+
+	const partsPerColumn = 2 // length prefix, value
+
+	parts := make([]string, 0, partsPerColumn*len(columns))
+	for _, column := range columns {
+		parts = append(parts, "octet_length("+column+")", column)
+	}
+
+	return "sha256(convert_to(concat_ws(chr(31), " + strings.Join(parts, ", ") + "), 'UTF8'))"
+}
+
+// Upsert inserts or updates the embedding for (feedback_record_id, model). On conflict updates
+// embedding, updated_at and source_hash. Uses halfvec storage (2 bytes per dimension); pgvector-go
+// converts float32 to float16 when encoding. embedding must have length
+// models.EmbeddingVectorDimensions (fixed 768). inputKind selects which columns source_hash covers.
 //
 // stillCurrent (optional) guards against the concurrent-jobs race: two jobs for the same record
-// run in parallel and the one that read OLDER content lands its write LAST, permanently attaching
-// a stale vector (the missing-rows-only backfill can never repair it). Under a per-record
+// run in parallel and the one that read OLDER content lands its write LAST, attaching a stale
+// vector the repair sweep would then have to find and redo. Under a per-record
 // advisory lock the record's current content is re-read and compared; a mismatch returns
 // huberrors.ErrEmbeddingSuperseded — a benign skip, since the job holding the current content
 // writes the row.
 func (r *EmbeddingsRepository) Upsert(
-	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
+	ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+	embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	if len(embedding) != models.EmbeddingVectorDimensions {
 		return fmt.Errorf("%w: got %d, want %d", ErrEmbeddingDimensionMismatch, len(embedding), models.EmbeddingVectorDimensions)
@@ -128,11 +167,15 @@ func (r *EmbeddingsRepository) Upsert(
 			return err
 		}
 
+		// source_hash is computed from the row locked and checked above, so it describes exactly
+		// the content this vector was built from (see embeddingSourceHashSQL).
 		_, err := dbTx.Exec(ctx, `
-			INSERT INTO embeddings (feedback_record_id, embedding, model, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO embeddings (feedback_record_id, embedding, model, created_at, updated_at, source_hash)
+			SELECT $1, $2, $3, $4, $5, `+embeddingSourceHashSQL(inputKind)+`
+			FROM feedback_records fr
+			WHERE fr.id = $1
 			ON CONFLICT (feedback_record_id, model)
-			DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = $5`,
+			DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = $5, source_hash = EXCLUDED.source_hash`,
 			feedbackRecordID, vec, model, now, now,
 		)
 		if err != nil {
@@ -308,40 +351,76 @@ func (r *EmbeddingsRepository) ListTenantFeedbackRecordIDsForBackfillByInputKind
 	return r.listFeedbackRecordIDsForBackfillByInputKind(ctx, model, inputKind, tenantID, true, afterID, limit)
 }
 
-// ListPendingTaxonomyEmbeddingIDs returns records of any field type eligible for the taxonomy
-// input (taxonomyEmbeddingEligibleTextSQL) that still lack the exact taxonomy embedding model and
-// do not already have an in-flight embedding job on any queue.
-// Terminal failures are excluded: retrying content the provider has conclusively rejected would
-// spend a call on every sweep forever. Non-terminal failures become eligible after retryBefore,
-// preventing the same poison records from monopolizing every bounded sweep. Candidates are
-// ordered oldest first so successful/cooldown-filtered sweeps advance through the backlog rather
-// than repeatedly selecting whichever tenant is ingesting the newest records.
+// ListPendingEmbeddingIDs returns the records whose embedding for model is owed repair and that
+// have no embedding job in flight on any queue:
+//
+//   - missing: eligible for the input kind (embeddingEligibleTextSQL) and no vector for model;
+//   - stale: a vector whose source_hash no longer matches the record's content
+//     (embeddingSourceHashSQL). A NULL hash predates hashing and is trusted as current;
+//   - orphaned: a vector although the record no longer has any text. The worker clears it.
+//
+// Terminal failures for the current model and revision are excluded: retrying content the provider
+// has conclusively rejected would spend a call on every sweep forever. Non-terminal failures become
+// eligible after retryBefore, so the same poison records cannot monopolize every bounded sweep.
+// Candidates are ordered oldest first so successful/cooldown-filtered sweeps advance through the
+// backlog rather than repeatedly selecting whichever tenant is ingesting the newest records.
 //
 // The ordered eligibility scan is deliberately deployment-wide rather than tenant-scoped: the
 // repair lane must make progress without requiring tenant discovery or allowing a busy tenant to
 // monopolize it. Its operational impact is bounded by the five-minute sweep cadence and two-minute
-// worker deadline, while the target-depth LIMIT bounds returned rows and queued work (not scan
-// cost). Changing the access path requires production-scale query-plan evidence because the
-// missing-embedding predicate lives in a separate table.
-func (r *EmbeddingsRepository) ListPendingTaxonomyEmbeddingIDs(
-	ctx context.Context, model string, retryBefore time.Time, limit int,
+// worker deadline, while the LIMIT bounds returned rows and queued work (not scan cost). Hashing
+// every embedded record's content is part of that scan. Measured at 200k records with vectors for
+// both models: ~500 ms per model when nothing is owed (the full scan; the missing-only query it
+// replaced took ~185 ms), ~8 ms with a 1% backlog. A cheaper prefilter on updated_at is not safe:
+// an edit whose transaction started before a vector's write but committed after it carries the
+// older timestamp. Changing the access path requires production-scale query-plan evidence.
+func (r *EmbeddingsRepository) ListPendingEmbeddingIDs(
+	ctx context.Context, model string, inputKind models.EmbeddingInputKind, retryBefore time.Time, limit int,
+) ([]uuid.UUID, error) {
+	return r.listPendingEmbeddingIDs(ctx, model, inputKind, "", retryBefore, limit)
+}
+
+// ListTenantPendingEmbeddingIDs is ListPendingEmbeddingIDs restricted to one tenant: the operator
+// repair path (backfill-embeddings -tenant-id) selects exactly what the sweep would.
+func (r *EmbeddingsRepository) ListTenantPendingEmbeddingIDs(
+	ctx context.Context, tenantID, model string, inputKind models.EmbeddingInputKind, retryBefore time.Time, limit int,
+) ([]uuid.UUID, error) {
+	if tenantID == "" {
+		return nil, errEmbeddingBackfillTenantRequired
+	}
+
+	return r.listPendingEmbeddingIDs(ctx, model, inputKind, tenantID, retryBefore, limit)
+}
+
+//nolint:funcorder // scoped helper stays with the public pending-set methods
+func (r *EmbeddingsRepository) listPendingEmbeddingIDs(
+	ctx context.Context, model string, inputKind models.EmbeddingInputKind, tenantID string,
+	retryBefore time.Time, limit int,
 ) ([]uuid.UUID, error) {
 	if limit <= 0 {
 		return []uuid.UUID{}, nil
 	}
 
+	inputKind = models.NormalizeEmbeddingInputKind(inputKind)
+	eligible := embeddingEligibleTextSQL(inputKind)
+
 	rows, err := r.db.Query(ctx, `
 		SELECT fr.id
 		FROM feedback_records fr
+		LEFT JOIN embeddings e
+		  ON e.feedback_record_id = fr.id AND e.model = $1
 		LEFT JOIN feedback_record_enrichment_failures failure
 		  ON failure.feedback_record_id = fr.id
 		 AND failure.enrichment = $3
 		 AND failure.context_key = $1
 		 AND failure.source_updated_at = fr.updated_at
-		WHERE `+taxonomyEmbeddingEligibleTextSQL+`
-		  AND NOT EXISTS (
-			SELECT 1 FROM embeddings e
-			WHERE e.feedback_record_id = fr.id AND e.model = $1
+		WHERE ($6 = '' OR fr.tenant_id = $6)
+		  AND (
+			(`+eligible+` AND (
+			  e.feedback_record_id IS NULL
+			  OR (e.source_hash IS NOT NULL AND e.source_hash <> `+embeddingSourceHashSQL(inputKind)+`)
+			))
+			OR (e.feedback_record_id IS NOT NULL AND NOT (`+eligible+`))
 		  )
 		  AND (failure.feedback_record_id IS NULL OR (
 		    NOT failure.terminal AND failure.failed_at <= $4
@@ -362,13 +441,14 @@ func (r *EmbeddingsRepository) ListPendingTaxonomyEmbeddingIDs(
 		ORDER BY fr.collected_at, fr.id
 		LIMIT $5`,
 		model,
-		models.EmbeddingInputKindTaxonomyTranslated,
-		models.EnrichmentNameTaxonomyEmbedding,
+		inputKind,
+		embeddingFailureEnrichment(inputKind),
 		retryBefore,
 		limit,
+		tenantID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list pending taxonomy embedding ids: %w", err)
+		return nil, fmt.Errorf("list pending embedding ids: %w", err)
 	}
 	defer rows.Close()
 
@@ -377,17 +457,26 @@ func (r *EmbeddingsRepository) ListPendingTaxonomyEmbeddingIDs(
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan pending taxonomy embedding id: %w", err)
+			return nil, fmt.Errorf("scan pending embedding id: %w", err)
 		}
 
 		ids = append(ids, id)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate pending taxonomy embedding ids: %w", err)
+		return nil, fmt.Errorf("iterate pending embedding ids: %w", err)
 	}
 
 	return ids, nil
+}
+
+// embeddingFailureEnrichment is the failure-marker name an input kind's failures are recorded under.
+func embeddingFailureEnrichment(kind models.EmbeddingInputKind) string {
+	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
+		return models.EnrichmentNameTaxonomyEmbedding
+	}
+
+	return models.EnrichmentNameEmbedding
 }
 
 // CountRunnableEmbeddingJobs returns the current runnable depth of one embedding queue. Retryable
@@ -870,5 +959,5 @@ func backfillEligibilitySQL(inputKind models.EmbeddingInputKind) string {
 		return taxonomyEmbeddingEligibleTextSQL
 	}
 
-	return `fr.value_text IS NOT NULL AND trim(fr.value_text) != ''`
+	return rawEmbeddingEligibleTextSQL
 }

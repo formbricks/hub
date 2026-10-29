@@ -107,7 +107,8 @@ func testListPendingTaxonomyEmbeddingIDs(t *testing.T, fieldType models.FieldTyp
 
 	vector := make([]float32, models.EmbeddingVectorDimensions)
 	vector[0] = 0.5
-	require.NoError(t, embeddingsRepo.Upsert(ctx, embedded.ID, model, vector, nil))
+	require.NoError(t, embeddingsRepo.Upsert(
+		ctx, embedded.ID, model, models.EmbeddingInputKindTaxonomyTranslated, vector, nil))
 
 	_, err = riverClient.Insert(ctx, service.FeedbackEmbeddingArgs{
 		FeedbackRecordID: activeJob.ID,
@@ -150,7 +151,8 @@ func testListPendingTaxonomyEmbeddingIDs(t *testing.T, fieldType models.FieldTyp
 	// This repository is shared by local integration runs, and a unique model makes every existing
 	// fixture look missing. The fixture timestamps sort first so the assertion does not depend on a
 	// database-wide inspection limit; bounded production top-up is asserted in the service unit test.
-	ids, err := embeddingsRepo.ListPendingTaxonomyEmbeddingIDs(ctx, model, time.Now().Add(-15*time.Minute), 1_000)
+	ids, err := embeddingsRepo.ListPendingEmbeddingIDs(
+		ctx, model, models.EmbeddingInputKindTaxonomyTranslated, time.Now().Add(-15*time.Minute), 1_000)
 	require.NoError(t, err)
 
 	got := make(map[uuid.UUID]struct{}, len(ids))

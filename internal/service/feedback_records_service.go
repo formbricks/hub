@@ -80,8 +80,8 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 // EmbeddingsRepository defines the interface for embeddings table access.
 type EmbeddingsRepository interface {
 	Upsert(
-		ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-		stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+		embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
 	DeleteByFeedbackRecordAndModel(
 		ctx context.Context, feedbackRecordID uuid.UUID, model string,
@@ -586,8 +586,8 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecordsByUser(
 // If embedding is nil, the row for (feedbackRecordID, model) is deleted; otherwise upserted.
 // It does not publish an event.
 func (s *FeedbackRecordsService) SetEmbedding(
-	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
+	ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+	embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	if embedding == nil {
 		if err := s.embeddingsRepo.DeleteByFeedbackRecordAndModel(ctx, feedbackRecordID, model, stillCurrent); err != nil {
@@ -597,7 +597,7 @@ func (s *FeedbackRecordsService) SetEmbedding(
 		return nil
 	}
 
-	if err := s.embeddingsRepo.Upsert(ctx, feedbackRecordID, model, embedding, stillCurrent); err != nil {
+	if err := s.embeddingsRepo.Upsert(ctx, feedbackRecordID, model, inputKind, embedding, stillCurrent); err != nil {
 		return fmt.Errorf("upsert embedding: %w", err)
 	}
 

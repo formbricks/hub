@@ -121,11 +121,37 @@ to a service-account key path when running outside Google Cloud). A custom
 | `EMBEDDING_MODEL`                 | -       | Embedding model name.                                                                                                                                                           |
 | `EMBEDDING_BASE_URL`              | -       | OpenAI-compatible embeddings root URL. Use with `EMBEDDING_PROVIDER=openai` to target a self-hosted endpoint. See [Self-Hosted Embeddings](/guides/hub-self-hosted-embeddings). |
 | `EMBEDDING_MAX_CONCURRENT`        | `5`     | Max concurrent embedding jobs.                                                                                                                                                  |
-| `EMBEDDING_MAX_ATTEMPTS`          | `3`     | Max embedding attempts.                                                                                                                                                         |
+| `EMBEDDING_MAX_ATTEMPTS`          | `5`     | Max embedding attempts.                                                                                                                                                         |
+| `EMBEDDING_JOB_TIMEOUT_SECONDS`   | `60`    | Deadline for one embedding job.                                                                                                                                                 |
 | `EMBEDDING_MAX_INPUT_BYTES`       | `12000` | Max bytes of a record sent to the embedding provider; over it the input is trimmed to its first N bytes, so an over-long record still gets a vector. `0` disables the cap.      |
 | `EMBEDDING_NORMALIZE`             | `false` | Whether to normalize embeddings before storage.                                                                                                                                 |
 | `EMBEDDING_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                                                                                                     |
 | `EMBEDDING_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                                                                                                    |
+| `EMBEDDING_RECONCILE_ENABLED`     | `false` | Periodically repair embeddings on `hub-worker` (see [Embedding repair](#embedding-repair)). Opt in per deployment.                                                              |
+| `EMBEDDING_RECONCILE_INTERVAL_SECONDS` | `300` | How often the repair sweep runs.                                                                                                                                          |
+| `EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS` | `900` | Cooldown before a record whose attempts ran out on a transient error is retried.                                                                                       |
+| `EMBEDDING_RECONCILE_TARGET_DEPTH` | `100`  | Each sweep tops the `embeddings_reconcile` queue up to this many runnable jobs, shared fairly between the search and taxonomy embeddings.                                         |
+| `EMBEDDING_RECONCILE_MAX_CONCURRENT` | `1`  | Worker concurrency reserved for repaired records, separate from live embedding work.                                                                                            |
+
+#### Embedding repair
+
+`hub-api` queues a record's embedding jobs in the same transaction that writes it, so a crash
+cannot lose them. What can still leave a record without a current vector is a job that runs out of
+attempts. With `EMBEDDING_RECONCILE_ENABLED=true` and an embedding provider configured, a sweep on
+`hub-worker` (on River's elected leader) re-queues every record whose vector is:
+
+- **missing**: the record has text but no vector for the current model;
+- **stale**: the text the vector was computed from has changed since (for the taxonomy embedding,
+  this includes the translation);
+- **orphaned**: the record no longer has any text. The repair deletes the vector without calling
+  the provider.
+
+This covers the search embedding always, and the taxonomy embedding when `TAXONOMY_SERVICE_URL`
+is set. Records whose attempts ran out on a transient error are retried after
+`EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS`; records the provider rejected outright are not retried
+until their content changes.
+
+Vectors written before Hub recorded what they were computed from are trusted as current.
 
 ### Translation
 

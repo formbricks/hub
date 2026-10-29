@@ -59,7 +59,7 @@ func TestSemanticSearch_NearestFeedbackRecords(t *testing.T) {
 			SubmissionID: testTenantID("sub"),
 		}, nil)
 		require.NoError(t, createErr)
-		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, searchTestModel, searchVec(closeness), nil))
+		require.NoError(t, embeddingsRepo.Upsert(ctx, rec.ID, searchTestModel, models.EmbeddingInputKindRaw, searchVec(closeness), nil))
 
 		return rec.ID
 	}

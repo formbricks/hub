@@ -206,7 +206,9 @@ func testTaxonomyEmbeddingRecovery(t *testing.T, fieldType models.FieldType, val
 	// 4. The provider has recovered. The periodic sweep must pick the record up on its own.
 	provider.healthy = true
 
-	reconciler := service.NewEmbeddingReconcileService(embeddingsRepo, model, 1_000, maxAttempts, retryAfter)
+	reconciler := service.NewEmbeddingReconcileService(embeddingsRepo, []service.EmbeddingReconcileTarget{
+		{Model: model, InputKind: models.EmbeddingInputKindTaxonomyTranslated},
+	}, 1_000, maxAttempts, retryAfter)
 	reconciler.SetInserter(riverClient)
 
 	_, err = reconciler.Sweep(ctx)
@@ -373,7 +375,8 @@ func TestTaxonomyEmbeddingEligibilityAgreesAcrossPaths(t *testing.T) {
 	_, err = db.Exec(ctx, `DELETE FROM river_job WHERE args->>'model' = $1`, model)
 	require.NoError(t, err)
 
-	pending, err := embeddingsRepo.ListPendingTaxonomyEmbeddingIDs(ctx, model, time.Now(), 10_000)
+	pending, err := embeddingsRepo.ListPendingEmbeddingIDs(
+		ctx, model, models.EmbeddingInputKindTaxonomyTranslated, time.Now(), 10_000)
 	require.NoError(t, err)
 
 	repairSelected := make(map[uuid.UUID]bool, len(pending))

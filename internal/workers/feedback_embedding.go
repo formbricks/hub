@@ -38,8 +38,8 @@ const defaultEmbeddingJobTimeout = 60 * time.Second
 type feedbackEmbeddingService interface {
 	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	SetEmbedding(
-		ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-		stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+		embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
 }
 
@@ -171,7 +171,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 		return w.handleEmbedError(ctx, err, job, record, log, start)
 	}
 
-	err = w.embeddingService.SetEmbedding(ctx, args.FeedbackRecordID, args.Model, embedding, stillCurrent)
+	err = w.embeddingService.SetEmbedding(ctx, args.FeedbackRecordID, args.Model, inputKind, embedding, stillCurrent)
 	if err != nil {
 		isLastAttempt := job.Attempt >= job.MaxAttempts
 
@@ -227,13 +227,11 @@ func (w *FeedbackEmbeddingWorker) handleEmbedError(
 			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "failed_final")
 		}
 
-		if w.failureMetrics != nil &&
-			inputKind == models.EmbeddingInputKindTaxonomyTranslated {
-			w.failureMetrics.RecordTerminalFailure(
-				ctx, models.EnrichmentNameTaxonomyEmbedding, string(reason))
+		if w.failureMetrics != nil {
+			w.failureMetrics.RecordTerminalFailure(ctx, embeddingEnrichmentName(inputKind), string(reason))
 		}
 
-		w.markTaxonomyEmbeddingFailed(
+		w.markEmbeddingFailed(
 			ctx, log, record, inputKind, job.Args.Model, job.Attempt, true, string(reason))
 		log.Error("embedding: provider failed permanently for this record, not retrying",
 			"reason", string(reason),
@@ -260,7 +258,7 @@ func (w *FeedbackEmbeddingWorker) handleEmbedError(
 	}
 
 	if isLastAttempt {
-		w.markTaxonomyEmbeddingFailed(
+		w.markEmbeddingFailed(
 			ctx, log, record, inputKind, job.Args.Model, job.Attempt, false,
 			models.EnrichmentFailureReasonProviderError,
 		)
@@ -345,7 +343,7 @@ func (w *FeedbackEmbeddingWorker) handleSetEmbeddingError(
 		}
 
 		if isLastAttempt {
-			w.markTaxonomyEmbeddingFailed(
+			w.markEmbeddingFailed(
 				ctx, log, record, inputKind, model, attempt, false,
 				models.EnrichmentFailureReasonWriteFailed,
 			)
@@ -360,9 +358,9 @@ func (w *FeedbackEmbeddingWorker) handleSetEmbeddingError(
 	}
 }
 
-// markTaxonomyEmbeddingFailed writes failure bookkeeping only for the translated taxonomy model.
-// Raw search embeddings are intentionally outside the taxonomy progress/reconcile contract.
-func (w *FeedbackEmbeddingWorker) markTaxonomyEmbeddingFailed(
+// markEmbeddingFailed writes the durable failure marker the repair sweep reads, keyed by the exact
+// model and the record revision, for both the raw search embedding and the taxonomy embedding.
+func (w *FeedbackEmbeddingWorker) markEmbeddingFailed(
 	ctx context.Context,
 	log *slog.Logger,
 	record *models.FeedbackRecord,
@@ -372,8 +370,7 @@ func (w *FeedbackEmbeddingWorker) markTaxonomyEmbeddingFailed(
 	terminal bool,
 	reason string,
 ) {
-	if w.failures == nil || record == nil ||
-		models.NormalizeEmbeddingInputKind(inputKind) != models.EmbeddingInputKindTaxonomyTranslated {
+	if w.failures == nil || record == nil {
 		return
 	}
 
@@ -383,7 +380,7 @@ func (w *FeedbackEmbeddingWorker) markTaxonomyEmbeddingFailed(
 	err := w.failures.RecordFailure(writeCtx, models.EnrichmentFailure{
 		FeedbackRecordID: record.ID,
 		TenantID:         record.TenantID,
-		Enrichment:       models.EnrichmentNameTaxonomyEmbedding,
+		Enrichment:       embeddingEnrichmentName(inputKind),
 		Terminal:         terminal,
 		Reason:           reason,
 		Attempts:         attempts,
@@ -398,14 +395,17 @@ func (w *FeedbackEmbeddingWorker) markTaxonomyEmbeddingFailed(
 		w.metrics.RecordWorkerError(ctx, "failure_marker_write_failed")
 	}
 
-	log.Error("embedding: could not record taxonomy embedding failure",
+	log.Error("embedding: could not record embedding failure",
 		"terminal", terminal,
 		"reason", reason,
 		"error", err,
 	)
 }
 
-// handleEmptyText clears the embedding for text fields when value_text is empty, or records skip for non-text.
+// handleEmptyText clears the embedding when the record no longer has embeddable text, whatever its
+// field type: the live path embeds any record carrying text (choice and matrix answers store their
+// option label on categorical rows), so any of them can be left holding a vector of text it no
+// longer has.
 func (w *FeedbackEmbeddingWorker) handleEmptyText(
 	ctx context.Context,
 	job *river.Job[service.FeedbackEmbeddingArgs],
@@ -414,43 +414,32 @@ func (w *FeedbackEmbeddingWorker) handleEmptyText(
 	start time.Time,
 	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
-	feedbackRecordID := job.Args.FeedbackRecordID
+	inputKind := models.NormalizeEmbeddingInputKind(job.Args.InputKind)
 
-	if record.FieldType == models.FieldTypeText {
-		err := w.embeddingService.SetEmbedding(ctx, feedbackRecordID, job.Args.Model, nil, stillCurrent)
-		if err != nil {
-			isLastAttempt := job.Attempt >= job.MaxAttempts
+	err := w.embeddingService.SetEmbedding(ctx, job.Args.FeedbackRecordID, job.Args.Model, inputKind, nil, stillCurrent)
+	if err != nil {
+		isLastAttempt := job.Attempt >= job.MaxAttempts
 
-			return w.handleSetEmbeddingError(
-				ctx,
-				err,
-				log,
-				start,
-				record,
-				job.Args.Model,
-				models.NormalizeEmbeddingInputKind(job.Args.InputKind),
-				job.Attempt,
-				isLastAttempt,
-				"clear feedback record embedding",
-			)
-		}
-
-		if w.metrics != nil {
-			w.metrics.RecordEmbeddingOutcome(ctx, "success")
-			w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "success")
-		}
-
-		log.Info("embedding: cleared (empty value_text)")
-
-		return nil
+		return w.handleSetEmbeddingError(
+			ctx,
+			err,
+			log,
+			start,
+			record,
+			job.Args.Model,
+			inputKind,
+			job.Attempt,
+			isLastAttempt,
+			"clear feedback record embedding",
+		)
 	}
 
 	if w.metrics != nil {
-		w.metrics.RecordEmbeddingOutcome(ctx, "skipped")
-		w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "skipped")
+		w.metrics.RecordEmbeddingOutcome(ctx, "success")
+		w.metrics.RecordEmbeddingDuration(ctx, time.Since(start), "success")
 	}
 
-	log.Info("embedding: skipped (no value_text)")
+	log.Info("embedding: cleared (empty value_text)")
 
 	return nil
 }

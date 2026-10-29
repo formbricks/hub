@@ -326,8 +326,9 @@ config:
     # provider-neutral and apply equally to managed and self-hosted embedding APIs.
     EMBEDDING_MAX_ATTEMPTS: "5"
     EMBEDDING_JOB_TIMEOUT_SECONDS: "60"
-    # Opt in after TAXONOMY_SERVICE_URL/TOKEN and the taxonomy embedding model are configured.
-    # Repair work uses a separate low-priority, single-worker lane so it cannot delay live records.
+    # Repairs missing, stale and orphaned embeddings: the search embedding always, the taxonomy
+    # embedding once TAXONOMY_SERVICE_URL/TOKEN are configured. Repair work uses a separate
+    # low-priority, single-worker lane so it cannot delay live records.
     EMBEDDING_RECONCILE_ENABLED: "false"
     EMBEDDING_RECONCILE_INTERVAL_SECONDS: "300"
     EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS: "900"

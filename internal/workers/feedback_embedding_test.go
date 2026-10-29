@@ -73,6 +73,7 @@ type mockEmbeddingService struct {
 	setErr          error
 	setCalls        int
 	setEmbeddingNil bool
+	setInputKind    models.EmbeddingInputKind
 	// stillCurrent is the supersession guard the worker passed to SetEmbedding, kept so a test can
 	// ask it directly whether a given content is still current.
 	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool
@@ -83,10 +84,11 @@ func (m *mockEmbeddingService) GetFeedbackRecord(_ context.Context, _ uuid.UUID)
 }
 
 func (m *mockEmbeddingService) SetEmbedding(
-	_ context.Context, _ uuid.UUID, _ string, embedding []float32,
+	_ context.Context, _ uuid.UUID, _ string, inputKind models.EmbeddingInputKind, embedding []float32,
 	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	m.setCalls++
+	m.setInputKind = inputKind
 	m.setEmbeddingNil = embedding == nil
 	m.stillCurrent = stillCurrent
 
@@ -178,7 +180,7 @@ func TestFeedbackEmbeddingWorkerUsesConfiguredTimeout(t *testing.T) {
 	assert.Equal(t, 75*time.Second, worker.Timeout(embeddingJob()))
 }
 
-func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
+func TestFeedbackEmbeddingWorkerRecordsFailures(t *testing.T) {
 	record := translatedTextRecord("Bonjour", "Hello")
 	record.ID = uuid.Must(uuid.NewV7())
 	record.TenantID = "tenant-embedding-failure"
@@ -238,7 +240,9 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 		assert.Equal(t, models.EnrichmentFailureReasonWriteFailed, failures.calls[0].Reason)
 	})
 
-	t.Run("raw embedding failures never enter taxonomy state", func(t *testing.T) {
+	// The repair sweep covers the search embedding too (ENG-2792), so its failures need the same
+	// durable state, recorded under their own name so they never count as taxonomy failures.
+	t.Run("raw embedding failures are recorded as search-embedding failures", func(t *testing.T) {
 		failures := &recordingFailureRecorder{}
 		failureMetrics := &countingFailureMetrics{}
 		worker := NewFeedbackEmbeddingWorkerWithOptions(
@@ -250,8 +254,11 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 
 		var cancelErr *river.JobCancelError
 		require.ErrorAs(t, worker.Work(context.Background(), job), &cancelErr)
-		assert.Empty(t, failures.calls)
-		assert.Zero(t, failureMetrics.terminal)
+		require.Len(t, failures.calls, 1)
+		assert.Equal(t, models.EnrichmentNameEmbedding, failures.calls[0].Enrichment)
+		assert.Equal(t, job.Args.Model, failures.calls[0].ContextKey)
+		assert.True(t, failures.calls[0].Terminal)
+		assert.Equal(t, 1, failureMetrics.terminal)
 	})
 }
 

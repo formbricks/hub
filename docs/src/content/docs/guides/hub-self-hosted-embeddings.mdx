@@ -269,8 +269,11 @@ Check `river_job` for `feedback_embedding` rows and inspect their `errors`
 column. The two most common causes:
 
 - **`connection reset by peer` or `connection refused`** — Hub reached the
-  endpoint before it was ready. Wait for the runtime to finish model warmup,
-  then re-enqueue with `make run-backfill-embeddings`.
+  endpoint before it was ready. Wait for the runtime to finish model warmup.
+  With `EMBEDDING_RECONCILE_ENABLED=true` the records are re-queued on their
+  own once `EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS` has passed (see
+  [Embedding repair](/reference/environment-variables#embedding-repair));
+  otherwise re-enqueue them with `make run-backfill-embeddings`.
 - **`401 Unauthorized`** — `EMBEDDING_PROVIDER_API_KEY` does not match the
   bearer token the endpoint expects.
 
