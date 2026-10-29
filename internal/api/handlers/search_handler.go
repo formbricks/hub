@@ -76,14 +76,14 @@ func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.service == nil {
-		response.RespondServiceUnavailable(w, r, "Semantic search is not available: embeddings are not configured.")
+	if err := validation.RejectUnknownQueryParams(r, searchQueryParams...); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}
 
-	if err := validation.RejectUnknownQueryParams(r, searchQueryParams...); err != nil {
-		response.RespondError(w, r, err)
+	if h.service == nil {
+		response.RespondServiceUnavailable(w, r, "Semantic search is not available: embeddings are not configured.")
 
 		return
 	}
@@ -138,6 +138,12 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if err := validation.RejectUnknownQueryParams(r, searchQueryParams...); err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Similar feedback is not available: embeddings are not configured.")
 
@@ -154,12 +160,6 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		response.RespondInvalidParams(w, r, response.InvalidParam{Name: "id", Reason: "must be a valid UUID"})
-
-		return
-	}
-
-	if err := validation.RejectUnknownQueryParams(r, searchQueryParams...); err != nil {
-		response.RespondError(w, r, err)
 
 		return
 	}

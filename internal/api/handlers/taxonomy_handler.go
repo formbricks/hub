@@ -60,14 +60,14 @@ func NewTaxonomyHandler(service TaxonomyService, recordTaxonomy ...FeedbackRecor
 
 // ListFields returns taxonomy-capable feedback fields.
 func (h *TaxonomyHandler) ListFields(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
-		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}
 
-	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
-		response.RespondError(w, r, err)
+	if h.service == nil {
+		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
 
 		return
 	}
@@ -114,15 +114,15 @@ func (h *TaxonomyHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 
 // ListRuns returns taxonomy run history.
 func (h *TaxonomyHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
-		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
+	filters := models.ListTaxonomyRunsFilters{}
+	if err := validation.ValidateAndDecodeQueryParams(r, &filters); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}
 
-	filters := models.ListTaxonomyRunsFilters{}
-	if err := validation.ValidateAndDecodeQueryParams(r, &filters); err != nil {
-		response.RespondError(w, r, err)
+	if h.service == nil {
+		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
 
 		return
 	}

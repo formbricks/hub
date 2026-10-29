@@ -27,14 +27,14 @@ func NewEnrichmentStatusHandler(service EnrichmentStatusService) *EnrichmentStat
 // GetStatus handles GET /v1/enrichment-status?tenant_id=<id>. It returns per-enrichment
 // eligible/done counts for the tenant. tenant_id is required; a missing/blank value yields 400.
 func (h *EnrichmentStatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
-		response.RespondServiceUnavailable(w, r, "Enrichment status is not available.")
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}
 
-	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
-		response.RespondError(w, r, err)
+	if h.service == nil {
+		response.RespondServiceUnavailable(w, r, "Enrichment status is not available.")
 
 		return
 	}
