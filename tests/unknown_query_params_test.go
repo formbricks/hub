@@ -100,6 +100,24 @@ func TestUnknownQueryParamsAreRejected(t *testing.T) {
 		assert.Empty(t, body.Data, "nothing was created or changed after a future updated_since")
 	})
 
+	// Review on #155: source_name[1]=survey decoded to ["", "survey"], which also matches records whose
+	// source name is empty. Only the repeated form the spec declares is accepted now.
+	t.Run("list refuses an indexed filter and accepts the repeated form", func(t *testing.T) {
+		status, problem, _ := get(t, "/v1/feedback-records", url.Values{
+			"tenant_id": {tenant}, "source_name[1]": {"survey"},
+		})
+
+		require.Equal(t, http.StatusBadRequest, status)
+		require.Len(t, problem.InvalidParams, 1)
+		assert.Equal(t, "source_name[1]", problem.InvalidParams[0].Name)
+		assert.Contains(t, problem.InvalidParams[0].Reason, "send source_name=value")
+
+		status, _, _ = get(t, "/v1/feedback-records", url.Values{
+			"tenant_id": {tenant}, "source_name": {"survey", "other"},
+		})
+		assert.Equal(t, http.StatusOK, status)
+	})
+
 	t.Run("count rejects paging, which cannot change a total", func(t *testing.T) {
 		status, problem, _ := get(t, "/v1/feedback-records/count", url.Values{
 			"tenant_id": {tenant}, "limit": {"1"}, "sort": {"created_at"},

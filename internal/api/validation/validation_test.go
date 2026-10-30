@@ -323,7 +323,9 @@ func TestValidateInvertedRangeFilters(t *testing.T) {
 // which then reached Postgres and failed the field_type_enum cast as an unmapped 500, and for
 // sentiment/emotions was accepted silently.
 //
-// The struct tags, not the decoder, are what actually hold the "no unknown label" invariant.
+// The API now refuses the indexed form before decoding, so this decodes with the package decoder
+// directly: the struct tags, not the decoder or that check, are what hold the "no unknown label"
+// invariant, and they must keep holding it however the struct was populated.
 func TestDecodeEnumSliceIndexedFormIsValidated(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -339,10 +341,11 @@ func TestDecodeEnumSliceIndexedFormIsValidated(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			var filters models.ListFeedbackRecordsFilters
 
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
-				"/v1/x?tenant_id=t1&"+testCase.query, http.NoBody)
+			query, err := url.ParseQuery("tenant_id=t1&" + testCase.query)
+			require.NoError(t, err)
+			require.NoError(t, decoder.Decode(&filters, query))
 
-			err := ValidateAndDecodeQueryParams(req, &filters)
+			err = ValidateStruct(&filters)
 			require.Error(t, err, "the indexed form must not bypass enum validation")
 
 			var validationErrs validator.ValidationErrors
@@ -356,16 +359,13 @@ func TestDecodeEnumSliceIndexedFormIsValidated(t *testing.T) {
 	t.Run("indexed form is length-capped", func(t *testing.T) {
 		var filters models.ListFeedbackRecordsFilters
 
-		var query strings.Builder
-
-		query.WriteString("/v1/x?tenant_id=t1")
-
+		query := url.Values{"tenant_id": {"t1"}}
 		for i := range 8 {
-			query.WriteString("&sentiment[" + strconv.Itoa(i) + "]=neutral")
+			query.Set("sentiment["+strconv.Itoa(i)+"]", "neutral")
 		}
 
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, query.String(), http.NoBody)
-		require.Error(t, ValidateAndDecodeQueryParams(req, &filters))
+		require.NoError(t, decoder.Decode(&filters, query))
+		require.Error(t, ValidateStruct(&filters))
 	})
 }
 
@@ -402,14 +402,37 @@ func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
 	})
 
 	// The indexed form decodes into the same field, so it stays accepted under its base name.
-	t.Run("accepts the indexed form of a declared parameter", func(t *testing.T) {
-		var filters models.ListFeedbackRecordsFilters
+	// Only the repeated form the spec declares is accepted. The decoder's indexed form turns each of
+	// these into a filter other than the one sent: a gap becomes "" (["", "survey"] also matches an
+	// empty source name), a repeated index keeps one value, a leading zero shifts the index, and an
+	// indexed key overwrites the plain one (["b"], dropping "a").
+	t.Run("refuses the indexed form of a declared parameter, naming the encoding to use", func(t *testing.T) {
+		for _, rawQuery := range []string{
+			"source_name[1]=survey",
+			"source_name[0]=a",
+			"source_name[0]=a&source_name[1]=b",
+			"source_name[0]=a&source_name[2]=c",
+			"source_name[0]=a&source_name[0]=b",
+			"source_name[01]=a",
+			"source_name=a&source_name[0]=b",
+			"field_type[0]=text",
+		} {
+			var filters models.ListFeedbackRecordsFilters
 
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
-			"/v1/x?tenant_id=t1&source_type[0]=survey", http.NoBody)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?tenant_id=t1&"+rawQuery, http.NoBody)
 
-		require.NoError(t, ValidateAndDecodeQueryParams(req, &filters))
-		assert.Equal(t, []string{"survey"}, filters.SourceType)
+			var queryErr *QueryDecodeError
+			require.ErrorAsf(t, ValidateAndDecodeQueryParams(req, &filters), &queryErr, "query %q", rawQuery)
+			require.NotEmptyf(t, queryErr.InvalidParams(), "query %q", rawQuery)
+
+			for _, param := range queryErr.InvalidParams() {
+				name, _, _ := strings.Cut(param.Name, "[")
+				assert.Equalf(t, "the indexed form is not accepted: send "+name+"=value, repeating "+name+
+					" once per value where it takes several", param.Reason, "query %q", rawQuery)
+			}
+
+			assert.Emptyf(t, filters.SourceName, "query %q decoded anyway", rawQuery)
+		}
 	})
 
 	t.Run("rejects the indexed form of an unknown parameter", func(t *testing.T) {
@@ -425,8 +448,7 @@ func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
 	})
 
 	// The decoder reads name[<index>] only into a slice field and silently ignores every other
-	// bracketed key, so each of these must be refused rather than accepted under its base name.
-	// tenant_id[0] alone is the dangerous one: it leaves the tenant unset.
+	// bracketed key. tenant_id[0] alone is the dangerous one: it leaves the tenant unset.
 	t.Run("rejects bracketed keys the decoder would ignore", func(t *testing.T) {
 		for _, key := range []string{
 			"tenant_id[0]", "updated_since[0]", "sort[0]", "limit[0]",
@@ -439,7 +461,9 @@ func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
 
 			var queryErr *QueryDecodeError
 			require.ErrorAsf(t, ValidateAndDecodeQueryParams(req, &filters), &queryErr, "key %q", key)
-			assert.Equal(t, []InvalidParam{{Name: key, Reason: ReasonUnknownQueryParam}}, queryErr.InvalidParams())
+			require.Len(t, queryErr.InvalidParams(), 1)
+			assert.Equal(t, key, queryErr.InvalidParams()[0].Name)
+			assert.Contains(t, queryErr.InvalidParams()[0].Reason, "indexed form is not accepted")
 		}
 	})
 
@@ -497,7 +521,10 @@ func TestRejectUnknownQueryParams(t *testing.T) {
 	require.ErrorAs(t, RejectUnknownQueryParams(
 		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?min_score[0]=0.9", http.NoBody),
 		"tenant_id", "limit", "min_score"), &queryErr)
-	assert.Equal(t, []InvalidParam{{Name: "min_score[0]", Reason: ReasonUnknownQueryParam}}, queryErr.InvalidParams())
+	assert.Equal(t, []InvalidParam{{
+		Name:   "min_score[0]",
+		Reason: "the indexed form is not accepted: send min_score=value, repeating min_score once per value where it takes several",
+	}}, queryErr.InvalidParams())
 }
 
 func TestNoReplacementChar(t *testing.T) {

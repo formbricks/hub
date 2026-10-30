@@ -13,8 +13,10 @@ info:
         substitutes for invalid UTF-8 and unpaired surrogates; such a value is rejected with 400.
         An operation that takes query parameters rejects one it does not declare with 400, naming it in
         invalid_params, rather than ignoring it: an ignored filter returns more records than the caller
-        asked for, with a 200 that looks right. A repeatable parameter may also be sent in its indexed
-        form (source_type[0]). Hub releases up to 0.14.1 ignored unknown parameters.
+        asked for, with a 200 that looks right. A repeatable parameter is sent once per value
+        (source_type=a&source_type=b); the indexed form (source_type[0]=a) is rejected the same way,
+        since it can decode to a different filter (a gap in the indexes becomes an empty value). Hub
+        releases up to 0.14.1 ignored unknown parameters and accepted the indexed form.
         Self-hosted Hub servers advertise their deployed base URL from PUBLIC_BASE_URL so generated SDK clients
         can point to the correct Hub instance.
         Full Documentation: https://hub.formbricks.com

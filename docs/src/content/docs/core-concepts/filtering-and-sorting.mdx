@@ -44,6 +44,7 @@ which is read as one literal value:
 ```bash
 -d source_type=survey -d source_type=review   # ✅ two values
 -d "source_type=survey,review"                # ❌ one value, literally "survey,review"
+-d "source_type[0]=survey"                    # ❌ 400: the indexed form is not accepted
 ```
 
 <Aside type="note">
