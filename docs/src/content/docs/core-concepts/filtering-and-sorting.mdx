@@ -68,11 +68,19 @@ looks complete and is not.
 records whose source type is blank, and it is not an error:
 
 ```bash
--d source_type=          # no constraint — identical to leaving it out
+-d source_type=                          # no constraint — identical to leaving it out
+-d source_type= -d source_type=survey    # the same as source_type=survey alone
 ```
 
-This holds for every query parameter, not just the repeatable filters, so a UI that always emits its
-whole filter set does not have to strip the empty ones before sending.
+This holds for every filter, so a UI that always emits its whole filter set does not have to strip
+the empty ones before sending. It does not apply to `tenant_id`: an empty tenant is never read as "no
+tenant".
+
+<Aside type="caution">
+  Hub releases up to 0.14.1 read an empty value of `source_type`, `source_id`, `source_name`,
+  `field_id`, `field_group_id`, `value_id`, `user_id`, `submission_id` or `language` as a filter on
+  the empty string, matching only records where that field is blank.
+</Aside>
 
 ### An unknown parameter is rejected
 
@@ -92,6 +100,14 @@ that matched everything:
 
 The count endpoint takes the list's filters but not `sort`, `order`, `limit` or `cursor`, which
 cannot change a total, so those are rejected there too.
+
+Two more shapes are rejected for the same reason, since the parser would otherwise read part of the
+request and drop the rest:
+
+- A parameter that takes one value (`tenant_id`, `sort`, `updated_since`, …) given more than once.
+  Only the repeatable filters above take several.
+- A query string that is not well formed, such as one using `;` as a separator or carrying a broken
+  percent escape. The whole request is rejected, under the name `query`.
 
 <Aside type="caution">
   Hub releases up to 0.14.1 ignore a parameter they do not know. Against one of those, a filter

@@ -118,6 +118,13 @@ func TestUnknownQueryParamsAreRejected(t *testing.T) {
 		assert.Equal(t, http.StatusOK, status)
 	})
 
+	t.Run("list refuses a repeated single-valued parameter", func(t *testing.T) {
+		status, problem, _ := get(t, "/v1/feedback-records", url.Values{"tenant_id": {tenant, "other-tenant"}})
+
+		require.Equal(t, http.StatusBadRequest, status)
+		assert.Equal(t, []string{"tenant_id"}, invalidParamNames(problem))
+	})
+
 	t.Run("count rejects paging, which cannot change a total", func(t *testing.T) {
 		status, problem, _ := get(t, "/v1/feedback-records/count", url.Values{
 			"tenant_id": {tenant}, "limit": {"1"}, "sort": {"created_at"},
@@ -146,7 +153,8 @@ func TestUnknownQueryParamsAreRejected(t *testing.T) {
 
 // The decoder reads an indexed key only into a slice field, so tenant_id[0] used to be dropped and
 // leave the tenant unset: DELETE ?user_id=u&tenant_id[0]=A then deleted u's records in every tenant,
-// as the documented no-tenant form does. It must be refused, with nothing deleted anywhere.
+// as the documented no-tenant form does. So did tenant_id=A; (see below). Both must be refused,
+// with nothing deleted anywhere.
 func TestDeleteByUserRefusesIndexedTenant(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	defer cleanup()
@@ -192,6 +200,15 @@ func TestDeleteByUserRefusesIndexedTenant(t *testing.T) {
 	require.Len(t, problem.InvalidParams, 1)
 	assert.Equal(t, "tenant_id[0]", problem.InvalidParams[0].Name)
 
+	// url.ParseQuery drops a pair it cannot read, so a trailing ";" used to lose the tenant the same
+	// way.
+	status, raw = send(t, http.MethodDelete,
+		"/v1/feedback-records?user_id="+url.QueryEscape(userID)+"&tenant_id="+url.QueryEscape(tenants[0])+";", "")
+	require.Equal(t, http.StatusBadRequest, status, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &problem))
+	require.Len(t, problem.InvalidParams, 1)
+	assert.Equal(t, "query", problem.InvalidParams[0].Name)
+
 	for _, tenant := range tenants {
 		status, raw := send(t, http.MethodGet, "/v1/feedback-records/count?tenant_id="+url.QueryEscape(tenant)+
 			"&user_id="+url.QueryEscape(userID), "")
@@ -201,4 +218,55 @@ func TestDeleteByUserRefusesIndexedTenant(t *testing.T) {
 		require.NoError(t, json.Unmarshal(raw, &count))
 		assert.Equal(t, int64(1), count.Count, "tenant %s lost its record", tenant)
 	}
+}
+
+// An empty value is documented as no constraint, but the decoder read ?source_name= as a filter on
+// "", so it returned only records with a blank source name, and source_name=&source_name=X also
+// matched blank ones (review on #155).
+func TestEmptyFilterValueIsNoConstraint(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	tenant := "empty-value-" + uuid.NewString()
+
+	for _, sourceName := range []string{"Alpha", "Beta", ""} {
+		body := fmt.Sprintf(`{"source_type":"survey","field_id":"q1","field_type":"text","value_text":"x",`+
+			`"submission_id":%q,"tenant_id":%q,"source_name":%q}`, uuid.NewString(), tenant, sourceName)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+			server.URL+"/v1/feedback-records", bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	count := func(t *testing.T, rawQuery string) int64 {
+		t.Helper()
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			server.URL+"/v1/feedback-records/count?tenant_id="+url.QueryEscape(tenant)+"&"+rawQuery, http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+testAPIKey)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+
+		defer func() { require.NoError(t, resp.Body.Close()) }()
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body models.CountFeedbackRecordsResponse
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+		return body.Count
+	}
+
+	assert.Equal(t, int64(3), count(t, "source_name="), "an empty value must not filter")
+	assert.Equal(t, int64(3), count(t, "source_type="), "an empty value must not filter")
+	assert.Equal(t, int64(1), count(t, "source_name=&source_name=Alpha"), "the empty value must not add blank names")
 }

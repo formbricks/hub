@@ -401,7 +401,6 @@ func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
 		assert.Equal(t, []string{"survey", "chat"}, filters.SourceType)
 	})
 
-	// The indexed form decodes into the same field, so it stays accepted under its base name.
 	// Only the repeated form the spec declares is accepted. The decoder's indexed form turns each of
 	// these into a filter other than the one sent: a gap becomes "" (["", "survey"] also matches an
 	// empty source name), a repeated index keeps one value, a leading zero shifts the index, and an
@@ -502,6 +501,72 @@ func TestDecodeQueryParamsRejectsUnknownParams(t *testing.T) {
 	})
 }
 
+// Each case is a request the decoder used to read as a different filter than the one sent, with
+// a 200: a pair url.ParseQuery drops, the first of several values for a single-valued parameter,
+// or an empty value read as a filter on "".
+func TestDecodeQueryParamsRefusesSilentDrops(t *testing.T) {
+	decode := func(t *testing.T, rawQuery string) (models.ListFeedbackRecordsFilters, error) {
+		t.Helper()
+
+		var filters models.ListFeedbackRecordsFilters
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?"+rawQuery, http.NoBody)
+
+		return filters, ValidateAndDecodeQueryParams(req, &filters)
+	}
+
+	t.Run("a query string it cannot fully parse", func(t *testing.T) {
+		for _, rawQuery := range []string{
+			"tenant_id=t1;", "tenant_id=t1&source_name=a;b", "tenant_id=t1&source_name=%zz",
+		} {
+			_, err := decode(t, rawQuery)
+
+			var queryErr *QueryDecodeError
+			require.ErrorAsf(t, err, &queryErr, "query %q", rawQuery)
+			assert.Equal(t, []InvalidParam{{Name: "query", Reason: reasonMalformedQuery}}, queryErr.InvalidParams())
+		}
+	})
+
+	t.Run("a single-valued parameter given more than once", func(t *testing.T) {
+		_, err := decode(t, "tenant_id=t1&tenant_id=t2&sort=created_at&sort=collected_at&source_type=a&source_type=b")
+
+		var queryErr *QueryDecodeError
+		require.ErrorAs(t, err, &queryErr)
+		assert.Equal(t, []InvalidParam{
+			{Name: "sort", Reason: reasonRepeatedQueryParam},
+			{Name: "tenant_id", Reason: reasonRepeatedQueryParam},
+		}, queryErr.InvalidParams(), "source_type is repeatable and must not be reported")
+	})
+
+	t.Run("an empty value of a repeatable filter is no constraint", func(t *testing.T) {
+		filters, err := decode(t, "tenant_id=t1&source_name=&source_type=&field_type=&updated_since=")
+		require.NoError(t, err)
+		assert.Empty(t, filters.SourceName)
+		assert.Empty(t, filters.SourceType)
+		assert.Empty(t, filters.FieldType)
+		assert.Nil(t, filters.UpdatedSince)
+
+		filters, err = decode(t, "tenant_id=t1&source_name=&source_name=Alpha")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Alpha"}, filters.SourceName)
+	})
+
+	t.Run("an empty required parameter is still missing", func(t *testing.T) {
+		_, err := decode(t, "tenant_id=")
+		require.Error(t, err)
+	})
+
+	// An empty optional tenant must stay an error, not become "no tenant": on DELETE by user that
+	// means every tenant.
+	t.Run("an empty single-valued parameter keeps its own validation", func(t *testing.T) {
+		var filters models.DeleteFeedbackRecordsByUserFilters
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/v1/x?user_id=u&tenant_id=", http.NoBody)
+
+		require.Error(t, ValidateAndDecodeQueryParams(req, &filters))
+	})
+}
+
 func TestRejectUnknownQueryParams(t *testing.T) {
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/v1/x?tenant_id=t1&limit=5&min_scor=0.9", http.NoBody)
@@ -517,7 +582,19 @@ func TestRejectUnknownQueryParams(t *testing.T) {
 		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?tenant_id=t1&limit=5", http.NoBody),
 		"tenant_id", "limit", "min_score"))
 
-	// Query().Get reads only the exact name, so no indexed form is accepted for these handlers.
+	// Query().Get reads the first value only, so these handlers refuse a repeat and a query string
+	// the parser drops part of, as well as any indexed form.
+	for rawQuery, want := range map[string]InvalidParam{
+		"min_score=0.5&min_score=0.9": {Name: "min_score", Reason: reasonRepeatedQueryParam},
+		"min_score=&min_score=0.9":    {Name: "min_score", Reason: reasonRepeatedQueryParam},
+		"limit=5;min_score=0.9":       {Name: "query", Reason: reasonMalformedQuery},
+	} {
+		require.ErrorAsf(t, RejectUnknownQueryParams(
+			httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?"+rawQuery, http.NoBody),
+			"tenant_id", "limit", "min_score"), &queryErr, "query %q", rawQuery)
+		assert.Equal(t, []InvalidParam{want}, queryErr.InvalidParams(), "query %q", rawQuery)
+	}
+
 	require.ErrorAs(t, RejectUnknownQueryParams(
 		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/x?min_score[0]=0.9", http.NoBody),
 		"tenant_id", "limit", "min_score"), &queryErr)
