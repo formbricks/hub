@@ -12,11 +12,13 @@ import (
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/pkg/cursor"
 )
 
 type mockFeedbackRecordsRepo struct {
 	record                     *models.FeedbackRecord
+	createHookSet              bool                   // whether Create got a write hook (the explicit-transaction path)
 	previousRecord             *models.FeedbackRecord // pre-update row Update returns; falls back to record when nil
 	createReq                  *models.CreateFeedbackRecordRequest
 	deleteByUserGroups         []models.DeletedFeedbackRecordsByTenant
@@ -53,17 +55,29 @@ type mockFeedbackRecordsRepo struct {
 	listCursorID     uuid.UUID
 }
 
+// Create, Update and SetTranslation run the write hook the way the repository does, with a nil
+// transaction (the mock inserters ignore it); a hook error fails the write.
 func (m *mockFeedbackRecordsRepo) Create(
-	_ context.Context, req *models.CreateFeedbackRecordRequest,
+	ctx context.Context, req *models.CreateFeedbackRecordRequest, hook repository.RecordWriteHook,
 ) (*models.FeedbackRecord, error) {
 	reqCopy := *req
 	m.createReq = &reqCopy
+	m.createHookSet = hook != nil
 
-	if m.record != nil {
-		return m.record, nil
+	record := m.record
+	if record == nil {
+		record = &models.FeedbackRecord{
+			TenantID: req.TenantID, FieldType: req.FieldType, FieldLabel: req.FieldLabel, ValueText: req.ValueText,
+		}
 	}
 
-	return &models.FeedbackRecord{TenantID: req.TenantID}, nil
+	if hook != nil {
+		if err := hook(ctx, nil, record, nil); err != nil {
+			return nil, err
+		}
+	}
+
+	return record, nil
 }
 
 func (m *mockFeedbackRecordsRepo) GetByID(_ context.Context, _ uuid.UUID) (*models.FeedbackRecord, error) {
@@ -90,12 +104,18 @@ func (m *mockFeedbackRecordsRepo) ListAfterCursor(
 }
 
 func (m *mockFeedbackRecordsRepo) Update(
-	_ context.Context, _ uuid.UUID, _ *models.UpdateFeedbackRecordRequest,
+	ctx context.Context, _ uuid.UUID, _ *models.UpdateFeedbackRecordRequest, hook repository.RecordWriteHook,
 ) (*models.FeedbackRecord, *models.FeedbackRecord, error) {
 	if m.record != nil {
 		previous := m.record
 		if m.previousRecord != nil {
 			previous = m.previousRecord
+		}
+
+		if hook != nil {
+			if err := hook(ctx, nil, m.record, previous); err != nil {
+				return nil, nil, err
+			}
 		}
 
 		return m.record, previous, nil
@@ -105,8 +125,13 @@ func (m *mockFeedbackRecordsRepo) Update(
 }
 
 func (m *mockFeedbackRecordsRepo) SetTranslation(
-	_ context.Context, _ uuid.UUID, _ *string, _, _ string, _ func(valueText *string) bool,
+	ctx context.Context, _ uuid.UUID, _ *string, _, _ string, _ func(valueText *string) bool,
+	hook repository.RecordWriteHook,
 ) error {
+	if hook != nil {
+		return hook(ctx, nil, nil, nil)
+	}
+
 	return nil
 }
 
@@ -509,17 +534,12 @@ func TestFeedbackRecordsService_SetTranslation_RequiresLangKey(t *testing.T) {
 
 func TestFeedbackRecordsService_SetTranslation_EnqueuesTaxonomyEmbedding(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
-	svc := NewFeedbackRecordsService(
-		&mockFeedbackRecordsRepo{},
-		nil,
-		"",
-		nil,
-		inserter,
-		"embeddings",
-		3,
-		"",
-	)
-	svc.SetTaxonomyEmbeddingModel("taxonomy:embedding-model:translated-v1")
+	svc := NewFeedbackRecordsService(&mockFeedbackRecordsRepo{}, nil, "", nil, nil, "", 0, "")
+	svc.SetEmbeddingEnqueuer(NewEmbeddingEnqueuer(inserter,
+		NewEmbeddingJobBuilder("raw-model", "embeddings", 3, "", 0, nil),
+		NewEmbeddingJobBuilderForInputKind("taxonomy:embedding-model:translated-v1", "embeddings", 3, "", 0, nil,
+			models.EmbeddingInputKindTaxonomyTranslated),
+	))
 
 	recordID := uuid.New()
 
@@ -1178,5 +1198,39 @@ func TestListFeedbackRecords_PaginationInvariantViolation(t *testing.T) {
 	)
 	if !errors.Is(err, ErrPaginationInvariantViolated) {
 		t.Fatalf("ListFeedbackRecords() error = %v, want ErrPaginationInvariantViolated", err)
+	}
+}
+
+// TestFeedbackRecordsService_CreateTakesTheTransactionOnlyWhenEmbeddingsAreOwed: a record with no
+// embeddable text (a number, a boolean, a date) keeps the single-statement insert; one with text
+// takes the transaction that carries its jobs.
+func TestFeedbackRecordsService_CreateTakesTheTransactionOnlyWhenEmbeddingsAreOwed(t *testing.T) {
+	inserter := &mockEmbeddingInserter{}
+	repo := &mockFeedbackRecordsRepo{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+	svc.SetEmbeddingEnqueuer(NewEmbeddingEnqueuer(inserter, NewEmbeddingJobBuilder("raw-model", "embeddings", 3, "", 0, nil)))
+
+	blank := "   "
+	for _, valueText := range []*string{nil, &blank} {
+		if _, err := svc.CreateFeedbackRecord(context.Background(), &models.CreateFeedbackRecordRequest{
+			TenantID: "tenant", FieldType: models.FieldTypeNumber, ValueText: valueText,
+		}); err != nil {
+			t.Fatalf("CreateFeedbackRecord() error = %v", err)
+		}
+
+		if repo.createHookSet {
+			t.Fatalf("no text, no embedding owed: the create must not take the transaction")
+		}
+	}
+
+	text := "Great"
+	if _, err := svc.CreateFeedbackRecord(context.Background(), &models.CreateFeedbackRecordRequest{
+		TenantID: "tenant", FieldType: models.FieldTypeCategorical, ValueText: &text,
+	}); err != nil {
+		t.Fatalf("CreateFeedbackRecord() error = %v", err)
+	}
+
+	if !repo.createHookSet || len(inserter.insertCalls) != 1 {
+		t.Fatalf("hook set = %v, jobs = %d; want the transaction and one job", repo.createHookSet, len(inserter.insertCalls))
 	}
 }

@@ -42,6 +42,22 @@ func NormalizeEmbeddingInputKind(kind EmbeddingInputKind) EmbeddingInputKind {
 	}
 }
 
+// ReadsTranslation reports whether the kind's input prefers the record's translated text, so a
+// translation write changes it. Only the taxonomy kind does; the raw search embedding reads the
+// original value_text.
+func (k EmbeddingInputKind) ReadsTranslation() bool {
+	return NormalizeEmbeddingInputKind(k) == EmbeddingInputKindTaxonomyTranslated
+}
+
+// EnrichmentName is the name the kind's metrics and failure markers carry.
+func (k EmbeddingInputKind) EnrichmentName() string {
+	if k.ReadsTranslation() {
+		return EnrichmentNameTaxonomyEmbedding
+	}
+
+	return EnrichmentNameEmbedding
+}
+
 // FeedbackRecordWithScore is a feedback record ID, similarity score, and the record's field_label and value_text for display.
 // Embeddings exist only for text, so ValueText is always set for any search result.
 type FeedbackRecordWithScore struct {

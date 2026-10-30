@@ -71,7 +71,7 @@ func TestTrimForProvider(t *testing.T) {
 // embedding share one worker but are different pipelines, and a counter that conflated them would
 // not say which one is cutting text.
 func TestEmbeddingEnrichmentName(t *testing.T) {
-	assert.Equal(t, models.EnrichmentNameEmbedding, embeddingEnrichmentName(models.EmbeddingInputKindRaw))
+	assert.Equal(t, models.EnrichmentNameEmbedding, models.EmbeddingInputKindRaw.EnrichmentName())
 	assert.Equal(t, models.EnrichmentNameTaxonomyEmbedding,
-		embeddingEnrichmentName(models.EmbeddingInputKindTaxonomyTranslated))
+		models.EmbeddingInputKindTaxonomyTranslated.EnrichmentName())
 }

@@ -15,11 +15,12 @@ import (
 	"github.com/formbricks/hub/internal/observability"
 )
 
-// EmbeddingProvider implements eventPublisher by enqueueing one River job per feedback record event
-// when the event is FeedbackRecordCreated (with non-empty value_text) or FeedbackRecordUpdated
-// (with value_text in ChangedFields, including when value_text is now empty so the worker can clear).
-type EmbeddingProvider struct {
-	inserter      RiverJobInserter
+// EmbeddingJobBuilder decides which feedback_embedding job, if any, a feedback-record event owes
+// for one embedding model: FeedbackRecordCreated with embeddable text, or FeedbackRecordUpdated
+// with value_text or field_label among the changed fields (even when the text is now empty, so the
+// worker can clear the vector). It builds jobs and does no I/O; EmbeddingEnqueuer inserts them in
+// the write's own transaction.
+type EmbeddingJobBuilder struct {
 	model         string
 	queueName     string
 	maxAttempts   int
@@ -29,27 +30,25 @@ type EmbeddingProvider struct {
 	inputKind     models.EmbeddingInputKind
 }
 
-// NewEmbeddingProvider creates a provider that enqueues feedback_embedding jobs.
+// NewEmbeddingJobBuilder creates a job builder for raw (search) embeddings.
 // model is the embedding model name (e.g. text-embedding-3-small) from EMBEDDING_MODEL.
 // docPrefix is the prefix for document text (from EmbeddingPrefixForProvider); use "" for OpenAI/Google.
 // maxInputBytes caps the input (EMBEDDING_MAX_INPUT_BYTES); 0 is unlimited.
 // metrics may be nil when metrics are disabled.
-func NewEmbeddingProvider(
-	inserter RiverJobInserter,
+func NewEmbeddingJobBuilder(
 	model string,
 	queueName string,
 	maxAttempts int,
 	docPrefix string,
 	maxInputBytes int,
 	metrics observability.EmbeddingMetrics,
-) *EmbeddingProvider {
-	return NewEmbeddingProviderForInputKind(
-		inserter, model, queueName, maxAttempts, docPrefix, maxInputBytes, metrics, models.EmbeddingInputKindRaw)
+) *EmbeddingJobBuilder {
+	return NewEmbeddingJobBuilderForInputKind(
+		model, queueName, maxAttempts, docPrefix, maxInputBytes, metrics, models.EmbeddingInputKindRaw)
 }
 
-// NewEmbeddingProviderForInputKind creates a provider for a specific embedding input kind.
-func NewEmbeddingProviderForInputKind(
-	inserter RiverJobInserter,
+// NewEmbeddingJobBuilderForInputKind creates a job builder for a specific embedding input kind.
+func NewEmbeddingJobBuilderForInputKind(
 	model string,
 	queueName string,
 	maxAttempts int,
@@ -57,9 +56,8 @@ func NewEmbeddingProviderForInputKind(
 	maxInputBytes int,
 	metrics observability.EmbeddingMetrics,
 	inputKind models.EmbeddingInputKind,
-) *EmbeddingProvider {
-	return &EmbeddingProvider{
-		inserter:      inserter,
+) *EmbeddingJobBuilder {
+	return &EmbeddingJobBuilder{
 		model:         model,
 		queueName:     queueName,
 		maxAttempts:   maxAttempts,
@@ -70,88 +68,105 @@ func NewEmbeddingProviderForInputKind(
 	}
 }
 
-// PublishEvent enqueues a feedback_embedding job when the event is FeedbackRecordCreated (with non-empty value_text)
-// or FeedbackRecordUpdated (with value_text in ChangedFields). On update, the job is enqueued even when value_text
-// is now empty so the worker can clear the embedding for text fields.
-// API key is required for openai and google (validated at startup).
-func (p *EmbeddingProvider) PublishEvent(ctx context.Context, event Event) {
+// jobFor returns the job event owes this model, or false when it owes none.
+func (b *EmbeddingJobBuilder) jobFor(event Event) (river.InsertManyParams, bool) {
 	if event.Type == datatypes.FeedbackRecordUpdated {
-		if !p.hasEmbeddingRelevantChange(event.ChangedFields) {
+		if !b.hasEmbeddingRelevantChange(event.ChangedFields) {
 			slog.Debug("embedding: skip, embedding input fields not in changed fields",
 				"event_id", event.ID,
 				"feedback_record_id", recordIDFromEventData(event.Data),
 			)
 
-			return
+			return river.InsertManyParams{}, false
 		}
 	} else if event.Type != datatypes.FeedbackRecordCreated {
-		return
+		return river.InsertManyParams{}, false
 	}
 
 	record, ok := event.Data.(*models.FeedbackRecord)
 	if !ok {
 		slog.Debug("embedding: skip, event data is not *FeedbackRecord", "event_id", event.ID)
 
-		return
+		return river.InsertManyParams{}, false
 	}
 
 	// Build the embedding input once and reuse it for both the create-time empty check and the
-	// dedupe hash; it was otherwise computed twice on the create path. The same capped string the
-	// worker will embed is what gets hashed, so a change past the cap cannot present as a different
-	// embedding than the one already stored.
-	input, _ := BuildEmbeddingInputForKind(record, p.inputKind, p.docPrefix, TextCap{MaxBytes: p.maxInputBytes})
+	// dedupe hash. The same capped string the worker will embed is what gets hashed, so a change
+	// past the cap cannot present as a different embedding than the one already stored.
+	input, _ := BuildEmbeddingInputForKind(record, b.inputKind, b.docPrefix, TextCap{MaxBytes: b.maxInputBytes})
 
 	// On create, only enqueue when there is embeddable text. On update we enqueue regardless so the worker can clear.
 	if event.Type == datatypes.FeedbackRecordCreated && input == "" {
 		slog.Debug("embedding: skip, no value_text on create", "event_id", event.ID, "feedback_record_id", record.ID)
 
-		return
+		return river.InsertManyParams{}, false
 	}
-
-	valueTextHash := hashContent(input)
 
 	// Deliberately no UniqueOpts on the event path — mirrors the classify providers: River's
 	// completed-state dedupe swallowed the re-embed after content transitioned away and back
 	// within the dedupe bucket, leaving the record without an embedding (the clear path deletes
 	// the row). Update events fire only on actual field changes, so each event is a real
 	// transition worth embedding.
-	opts := &river.InsertOpts{
-		Queue:       p.queueName,
-		MaxAttempts: p.maxAttempts,
+	return river.InsertManyParams{
+		Args: FeedbackEmbeddingArgs{
+			FeedbackRecordID: record.ID,
+			EventID:          event.ID,
+			Model:            b.model,
+			InputKind:        b.inputKind,
+			ValueTextHash:    hashContent(input),
+		},
+		InsertOpts: b.insertOpts(),
+	}, true
+}
+
+// owesCreate reports whether a record created with this label and text owes this model a job.
+func (b *EmbeddingJobBuilder) owesCreate(fieldLabel, valueText *string) bool {
+	input, _ := BuildEmbeddingInputFromValues(fieldLabel, valueText, nil, b.inputKind, b.docPrefix,
+		TextCap{MaxBytes: b.maxInputBytes})
+
+	return input != ""
+}
+
+// translationJob returns the taxonomy re-embed a translation write owes, or false for a model
+// whose input does not read the translation. The record's content is read by the worker; the
+// fixed hash keeps the args shape the translation path has always used.
+func (b *EmbeddingJobBuilder) translationJob(feedbackRecordID uuid.UUID) (river.InsertManyParams, bool) {
+	if !b.inputKind.ReadsTranslation() {
+		return river.InsertManyParams{}, false
 	}
 
-	_, err := p.inserter.Insert(ctx, FeedbackEmbeddingArgs{
-		FeedbackRecordID: record.ID,
-		EventID:          event.ID,
-		Model:            p.model,
-		InputKind:        p.inputKind,
-		ValueTextHash:    valueTextHash,
-	}, opts)
-	if err != nil {
-		if p.metrics != nil {
-			p.metrics.RecordProviderError(ctx, "enqueue_failed")
-		}
+	return river.InsertManyParams{
+		Args: FeedbackEmbeddingArgs{
+			FeedbackRecordID: feedbackRecordID,
+			Model:            b.model,
+			InputKind:        b.inputKind,
+			ValueTextHash:    ValueTextHashTranslation,
+		},
+		InsertOpts: b.insertOpts(),
+	}, true
+}
 
-		slog.Error("embedding: enqueue failed",
-			"event_id", event.ID,
-			"feedback_record_id", record.ID,
-			"error", err,
-		)
-
-		return
-	}
-
-	slog.Info("embedding: job enqueued",
-		"event_id", event.ID,
-		"feedback_record_id", record.ID,
-	)
-
-	if p.metrics != nil {
-		p.metrics.RecordJobsEnqueued(ctx, 1)
+// recordEnqueued and recordEnqueueFailed count against this model's metrics; nil disables them.
+func (b *EmbeddingJobBuilder) recordEnqueued(ctx context.Context) {
+	if b.metrics != nil {
+		b.metrics.RecordJobsEnqueued(ctx, 1)
 	}
 }
 
-func (p *EmbeddingProvider) hasEmbeddingRelevantChange(changedFields []string) bool {
+func (b *EmbeddingJobBuilder) recordEnqueueFailed(ctx context.Context) {
+	if b.metrics != nil {
+		b.metrics.RecordProviderError(ctx, "enqueue_failed")
+	}
+}
+
+func (b *EmbeddingJobBuilder) insertOpts() *river.InsertOpts {
+	return &river.InsertOpts{
+		Queue:       b.queueName,
+		MaxAttempts: b.maxAttempts,
+	}
+}
+
+func (b *EmbeddingJobBuilder) hasEmbeddingRelevantChange(changedFields []string) bool {
 	return slices.Contains(changedFields, "value_text") || slices.Contains(changedFields, "field_label")
 }
 
@@ -212,7 +227,7 @@ func BuildEmbeddingInputFromValues(
 	prefix string,
 	inputCap TextCap,
 ) (string, bool) {
-	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
+	if kind.ReadsTranslation() {
 		if normalizedText(valueTextTranslated) != "" {
 			return buildEmbeddingInput(fieldLabel, valueTextTranslated, prefix, inputCap)
 		}

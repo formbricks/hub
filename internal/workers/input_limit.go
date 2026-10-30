@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/observability"
 	"github.com/formbricks/hub/internal/service"
 )
@@ -49,15 +48,4 @@ func trimForProvider(
 	}
 
 	return capped
-}
-
-// embeddingEnrichmentName maps an embedding input kind to the label its metrics carry. The raw
-// search embedding and the taxonomy's translated-text embedding are separate pipelines that happen
-// to share one worker, so a counter that lumped them together would hide which one is trimming.
-func embeddingEnrichmentName(kind models.EmbeddingInputKind) string {
-	if models.NormalizeEmbeddingInputKind(kind) == models.EmbeddingInputKindTaxonomyTranslated {
-		return models.EnrichmentNameTaxonomyEmbedding
-	}
-
-	return models.EnrichmentNameEmbedding
 }

@@ -345,7 +345,8 @@ func seedEmbeddedFeedback(
 		embedding[0] = 0.25
 
 		// nil stillCurrent: unconditional write (test setup, no concurrent-job race to guard).
-		require.NoError(t, harness.embeddingsRepo.Upsert(ctx, recordID, taxonomyEmbeddingModel, embedding, nil))
+		require.NoError(t, harness.embeddingsRepo.Upsert(
+			ctx, recordID, taxonomyEmbeddingModel, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
 		recordIDs = append(recordIDs, recordID)
 	}
 

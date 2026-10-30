@@ -1,6 +1,7 @@
-// backfill-embeddings enqueues River embedding jobs for feedback records that have
-// non-empty value_text and null embedding. Run this when the API server is not
-// handling backfill (e.g. one-off or scheduled). hub-worker processes the jobs.
+// backfill-embeddings enqueues River embedding jobs for the feedback records whose embedding is
+// missing, stale or orphaned: the same selection as the repair sweep (EMBEDDING_RECONCILE_*), on
+// demand and at full worker concurrency, for incident recovery or a deployment without the sweep.
+// hub-worker processes the jobs.
 //
 // With -prune-stale-models it instead deletes embedding rows left behind by previous
 // EMBEDDING_MODEL values. Run the prune only AFTER a model migration's backfill has
@@ -52,8 +53,15 @@ func run() int {
 	taxonomyMode := flag.Bool("taxonomy", false,
 		"backfill taxonomy embeddings from translated text using TAXONOMY_EMBEDDING_MODEL or taxonomy:<EMBEDDING_MODEL>:translated-v1")
 	tenantID := flag.String("tenant-id", "", "restrict the backfill to one tenant ID")
-	countOnly := flag.Bool("count-only", false, "count eligible missing embeddings without enqueueing jobs")
+	countOnly := flag.Bool("count-only", false, "count records owed an embedding without enqueueing jobs")
 	maxRecords := flag.Int("max-records", 0, "maximum candidates to enqueue; 0 means unlimited")
+	stale := flag.Bool("stale", false,
+		"also re-embed vectors written before Hub recorded what they were computed from (requires -tenant-id)")
+	retryTerminal := flag.Bool("retry-terminal", false,
+		"also retry records the provider rejected outright, once the cause is fixed (requires -tenant-id)")
+	cooldown := flag.Duration("cooldown", 0,
+		"skip records whose attempts ran out on a transient error less than this long ago (e.g. 24h to keep "+
+			"a record that keeps failing out of repeated batch runs); 0 retries them at once")
 
 	flag.Parse()
 
@@ -63,7 +71,20 @@ func run() int {
 		return exitFailure
 	}
 
-	if *pruneStaleModels && (*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0) {
+	if *cooldown < 0 {
+		slog.Error("-cooldown cannot be negative")
+
+		return exitFailure
+	}
+
+	if (*stale || *retryTerminal) && *tenantID == "" {
+		slog.Error("-stale and -retry-terminal require -tenant-id: they can select every vector a tenant has")
+
+		return exitFailure
+	}
+
+	if *pruneStaleModels &&
+		(*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0 || *stale || *retryTerminal) {
 		slog.Error("-prune-stale-models cannot be combined with backfill scope or preview flags")
 
 		return exitFailure
@@ -174,30 +195,14 @@ func run() int {
 		}
 	}
 
-	if *countOnly {
-		var count int
-		if *tenantID == "" {
-			count, err = embeddingsRepo.CountFeedbackRecordsForBackfillByInputKind(ctx, targetModel, inputKind)
-		} else {
-			count, err = embeddingsRepo.CountTenantFeedbackRecordsForBackfillByInputKind(
-				ctx, *tenantID, targetModel, inputKind)
-		}
-
-		if err != nil {
-			slog.Error("Backfill count failed", "error", err)
-
-			return exitFailure
-		}
-
-		selected := count
-		if *maxRecords > 0 && selected > *maxRecords {
-			selected = *maxRecords
-		}
-
-		fmt.Printf("Found %d eligible missing embedding(s) for model %q; %d would be selected.\n",
-			count, targetModel, selected)
-
-		return exitSuccess
+	params := service.EmbeddingBackfillParams{
+		Model:           targetModel,
+		InputKind:       inputKind,
+		TenantID:        *tenantID,
+		MaxRecords:      *maxRecords,
+		IncludeLegacy:   *stale,
+		IncludeTerminal: *retryTerminal,
+		Cooldown:        *cooldown,
 	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
@@ -210,6 +215,34 @@ func run() int {
 		maxAttempts,
 		"", // translation default unused: embeddings backfill only
 	)
+
+	// The Hub has no audit store; this line and the completion line are the record of who changed
+	// what (the operator's exec session is the who). Records are identified by count, never content.
+	scope := []any{
+		"model", targetModel, "input_kind", inputKind, "tenant_id", *tenantID,
+		"max_records", *maxRecords, "stale", *stale, "retry_terminal", *retryTerminal, "cooldown", *cooldown,
+		"count_only", *countOnly,
+	}
+	slog.Info("Embedding backfill started", scope...) // #nosec G706 -- values are structured log attributes
+
+	if *countOnly {
+		count, countErr := feedbackRecordsService.CountEmbeddingBackfill(ctx, params)
+		if countErr != nil {
+			slog.Error("Backfill count failed", "error", countErr)
+
+			return exitFailure
+		}
+
+		selected := count
+		if *maxRecords > 0 && selected > *maxRecords {
+			selected = *maxRecords
+		}
+
+		fmt.Printf("Found %d record(s) owed an embedding for model %q; %d would be selected.\n",
+			count, targetModel, selected)
+
+		return exitSuccess
+	}
 
 	embeddingClient, err := service.NewEmbeddingClient(ctx, embeddingCfg)
 	if err != nil {
@@ -249,35 +282,19 @@ func run() int {
 
 	feedbackRecordsService.SetEmbeddingInserter(riverClient)
 
-	var enqueued int
-	if *tenantID == "" {
-		enqueued, err = feedbackRecordsService.BackfillEmbeddingsWithInputKindLimit(
-			ctx, targetModel, inputKind, *maxRecords)
-	} else {
-		enqueued, err = feedbackRecordsService.BackfillTenantEmbeddingsWithInputKind(
-			ctx, *tenantID, targetModel, inputKind, *maxRecords)
-	}
-
+	result, err := feedbackRecordsService.BackfillEmbeddings(ctx, params)
 	if err != nil {
-		slog.Error("Backfill failed", "error", err)
+		slog.Error("Backfill failed", append(scope, "error", err,
+			"selected_before_failure", result.Selected, "enqueued_before_failure", result.Enqueued)...)
 
 		return exitFailure
 	}
 
-	logAttrs := []any{
-		"enqueued", enqueued,
-		"model", targetModel,
-		"input_kind", inputKind,
-		"tenant_scoped", *tenantID != "",
-		"max_records", *maxRecords,
-	}
-	if *tenantID != "" {
-		logAttrs = append(logAttrs, "tenant_id", *tenantID)
-	}
+	// #nosec G706 -- values are structured log attributes
+	slog.Info("Embedding backfill complete", append(scope, "selected", result.Selected, "enqueued", result.Enqueued)...)
 
-	slog.Info("Backfill complete", logAttrs...) // #nosec G706 -- values are structured log attributes
-
-	fmt.Printf("Enqueued %d embedding job(s) for model %q.\n", enqueued, targetModel)
+	fmt.Printf("Selected %d record(s) and enqueued %d embedding job(s) for model %q; the rest were already queued.\n",
+		result.Selected, result.Enqueued, targetModel)
 
 	return exitSuccess
 }

@@ -345,7 +345,7 @@ func TestStaleMarkerStopsCountingWhenTheRecordMovesOn(t *testing.T) {
 	// 2. It later succeeded. No cleanup write — that is the design — so the marker is still there.
 	translated := "übersetzt"
 	require.NoError(t, frepo.SetTranslation(ctx, record.ID, &translated, "de-DE", "",
-		func(*string) bool { return true }))
+		func(*string) bool { return true }, nil))
 
 	counts, err = statusRepo.CountEnrichmentStatus(ctx, tenant, "")
 	require.NoError(t, err)
@@ -503,7 +503,8 @@ func TestCountFailedRecordsAggregateIncludesOnlyCurrentTaxonomyEmbeddingFailures
 
 	embedding := make([]float32, models.EmbeddingVectorDimensions)
 	embedding[0] = 0.25
-	require.NoError(t, embeddingsRepo.Upsert(ctx, record.ID, model, embedding, nil))
+	require.NoError(t, embeddingsRepo.Upsert(
+		ctx, record.ID, model, models.EmbeddingInputKindTaxonomyTranslated, embedding, nil))
 
 	afterSuccess, err := statusRepo.CountFailedRecordsAggregate(ctx, model)
 	require.NoError(t, err)

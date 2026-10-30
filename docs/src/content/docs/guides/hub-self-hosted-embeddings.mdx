@@ -60,6 +60,17 @@ provider and model.
 See [Environment Variables](/reference/environment-variables) for the full
 runtime configuration reference.
 
+### When Hub Embeds a Record
+
+`hub-api` queues the embedding jobs a record needs in the same database
+transaction that creates or edits it: one job per model when a record with
+text is created, and a re-embed when its `value_text` or `field_label`
+changes. When `hub-worker` writes a translation, it queues the taxonomy
+re-embed in that same way. A record and its jobs are committed together or
+not at all, so a restart or crash cannot leave a record that nothing will
+embed. If the jobs cannot be queued, the write fails and the API returns an
+error the client can retry.
+
 ## Option 1: Bundled TEI Runtime (Helm)
 
 The Hub Helm chart can deploy TEI as a sidecar `Deployment` and wire Hub to it
@@ -259,8 +270,11 @@ Check `river_job` for `feedback_embedding` rows and inspect their `errors`
 column. The two most common causes:
 
 - **`connection reset by peer` or `connection refused`** — Hub reached the
-  endpoint before it was ready. Wait for the runtime to finish model warmup,
-  then re-enqueue with `make run-backfill-embeddings`.
+  endpoint before it was ready. Wait for the runtime to finish model warmup.
+  With `EMBEDDING_RECONCILE_ENABLED=true` the records are re-queued on their
+  own once `EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS` has passed (see
+  [Embedding repair](/reference/environment-variables#embedding-repair));
+  otherwise re-enqueue them with `make run-backfill-embeddings`.
 - **`401 Unauthorized`** — `EMBEDDING_PROVIDER_API_KEY` does not match the
   bearer token the endpoint expects.
 

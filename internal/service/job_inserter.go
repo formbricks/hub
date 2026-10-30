@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
@@ -24,4 +25,10 @@ type RiverJobInserter interface {
 // that is already in flight.
 type RiverBatchInserter interface {
 	InsertMany(ctx context.Context, params []river.InsertManyParams) ([]*rivertype.JobInsertResult, error)
+}
+
+// RiverTxBatchInserter inserts River jobs inside a caller's transaction, so they commit or roll back
+// with the write that owes them (see repository.RecordWriteHook). The River client satisfies it.
+type RiverTxBatchInserter interface {
+	InsertManyTx(ctx context.Context, tx pgx.Tx, params []river.InsertManyParams) ([]*rivertype.JobInsertResult, error)
 }

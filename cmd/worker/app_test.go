@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/service"
 )
 
@@ -39,17 +40,28 @@ func TestEmbeddingReconcileConfigured(t *testing.T) {
 		assert.False(t, embeddingReconcileConfigured(cfg))
 	})
 
-	t.Run("taxonomy integration is required", func(t *testing.T) {
+	t.Run("taxonomy is not required: the search embedding is repaired on its own", func(t *testing.T) {
 		cfg := base()
 		cfg.Taxonomy.ServiceURL = ""
-		assert.False(t, embeddingReconcileConfigured(cfg))
+		assert.True(t, embeddingReconcileConfigured(cfg))
+	})
+}
+
+func TestEmbeddingReconcileTargets(t *testing.T) {
+	cfg := &config.Config{Taxonomy: config.TaxonomyConfig{ServiceURL: "https://taxonomy.example.com"}}
+
+	t.Run("raw always, taxonomy when configured", func(t *testing.T) {
+		assert.Equal(t, []service.EmbeddingReconcileTarget{
+			{Model: "raw", InputKind: models.EmbeddingInputKindRaw},
+			{Model: "taxonomy:raw:translated-v1", InputKind: models.EmbeddingInputKindTaxonomyTranslated},
+		}, embeddingReconcileTargets(cfg, "raw", "taxonomy:raw:translated-v1"))
 	})
 
-	t.Run("taxonomy token without a service URL is not configured", func(t *testing.T) {
-		cfg := base()
-		cfg.Taxonomy.ServiceURL = ""
-		cfg.Taxonomy.ServiceToken = "configured-token"
-		assert.False(t, embeddingReconcileConfigured(cfg))
+	t.Run("no taxonomy service, no taxonomy vectors", func(t *testing.T) {
+		noTaxonomy := &config.Config{Taxonomy: config.TaxonomyConfig{ServiceToken: "configured-token"}}
+		assert.Equal(t, []service.EmbeddingReconcileTarget{
+			{Model: "raw", InputKind: models.EmbeddingInputKindRaw},
+		}, embeddingReconcileTargets(noTaxonomy, "raw", "taxonomy:raw:translated-v1"))
 	})
 }
 

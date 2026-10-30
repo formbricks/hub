@@ -42,7 +42,7 @@ func TestFeedbackRecords_ValueIDRoundTrip(t *testing.T) {
 		ValueID:      &valueID,
 		TenantID:     tenantID,
 		SubmissionID: testTenantID("submission"),
-	})
+	}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, created.ValueID)
 	assert.Equal(t, valueID, *created.ValueID)
@@ -57,14 +57,14 @@ func TestFeedbackRecords_ValueIDRoundTrip(t *testing.T) {
 
 	// Update changes value_id.
 	newID := "opt_neutral"
-	updated, _, err := repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueID: &newID})
+	updated, _, err := repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueID: &newID}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, updated.ValueID)
 	assert.Equal(t, newID, *updated.ValueID)
 
 	// An unrelated update leaves value_id intact.
 	newLabel := "Neutral"
-	afterUnrelated, _, err := repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &newLabel})
+	afterUnrelated, _, err := repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &newLabel}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, afterUnrelated.ValueID)
 	assert.Equal(t, newID, *afterUnrelated.ValueID, "value_id survives an unrelated update")
@@ -101,7 +101,7 @@ func TestFeedbackRecords_ListFilterByValueID(t *testing.T) {
 			ValueID:      &optionID,
 			TenantID:     tenantID,
 			SubmissionID: submission,
-		})
+		}, nil)
 		require.NoError(t, createErr)
 	}
 	createOption(testTenantID("sub-a"), wantID)

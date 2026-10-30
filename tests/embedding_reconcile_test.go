@@ -20,22 +20,23 @@ import (
 	"github.com/formbricks/hub/pkg/database"
 )
 
-// TestListPendingTaxonomyEmbeddingIDs exercises the real repair-selection query against River and
+// TestListPendingEmbeddingIDsAppliesFailureAndJobRules exercises the real repair-selection query,
+// for the taxonomy embedding, against River and
 // enrichment failure state. Each exclusion is part of the safety contract: omitting one either
 // duplicates provider work or permanently abandons recoverable records.
-func TestListPendingTaxonomyEmbeddingIDs(t *testing.T) {
+func TestListPendingEmbeddingIDsAppliesFailureAndJobRules(t *testing.T) {
 	// Every exclusion must hold for any field type the live taxonomy path embeds, not only text:
 	// categorical rows carry option labels and are repaired by the same query (ENG-2792).
 	for _, fieldType := range []models.FieldType{models.FieldTypeText, models.FieldTypeCategorical} {
 		t.Run(string(fieldType), func(t *testing.T) {
-			testListPendingTaxonomyEmbeddingIDs(t, fieldType)
+			testListPendingEmbeddingIDsAppliesFailureAndJobRules(t, fieldType)
 		})
 	}
 }
 
-// testListPendingTaxonomyEmbeddingIDs seeds one record per selection case with the given field type
+// testListPendingEmbeddingIDsAppliesFailureAndJobRules seeds one record per selection case with the given field type
 // and asserts which ones the repair query returns.
-func testListPendingTaxonomyEmbeddingIDs(t *testing.T, fieldType models.FieldType) {
+func testListPendingEmbeddingIDsAppliesFailureAndJobRules(t *testing.T, fieldType models.FieldType) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -107,7 +108,8 @@ func testListPendingTaxonomyEmbeddingIDs(t *testing.T, fieldType models.FieldTyp
 
 	vector := make([]float32, models.EmbeddingVectorDimensions)
 	vector[0] = 0.5
-	require.NoError(t, embeddingsRepo.Upsert(ctx, embedded.ID, model, vector, nil))
+	require.NoError(t, embeddingsRepo.Upsert(
+		ctx, embedded.ID, model, models.EmbeddingInputKindTaxonomyTranslated, vector, nil))
 
 	_, err = riverClient.Insert(ctx, service.FeedbackEmbeddingArgs{
 		FeedbackRecordID: activeJob.ID,
@@ -150,7 +152,8 @@ func testListPendingTaxonomyEmbeddingIDs(t *testing.T, fieldType models.FieldTyp
 	// This repository is shared by local integration runs, and a unique model makes every existing
 	// fixture look missing. The fixture timestamps sort first so the assertion does not depend on a
 	// database-wide inspection limit; bounded production top-up is asserted in the service unit test.
-	ids, err := embeddingsRepo.ListPendingTaxonomyEmbeddingIDs(ctx, model, time.Now().Add(-15*time.Minute), 1_000)
+	ids, err := embeddingsRepo.ListPendingEmbeddingIDs(
+		ctx, model, models.EmbeddingInputKindTaxonomyTranslated, time.Now().Add(-15*time.Minute), 1_000)
 	require.NoError(t, err)
 
 	got := make(map[uuid.UUID]struct{}, len(ids))

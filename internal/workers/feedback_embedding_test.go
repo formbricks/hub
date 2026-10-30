@@ -73,6 +73,9 @@ type mockEmbeddingService struct {
 	setErr          error
 	setCalls        int
 	setEmbeddingNil bool
+	setInputKind    models.EmbeddingInputKind
+	current         bool  // EmbeddingIsCurrent answer
+	currentErr      error // EmbeddingIsCurrent error
 	// stillCurrent is the supersession guard the worker passed to SetEmbedding, kept so a test can
 	// ask it directly whether a given content is still current.
 	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool
@@ -82,11 +85,18 @@ func (m *mockEmbeddingService) GetFeedbackRecord(_ context.Context, _ uuid.UUID)
 	return m.record, m.getErr
 }
 
+func (m *mockEmbeddingService) EmbeddingIsCurrent(
+	context.Context, uuid.UUID, string, models.EmbeddingInputKind,
+) (bool, error) {
+	return m.current, m.currentErr
+}
+
 func (m *mockEmbeddingService) SetEmbedding(
-	_ context.Context, _ uuid.UUID, _ string, embedding []float32,
+	_ context.Context, _ uuid.UUID, _ string, inputKind models.EmbeddingInputKind, embedding []float32,
 	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	m.setCalls++
+	m.setInputKind = inputKind
 	m.setEmbeddingNil = embedding == nil
 	m.stillCurrent = stillCurrent
 
@@ -178,7 +188,7 @@ func TestFeedbackEmbeddingWorkerUsesConfiguredTimeout(t *testing.T) {
 	assert.Equal(t, 75*time.Second, worker.Timeout(embeddingJob()))
 }
 
-func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
+func TestFeedbackEmbeddingWorkerRecordsFailures(t *testing.T) {
 	record := translatedTextRecord("Bonjour", "Hello")
 	record.ID = uuid.Must(uuid.NewV7())
 	record.TenantID = "tenant-embedding-failure"
@@ -238,7 +248,9 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 		assert.Equal(t, models.EnrichmentFailureReasonWriteFailed, failures.calls[0].Reason)
 	})
 
-	t.Run("raw embedding failures never enter taxonomy state", func(t *testing.T) {
+	// The repair sweep covers the search embedding too (ENG-2792), so its failures need the same
+	// durable state, recorded under their own name so they never count as taxonomy failures.
+	t.Run("raw embedding failures are recorded as search-embedding failures", func(t *testing.T) {
 		failures := &recordingFailureRecorder{}
 		failureMetrics := &countingFailureMetrics{}
 		worker := NewFeedbackEmbeddingWorkerWithOptions(
@@ -250,8 +262,11 @@ func TestFeedbackEmbeddingWorkerRecordsTaxonomyFailures(t *testing.T) {
 
 		var cancelErr *river.JobCancelError
 		require.ErrorAs(t, worker.Work(context.Background(), job), &cancelErr)
-		assert.Empty(t, failures.calls)
-		assert.Zero(t, failureMetrics.terminal)
+		require.Len(t, failures.calls, 1)
+		assert.Equal(t, models.EnrichmentNameEmbedding, failures.calls[0].Enrichment)
+		assert.Equal(t, job.Args.Model, failures.calls[0].ContextKey)
+		assert.True(t, failures.calls[0].Terminal)
+		assert.Equal(t, 1, failureMetrics.terminal)
 	})
 }
 
@@ -536,4 +551,27 @@ func TestFeedbackEmbeddingWorker_SupersessionGuardUsesTheCappedText(t *testing.T
 	changedHead := strings.Repeat("b", 100) + "tail"
 	assert.False(t, svc.stillCurrent(record.FieldLabel, &changedHead, nil),
 		"a change inside the capped prefix supersedes it")
+}
+
+// TestFeedbackEmbeddingWorkerSkipsCurrentVector: a repair or backfill job that lands after a live
+// job already embedded this content, or a job re-run after a crash between the write and River
+// completing it, must not spend a provider call (ENG-2792). A failed check must not block the job.
+func TestFeedbackEmbeddingWorkerSkipsCurrentVector(t *testing.T) {
+	t.Run("current vector: no provider call, no write", func(t *testing.T) {
+		svc := &mockEmbeddingService{record: textRecord("Great"), current: true}
+		client := &mockEmbeddingClient{embedding: []float32{0.1}}
+
+		require.NoError(t, NewFeedbackEmbeddingWorker(svc, client, "", nil).Work(context.Background(), embeddingJob()))
+		assert.Empty(t, client.input, "the provider must not be called")
+		assert.Zero(t, svc.setCalls)
+	})
+
+	t.Run("failed check: embeds anyway", func(t *testing.T) {
+		svc := &mockEmbeddingService{record: textRecord("Great"), currentErr: errors.New("db blip")}
+		client := &mockEmbeddingClient{embedding: []float32{0.1}}
+
+		require.NoError(t, NewFeedbackEmbeddingWorker(svc, client, "", nil).Work(context.Background(), embeddingJob()))
+		assert.NotEmpty(t, client.input)
+		assert.Equal(t, 1, svc.setCalls)
+	})
 }
