@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
+
+	"github.com/formbricks/hub/internal/models"
 )
 
 // EmbeddingEnqueuer inserts the embedding jobs a feedback-record write owes inside that write's
@@ -28,16 +30,34 @@ func NewEmbeddingEnqueuer(inserter RiverTxBatchInserter, builders ...*EmbeddingJ
 	return &EmbeddingEnqueuer{inserter: inserter, builders: builders}
 }
 
+// OwesCreate reports whether creating a record with this label and text owes any embedding job,
+// before the record exists: exactly when some model's built input is non-empty, the rule jobFor
+// applies to the created record.
+func (e *EmbeddingEnqueuer) OwesCreate(fieldLabel, valueText *string) bool {
+	for _, builder := range e.builders {
+		if builder.owesCreate(fieldLabel, valueText) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // EnqueueTx inserts, in dbTx, every embedding job event owes. An error must abort the write.
 func (e *EmbeddingEnqueuer) EnqueueTx(ctx context.Context, dbTx pgx.Tx, event Event) error {
-	return e.insert(ctx, dbTx, event.ID, recordIDFromEventData(event.Data),
+	tenantID := ""
+	if record, ok := event.Data.(*models.FeedbackRecord); ok {
+		tenantID = record.TenantID
+	}
+
+	return e.insert(ctx, dbTx, event.ID, recordIDFromEventData(event.Data), tenantID,
 		func(builder *EmbeddingJobBuilder) (river.InsertManyParams, bool) { return builder.jobFor(event) })
 }
 
 // EnqueueTranslationTx inserts, in dbTx, the taxonomy re-embed a translation write owes: the
 // taxonomy input prefers translated text, so a new (or cleared) translation changes it.
 func (e *EmbeddingEnqueuer) EnqueueTranslationTx(ctx context.Context, dbTx pgx.Tx, feedbackRecordID uuid.UUID) error {
-	return e.insert(ctx, dbTx, uuid.Nil, feedbackRecordID,
+	return e.insert(ctx, dbTx, uuid.Nil, feedbackRecordID, "",
 		func(builder *EmbeddingJobBuilder) (river.InsertManyParams, bool) {
 			return builder.translationJob(feedbackRecordID)
 		})
@@ -47,7 +67,7 @@ func (e *EmbeddingEnqueuer) EnqueueTranslationTx(ctx context.Context, dbTx pgx.T
 // recorded at insert time: a transaction that later fails to commit overcounts by its jobs, which
 // is rarer and cheaper than threading commit outcomes back here.
 func (e *EmbeddingEnqueuer) insert(
-	ctx context.Context, dbTx pgx.Tx, eventID, feedbackRecordID uuid.UUID,
+	ctx context.Context, dbTx pgx.Tx, eventID, feedbackRecordID uuid.UUID, tenantID string,
 	owed func(*EmbeddingJobBuilder) (river.InsertManyParams, bool),
 ) error {
 	params := make([]river.InsertManyParams, 0, len(e.builders))
@@ -72,6 +92,7 @@ func (e *EmbeddingEnqueuer) insert(
 		slog.ErrorContext(ctx, "embedding: enqueue failed, write rolled back",
 			"event_id", eventID,
 			"feedback_record_id", feedbackRecordID,
+			"tenant_id", tenantID,
 			"error", err,
 		)
 
@@ -85,6 +106,7 @@ func (e *EmbeddingEnqueuer) insert(
 	slog.InfoContext(ctx, "embedding: jobs enqueued",
 		"event_id", eventID,
 		"feedback_record_id", feedbackRecordID,
+		"tenant_id", tenantID,
 		"jobs", len(params),
 	)
 

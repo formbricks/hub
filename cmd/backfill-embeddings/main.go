@@ -59,11 +59,20 @@ func run() int {
 		"also re-embed vectors written before Hub recorded what they were computed from (requires -tenant-id)")
 	retryTerminal := flag.Bool("retry-terminal", false,
 		"also retry records the provider rejected outright, once the cause is fixed (requires -tenant-id)")
+	cooldown := flag.Duration("cooldown", 0,
+		"skip records whose attempts ran out on a transient error less than this long ago (e.g. 24h to keep "+
+			"a record that keeps failing out of repeated batch runs); 0 retries them at once")
 
 	flag.Parse()
 
 	if *maxRecords < 0 {
 		slog.Error("-max-records cannot be negative")
+
+		return exitFailure
+	}
+
+	if *cooldown < 0 {
+		slog.Error("-cooldown cannot be negative")
 
 		return exitFailure
 	}
@@ -193,6 +202,7 @@ func run() int {
 		MaxRecords:      *maxRecords,
 		IncludeLegacy:   *stale,
 		IncludeTerminal: *retryTerminal,
+		Cooldown:        *cooldown,
 	}
 
 	feedbackRecordsService := service.NewFeedbackRecordsService(
@@ -210,7 +220,8 @@ func run() int {
 	// what (the operator's exec session is the who). Records are identified by count, never content.
 	scope := []any{
 		"model", targetModel, "input_kind", inputKind, "tenant_id", *tenantID,
-		"max_records", *maxRecords, "stale", *stale, "retry_terminal", *retryTerminal, "count_only", *countOnly,
+		"max_records", *maxRecords, "stale", *stale, "retry_terminal", *retryTerminal, "cooldown", *cooldown,
+		"count_only", *countOnly,
 	}
 	slog.Info("Embedding backfill started", scope...) // #nosec G706 -- values are structured log attributes
 

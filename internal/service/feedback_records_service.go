@@ -182,7 +182,14 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(
 	// webhook delivery this create causes correlates.
 	event := NewEvent(datatypes.FeedbackRecordCreated, nil, nil)
 
-	record, err := s.repo.Create(ctx, &normalizedReq, s.embeddingWriteHook(event, nil))
+	// A record that owes no embedding (no text: a number, a boolean, a date) keeps the single-
+	// statement insert; only one that does pays for the explicit transaction.
+	var hook repository.RecordWriteHook
+	if s.embeddingEnqueuer != nil && s.embeddingEnqueuer.OwesCreate(normalizedReq.FieldLabel, normalizedReq.ValueText) {
+		hook = s.embeddingWriteHook(event, nil)
+	}
+
+	record, err := s.repo.Create(ctx, &normalizedReq, hook)
 	if err != nil {
 		return nil, fmt.Errorf("create feedback record: %w", err)
 	}
@@ -620,6 +627,10 @@ type EmbeddingBackfillParams struct {
 	// IncludeTerminal also retries records the provider rejected outright, for after the reason
 	// was fixed (a lower input cap, say). Tenant-scoped only.
 	IncludeTerminal bool
+	// Cooldown skips records whose attempts ran out on a transient error less than this long ago.
+	// Zero (the default) retries them at once, which is what recovery after a provider outage
+	// wants; a longer one keeps a record that keeps failing out of repeated batch runs.
+	Cooldown time.Duration
 }
 
 // EmbeddingBackfillResult reports what a backfill did.
@@ -630,15 +641,15 @@ type EmbeddingBackfillResult struct {
 	Enqueued int
 }
 
-// filter is the selection a backfill makes. Unlike the sweep it has no transient-failure cooldown:
-// an operator runs it once the provider has recovered, and waiting out the cooldown then would
-// hide exactly the records the incident left behind. Re-runs stay idempotent through the
-// in-flight dedupe.
+// filter is the selection a backfill makes. Unlike the sweep it has no transient-failure cooldown
+// by default: an operator runs it once the provider has recovered, and waiting out the sweep's
+// cooldown then would hide exactly the records the incident left behind. Re-runs stay idempotent
+// through the in-flight dedupe.
 func (p EmbeddingBackfillParams) filter(now time.Time) repository.PendingEmbeddingsFilter {
 	return repository.PendingEmbeddingsFilter{
 		Model:           p.Model,
 		InputKind:       models.NormalizeEmbeddingInputKind(p.InputKind),
-		RetryBefore:     now,
+		RetryBefore:     now.Add(-p.Cooldown),
 		IncludeLegacy:   p.IncludeLegacy,
 		IncludeTerminal: p.IncludeTerminal,
 	}
@@ -699,11 +710,6 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(
 	}
 
 	filter := params.filter(time.Now())
-	opts := &river.InsertOpts{
-		Queue:       s.embeddingQueueName,
-		MaxAttempts: s.embeddingMaxAttempts,
-		UniqueOpts:  inFlightUniqueOpts(),
-	}
 
 	for {
 		pageSize := embeddingBackfillPageSize
@@ -724,17 +730,11 @@ func (s *FeedbackRecordsService) BackfillEmbeddings(
 			break
 		}
 
+		target := EmbeddingReconcileTarget{Model: filter.Model, InputKind: filter.InputKind}
+
 		jobs := make([]river.InsertManyParams, 0, len(page))
 		for _, id := range page {
-			jobs = append(jobs, river.InsertManyParams{
-				Args: FeedbackEmbeddingArgs{
-					FeedbackRecordID: id,
-					Model:            filter.Model,
-					InputKind:        filter.InputKind,
-					ValueTextHash:    ValueTextHashRepair,
-				},
-				InsertOpts: opts,
-			})
+			jobs = append(jobs, repairEmbeddingJob(id, target, s.embeddingQueueName, 0, s.embeddingMaxAttempts))
 		}
 
 		inserted, err := s.embeddingInserter.InsertMany(ctx, jobs)

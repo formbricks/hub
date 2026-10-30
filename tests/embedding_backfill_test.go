@@ -436,11 +436,11 @@ func TestEmbeddingBackfillSelectsWhatTheSweepWould(t *testing.T) {
 
 	stale := fixtures.seed(ctx, t, models.FieldTypeCategorical, text("Before"), nil)
 	require.NoError(t, embeddingsRepo.Upsert(ctx, stale.ID, model, models.EmbeddingInputKindRaw, unitVector(), nil))
-	fixtures.exec(t, `UPDATE feedback_records SET value_text = 'After' WHERE id = $1`, stale.ID)
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET value_text = 'After' WHERE id = $1`, stale.ID)
 
 	legacy := fixtures.seed(ctx, t, models.FieldTypeCategorical, text("Legacy"), nil)
 	require.NoError(t, embeddingsRepo.Upsert(ctx, legacy.ID, model, models.EmbeddingInputKindRaw, unitVector(), nil))
-	fixtures.exec(t, `UPDATE embeddings SET source_hash = NULL WHERE feedback_record_id = $1`, legacy.ID)
+	fixtures.exec(ctx, t, `UPDATE embeddings SET source_hash = NULL WHERE feedback_record_id = $1`, legacy.ID)
 
 	// Its attempts ran out on a transient error a moment ago, as in an incident the operator is
 	// recovering from: the sweep waits out the cooldown, the backfill must not.
@@ -480,6 +480,23 @@ func TestEmbeddingBackfillSelectsWhatTheSweepWould(t *testing.T) {
 	count, err := svc.CountEmbeddingBackfill(ctx, params)
 	require.NoError(t, err)
 	assert.Zero(t, count, "-count-only agrees: everything owed is now in flight")
+
+	// -cooldown keeps a record that just failed out, for operators running batch after batch.
+	_, err = db.Exec(ctx, `DELETE FROM river_job WHERE args->>'feedback_record_id' = $1`, cooling.ID.String())
+	require.NoError(t, err)
+
+	cooled := params
+	cooled.Cooldown = 15 * time.Minute
+	count, err = svc.CountEmbeddingBackfill(ctx, cooled)
+	require.NoError(t, err)
+	assert.Zero(t, count, "with -cooldown the record that just failed is left alone")
+
+	count, err = svc.CountEmbeddingBackfill(ctx, params)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "without it, it is owed again")
+
+	_, err = svc.BackfillEmbeddings(ctx, params)
+	require.NoError(t, err)
 
 	// The sweep's repair for the same record is the same River unique key, so even a sweep that
 	// selected it before the backfill's insert landed could not queue it twice.

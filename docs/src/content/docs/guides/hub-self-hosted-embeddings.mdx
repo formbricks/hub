@@ -65,10 +65,11 @@ runtime configuration reference.
 `hub-api` queues the embedding jobs a record needs in the same database
 transaction that creates or edits it: one job per model when a record with
 text is created, and a re-embed when its `value_text` or `field_label`
-changes. A translation write queues the taxonomy re-embed the same way. The
-record and its jobs are committed together or not at all, so a restart or
-crash cannot leave a record that nothing will embed. If the jobs cannot be
-queued, the write fails and the API returns an error the client can retry.
+changes. When `hub-worker` writes a translation, it queues the taxonomy
+re-embed in that same way. A record and its jobs are committed together or
+not at all, so a restart or crash cannot leave a record that nothing will
+embed. If the jobs cannot be queued, the write fails and the API returns an
+error the client can retry.
 
 ## Option 1: Bundled TEI Runtime (Helm)
 

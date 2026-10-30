@@ -349,7 +349,9 @@ type PendingEmbeddingsFilter struct {
 // and revision are excluded (unless the filter includes them): retrying content the provider has
 // conclusively rejected would spend a call on every pass forever. Non-terminal failures become
 // eligible after RetryBefore, so the same poison records cannot monopolize every bounded sweep.
-// Every fragment is a compile-time constant; values travel as parameters.
+// Every fragment is a compile-time constant; values travel as parameters ($1 model, $2 input kind,
+// $3 failure-marker enrichment, $4 retry-before, $5 include legacy, $6 include terminal, then the
+// tenant, the cursor and the limit as present).
 func pendingEmbeddingsQuery(
 	filter PendingEmbeddingsFilter, tenantID *string, columns, orderBy string, limit int,
 ) (string, []any) {
@@ -357,14 +359,22 @@ func pendingEmbeddingsQuery(
 	eligible := embeddingEligibleTextSQL(kind)
 	args := []any{
 		filter.Model, kind, kind.EnrichmentName(), filter.RetryBefore,
-		filter.IncludeLegacy, filter.IncludeTerminal, filter.AfterID,
+		filter.IncludeLegacy, filter.IncludeTerminal,
 	}
 
-	tenantPredicate := ""
+	// Scope predicates are emitted only when they restrict anything: a constant-true parameter
+	// predicate still costs a selectivity guess once pgx's statement cache makes Postgres plan the
+	// query generically.
+	scope := "TRUE"
 
 	if tenantID != nil {
 		args = append(args, *tenantID)
-		tenantPredicate = fmt.Sprintf("\n\t\t  AND fr.tenant_id = $%d", len(args))
+		scope += fmt.Sprintf(" AND fr.tenant_id = $%d", len(args))
+	}
+
+	if filter.AfterID != uuid.Nil {
+		args = append(args, filter.AfterID)
+		scope += fmt.Sprintf(" AND fr.id > $%d", len(args))
 	}
 
 	tail := ""
@@ -384,7 +394,7 @@ func pendingEmbeddingsQuery(
 		 AND failure.enrichment = $3
 		 AND failure.context_key = $1
 		 AND failure.source_updated_at = fr.updated_at
-		WHERE fr.id > $7` + tenantPredicate + `
+		WHERE ` + scope + `
 		  AND (
 			(` + eligible + ` AND (
 			  e.feedback_record_id IS NULL

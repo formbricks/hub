@@ -18,6 +18,7 @@ import (
 
 type mockFeedbackRecordsRepo struct {
 	record                     *models.FeedbackRecord
+	createHookSet              bool                   // whether Create got a write hook (the explicit-transaction path)
 	previousRecord             *models.FeedbackRecord // pre-update row Update returns; falls back to record when nil
 	createReq                  *models.CreateFeedbackRecordRequest
 	deleteByUserGroups         []models.DeletedFeedbackRecordsByTenant
@@ -61,10 +62,13 @@ func (m *mockFeedbackRecordsRepo) Create(
 ) (*models.FeedbackRecord, error) {
 	reqCopy := *req
 	m.createReq = &reqCopy
+	m.createHookSet = hook != nil
 
 	record := m.record
 	if record == nil {
-		record = &models.FeedbackRecord{TenantID: req.TenantID}
+		record = &models.FeedbackRecord{
+			TenantID: req.TenantID, FieldType: req.FieldType, FieldLabel: req.FieldLabel, ValueText: req.ValueText,
+		}
 	}
 
 	if hook != nil {
@@ -1194,5 +1198,39 @@ func TestListFeedbackRecords_PaginationInvariantViolation(t *testing.T) {
 	)
 	if !errors.Is(err, ErrPaginationInvariantViolated) {
 		t.Fatalf("ListFeedbackRecords() error = %v, want ErrPaginationInvariantViolated", err)
+	}
+}
+
+// TestFeedbackRecordsService_CreateTakesTheTransactionOnlyWhenEmbeddingsAreOwed: a record with no
+// embeddable text (a number, a boolean, a date) keeps the single-statement insert; one with text
+// takes the transaction that carries its jobs.
+func TestFeedbackRecordsService_CreateTakesTheTransactionOnlyWhenEmbeddingsAreOwed(t *testing.T) {
+	inserter := &mockEmbeddingInserter{}
+	repo := &mockFeedbackRecordsRepo{}
+	svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+	svc.SetEmbeddingEnqueuer(NewEmbeddingEnqueuer(inserter, NewEmbeddingJobBuilder("raw-model", "embeddings", 3, "", 0, nil)))
+
+	blank := "   "
+	for _, valueText := range []*string{nil, &blank} {
+		if _, err := svc.CreateFeedbackRecord(context.Background(), &models.CreateFeedbackRecordRequest{
+			TenantID: "tenant", FieldType: models.FieldTypeNumber, ValueText: valueText,
+		}); err != nil {
+			t.Fatalf("CreateFeedbackRecord() error = %v", err)
+		}
+
+		if repo.createHookSet {
+			t.Fatalf("no text, no embedding owed: the create must not take the transaction")
+		}
+	}
+
+	text := "Great"
+	if _, err := svc.CreateFeedbackRecord(context.Background(), &models.CreateFeedbackRecordRequest{
+		TenantID: "tenant", FieldType: models.FieldTypeCategorical, ValueText: &text,
+	}); err != nil {
+		t.Fatalf("CreateFeedbackRecord() error = %v", err)
+	}
+
+	if !repo.createHookSet || len(inserter.insertCalls) != 1 {
+		t.Fatalf("hook set = %v, jobs = %d; want the transaction and one job", repo.createHookSet, len(inserter.insertCalls))
 	}
 }

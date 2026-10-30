@@ -149,7 +149,7 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	text, trimmed := service.BuildEmbeddingInputForKind(record, inputKind, w.docPrefix, inputCap)
 	if trimmed {
-		recordTrimmed(ctx, w.trimmedMetrics, embeddingEnrichmentName(inputKind))
+		recordTrimmed(ctx, w.trimmedMetrics, inputKind.EnrichmentName())
 	}
 
 	// stillCurrent lets the repository verify, atomically with the write, that the content this
@@ -248,7 +248,7 @@ func (w *FeedbackEmbeddingWorker) handleEmbedError(
 		}
 
 		if w.failureMetrics != nil {
-			w.failureMetrics.RecordTerminalFailure(ctx, embeddingEnrichmentName(inputKind), string(reason))
+			w.failureMetrics.RecordTerminalFailure(ctx, inputKind.EnrichmentName(), string(reason))
 		}
 
 		w.markEmbeddingFailed(
@@ -400,7 +400,7 @@ func (w *FeedbackEmbeddingWorker) markEmbeddingFailed(
 	err := w.failures.RecordFailure(writeCtx, models.EnrichmentFailure{
 		FeedbackRecordID: record.ID,
 		TenantID:         record.TenantID,
-		Enrichment:       embeddingEnrichmentName(inputKind),
+		Enrichment:       inputKind.EnrichmentName(),
 		Terminal:         terminal,
 		Reason:           reason,
 		Attempts:         attempts,

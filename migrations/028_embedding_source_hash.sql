@@ -16,7 +16,9 @@
 -- provider call each. They are re-verified on the record's next content change, or on demand per
 -- tenant with backfill-embeddings.
 --
--- Adding a nullable column without a default is a catalog-only change; no rewrite, no backfill.
+-- Adding a nullable column without a default is a catalog-only change; no rewrite, no backfill. It
+-- still needs a moment's ACCESS EXCLUSIVE lock on embeddings, so it waits for running queries on
+-- the table (a repair sweep, a long semantic search) to finish first.
 --
 -- The file runs without a wrapping transaction so each statement holds its lock only for itself:
 -- inside one transaction the ACCESS EXCLUSIVE lock on the busy embeddings table would be kept
@@ -49,7 +51,9 @@ ALTER TABLE feedback_record_enrichment_failures
 
 -- +goose down
 -- Raw-embedding markers are advisory and the old constraint cannot represent them; a future
--- attempt recreates whatever is still true.
+-- attempt recreates whatever is still true. Stop hub-worker first: with no wrapping transaction, a
+-- worker still running the new code could write an 'embedding' marker between the DELETE and the
+-- ADD. NOT VALID then VALIDATE keeps the constraint swap from blocking writes, as in the up section.
 DELETE FROM feedback_record_enrichment_failures
 WHERE enrichment = 'embedding';
 
@@ -63,6 +67,9 @@ ALTER TABLE feedback_record_enrichment_failures
     OR
     (enrichment = 'taxonomy_embedding'
       AND NULLIF(btrim(context_key), '') IS NOT NULL AND source_updated_at IS NOT NULL)
-  );
+  ) NOT VALID;
+
+ALTER TABLE feedback_record_enrichment_failures
+  VALIDATE CONSTRAINT feedback_record_enrichment_failures_enrichment_valid;
 
 ALTER TABLE embeddings DROP COLUMN IF EXISTS source_hash;

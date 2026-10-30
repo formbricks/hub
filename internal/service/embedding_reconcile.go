@@ -110,12 +110,12 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 		return result, nil
 	}
 
-	retryBefore := time.Now().Add(-s.retryAfter)
-	params := make([]river.InsertManyParams, 0, room)
-
 	if len(s.targets) == 0 {
 		return result, nil
 	}
+
+	retryBefore := time.Now().Add(-s.retryAfter)
+	params := make([]river.InsertManyParams, 0, room)
 
 	first := s.nextFirstTarget()
 
@@ -176,10 +176,18 @@ func (s *EmbeddingReconcileService) nextFirstTarget() int {
 	return first
 }
 
-// repairJob is one record's repair. Unique across the in-flight states, and sharing its unique key
-// with the operator backfill's jobs, so neither another sweep nor a concurrent backfill can queue
-// the same repair twice.
+// repairJob is one record's repair on the low-priority repair lane.
 func (s *EmbeddingReconcileService) repairJob(target EmbeddingReconcileTarget, id uuid.UUID) river.InsertManyParams {
+	return repairEmbeddingJob(id, target, EmbeddingsReconcileQueueName, embeddingRepairPriority, s.maxAttempts)
+}
+
+// repairEmbeddingJob is the one shape of a repair job, for the sweep and the operator backfill
+// alike. Both use ValueTextHashRepair and the in-flight-only unique options, so their jobs for the
+// same record are one River unique key (the queue is not part of it) and neither can queue a repair
+// the other already has in flight. priority 0 is River's default.
+func repairEmbeddingJob(
+	id uuid.UUID, target EmbeddingReconcileTarget, queue string, priority, maxAttempts int,
+) river.InsertManyParams {
 	return river.InsertManyParams{
 		Args: FeedbackEmbeddingArgs{
 			FeedbackRecordID: id,
@@ -188,9 +196,9 @@ func (s *EmbeddingReconcileService) repairJob(target EmbeddingReconcileTarget, i
 			ValueTextHash:    ValueTextHashRepair,
 		},
 		InsertOpts: &river.InsertOpts{
-			Queue:       EmbeddingsReconcileQueueName,
-			Priority:    embeddingRepairPriority,
-			MaxAttempts: s.maxAttempts,
+			Queue:       queue,
+			Priority:    priority,
+			MaxAttempts: maxAttempts,
 			UniqueOpts:  inFlightUniqueOpts(),
 		},
 	}

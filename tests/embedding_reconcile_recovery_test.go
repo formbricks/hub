@@ -231,7 +231,7 @@ func testTaxonomyEmbeddingRecovery(t *testing.T, fieldType models.FieldType, val
 			FeedbackRecordID: recordID,
 			Model:            model,
 			InputKind:        models.EmbeddingInputKindTaxonomyTranslated,
-			ValueTextHash:    "reconcile",
+			ValueTextHash:    service.ValueTextHashRepair,
 		},
 	}))
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -72,10 +73,10 @@ func (f *staleRepairFixtures) seed(
 	return &record
 }
 
-func (f *staleRepairFixtures) exec(t *testing.T, sql string, args ...any) {
+func (f *staleRepairFixtures) exec(ctx context.Context, t *testing.T, sql string, args ...any) {
 	t.Helper()
 
-	_, err := f.db.Exec(context.Background(), sql, args...)
+	_, err := f.db.Exec(ctx, sql, args...)
 	require.NoError(t, err)
 }
 
@@ -141,41 +142,41 @@ func testListPendingEmbeddingIDsFindsStaleAndOrphanedVectors(
 
 	editedText := fixtures.seed(ctx, t, fieldType, text("Before"), nil)
 	embed(editedText)
-	fixtures.exec(t, `UPDATE feedback_records SET value_text = 'After', updated_at = NOW() WHERE id = $1`, editedText.ID)
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET value_text = 'After', updated_at = NOW() WHERE id = $1`, editedText.ID)
 
 	editedLabel := fixtures.seed(ctx, t, fieldType, text("Same answer"), nil)
 	embed(editedLabel)
-	fixtures.exec(t, `UPDATE feedback_records SET field_label = 'A new question', updated_at = NOW() WHERE id = $1`,
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET field_label = 'A new question', updated_at = NOW() WHERE id = $1`,
 		editedLabel.ID)
 
 	retranslated := fixtures.seed(ctx, t, fieldType, text("Bonjour"), text("Hello"))
 	embed(retranslated)
-	fixtures.exec(t, `UPDATE feedback_records SET value_text_translated = 'Good day', updated_at = NOW() WHERE id = $1`,
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET value_text_translated = 'Good day', updated_at = NOW() WHERE id = $1`,
 		retranslated.ID)
 
 	// The same text moved from one column to the next (a NULL taking its place) is a different
 	// input; the hash must not read the two rows as the same. For the search kind the record has no
 	// text left at all, so it is owed a clear either way.
 	shifted := fixtures.seed(ctx, t, fieldType, text("A"), text("B"))
-	fixtures.exec(t, `UPDATE feedback_records SET field_label = NULL WHERE id = $1`, shifted.ID)
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET field_label = NULL WHERE id = $1`, shifted.ID)
 	embed(shifted)
-	fixtures.exec(t, `UPDATE feedback_records SET field_label = 'A', value_text = NULL, updated_at = NOW() WHERE id = $1`,
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET field_label = 'A', value_text = NULL, updated_at = NOW() WHERE id = $1`,
 		shifted.ID)
 
 	enrichedOnly := fixtures.seed(ctx, t, fieldType, text("Unchanged"), nil)
 	embed(enrichedOnly)
-	fixtures.exec(t, `UPDATE feedback_records SET sentiment = 'positive', sentiment_score = 0.9, updated_at = NOW()
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET sentiment = 'positive', sentiment_score = 0.9, updated_at = NOW()
 		WHERE id = $1`, enrichedOnly.ID)
 
 	emptied := fixtures.seed(ctx, t, fieldType, text("Soon gone"), nil)
 	embed(emptied)
-	fixtures.exec(t, `UPDATE feedback_records SET value_text = NULL, updated_at = NOW() WHERE id = $1`, emptied.ID)
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET value_text = NULL, updated_at = NOW() WHERE id = $1`, emptied.ID)
 
 	// A vector written before source_hash existed is trusted as current, even if it is not.
 	legacy := fixtures.seed(ctx, t, fieldType, text("Legacy"), nil)
 	embed(legacy)
-	fixtures.exec(t, `UPDATE embeddings SET source_hash = NULL WHERE feedback_record_id = $1`, legacy.ID)
-	fixtures.exec(t, `UPDATE feedback_records SET value_text = 'Legacy, edited', updated_at = NOW() WHERE id = $1`,
+	fixtures.exec(ctx, t, `UPDATE embeddings SET source_hash = NULL WHERE feedback_record_id = $1`, legacy.ID)
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET value_text = 'Legacy, edited', updated_at = NOW() WHERE id = $1`,
 		legacy.ID)
 
 	// A terminal failure for the current revision is excluded for this kind, and only this kind.
@@ -262,9 +263,9 @@ func TestEmbeddingRepairHealsStaleAndOrphanedVectors(t *testing.T) {
 		}
 	}
 
-	fixtures.exec(t, `UPDATE feedback_records SET value_text = 'Not satisfied', updated_at = NOW() WHERE id = $1`,
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET value_text = 'Not satisfied', updated_at = NOW() WHERE id = $1`,
 		edited.ID)
-	fixtures.exec(t, `UPDATE feedback_records SET value_text = NULL, updated_at = NOW() WHERE id = $1`, emptied.ID)
+	fixtures.exec(ctx, t, `UPDATE feedback_records SET value_text = NULL, updated_at = NOW() WHERE id = $1`, emptied.ID)
 
 	reconciler := service.NewEmbeddingReconcileService(embeddingsRepo, targets, 10_000, 5, 15*time.Minute)
 	reconciler.SetInserter(riverClient)
@@ -348,6 +349,45 @@ func runRepairJobs(
 	return len(jobs)
 }
 
+// failFirstWrite loses the first vector write, as a worker killed between the provider call and the
+// write would.
+type failFirstWrite struct {
+	feedbackEmbeddingService
+
+	failed bool
+}
+
+// feedbackEmbeddingService is the worker's view of the records service.
+type feedbackEmbeddingService interface {
+	GetFeedbackRecord(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
+	SetEmbedding(
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+		embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
+	) error
+	EmbeddingIsCurrent(
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+	) (bool, error)
+}
+
+func (f *failFirstWrite) SetEmbedding(
+	ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+	embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
+) error {
+	if !f.failed {
+		f.failed = true
+
+		return errors.New("worker killed before the write")
+	}
+
+	if err := f.feedbackEmbeddingService.SetEmbedding(
+		ctx, feedbackRecordID, model, inputKind, embedding, stillCurrent,
+	); err != nil {
+		return fmt.Errorf("set embedding: %w", err)
+	}
+
+	return nil
+}
+
 // failingFailureRecorder loses every failure-marker write, as a database blip at the worst moment.
 type failingFailureRecorder struct{}
 
@@ -381,6 +421,49 @@ func TestEmbeddingWorkerCrashBoundaries(t *testing.T) {
 			},
 		}
 	}
+
+	vectorState := func(t *testing.T, recordID uuid.UUID) (vectors int, hashed bool) {
+		t.Helper()
+
+		require.NoError(t, db.QueryRow(ctx, `
+			SELECT COUNT(*), COALESCE(bool_and(source_hash IS NOT NULL), false)
+			FROM embeddings WHERE feedback_record_id = $1 AND model = $2`, recordID, model).Scan(&vectors, &hashed))
+
+		return vectors, hashed
+	}
+
+	t.Run("died after the provider call, before the write: the re-run embeds once more", func(t *testing.T) {
+		record := fixtures.seed(ctx, t, models.FieldTypeCategorical, &answer, nil)
+		provider := &countingEmbeddingClient{}
+		dying := &failFirstWrite{feedbackEmbeddingService: recordsService}
+
+		require.Error(t, workers.NewFeedbackEmbeddingWorker(dying, provider, "", nil).Work(ctx, job(record.ID, 1)),
+			"the write never happens")
+
+		vectors, _ := vectorState(t, record.ID)
+		require.Zero(t, vectors)
+
+		require.NoError(t, workers.NewFeedbackEmbeddingWorker(recordsService, provider, "", nil).Work(ctx, job(record.ID, 2)))
+
+		vectors, hashed := vectorState(t, record.ID)
+		assert.Equal(t, 1, vectors)
+		assert.True(t, hashed)
+		assert.Equal(t, 2, provider.calls, "the interrupted call cannot be saved; nothing more is spent")
+	})
+
+	t.Run("a legacy vector is re-embedded, not skipped as current", func(t *testing.T) {
+		record := fixtures.seed(ctx, t, models.FieldTypeCategorical, &answer, nil)
+		require.NoError(t, embeddingsRepo.Upsert(ctx, record.ID, model, models.EmbeddingInputKindRaw, unitVector(), nil))
+		fixtures.exec(ctx, t, `UPDATE embeddings SET source_hash = NULL WHERE feedback_record_id = $1`, record.ID)
+
+		provider := &countingEmbeddingClient{}
+		require.NoError(t, workers.NewFeedbackEmbeddingWorker(recordsService, provider, "", nil).Work(ctx, job(record.ID, 1)))
+
+		assert.Equal(t, 1, provider.calls, "what -stale queues must actually be re-embedded")
+
+		_, hashed := vectorState(t, record.ID)
+		assert.True(t, hashed, "the re-embed records what the vector was built from")
+	})
 
 	t.Run("re-run after the write costs no provider call", func(t *testing.T) {
 		record := fixtures.seed(ctx, t, models.FieldTypeCategorical, &answer, nil)
