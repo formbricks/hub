@@ -19,9 +19,9 @@ var errWriteHookNeedsPgxTx = errors.New("record write hook: transaction is not a
 // It exists so work derived from a write is enqueued atomically with it: both commit or neither
 // does. Enqueueing after the commit instead, through the in-process event channel, loses the job
 // whenever the process dies between the two or the channel is full, and the record is then never
-// enriched (ENG-2792: a hub-api SIGKILL right after 400 acknowledged creates left between a
-// quarter and a half of them with no job, across runs). River keeps its queue in this database, so
-// river_job is the outbox and InsertTx is the whole pattern; no relay process is needed.
+// enriched (ENG-2792: a hub-api SIGKILL right after 400 acknowledged creates left 111 to 288 of
+// them with no job, across runs). River keeps its queue in this database, so river_job is the
+// outbox and InsertTx is the whole pattern; no relay process is needed.
 //
 // written is the row as this write left it; previous is the row it replaced (nil on create).
 // SetTranslation passes nil for both: its hook needs only the record id its caller already holds.
