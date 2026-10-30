@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/formbricks/hub/internal/api/response"
+	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/models"
 )
 
@@ -26,6 +27,12 @@ func NewEnrichmentStatusHandler(service EnrichmentStatusService) *EnrichmentStat
 // GetStatus handles GET /v1/enrichment-status?tenant_id=<id>. It returns per-enrichment
 // eligible/done counts for the tenant. tenant_id is required; a missing/blank value yields 400.
 func (h *EnrichmentStatusHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Enrichment status is not available.")
 

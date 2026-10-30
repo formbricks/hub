@@ -5,10 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"net/url"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -207,11 +211,11 @@ func validateListFeedbackRecordsFilters(structLevel validator.StructLevel) {
 // "sentiment[2]" (which a client cannot address), and an empty value stays a no-op filter, which
 // is what ?field_type= has always been.
 //
-// It is NOT sufficient on its own, which is why the struct also carries dive tags. The decoder
-// consults customTypeFuncs only when the plain query key is present; go-playground/form's indexed
-// form (?field_type[0]=x) takes a different branch, skips these funcs entirely, and assigns the
-// raw string. The dive tags run on the decoded struct regardless of how it was populated, so they
-// catch what this misses.
+// The struct also carries dive tags as a second gate. The decoder consults customTypeFuncs only
+// when the plain query key is present; go-playground/form's indexed form (?field_type[0]=x) takes a
+// different branch, skips these funcs entirely, and assigns the raw string. DecodeQueryParams now
+// refuses the indexed form before decoding (see unknownQueryParams), but the dive tags run on the
+// decoded struct however it was populated, so they still hold if that check ever loosens.
 func registerEnumSliceTypes() {
 	decoder.RegisterCustomTypeFunc(func(vals []string) (any, error) {
 		return models.ParseFieldTypes(vals)
@@ -279,9 +283,63 @@ func (e requestValidationError) As(target any) bool {
 	return true
 }
 
-// DecodeQueryParams decodes URL query parameters into a struct.
-func DecodeQueryParams(r *http.Request, dst any) error {
-	if err := decoder.Decode(dst, r.URL.Query()); err != nil {
+// ReasonUnknownQueryParam is the invalid_params reason for a query parameter the operation does
+// not declare.
+const ReasonUnknownQueryParam = "is not a recognized query parameter for this operation"
+
+// reasonRepeatedQueryParam is the invalid_params reason for a single-valued parameter given more
+// than once. The decoder would keep the first value and drop the rest without saying so.
+const reasonRepeatedQueryParam = "is given more than once; it takes a single value"
+
+// reasonMalformedQuery is the invalid_params reason, under the name "query", for a query string
+// url.ParseQuery cannot fully read. It drops the pair it cannot parse (a ";" separator, a bad
+// percent escape), so reading the rest would silently lose a filter: DELETE
+// ?user_id=u&tenant_id=A; would lose the tenant and delete across tenants.
+const reasonMalformedQuery = "is malformed: separate parameters with & and percent-encode reserved characters"
+
+// reasonIndexedQueryParam is the invalid_params reason for a declared parameter sent in the indexed
+// form (source_type[0]=x); %[1]s is the parameter name.
+const reasonIndexedQueryParam = "the indexed form is not accepted: send %[1]s=value, " +
+	"repeating %[1]s once per value where it takes several"
+
+// maxReportedQueryParams and maxReportedQueryParamRunes bound how much of a caller-chosen query
+// string an unknown-parameter error echoes back, as response bounds body member names: a request
+// may carry thousands of keys, each up to the header size limit.
+const (
+	maxReportedQueryParams     = 20
+	maxReportedQueryParamRunes = 64
+)
+
+// QueryOption adjusts which query parameters DecodeQueryParams accepts.
+type QueryOption func(allowed map[string]queryParamKind)
+
+// WithoutQueryParams rejects parameters the destination struct declares but the operation does not
+// take, for an operation that shares another one's filter struct (count reuses the list filters
+// without their ordering and paging).
+func WithoutQueryParams(names ...string) QueryOption {
+	return func(allowed map[string]queryParamKind) {
+		for _, name := range names {
+			delete(allowed, name)
+		}
+	}
+}
+
+// DecodeQueryParams decodes URL query parameters into a struct. Every way the decoder would
+// silently drop part of the request is refused instead, because each answers a different question
+// than the caller asked with a 200 that looks right (see checkQuery). An empty value of a
+// repeatable filter is no constraint: ?source_type= is the same request as leaving source_type out.
+func DecodeQueryParams(r *http.Request, dst any, opts ...QueryOption) error {
+	allowed := maps.Clone(declaredQueryParams(reflect.TypeOf(dst)))
+	for _, opt := range opts {
+		opt(allowed)
+	}
+
+	query, err := checkQuery(r, allowed)
+	if err != nil {
+		return err
+	}
+
+	if err := decoder.Decode(dst, withoutEmptyRepeatableValues(query, allowed)); err != nil {
 		return newQueryDecodeError(err)
 	}
 
@@ -289,12 +347,234 @@ func DecodeQueryParams(r *http.Request, dst any) error {
 }
 
 // ValidateAndDecodeQueryParams decodes and validates query parameters in one step.
-func ValidateAndDecodeQueryParams(r *http.Request, dst any) error {
-	if err := DecodeQueryParams(r, dst); err != nil {
+func ValidateAndDecodeQueryParams(r *http.Request, dst any, opts ...QueryOption) error {
+	if err := DecodeQueryParams(r, dst, opts...); err != nil {
 		return err
 	}
 
 	return ValidateStruct(dst)
+}
+
+// RejectUnknownQueryParams is DecodeQueryParams' unknown-parameter check for a handler that reads
+// its query parameters by hand: it fails with the same QueryDecodeError when the request carries a
+// parameter outside allowed.
+func RejectUnknownQueryParams(r *http.Request, allowed ...string) error {
+	allowedSet := make(map[string]queryParamKind, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = queryParamSingle
+	}
+
+	_, err := checkQuery(r, allowedSet)
+
+	return err
+}
+
+var errUnknownQueryParams = errors.New("unknown query parameters")
+
+// checkQuery parses the request's query string and refuses, as a QueryDecodeError, everything the
+// decoder (or a handler's Query().Get) would otherwise silently drop or reinterpret:
+//
+//   - a query string url.ParseQuery cannot fully read (reasonMalformedQuery);
+//   - a key that is not exactly a declared parameter, including the indexed form of one (see
+//     unknownQueryParams);
+//   - a single-valued parameter given more than once (reasonRepeatedQueryParam).
+func checkQuery(r *http.Request, allowed map[string]queryParamKind) (url.Values, error) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return nil, &QueryDecodeError{
+			err:    errUnknownQueryParams,
+			params: []InvalidParam{{Name: "query", Reason: reasonMalformedQuery}},
+		}
+	}
+
+	if params := unknownQueryParams(query, allowed); len(params) > 0 {
+		return nil, &QueryDecodeError{err: errUnknownQueryParams, params: params}
+	}
+
+	var repeated []string
+
+	for key, values := range query {
+		if allowed[key] == queryParamSingle && len(values) > 1 {
+			repeated = append(repeated, key)
+		}
+	}
+
+	if len(repeated) > 0 {
+		sort.Strings(repeated)
+
+		params := make([]InvalidParam, 0, len(repeated))
+		for _, key := range repeated {
+			params = append(params, InvalidParam{Name: key, Reason: reasonRepeatedQueryParam})
+		}
+
+		return nil, &QueryDecodeError{err: errUnknownQueryParams, params: params}
+	}
+
+	return query, nil
+}
+
+// withoutEmptyRepeatableValues drops the empty values of repeatable parameters, and such a key left
+// with none. The decoder would otherwise read ?source_name= as a filter on the empty string,
+// matching records with a blank source name, where the documented meaning is no constraint.
+//
+// Single-valued parameters keep their empty value on purpose: their own decoding and validation
+// already decide what it means, and dropping it can widen a request. ?tenant_id= on
+// DELETE /v1/feedback-records is a 400 today; dropped, it would be the documented no-tenant form
+// and delete the user's records in every tenant.
+func withoutEmptyRepeatableValues(query url.Values, allowed map[string]queryParamKind) url.Values {
+	cleaned := make(url.Values, len(query))
+
+	for key, values := range query {
+		if allowed[key] != queryParamRepeatable {
+			cleaned[key] = values
+
+			continue
+		}
+
+		kept := slices.DeleteFunc(slices.Clone(values), func(value string) bool { return value == "" })
+		if len(kept) > 0 {
+			cleaned[key] = kept
+		}
+	}
+
+	return cleaned
+}
+
+// queryParamKind records whether a declared parameter takes several values (a slice field, sent
+// as a repeated key) or one.
+type queryParamKind uint8
+
+const (
+	queryParamSingle queryParamKind = iota + 1
+	queryParamRepeatable
+)
+
+// declaredQueryParamsCache holds, per destination struct type, the parameter names its form tags
+// declare. Filter structs are a fixed set, so it never grows past them. Its maps are read-only;
+// DecodeQueryParams clones one before applying options.
+var declaredQueryParamsCache sync.Map
+
+func declaredQueryParams(typ reflect.Type) map[string]queryParamKind {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+
+	if cached, ok := declaredQueryParamsCache.Load(typ); ok {
+		names, _ := cached.(map[string]queryParamKind)
+
+		return names
+	}
+
+	names := map[string]queryParamKind{}
+	collectDeclaredQueryParams(typ, names)
+	declaredQueryParamsCache.Store(typ, names)
+
+	return names
+}
+
+// collectDeclaredQueryParams mirrors how go-playground/form names a field: its form tag, else its Go
+// name, with "-" skipped and an untagged embedded struct's fields promoted. A slice field is
+// repeatable; any other field takes a single value.
+func collectDeclaredQueryParams(typ reflect.Type, names map[string]queryParamKind) {
+	if typ.Kind() != reflect.Struct {
+		return
+	}
+
+	for field := range typ.Fields() {
+		tag := field.Tag.Get("form")
+		if tag == "-" {
+			continue
+		}
+
+		name, _, _ := strings.Cut(tag, ",")
+
+		if field.Anonymous && name == "" {
+			embedded := field.Type
+			for embedded.Kind() == reflect.Pointer {
+				embedded = embedded.Elem()
+			}
+
+			collectDeclaredQueryParams(embedded, names)
+
+			continue
+		}
+
+		if !field.IsExported() {
+			continue
+		}
+
+		if name == "" {
+			name = field.Name
+		}
+
+		kind := queryParamSingle
+		if field.Type.Kind() == reflect.Slice {
+			kind = queryParamRepeatable
+		}
+
+		names[name] = kind
+	}
+}
+
+// unknownQueryParams returns one invalid param per query key that is not exactly a name in allowed,
+// sorted by key and bounded (see maxReportedQueryParams).
+//
+// Only the encoding the spec declares for a repeatable parameter (style: form, explode: true, so
+// source_type=a&source_type=b) is accepted. go-playground/form also decodes an indexed form
+// (source_type[0]=a) into a slice field, but it fills a gap in the indexes with "" (source_type[1]=a
+// filters on ["", "a"], matching records with an empty source type), keeps only one value of a
+// repeated index, and lets an indexed key overwrite the plain one (source_type=a&source_type[0]=b
+// filters on ["b"]). Each of those answers a different question than the caller asked, so the
+// indexed form is refused with a reason that names the encoding to use instead.
+func unknownQueryParams(query url.Values, allowed map[string]queryParamKind) []InvalidParam {
+	var unknown []string
+
+	for key := range query {
+		if _, ok := allowed[key]; !ok {
+			unknown = append(unknown, key)
+		}
+	}
+
+	if len(unknown) == 0 {
+		return nil
+	}
+
+	sort.Strings(unknown)
+
+	reported := unknown[:min(len(unknown), maxReportedQueryParams)]
+	params := make([]InvalidParam, 0, len(reported)+1)
+
+	for _, key := range reported {
+		reason := ReasonUnknownQueryParam
+
+		if name, _, indexed := strings.Cut(key, "["); indexed {
+			if _, declared := allowed[name]; declared {
+				reason = fmt.Sprintf(reasonIndexedQueryParam, name)
+			}
+		}
+
+		params = append(params, InvalidParam{Name: truncateRunes(key, maxReportedQueryParamRunes), Reason: reason})
+	}
+
+	if omitted := len(unknown) - len(reported); omitted > 0 {
+		params = append(params, InvalidParam{
+			Name:   "query",
+			Reason: fmt.Sprintf("has %d more unrecognized parameters, not listed", omitted),
+		})
+	}
+
+	return params
+}
+
+// truncateRunes shortens s to at most limit runes, marking a cut with an ellipsis.
+func truncateRunes(s string, limit int) string {
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+
+	runes := []rune(s)
+
+	return string(runes[:limit]) + "…"
 }
 
 func newQueryDecodeError(err error) *QueryDecodeError {

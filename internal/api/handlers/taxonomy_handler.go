@@ -60,6 +60,12 @@ func NewTaxonomyHandler(service TaxonomyService, recordTaxonomy ...FeedbackRecor
 
 // ListFields returns taxonomy-capable feedback fields.
 func (h *TaxonomyHandler) ListFields(w http.ResponseWriter, r *http.Request) {
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
+		return
+	}
+
 	if h.service == nil {
 		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
 
@@ -108,15 +114,15 @@ func (h *TaxonomyHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 
 // ListRuns returns taxonomy run history.
 func (h *TaxonomyHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
-		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
+	filters := models.ListTaxonomyRunsFilters{}
+	if err := validation.ValidateAndDecodeQueryParams(r, &filters); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}
 
-	filters := models.ListTaxonomyRunsFilters{}
-	if err := validation.ValidateAndDecodeQueryParams(r, &filters); err != nil {
-		response.RespondError(w, r, err)
+	if h.service == nil {
+		response.RespondServiceUnavailable(w, r, "Taxonomy is not available.")
 
 		return
 	}
@@ -135,6 +141,12 @@ func (h *TaxonomyHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 func (h *TaxonomyHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	runID, ok := parseUUIDPathValue(w, r, "run_id")
 	if !ok {
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
 		return
 	}
 
@@ -169,6 +181,12 @@ func (h *TaxonomyHandler) GetActiveTree(w http.ResponseWriter, r *http.Request) 
 func (h *TaxonomyHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	runID, ok := parseUUIDPathValue(w, r, "run_id")
 	if !ok {
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
 		return
 	}
 
@@ -216,6 +234,12 @@ func (h *TaxonomyHandler) GetFeedbackRecordTaxonomy(w http.ResponseWriter, r *ht
 func (h *TaxonomyHandler) RecordCounts(w http.ResponseWriter, r *http.Request) {
 	runID, ok := parseUUIDPathValue(w, r, "run_id")
 	if !ok {
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, "tenant_id"); err != nil {
+		response.RespondError(w, r, err)
+
 		return
 	}
 
@@ -318,6 +342,12 @@ func parseUUIDPathValue(w http.ResponseWriter, r *http.Request, name string) (uu
 }
 
 func taxonomyScopeFromQuery(w http.ResponseWriter, r *http.Request) (models.TaxonomyScope, bool) {
+	if err := validation.RejectUnknownQueryParams(r, "scope_type", "tenant_id", "source_type", "source_id", "field_id"); err != nil {
+		response.RespondError(w, r, err)
+
+		return models.TaxonomyScope{}, false
+	}
+
 	scope := models.TaxonomyScope{
 		ScopeType:  models.TaxonomyScopeType(r.URL.Query().Get("scope_type")),
 		TenantID:   r.URL.Query().Get("tenant_id"),
