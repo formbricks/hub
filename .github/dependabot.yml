@@ -1,0 +1,49 @@
+# Version updates for Hub's Go modules, its base images, and the actions pinned in .github/workflows.
+# Security updates are configured separately in the repository settings.
+version: 2
+updates:
+  # Patch and minor releases of direct and indirect modules, one grouped PR a week, so fixes land before
+  # they become advisories. `allow` narrows version updates only, so security updates still arrive.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 3
+    allow:
+      - dependency-type: all
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+    groups:
+      go-minor-and-patch:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # The golang builder and alpine runtime images. New tags are where OS and runtime security fixes arrive,
+  # and the ECR image scan counts them.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: daily
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(docker)"
+
+  # One PR a month moves every action together.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(ci)"
