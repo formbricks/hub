@@ -2,7 +2,7 @@
 # Stage 1: Build
 # =============================================================================
 # TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
-FROM golang:1.27.3-alpine AS builder
+FROM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG GOOSE_VERSION=v3.28.0
@@ -49,7 +49,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/h
 # =============================================================================
 # Stage 2: Runtime (default: hub-api)
 # =============================================================================
-FROM alpine:3.24
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 # Require the patched zlib even when the base image contains an older package (CVE-2026-85091).
 # Require the CA store that drops emSign ECC Root CA - G3 after the October 2026 eMudhra
