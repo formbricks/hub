@@ -86,10 +86,10 @@ type EmbeddingReconcileResult struct {
 // orphaned. The query excludes active jobs across all queues and terminal failures, and cools
 // transient failures before making them eligible again.
 //
-// The room is shared fairly: each target may claim an equal share of what is left, and a target
-// with less backlog than its share leaves the rest to the targets after it. The first target
-// rotates between sweeps. So a large taxonomy backlog cannot starve search-embedding repair, or
-// the reverse.
+// The room is shared max-min fairly (see shareRepairRoom): targets with backlog split it evenly,
+// and whatever a target cannot use goes to the others, so the lane fills whenever there is work
+// for it. The first target rotates between sweeps. So a large taxonomy backlog cannot starve
+// search-embedding repair, or the reverse, and one model's backlog alone gets the whole depth.
 func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconcileResult, error) {
 	result := EmbeddingReconcileResult{}
 	if s.inserter == nil {
@@ -115,27 +115,32 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 	}
 
 	retryBefore := time.Now().Add(-s.retryAfter)
-	params := make([]river.InsertManyParams, 0, room)
-
 	first := s.nextFirstTarget()
+
+	// Each target is asked for up to the whole room, so a target can take what the others leave
+	// without a second scan. The overfetch is at most (targets-1) × room ids, bounded by the target
+	// depth, and the scan costs about the same either way: with no backlog it reads every candidate
+	// row whatever the limit.
+	ordered := make([]EmbeddingReconcileTarget, len(s.targets))
+	candidates := make([][]uuid.UUID, len(s.targets))
 
 	for i := range s.targets {
 		target := s.targets[(first+i)%len(s.targets)]
+		ordered[i] = target
 
-		share := room / (len(s.targets) - i)
-		if share <= 0 {
-			continue
-		}
-
-		ids, err := s.repo.ListPendingEmbeddingIDs(ctx, target.Model, target.InputKind, retryBefore, share)
+		ids, err := s.repo.ListPendingEmbeddingIDs(ctx, target.Model, target.InputKind, retryBefore, room)
 		if err != nil {
 			return result, fmt.Errorf("list pending embeddings for %s: %w", target.InputKind, err)
 		}
 
-		room -= len(ids)
+		candidates[i] = ids
+	}
 
-		for _, id := range ids {
-			params = append(params, s.repairJob(target, id))
+	params := make([]river.InsertManyParams, 0, room)
+
+	for i, take := range shareRepairRoom(candidates, room) {
+		for _, id := range candidates[i][:take] {
+			params = append(params, s.repairJob(ordered[i], id))
 		}
 	}
 
@@ -163,6 +168,43 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 	)
 
 	return result, nil
+}
+
+// shareRepairRoom splits room between targets max-min fairly: each round gives every target that
+// still has candidates an equal share of what is left, capped by what it has, until the room or the
+// candidates run out. A remainder smaller than one slot per target goes one slot each in order, so
+// with the order rotating between sweeps no target is favoured. It returns how many of each
+// target's candidates to take, never more than it has and never more than room in total.
+func shareRepairRoom(candidates [][]uuid.UUID, room int) []int {
+	take := make([]int, len(candidates))
+
+	for room > 0 {
+		open := 0
+
+		for i := range candidates {
+			if take[i] < len(candidates[i]) {
+				open++
+			}
+		}
+
+		if open == 0 {
+			break
+		}
+
+		share := max(room/open, 1)
+
+		for i := range candidates {
+			if room == 0 {
+				break
+			}
+
+			grant := min(share, len(candidates[i])-take[i], room)
+			take[i] += grant
+			room -= grant
+		}
+	}
+
+	return take
 }
 
 // nextFirstTarget returns the target this sweep serves first and advances the rotation.
