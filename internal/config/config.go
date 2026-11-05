@@ -41,6 +41,10 @@ var (
 		".env file is malformed (fix quoting/characters; parse detail withheld to avoid logging secrets)")
 	ErrInvalidTranslationDefaultLanguage = errors.New("TRANSLATION_DEFAULT_LANGUAGE must be a valid BCP-47 locale (e.g. en-US)")
 	ErrInvalidTaxonomyServiceURL         = errors.New("TAXONOMY_SERVICE_URL must be an absolute http(s) URL without query or fragment")
+	// ErrTaxonomyEmbeddingModelCollision: the two embeddings are stored per model, and their vectors
+	// are built from different input (the taxonomy one prefers the translation). One model key for
+	// both would make each overwrite the other's vector and mark it stale, re-embedding forever.
+	ErrTaxonomyEmbeddingModelCollision = errors.New("TAXONOMY_EMBEDDING_MODEL must differ from EMBEDDING_MODEL")
 	// ErrInvalidEmbeddingMaxInputBytes and its three siblings exist one per enrichment so the message
 	// names the env var the operator actually set, the way every other per-type error in this block
 	// does. The floor is one rune (4 bytes, the longest UTF-8 encoding): below it, a record that
@@ -656,6 +660,10 @@ func validate(cfg *Config) error {
 
 	if cfg.Database.MinConns > cfg.Database.MaxConns {
 		return ErrDatabaseMinConnsExceedsMax
+	}
+
+	if model := strings.TrimSpace(cfg.Taxonomy.EmbeddingModel); model != "" && model == strings.TrimSpace(cfg.Embedding.Model) {
+		return ErrTaxonomyEmbeddingModelCollision
 	}
 
 	if cfg.Server.PublicBaseURL != "" {

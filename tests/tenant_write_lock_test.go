@@ -557,7 +557,7 @@ func TestRepositoryWritesConflictDuringPurge(t *testing.T) {
 		embedding := make([]float32, models.EmbeddingVectorDimensions)
 		embedding[0] = 0.5
 
-		err := embeddingsRepo.Upsert(ctx, record.ID, "model-name", embedding, nil)
+		err := embeddingsRepo.Upsert(ctx, record.ID, "model-name", models.EmbeddingInputKindRaw, embedding, nil)
 		require.ErrorIs(t, err, huberrors.ErrTenantWriteConflict)
 
 		err = embeddingsRepo.DeleteByFeedbackRecordAndModel(ctx, record.ID, "model-name", nil)
@@ -584,7 +584,7 @@ func TestRepositoryWritesConflictDuringPurge(t *testing.T) {
 
 		embedding := make([]float32, models.EmbeddingVectorDimensions)
 		embedding[0] = 0.5
-		require.NoError(t, embeddingsRepo.Upsert(ctx, record.ID, "model-name", embedding, nil))
+		require.NoError(t, embeddingsRepo.Upsert(ctx, record.ID, "model-name", models.EmbeddingInputKindRaw, embedding, nil))
 
 		_, err := taxonomyRepo.MarkRunRunning(ctx, pendingRun.ID, tenantA)
 		require.NoError(t, err)

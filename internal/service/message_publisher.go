@@ -29,6 +29,21 @@ type MessagePublisher interface {
 	PublishEvent(ctx context.Context, eventType datatypes.EventType, data any)
 	// PublishEventWithChangedFields publishes a single event with data and optional changed fields (for updates)
 	PublishEventWithChangedFields(ctx context.Context, eventType datatypes.EventType, data any, changedFields []string)
+	// Publish publishes a caller-built event. Used when work for the same event was already
+	// enqueued transactionally under its ID, so every job and delivery for it correlates.
+	Publish(ctx context.Context, event Event)
+}
+
+// NewEvent builds an event with a fresh time-ordered ID. Data is set by the caller once the
+// written record exists.
+func NewEvent(eventType datatypes.EventType, data any, changedFields []string) Event {
+	return Event{
+		ID:            uuid.Must(uuid.NewV7()),
+		Type:          eventType,
+		Timestamp:     time.Now(),
+		Data:          data,
+		ChangedFields: changedFields,
+	}
 }
 
 // eventPublisher is the internal interface for providers that receive a full Event.
@@ -81,14 +96,13 @@ func (m *MessagePublisherManager) PublishEvent(ctx context.Context, eventType da
 func (m *MessagePublisherManager) PublishEventWithChangedFields(
 	ctx context.Context, eventType datatypes.EventType, data any, changedFields []string,
 ) {
-	event := Event{
-		ID:            uuid.Must(uuid.NewV7()),
-		Type:          eventType,
-		Timestamp:     time.Now(),
-		Data:          data,
-		ChangedFields: changedFields,
-	}
+	m.Publish(ctx, NewEvent(eventType, data, changedFields))
+}
 
+// Publish hands a caller-built event to every registered provider. Delivery is best effort: a
+// full channel drops the event, and a process exit loses whatever is buffered. Work that must not
+// be lost is enqueued in the write's own transaction instead (see EmbeddingEnqueuer).
+func (m *MessagePublisherManager) Publish(ctx context.Context, event Event) {
 	select {
 	case m.eventChan <- event:
 		slog.Debug("Event published to channel", "event_id", event.ID, "event_type", event.Type)

@@ -24,24 +24,43 @@ type stubEmbeddingReconcileRepository struct {
 	listLimit   int
 	retryBefore time.Time
 	depthQueue  string
+	idsByModel  map[string][]uuid.UUID
+	listCalls   []listCall
 }
 
-func (r *stubEmbeddingReconcileRepository) ListPendingTaxonomyEmbeddingIDs(
-	_ context.Context, model string, retryBefore time.Time, limit int,
+func (r *stubEmbeddingReconcileRepository) ListPendingEmbeddingIDs(
+	_ context.Context, model string, inputKind models.EmbeddingInputKind, retryBefore time.Time, limit int,
 ) ([]uuid.UUID, error) {
 	r.listModel = model
 	r.listLimit = limit
 	r.retryBefore = retryBefore
+	r.listCalls = append(r.listCalls, listCall{model: model, inputKind: inputKind, limit: limit})
 
 	if r.listErr != nil {
 		return nil, r.listErr
 	}
 
-	if len(r.ids) > limit {
-		return r.ids[:limit], nil
+	ids := r.ids
+	if byModel, ok := r.idsByModel[model]; ok {
+		ids = byModel
 	}
 
-	return r.ids, nil
+	if len(ids) > limit {
+		return ids[:limit], nil
+	}
+
+	return ids, nil
+}
+
+type listCall struct {
+	model     string
+	inputKind models.EmbeddingInputKind
+	limit     int
+}
+
+// taxonomyOnly is the single-target configuration the original sweep tests were written against.
+var taxonomyOnly = []EmbeddingReconcileTarget{
+	{Model: "taxonomy:model", InputKind: models.EmbeddingInputKindTaxonomyTranslated},
 }
 
 func (r *stubEmbeddingReconcileRepository) CountRunnableEmbeddingJobs(
@@ -84,7 +103,7 @@ func TestEmbeddingReconcileSweepTopsUpBoundedRepairQueue(t *testing.T) {
 	repo := &stubEmbeddingReconcileRepository{depth: 98, ids: ids}
 	inserter := &recordingBatchInserter{}
 	retryAfter := 15 * time.Minute
-	reconciler := NewEmbeddingReconcileService(repo, "taxonomy:model", 100, 5, retryAfter)
+	reconciler := NewEmbeddingReconcileService(repo, taxonomyOnly, 100, 5, retryAfter)
 	reconciler.SetInserter(inserter)
 
 	started := time.Now()
@@ -103,7 +122,7 @@ func TestEmbeddingReconcileSweepTopsUpBoundedRepairQueue(t *testing.T) {
 		assert.Equal(t, ids[index], args.FeedbackRecordID)
 		assert.Equal(t, "taxonomy:model", args.Model)
 		assert.Equal(t, models.EmbeddingInputKindTaxonomyTranslated, args.InputKind)
-		assert.Equal(t, "reconcile", args.ValueTextHash)
+		assert.Equal(t, ValueTextHashRepair, args.ValueTextHash)
 		require.NotNil(t, param.InsertOpts)
 		assert.Equal(t, EmbeddingsReconcileQueueName, param.InsertOpts.Queue)
 		assert.Equal(t, 4, param.InsertOpts.Priority)
@@ -122,7 +141,7 @@ func TestEmbeddingReconcileSweepTopsUpBoundedRepairQueue(t *testing.T) {
 func TestEmbeddingReconcileSweepStopsAtTarget(t *testing.T) {
 	repo := &stubEmbeddingReconcileRepository{depth: 100}
 	inserter := &recordingBatchInserter{}
-	reconciler := NewEmbeddingReconcileService(repo, "taxonomy:model", 100, 5, 15*time.Minute)
+	reconciler := NewEmbeddingReconcileService(repo, taxonomyOnly, 100, 5, 15*time.Minute)
 	reconciler.SetInserter(inserter)
 
 	result, err := reconciler.Sweep(context.Background())
@@ -141,7 +160,7 @@ func TestEmbeddingReconcileSweepCountsUniqueSkipsTruthfully(t *testing.T) {
 		{},
 		{UniqueSkippedAsDuplicate: true},
 	}}
-	reconciler := NewEmbeddingReconcileService(repo, "taxonomy:model", 2, 5, 15*time.Minute)
+	reconciler := NewEmbeddingReconcileService(repo, taxonomyOnly, 2, 5, 15*time.Minute)
 	reconciler.SetInserter(inserter)
 
 	result, err := reconciler.Sweep(context.Background())
@@ -153,7 +172,7 @@ func TestEmbeddingReconcileSweepCountsUniqueSkipsTruthfully(t *testing.T) {
 func TestEmbeddingReconcileSweepPropagatesBoundedFailures(t *testing.T) {
 	t.Run("inserter is required", func(t *testing.T) {
 		reconciler := NewEmbeddingReconcileService(
-			&stubEmbeddingReconcileRepository{}, "taxonomy:model", 100, 5, 15*time.Minute)
+			&stubEmbeddingReconcileRepository{}, taxonomyOnly, 100, 5, 15*time.Minute)
 		_, err := reconciler.Sweep(context.Background())
 		require.ErrorIs(t, err, ErrEmbeddingReconcileInserterUnset)
 	})
@@ -161,7 +180,7 @@ func TestEmbeddingReconcileSweepPropagatesBoundedFailures(t *testing.T) {
 	t.Run("depth read", func(t *testing.T) {
 		reconciler := NewEmbeddingReconcileService(
 			&stubEmbeddingReconcileRepository{depthErr: errors.New("db unavailable")},
-			"taxonomy:model", 100, 5, 15*time.Minute)
+			taxonomyOnly, 100, 5, 15*time.Minute)
 		reconciler.SetInserter(&recordingBatchInserter{})
 		_, err := reconciler.Sweep(context.Background())
 		require.ErrorContains(t, err, "read repair queue depth")
@@ -170,18 +189,181 @@ func TestEmbeddingReconcileSweepPropagatesBoundedFailures(t *testing.T) {
 	t.Run("record scan", func(t *testing.T) {
 		reconciler := NewEmbeddingReconcileService(
 			&stubEmbeddingReconcileRepository{listErr: errors.New("db unavailable")},
-			"taxonomy:model", 100, 5, 15*time.Minute)
+			taxonomyOnly, 100, 5, 15*time.Minute)
 		reconciler.SetInserter(&recordingBatchInserter{})
 		_, err := reconciler.Sweep(context.Background())
-		require.ErrorContains(t, err, "list pending taxonomy embeddings")
+		require.ErrorContains(t, err, "list pending embeddings")
 	})
 
 	t.Run("batch insert", func(t *testing.T) {
 		reconciler := NewEmbeddingReconcileService(
 			&stubEmbeddingReconcileRepository{ids: []uuid.UUID{uuid.Must(uuid.NewV7())}},
-			"taxonomy:model", 100, 5, 15*time.Minute)
+			taxonomyOnly, 100, 5, 15*time.Minute)
 		reconciler.SetInserter(&recordingBatchInserter{err: errors.New("river unavailable")})
 		_, err := reconciler.Sweep(context.Background())
-		require.ErrorContains(t, err, "enqueue taxonomy embedding repairs")
+		require.ErrorContains(t, err, "enqueue embedding repairs")
 	})
+}
+
+// TestEmbeddingReconcileSweepSharesRoomAcrossTargets keeps a big backlog on one embedding from
+// starving repair of the other, and keeps the lane full whenever any target has work: targets with
+// backlog split the room evenly, and whatever one cannot use goes to the others, whichever of them
+// is served first.
+func TestEmbeddingReconcileSweepSharesRoomAcrossTargets(t *testing.T) {
+	newIDs := func(n int) []uuid.UUID {
+		ids := make([]uuid.UUID, n)
+		for i := range ids {
+			ids[i] = uuid.Must(uuid.NewV7())
+		}
+
+		return ids
+	}
+
+	targets := []EmbeddingReconcileTarget{
+		{Model: "raw", InputKind: models.EmbeddingInputKindRaw},
+		{Model: "taxonomy:model", InputKind: models.EmbeddingInputKindTaxonomyTranslated},
+	}
+
+	enqueuedByKind := func(t *testing.T, params []river.InsertManyParams) map[models.EmbeddingInputKind]int {
+		t.Helper()
+
+		kinds := map[models.EmbeddingInputKind]int{}
+
+		for _, param := range params {
+			args, ok := param.Args.(FeedbackEmbeddingArgs)
+			require.True(t, ok)
+
+			kinds[args.InputKind]++
+		}
+
+		return kinds
+	}
+
+	t.Run("both backlogged: half each", func(t *testing.T) {
+		repo := &stubEmbeddingReconcileRepository{idsByModel: map[string][]uuid.UUID{
+			"raw": newIDs(500), "taxonomy:model": newIDs(500),
+		}}
+		inserter := &recordingBatchInserter{}
+		reconciler := NewEmbeddingReconcileService(repo, targets, 100, 5, 15*time.Minute)
+		reconciler.SetInserter(inserter)
+
+		result, err := reconciler.Sweep(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []listCall{
+			{model: "raw", inputKind: models.EmbeddingInputKindRaw, limit: 100},
+			{model: "taxonomy:model", inputKind: models.EmbeddingInputKindTaxonomyTranslated, limit: 100},
+		}, repo.listCalls, "each target is asked for the whole room, once")
+		assert.Equal(t, 100, result.Enqueued)
+		assert.Equal(t, map[models.EmbeddingInputKind]int{
+			models.EmbeddingInputKindRaw:                50,
+			models.EmbeddingInputKindTaxonomyTranslated: 50,
+		}, enqueuedByKind(t, inserter.params))
+	})
+
+	t.Run("a single free slot alternates between backlogged targets", func(t *testing.T) {
+		repo := &stubEmbeddingReconcileRepository{depth: 99, idsByModel: map[string][]uuid.UUID{
+			"raw": newIDs(5), "taxonomy:model": newIDs(5),
+		}}
+		inserter := &recordingBatchInserter{}
+		reconciler := NewEmbeddingReconcileService(repo, targets, 100, 5, 15*time.Minute)
+		reconciler.SetInserter(inserter)
+
+		served := map[models.EmbeddingInputKind]int{}
+
+		for range 2 {
+			_, err := reconciler.Sweep(context.Background())
+			require.NoError(t, err)
+			require.Len(t, inserter.params, 1)
+
+			for kind, n := range enqueuedByKind(t, inserter.params) {
+				served[kind] += n
+			}
+		}
+
+		assert.Equal(t, map[models.EmbeddingInputKind]int{
+			models.EmbeddingInputKindRaw:                1,
+			models.EmbeddingInputKindTaxonomyTranslated: 1,
+		}, served)
+	})
+
+	// Regression for the first pass of the fair share, which capped the first target at half the
+	// room and let the room the second could not use go to waste: 50 of 100 slots filled when only
+	// search had backlog and was served first, and none at all every other sweep with one free slot.
+	t.Run("one backlogged target gets the whole room whichever is served first", func(t *testing.T) {
+		for _, backlogged := range targets {
+			repo := &stubEmbeddingReconcileRepository{idsByModel: map[string][]uuid.UUID{
+				"raw": {}, "taxonomy:model": {}, backlogged.Model: newIDs(500),
+			}}
+			inserter := &recordingBatchInserter{}
+			reconciler := NewEmbeddingReconcileService(repo, targets, 100, 5, 15*time.Minute)
+			reconciler.SetInserter(inserter)
+
+			for sweep := range targets {
+				result, err := reconciler.Sweep(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, 100, result.Enqueued, "%s backlogged, sweep %d", backlogged.Model, sweep)
+				assert.Equal(t, map[models.EmbeddingInputKind]int{backlogged.InputKind: 100},
+					enqueuedByKind(t, inserter.params))
+			}
+
+			repo.depth = 99
+
+			for sweep := range targets {
+				result, err := reconciler.Sweep(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, 1, result.Enqueued, "%s backlogged, one free slot, sweep %d", backlogged.Model, sweep)
+			}
+		}
+	})
+
+	t.Run("unused share flows to the other target whichever is served first", func(t *testing.T) {
+		repo := &stubEmbeddingReconcileRepository{idsByModel: map[string][]uuid.UUID{
+			"raw": newIDs(10), "taxonomy:model": newIDs(500),
+		}}
+		inserter := &recordingBatchInserter{}
+		reconciler := NewEmbeddingReconcileService(repo, targets, 100, 5, 15*time.Minute)
+		reconciler.SetInserter(inserter)
+
+		for sweep := range targets {
+			result, err := reconciler.Sweep(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, 100, result.Enqueued, "sweep %d", sweep)
+			assert.Equal(t, map[models.EmbeddingInputKind]int{
+				models.EmbeddingInputKindRaw:                10,
+				models.EmbeddingInputKindTaxonomyTranslated: 90,
+			}, enqueuedByKind(t, inserter.params), "sweep %d", sweep)
+		}
+	})
+}
+
+// TestShareRepairRoom pins the max-min fair split: equal shares among targets with candidates,
+// what one cannot use going to the rest, a remainder going one slot each in order, and never more
+// than room in total or more than a target has.
+func TestShareRepairRoom(t *testing.T) {
+	ids := func(n int) []uuid.UUID { return make([]uuid.UUID, n) }
+
+	for _, testCase := range []struct {
+		name       string
+		candidates [][]uuid.UUID
+		room       int
+		want       []int
+	}{
+		{"both backlogged", [][]uuid.UUID{ids(100), ids(100)}, 100, []int{50, 50}},
+		{"first only", [][]uuid.UUID{ids(100), ids(0)}, 100, []int{100, 0}},
+		{"second only", [][]uuid.UUID{ids(0), ids(100)}, 100, []int{0, 100}},
+		{"short first", [][]uuid.UUID{ids(10), ids(100)}, 100, []int{10, 90}},
+		{"short second", [][]uuid.UUID{ids(100), ids(10)}, 100, []int{90, 10}},
+		{"odd room, remainder to first", [][]uuid.UUID{ids(100), ids(100)}, 3, []int{2, 1}},
+		{"one slot, first served", [][]uuid.UUID{ids(5), ids(5)}, 1, []int{1, 0}},
+		{"one slot, first empty", [][]uuid.UUID{ids(0), ids(5)}, 1, []int{0, 1}},
+		{"less work than room", [][]uuid.UUID{ids(3), ids(4)}, 100, []int{3, 4}},
+		{"no work", [][]uuid.UUID{ids(0), ids(0)}, 100, []int{0, 0}},
+		{"no room", [][]uuid.UUID{ids(5), ids(5)}, 0, []int{0, 0}},
+		{"more candidates than room", [][]uuid.UUID{ids(200)}, 100, []int{100}},
+		{"three targets", [][]uuid.UUID{ids(5), ids(100), ids(100)}, 100, []int{5, 48, 47}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, shareRepairRoom(testCase.candidates, testCase.room))
+		})
+	}
 }

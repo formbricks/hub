@@ -67,7 +67,7 @@ func TestFeedbackRecords_EnrichmentWritesSupersededOnContentChange(t *testing.T)
 			ValueText:    &vt,
 			TenantID:     tenantID,
 			SubmissionID: testTenantID("submission"),
-		})
+		}, nil)
 		require.NoError(t, createErr)
 
 		return rec
@@ -133,14 +133,14 @@ func TestFeedbackRecords_EnrichmentWritesSupersededOnContentChange(t *testing.T)
 		rec := mkRecord(t, "supersede-translation")
 		translated := "Das Produkt ist großartig"
 
-		err := repo.SetTranslation(ctx, rec.ID, &translated, "de-DE", "", staleGuard)
+		err := repo.SetTranslation(ctx, rec.ID, &translated, "de-DE", "", staleGuard, nil)
 		require.ErrorIs(t, err, huberrors.ErrTranslationSuperseded)
 
 		got, getErr := repo.GetByID(ctx, rec.ID)
 		require.NoError(t, getErr)
 		assert.Nil(t, got.ValueTextTranslated, "a superseded write must not set a translation")
 
-		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &translated, "de-DE", "", currentGuard))
+		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &translated, "de-DE", "", currentGuard, nil))
 
 		got, getErr = repo.GetByID(ctx, rec.ID)
 		require.NoError(t, getErr)

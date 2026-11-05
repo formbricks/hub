@@ -41,7 +41,7 @@ func TestListClassifyBackfillTargets(t *testing.T) {
 			ValueText:    &vt,
 			TenantID:     tenant,
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, createErr)
 
 		return rec

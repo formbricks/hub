@@ -65,7 +65,7 @@ func (e *filterTestEnv) seed(t *testing.T, opts ...func(*models.CreateFeedbackRe
 		opt(req)
 	}
 
-	created, err := e.repo.Create(t.Context(), req)
+	created, err := e.repo.Create(t.Context(), req, nil)
 	require.NoError(t, err)
 
 	return created
@@ -312,7 +312,7 @@ func TestFeedbackRecordFilters_UpdatedSinceSelectsCreatedAndChanged(t *testing.T
 
 	updated, _, err := env.repo.Update(t.Context(), patched.ID, &models.UpdateFeedbackRecordRequest{
 		UserID: new("user-after-cutoff"),
-	})
+	}, nil)
 	require.NoError(t, err)
 	require.False(t, updated.UpdatedAt.Before(cutoff), "PATCH must move updated_at past the cutoff")
 
@@ -322,7 +322,7 @@ func TestFeedbackRecordFilters_UpdatedSinceSelectsCreatedAndChanged(t *testing.T
 
 	// No tenant settings row, so the effective target is the default passed here and the write lands.
 	translation := "etwas Feedback"
-	require.NoError(t, env.repo.SetTranslation(t.Context(), translated.ID, &translation, "de", "de", nil))
+	require.NoError(t, env.repo.SetTranslation(t.Context(), translated.ID, &translation, "de", "de", nil, nil))
 
 	created := env.seed(t)
 
@@ -390,7 +390,7 @@ func TestFeedbackRecordFilters_UpdatedSincePaginationSurvivesUpdates(t *testing.
 			touch := func(id uuid.UUID) {
 				_, _, err := env.repo.Update(t.Context(), id, &models.UpdateFeedbackRecordRequest{
 					UserID: new("touched-" + uuid.NewString()),
-				})
+				}, nil)
 				require.NoError(t, err)
 			}
 
@@ -462,7 +462,7 @@ func TestFeedbackRecordFilters_UpdatedSinceWatermarkFromRunStart(t *testing.T) {
 	touch := func(id uuid.UUID) {
 		_, _, err := env.repo.Update(t.Context(), id, &models.UpdateFeedbackRecordRequest{
 			UserID: new("touched-" + uuid.NewString()),
-		})
+		}, nil)
 		require.NoError(t, err)
 	}
 

@@ -55,7 +55,7 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 		ValueText:    &valueText,
 		TenantID:     tenantID,
 		SubmissionID: testTenantID("submission"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	// A fresh record has no translation yet.
@@ -64,7 +64,7 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 
 	// Success: translated text + target locale persist and round-trip via GetByID.
 	translated := "Hallo, Welt"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE", "", nil))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE", "", nil, nil))
 
 	got, err := repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 	assert.Equal(t, "Hello, world", *got.ValueText, "source value_text must be preserved")
 
 	// Clearing: a nil translation nulls the column.
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, nil, "de-DE", "", nil))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, nil, "de-DE", "", nil, nil))
 
 	cleared, err := repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestFeedbackRecords_SetTranslation(t *testing.T) {
 	assert.Nil(t, cleared.TranslationLangKey, "clearing also nulls translation_lang_key")
 
 	// Missing record: NotFound (resolved via the shared tenant write lock).
-	err = repo.SetTranslation(ctx, uuid.New(), &translated, "de-DE", "", nil)
+	err = repo.SetTranslation(ctx, uuid.New(), &translated, "de-DE", "", nil, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, huberrors.ErrNotFound, "a missing record returns NotFound")
 }
@@ -121,12 +121,12 @@ func TestFeedbackRecords_SetTranslation_StaleTargetIsNoOp(t *testing.T) {
 		ValueText:    &valueText,
 		TenantID:     tenantID,
 		SubmissionID: testTenantID("submission"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	// A stale-target write (fr-FR — an older job or a stale-cache enqueue) must not land.
 	stale := "Bonjour le monde"
-	err = repo.SetTranslation(ctx, created.ID, &stale, "fr-FR", "", nil)
+	err = repo.SetTranslation(ctx, created.ID, &stale, "fr-FR", "", nil, nil)
 	require.ErrorIs(t, err, huberrors.ErrTranslationSuperseded, "stale-target write is superseded")
 
 	got, err := repo.GetByID(ctx, created.ID)
@@ -136,7 +136,7 @@ func TestFeedbackRecords_SetTranslation_StaleTargetIsNoOp(t *testing.T) {
 
 	// A current-target write (de-DE) lands normally.
 	current := "Hallo, Welt"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &current, "de-DE", "", nil))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &current, "de-DE", "", nil, nil))
 
 	got, err = repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -150,7 +150,7 @@ func TestFeedbackRecords_SetTranslation_StaleTargetIsNoOp(t *testing.T) {
 	_, err = settingsRepo.Upsert(ctx, tenantID, models.EnrichmentSettings{TargetLanguage: "fr-FR"})
 	require.NoError(t, err)
 
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &stale, "fr-FR", "", nil))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &stale, "fr-FR", "", nil, nil))
 
 	got, err = repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -189,13 +189,13 @@ func TestFeedbackRecords_SetTranslation_PersistsForDefaultLanguageTenant(t *test
 		ValueText:    &valueText,
 		TenantID:     tenantID,
 		SubmissionID: testTenantID("submission"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	// A default-resolved write (langKey = the deployment default) must land for a tenant with no
 	// stored target — exactly the case the stale-target guard must NOT reject.
 	translated := "Hello, world"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "en-US", "en-US", nil))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "en-US", "en-US", nil, nil))
 
 	got, err := repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -234,7 +234,7 @@ func TestFeedbackRecords_SetTranslation_StaleExplicitTargetUnderDefaultIsSuperse
 		ValueText:    &valueText,
 		TenantID:     tenantID,
 		SubmissionID: testTenantID("submission"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	const defaultLang = "en-US"
@@ -242,7 +242,7 @@ func TestFeedbackRecords_SetTranslation_StaleExplicitTargetUnderDefaultIsSuperse
 	// An old job still carrying the tenant's former explicit target (de-DE) must not land: the
 	// effective target is now the default (en-US), so de-DE no longer matches.
 	stale := "stale German"
-	err = repo.SetTranslation(ctx, created.ID, &stale, "de-DE", defaultLang, nil)
+	err = repo.SetTranslation(ctx, created.ID, &stale, "de-DE", defaultLang, nil, nil)
 	require.ErrorIs(t, err, huberrors.ErrTranslationSuperseded,
 		"a former-explicit-target write must not land once the tenant is on the default")
 
@@ -253,7 +253,7 @@ func TestFeedbackRecords_SetTranslation_StaleExplicitTargetUnderDefaultIsSuperse
 
 	// A write matching the effective (default) target lands.
 	translated := "Hello world"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, defaultLang, defaultLang, nil))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, defaultLang, defaultLang, nil, nil))
 
 	got, err = repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
@@ -295,7 +295,7 @@ func TestFeedbackRecords_ListTranslationBackfillTargets(t *testing.T) {
 			ValueText:    &valueText,
 			TenantID:     tenantID,
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, createErr)
 
 		return rec
@@ -312,12 +312,12 @@ func TestFeedbackRecords_ListTranslationBackfillTargets(t *testing.T) {
 	altTranslation := "alt"
 	_, err = settingsRepo.Upsert(ctx, tenantWithTarget, models.EnrichmentSettings{TargetLanguage: "fr-FR"})
 	require.NoError(t, err)
-	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &altTranslation, "fr-FR", "", nil))
+	require.NoError(t, repo.SetTranslation(ctx, stale.ID, &altTranslation, "fr-FR", "", nil, nil))
 	_, err = settingsRepo.Upsert(ctx, tenantWithTarget, models.EnrichmentSettings{TargetLanguage: "de-DE"})
 	require.NoError(t, err)
 
 	currentTranslation := "Hallo"
-	require.NoError(t, repo.SetTranslation(ctx, current.ID, &currentTranslation, "de-DE", "", nil)) // matches target
+	require.NoError(t, repo.SetTranslation(ctx, current.ID, &currentTranslation, "de-DE", "", nil, nil)) // matches target
 
 	// A large limit + membership lookup keeps the assertion robust to eligible rows already
 	// present in the shared test DB (mirrors tests/classify_backfill_test.go): with a small page,
@@ -396,7 +396,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 			req.Language = &sourceLang
 		}
 
-		rec, createErr := repo.Create(ctx, req)
+		rec, createErr := repo.Create(ctx, req, nil)
 		require.NoError(t, createErr)
 
 		if target != "" {
@@ -442,7 +442,7 @@ func TestFeedbackTranslation_WorkerPipeline(t *testing.T) {
 	t.Run("clears a stale translation when value_text is empty", func(t *testing.T) {
 		rec := createText("", "fr", "en-US")
 		stale := "stale translation"
-		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &stale, "en-US", "", nil))
+		require.NoError(t, repo.SetTranslation(ctx, rec.ID, &stale, "en-US", "", nil, nil))
 
 		worker := workers.NewFeedbackTranslationWorker(svc, &fakeTranslationClient{out: "unused"}, nil, nil, nil, service.TextCap{})
 		require.NoError(t, worker.Work(ctx, translationWorkerJob(rec.ID, "en-US")))
@@ -502,16 +502,16 @@ func TestFeedbackRecords_UpdateClearsTranslationOnlyOnContentChange(t *testing.T
 		ValueText:    &original,
 		TenantID:     tenantID,
 		SubmissionID: testTenantID("submission"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	translated := "Hallo, Welt"
-	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE", "", nil))
+	require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE", "", nil, nil))
 
 	// Re-sending the SAME value_text must NOT clear the translation — otherwise a deduped
 	// re-translation (identical content hash) would strand the record with no translation.
 	same := original
-	if _, _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &same}); err != nil {
+	if _, _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &same}, nil); err != nil {
 		t.Fatalf("Update(same value_text) error = %v", err)
 	}
 
@@ -524,7 +524,7 @@ func TestFeedbackRecords_UpdateClearsTranslationOnlyOnContentChange(t *testing.T
 
 	// An actual value_text change clears the now-stale translation.
 	changed := "Goodbye, world"
-	if _, _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &changed}); err != nil {
+	if _, _, err = repo.Update(ctx, created.ID, &models.UpdateFeedbackRecordRequest{ValueText: &changed}, nil); err != nil {
 		t.Fatalf("Update(changed value_text) error = %v", err)
 	}
 
@@ -574,7 +574,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 			Language:     &lang,
 			TenantID:     tenantID,
 			SubmissionID: testTenantID("submission"),
-		})
+		}, nil)
 		require.NoError(t, createErr)
 
 		label := models.SentimentPositive
@@ -583,7 +583,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		require.NoError(t, repo.SetEmotions(ctx, created.ID, []models.EmotionValue{models.EmotionJoy}, nil))
 
 		translated := "Hallo, Welt"
-		require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE", "", nil))
+		require.NoError(t, repo.SetTranslation(ctx, created.ID, &translated, "de-DE", "", nil, nil))
 
 		return created.ID
 	}
@@ -601,7 +601,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		id := seedEnriched(t, "clear-enrich-text", "Hello, world", "en-US")
 
 		changed := "Goodbye, world"
-		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &changed})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &changed}, nil)
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -617,7 +617,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		id := seedEnriched(t, "clear-enrich-ws", "Hello, world", "en-US")
 
 		padded := "  Hello, world  "
-		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &padded})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &padded}, nil)
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -629,7 +629,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		id := seedEnriched(t, "clear-enrich-noop", "Hello, world", "en-US")
 
 		same := "Hello, world"
-		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &same})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &same}, nil)
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -641,7 +641,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 		id := seedEnriched(t, "clear-enrich-lang", "Hello, world", "en-US")
 
 		newLang := "fr-FR"
-		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{Language: &newLang})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{Language: &newLang}, nil)
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -661,7 +661,7 @@ func TestFeedbackRecords_UpdateClearsEnrichmentOnlyOnContentChange(t *testing.T)
 
 		same := "Hello, world"
 		newLang := "fr-FR"
-		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &same, Language: &newLang})
+		_, _, updErr := repo.Update(ctx, id, &models.UpdateFeedbackRecordRequest{ValueText: &same, Language: &newLang}, nil)
 		require.NoError(t, updErr)
 
 		got, getErr := repo.GetByID(ctx, id)
@@ -700,7 +700,7 @@ func TestFeedbackRecords_GlobalBackfillUsesDefaultLanguage(t *testing.T) {
 		ValueText:    &valueText,
 		TenantID:     tenantID,
 		SubmissionID: testTenantID("submission"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	// A large limit so the record under test is never dropped by keyset paging regardless of
@@ -776,7 +776,7 @@ func TestFeedbackTranslation_OverCapSkipIsTerminalAndDurable(t *testing.T) {
 			Language:     &sourceLang,
 			TenantID:     tenantID,
 			SubmissionID: testTenantID("over-cap-sub"),
-		})
+		}, nil)
 		require.NoError(t, createErr)
 
 		return rec
@@ -819,7 +819,7 @@ func TestFeedbackTranslation_OverCapSkipIsTerminalAndDurable(t *testing.T) {
 
 	// --- an edit that fits heals it: markers are advisory, the live event path never reads them ---
 	shortText := "Bonjour le monde"
-	_, _, err = repo.Update(ctx, rec.ID, &models.UpdateFeedbackRecordRequest{ValueText: &shortText})
+	_, _, err = repo.Update(ctx, rec.ID, &models.UpdateFeedbackRecordRequest{ValueText: &shortText}, nil)
 	require.NoError(t, err)
 
 	healing := &fakeTranslationClient{out: "Hallo Welt"}

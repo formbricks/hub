@@ -67,6 +67,8 @@ type noopPublisher struct{}
 
 func (noopPublisher) PublishEvent(_ context.Context, _ datatypes.EventType, _ any) {}
 
+func (noopPublisher) Publish(context.Context, Event) {}
+
 func (noopPublisher) PublishEventWithChangedFields(_ context.Context, _ datatypes.EventType, _ any, _ []string) {
 }
 
@@ -76,6 +78,7 @@ type capturePublisher struct {
 	changedFields []string
 	callCount     int
 	events        []capturedEvent
+	ids           []uuid.UUID // IDs of events published through Publish
 }
 
 type capturedEvent struct {
@@ -99,6 +102,11 @@ func (p *capturePublisher) PublishEventWithChangedFields(
 	p.changedFields = changedFields
 	p.callCount++
 	p.events = append(p.events, capturedEvent{eventType: eventType, data: data, changedFields: changedFields})
+}
+
+func (p *capturePublisher) Publish(ctx context.Context, event Event) {
+	p.ids = append(p.ids, event.ID)
+	p.PublishEventWithChangedFields(ctx, event.Type, event.Data, event.ChangedFields)
 }
 
 func TestWebhooksService_CreateWebhook_InvalidSigningKey(t *testing.T) {

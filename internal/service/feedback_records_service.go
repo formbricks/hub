@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 
 	"github.com/formbricks/hub/internal/datatypes"
 	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
+	"github.com/formbricks/hub/internal/repository"
 	"github.com/formbricks/hub/pkg/cursor"
 )
 
@@ -39,21 +41,21 @@ var ErrSentimentScoreRequired = errors.New("sentiment score is required when a l
 // ErrInvalidEmotionLabel is returned when SetEmotions is given an unknown emotion label.
 var ErrInvalidEmotionLabel = errors.New("invalid emotion label")
 
-const uniqueByPeriodEmbedding = 24 * time.Hour
-
 // FeedbackRecordsRepository defines the interface for feedback records data access.
 type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesive feedback-record data-access boundary.
-	Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error)
+	Create(
+		ctx context.Context, req *models.CreateFeedbackRecordRequest, hook repository.RecordWriteHook,
+	) (*models.FeedbackRecord, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.FeedbackRecord, error)
 	List(ctx context.Context, filters *models.ListFeedbackRecordsFilters) ([]models.FeedbackRecord, bool, error)
 	ListAfterCursor(
 		ctx context.Context, filters *models.ListFeedbackRecordsFilters,
 		cursorCollectedAt time.Time, cursorID uuid.UUID,
 	) ([]models.FeedbackRecord, bool, error)
-	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
+	Update(ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest, hook repository.RecordWriteHook,
 	) (updated, previous *models.FeedbackRecord, err error)
 	SetTranslation(ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
-		stillCurrent func(valueText *string) bool) error
+		stillCurrent func(valueText *string) bool, hook repository.RecordWriteHook) error
 	SetSentiment(ctx context.Context, feedbackRecordID uuid.UUID, sentiment *models.SentimentValue, score *float64,
 		stillCurrent func(valueText *string) bool) error
 	SetEmotions(ctx context.Context, feedbackRecordID uuid.UUID, emotions []models.EmotionValue,
@@ -76,22 +78,22 @@ type FeedbackRecordsRepository interface { //nolint:interfacebloat // one cohesi
 // EmbeddingsRepository defines the interface for embeddings table access.
 type EmbeddingsRepository interface {
 	Upsert(
-		ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-		stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+		embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
 	DeleteByFeedbackRecordAndModel(
 		ctx context.Context, feedbackRecordID uuid.UUID, model string,
 		stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 	) error
-	ListFeedbackRecordIDsForBackfill(
-		ctx context.Context, model string, afterID uuid.UUID, limit int,
+	ListPendingEmbeddings(ctx context.Context, filter repository.PendingEmbeddingsFilter, limit int) ([]uuid.UUID, error)
+	ListTenantPendingEmbeddings(
+		ctx context.Context, tenantID string, filter repository.PendingEmbeddingsFilter, limit int,
 	) ([]uuid.UUID, error)
-	ListFeedbackRecordIDsForBackfillByInputKind(
-		ctx context.Context, model string, inputKind models.EmbeddingInputKind, afterID uuid.UUID, limit int,
-	) ([]uuid.UUID, error)
-	ListTenantFeedbackRecordIDsForBackfillByInputKind(
-		ctx context.Context, tenantID, model string, inputKind models.EmbeddingInputKind, afterID uuid.UUID, limit int,
-	) ([]uuid.UUID, error)
+	CountPendingEmbeddings(ctx context.Context, filter repository.PendingEmbeddingsFilter) (int, error)
+	CountTenantPendingEmbeddings(ctx context.Context, tenantID string, filter repository.PendingEmbeddingsFilter) (int, error)
+	EmbeddingIsCurrent(
+		ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+	) (bool, error)
 }
 
 // EnrichmentClearMetrics records enrichment outputs nulled by an edit's eager-clear, labeled by
@@ -106,9 +108,9 @@ type FeedbackRecordsService struct {
 	repo                   FeedbackRecordsRepository
 	embeddingsRepo         EmbeddingsRepository
 	embeddingModel         string
-	taxonomyEmbeddingModel string
 	publisher              MessagePublisher
-	embeddingInserter      RiverJobInserter
+	embeddingEnqueuer      *EmbeddingEnqueuer
+	embeddingInserter      RiverBatchInserter
 	embeddingQueueName     string
 	embeddingMaxAttempts   int
 	translationDefaultLang string
@@ -128,7 +130,7 @@ func NewFeedbackRecordsService(
 	embeddingsRepo EmbeddingsRepository,
 	embeddingModel string,
 	publisher MessagePublisher,
-	embeddingInserter RiverJobInserter,
+	embeddingInserter RiverBatchInserter,
 	embeddingQueueName string,
 	embeddingMaxAttempts int,
 	translationDefaultLang string,
@@ -145,15 +147,17 @@ func NewFeedbackRecordsService(
 	}
 }
 
-// SetEmbeddingInserter sets the River inserter for embedding jobs (e.g. after River client is created).
-// This allows a single service instance to be used by both handlers and the embedding worker.
-func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter RiverJobInserter) {
+// SetEmbeddingInserter sets the River inserter the embedding backfill uses (e.g. after the River
+// client is created).
+func (s *FeedbackRecordsService) SetEmbeddingInserter(inserter RiverBatchInserter) {
 	s.embeddingInserter = inserter
 }
 
-// SetTaxonomyEmbeddingModel sets the model key used for taxonomy-specific translated embeddings.
-func (s *FeedbackRecordsService) SetTaxonomyEmbeddingModel(model string) {
-	s.taxonomyEmbeddingModel = strings.TrimSpace(model)
+// SetEmbeddingEnqueuer makes record creates, edits and translation writes enqueue the embedding
+// jobs they owe inside their own transaction. nil (the default) enqueues none, for processes that
+// do not embed.
+func (s *FeedbackRecordsService) SetEmbeddingEnqueuer(enqueuer *EmbeddingEnqueuer) {
+	s.embeddingEnqueuer = enqueuer
 }
 
 // SetEnrichmentClearMetrics enables the eager-clear counter. Wire it on the API service instance
@@ -174,13 +178,25 @@ func (s *FeedbackRecordsService) CreateFeedbackRecord(
 	normalizedReq := *req
 	normalizedReq.TenantID = normalizedTenantID
 
-	record, err := s.repo.Create(ctx, &normalizedReq)
+	// One event ID for the transactional embedding jobs and the published event, so every job and
+	// webhook delivery this create causes correlates.
+	event := NewEvent(datatypes.FeedbackRecordCreated, nil, nil)
+
+	// A record that owes no embedding (no text: a number, a boolean, a date) keeps the single-
+	// statement insert; only one that does pays for the explicit transaction.
+	var hook repository.RecordWriteHook
+	if s.embeddingEnqueuer != nil && s.embeddingEnqueuer.OwesCreate(normalizedReq.FieldLabel, normalizedReq.ValueText) {
+		hook = s.embeddingWriteHook(event, nil)
+	}
+
+	record, err := s.repo.Create(ctx, &normalizedReq, hook)
 	if err != nil {
 		return nil, fmt.Errorf("create feedback record: %w", err)
 	}
 
 	if s.publisher != nil {
-		s.publisher.PublishEvent(ctx, datatypes.FeedbackRecordCreated, record)
+		event.Data = record
+		s.publisher.Publish(ctx, event)
 	}
 
 	return record, nil
@@ -212,14 +228,17 @@ func (s *FeedbackRecordsService) SetTranslation(
 		return ErrTranslationLangKeyRequired
 	}
 
-	if err := s.repo.SetTranslation(
-		ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang, stillCurrent,
-	); err != nil {
-		return fmt.Errorf("set feedback record translation: %w", err)
+	var hook repository.RecordWriteHook
+	if s.embeddingEnqueuer != nil {
+		hook = func(ctx context.Context, dbTx pgx.Tx, _, _ *models.FeedbackRecord) error {
+			return s.embeddingEnqueuer.EnqueueTranslationTx(ctx, dbTx, feedbackRecordID)
+		}
 	}
 
-	if err := s.enqueueTaxonomyEmbedding(ctx, feedbackRecordID); err != nil {
-		return err
+	if err := s.repo.SetTranslation(
+		ctx, feedbackRecordID, translated, langKey, s.translationDefaultLang, stillCurrent, hook,
+	); err != nil {
+		return fmt.Errorf("set feedback record translation: %w", err)
 	}
 
 	return nil
@@ -423,7 +442,17 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 	// event carries the fields that ACTUALLY changed: an integration idempotently re-PATCHing the
 	// same values must not re-fire webhooks or re-run every LLM enrichment, and the diff is
 	// computed against state consistent with the write (no pre-lock snapshot race).
-	record, previous, err := s.repo.Update(ctx, id, req)
+	changedFields := func(previous *models.FeedbackRecord) []string {
+		if previous == nil {
+			return req.ChangedFields()
+		}
+
+		return req.FieldsChangedFrom(previous)
+	}
+
+	event := NewEvent(datatypes.FeedbackRecordUpdated, nil, nil)
+
+	record, previous, err := s.repo.Update(ctx, id, req, s.embeddingWriteHook(event, changedFields))
 	if err != nil {
 		return nil, fmt.Errorf("update feedback record: %w", err)
 	}
@@ -431,15 +460,12 @@ func (s *FeedbackRecordsService) UpdateFeedbackRecord(
 	// A no-op update (no fields set, or every set field equal to its current value) must not
 	// publish an "updated" event: firing tenant-owned side effects for a nothing-changed write
 	// would re-trigger webhooks and enrichment for free — including while the tenant is under a
-	// data purge.
+	// data purge. The embedding hook applies the same rule inside the transaction.
 	if s.publisher != nil {
-		changed := req.ChangedFields()
-		if previous != nil {
-			changed = req.FieldsChangedFrom(previous)
-		}
-
-		if len(changed) > 0 {
-			s.publisher.PublishEventWithChangedFields(ctx, datatypes.FeedbackRecordUpdated, record, changed)
+		if changed := changedFields(previous); len(changed) > 0 {
+			event.Data = record
+			event.ChangedFields = changed
+			s.publisher.Publish(ctx, event)
 		}
 	}
 
@@ -565,8 +591,8 @@ func (s *FeedbackRecordsService) DeleteFeedbackRecordsByUser(
 // If embedding is nil, the row for (feedbackRecordID, model) is deleted; otherwise upserted.
 // It does not publish an event.
 func (s *FeedbackRecordsService) SetEmbedding(
-	ctx context.Context, feedbackRecordID uuid.UUID, model string, embedding []float32,
-	stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
+	ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+	embedding []float32, stillCurrent func(fieldLabel, valueText, valueTextTranslated *string) bool,
 ) error {
 	if embedding == nil {
 		if err := s.embeddingsRepo.DeleteByFeedbackRecordAndModel(ctx, feedbackRecordID, model, stillCurrent); err != nil {
@@ -576,7 +602,7 @@ func (s *FeedbackRecordsService) SetEmbedding(
 		return nil
 	}
 
-	if err := s.embeddingsRepo.Upsert(ctx, feedbackRecordID, model, embedding, stillCurrent); err != nil {
+	if err := s.embeddingsRepo.Upsert(ctx, feedbackRecordID, model, inputKind, embedding, stillCurrent); err != nil {
 		return fmt.Errorf("upsert embedding: %w", err)
 	}
 
@@ -587,140 +613,186 @@ func (s *FeedbackRecordsService) SetEmbedding(
 // enqueues per keyset page, so a large deployment is never fully materialized in memory.
 const embeddingBackfillPageSize = 500
 
-// BackfillEmbeddings enqueues embedding jobs for the given model for all feedback records that have
-// non-empty value_text and no embedding row for that model (existing rows are replaced by upsert when the job runs).
-// It streams the records in keyset pages. Returns the number of jobs enqueued. Requires embeddingInserter
-// and embeddingQueueName to be set.
-func (s *FeedbackRecordsService) BackfillEmbeddings(ctx context.Context, model string) (int, error) {
-	return s.BackfillEmbeddingsWithInputKind(ctx, model, models.EmbeddingInputKindRaw)
+// EmbeddingBackfillParams scopes an operator backfill (backfill-embeddings).
+type EmbeddingBackfillParams struct {
+	Model     string
+	InputKind models.EmbeddingInputKind
+	// TenantID restricts the backfill to one tenant (a feedback directory); empty is deployment-wide.
+	TenantID string
+	// MaxRecords stops after this many selected records; zero is unlimited.
+	MaxRecords int
+	// IncludeLegacy also re-embeds vectors written before Hub recorded what they were computed
+	// from. Tenant-scoped only: it can select every vector a tenant has.
+	IncludeLegacy bool
+	// IncludeTerminal also retries records the provider rejected outright, for after the reason
+	// was fixed (a lower input cap, say). Tenant-scoped only.
+	IncludeTerminal bool
+	// Cooldown skips records whose attempts ran out on a transient error less than this long ago.
+	// Zero (the default) retries them at once, which is what recovery after a provider outage
+	// wants; a longer one keeps a record that keeps failing out of repeated batch runs.
+	Cooldown time.Duration
 }
 
-// BackfillEmbeddingsWithInputKind enqueues embedding jobs for the given input kind.
-func (s *FeedbackRecordsService) BackfillEmbeddingsWithInputKind(
-	ctx context.Context,
-	model string,
-	inputKind models.EmbeddingInputKind,
-) (int, error) {
-	return s.BackfillEmbeddingsWithInputKindLimit(ctx, model, inputKind, 0)
+// EmbeddingBackfillResult reports what a backfill did.
+type EmbeddingBackfillResult struct {
+	// Selected is how many records the backfill found owed work.
+	Selected int
+	// Enqueued is how many jobs it queued; Selected minus Enqueued were already queued.
+	Enqueued int
 }
 
-// BackfillEmbeddingsWithInputKindLimit enqueues global missing embedding jobs, stopping after
-// maxRecords candidates when maxRecords is positive. Zero means unlimited.
-func (s *FeedbackRecordsService) BackfillEmbeddingsWithInputKindLimit(
-	ctx context.Context,
-	model string,
-	inputKind models.EmbeddingInputKind,
-	maxRecords int,
-) (int, error) {
-	return s.backfillEmbeddingsWithInputKind(ctx, model, inputKind, maxRecords,
-		func(ctx context.Context, afterID uuid.UUID, limit int) ([]uuid.UUID, error) {
-			return s.embeddingsRepo.ListFeedbackRecordIDsForBackfillByInputKind(
-				ctx, model, inputKind, afterID, limit)
-		})
+// filter is the selection a backfill makes. Unlike the sweep it has no transient-failure cooldown
+// by default: an operator runs it once the provider has recovered, and waiting out the sweep's
+// cooldown then would hide exactly the records the incident left behind. Re-runs stay idempotent
+// through the in-flight dedupe.
+func (p EmbeddingBackfillParams) filter(now time.Time) repository.PendingEmbeddingsFilter {
+	return repository.PendingEmbeddingsFilter{
+		Model:           p.Model,
+		InputKind:       models.NormalizeEmbeddingInputKind(p.InputKind),
+		RetryBefore:     now.Add(-p.Cooldown),
+		IncludeLegacy:   p.IncludeLegacy,
+		IncludeTerminal: p.IncludeTerminal,
+	}
 }
 
-// BackfillTenantEmbeddingsWithInputKind enqueues one tenant's missing embedding jobs, stopping
-// after maxRecords candidates when maxRecords is positive. Zero means unlimited.
-func (s *FeedbackRecordsService) BackfillTenantEmbeddingsWithInputKind(
-	ctx context.Context,
-	tenantID string,
-	model string,
-	inputKind models.EmbeddingInputKind,
-	maxRecords int,
-) (int, error) {
-	if tenantID == "" {
-		return 0, ErrMissingTenantID
+func (p EmbeddingBackfillParams) validate() error {
+	if (p.IncludeLegacy || p.IncludeTerminal) && p.TenantID == "" {
+		return ErrMissingTenantID
 	}
 
-	return s.backfillEmbeddingsWithInputKind(ctx, model, inputKind, maxRecords,
-		func(ctx context.Context, afterID uuid.UUID, limit int) ([]uuid.UUID, error) {
-			return s.embeddingsRepo.ListTenantFeedbackRecordIDsForBackfillByInputKind(
-				ctx, tenantID, model, inputKind, afterID, limit)
-		})
+	return nil
 }
 
-func (s *FeedbackRecordsService) backfillEmbeddingsWithInputKind( //nolint:funcorder // shared helper stays with public backfill entrypoints
-	ctx context.Context,
-	model string,
-	inputKind models.EmbeddingInputKind,
-	maxRecords int,
-	listPage func(context.Context, uuid.UUID, int) ([]uuid.UUID, error),
-) (int, error) {
+// CountEmbeddingBackfill counts what BackfillEmbeddings would select (before MaxRecords).
+func (s *FeedbackRecordsService) CountEmbeddingBackfill(ctx context.Context, params EmbeddingBackfillParams) (int, error) {
+	if err := params.validate(); err != nil {
+		return 0, err
+	}
+
+	filter := params.filter(time.Now())
+
+	var (
+		count int
+		err   error
+	)
+
+	if params.TenantID == "" {
+		count, err = s.embeddingsRepo.CountPendingEmbeddings(ctx, filter)
+	} else {
+		count, err = s.embeddingsRepo.CountTenantPendingEmbeddings(ctx, params.TenantID, filter)
+	}
+
+	if err != nil {
+		return 0, fmt.Errorf("count embedding backfill: %w", err)
+	}
+
+	return count, nil
+}
+
+// BackfillEmbeddings queues an embedding job for every record owed one under params, on the live
+// embeddings queue so incident recovery runs at full worker concurrency. It selects what the repair
+// sweep would (repository.PendingEmbeddingsFilter): missing, stale and orphaned vectors, skipping
+// records with a job already in flight on any queue and terminal failures, but not waiting out the
+// transient-failure cooldown (see filter). Its jobs share the sweep's unique key, so the two never
+// queue the same repair twice. One pass in id-ordered keyset pages, so the full set is never
+// materialized and records whose job finishes mid-run are not visited twice.
+func (s *FeedbackRecordsService) BackfillEmbeddings(
+	ctx context.Context, params EmbeddingBackfillParams,
+) (EmbeddingBackfillResult, error) {
+	result := EmbeddingBackfillResult{}
+
 	if s.embeddingInserter == nil || s.embeddingQueueName == "" {
-		return 0, ErrEmbeddingBackfillNotConfigured
+		return result, ErrEmbeddingBackfillNotConfigured
 	}
 
-	inputKind = models.NormalizeEmbeddingInputKind(inputKind)
-
-	opts := &river.InsertOpts{
-		Queue:       s.embeddingQueueName,
-		MaxAttempts: s.embeddingMaxAttempts,
-		UniqueOpts:  river.UniqueOpts{ByArgs: true, ByPeriod: uniqueByPeriodEmbedding},
+	if err := params.validate(); err != nil {
+		return result, err
 	}
 
-	enqueued := 0
-	skipped := 0
-	processed := 0
-	afterID := uuid.Nil
+	filter := params.filter(time.Now())
 
 	for {
 		pageSize := embeddingBackfillPageSize
-		if maxRecords > 0 && maxRecords-processed < pageSize {
-			pageSize = maxRecords - processed
+		if params.MaxRecords > 0 {
+			pageSize = min(pageSize, params.MaxRecords-result.Selected)
 		}
 
 		if pageSize <= 0 {
 			break
 		}
 
-		ids, err := listPage(ctx, afterID, pageSize)
+		page, err := s.listEmbeddingBackfillPage(ctx, params.TenantID, filter, pageSize)
 		if err != nil {
-			return enqueued, fmt.Errorf("list ids for embedding backfill: %w", err)
+			return result, err
 		}
 
-		if len(ids) == 0 {
+		if len(page) == 0 {
 			break
 		}
 
-		for _, id := range ids {
-			processed++
+		target := EmbeddingReconcileTarget{Model: filter.Model, InputKind: filter.InputKind}
 
-			res, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
-				FeedbackRecordID: id,
-				Model:            model,
-				InputKind:        inputKind,
-				ValueTextHash:    "backfill:" + string(inputKind),
-			}, opts)
-			if err != nil {
-				return enqueued, fmt.Errorf("enqueue embedding job for %s: %w", id, err)
-			}
-
-			// A duplicate skipped by the unique insert (a still-pending job from an earlier
-			// run) is not an enqueue — count it truthfully.
-			if res != nil && res.UniqueSkippedAsDuplicate {
-				skipped++
-
-				continue
-			}
-
-			enqueued++
+		jobs := make([]river.InsertManyParams, 0, len(page))
+		for _, id := range page {
+			jobs = append(jobs, repairEmbeddingJob(id, target, s.embeddingQueueName, 0, s.embeddingMaxAttempts))
 		}
 
-		// Advance the keyset cursor past the last id seen; the query excludes
-		// already-embedded records, so the cursor always moves forward.
-		afterID = ids[len(ids)-1]
+		inserted, err := s.embeddingInserter.InsertMany(ctx, jobs)
+		if err != nil {
+			return result, fmt.Errorf("enqueue embedding backfill: %w", err)
+		}
 
-		if len(ids) < embeddingBackfillPageSize {
+		result.Selected += len(page)
+
+		for _, job := range inserted {
+			if job != nil && !job.UniqueSkippedAsDuplicate {
+				result.Enqueued++
+			}
+		}
+
+		filter.AfterID = page[len(page)-1]
+
+		if len(page) < pageSize {
 			break
 		}
 	}
 
-	if skipped > 0 {
-		slog.Info("embedding backfill: duplicate jobs skipped by unique insert",
-			"skipped", skipped, "enqueued", enqueued)
+	return result, nil
+}
+
+//nolint:funcorder // scoped helper stays with the public backfill entry points
+func (s *FeedbackRecordsService) listEmbeddingBackfillPage(
+	ctx context.Context, tenantID string, filter repository.PendingEmbeddingsFilter, limit int,
+) ([]uuid.UUID, error) {
+	var (
+		page []uuid.UUID
+		err  error
+	)
+
+	if tenantID == "" {
+		page, err = s.embeddingsRepo.ListPendingEmbeddings(ctx, filter, limit)
+	} else {
+		page, err = s.embeddingsRepo.ListTenantPendingEmbeddings(ctx, tenantID, filter, limit)
 	}
 
-	return enqueued, nil
+	if err != nil {
+		return nil, fmt.Errorf("list records for embedding backfill: %w", err)
+	}
+
+	return page, nil
+}
+
+// EmbeddingIsCurrent reports whether the record already has a vector for model built from its
+// current content (internal use by the embeddings worker, to skip a provider call).
+func (s *FeedbackRecordsService) EmbeddingIsCurrent(
+	ctx context.Context, feedbackRecordID uuid.UUID, model string, inputKind models.EmbeddingInputKind,
+) (bool, error) {
+	current, err := s.embeddingsRepo.EmbeddingIsCurrent(ctx, feedbackRecordID, model, inputKind)
+	if err != nil {
+		return false, fmt.Errorf("check embedding is current: %w", err)
+	}
+
+	return current, nil
 }
 
 // BackfillTranslations enqueues a translation job for every feedback record that needs
@@ -773,25 +845,29 @@ func (s *FeedbackRecordsService) BackfillTranslationsForTenant(
 		})
 }
 
-func (s *FeedbackRecordsService) enqueueTaxonomyEmbedding(ctx context.Context, feedbackRecordID uuid.UUID) error {
-	if s.embeddingInserter == nil || s.embeddingQueueName == "" || s.taxonomyEmbeddingModel == "" {
+// embeddingWriteHook returns the hook that enqueues event's embedding jobs inside the write's
+// transaction, or nil when this process does not embed. changedFields derives the update's changed
+// fields from the row the write replaced; nil for a create.
+func (s *FeedbackRecordsService) embeddingWriteHook(
+	event Event, changedFields func(previous *models.FeedbackRecord) []string,
+) repository.RecordWriteHook {
+	if s.embeddingEnqueuer == nil {
 		return nil
 	}
 
-	_, err := s.embeddingInserter.Insert(ctx, FeedbackEmbeddingArgs{
-		FeedbackRecordID: feedbackRecordID,
-		Model:            s.taxonomyEmbeddingModel,
-		InputKind:        models.EmbeddingInputKindTaxonomyTranslated,
-		ValueTextHash:    "translation",
-	}, &river.InsertOpts{
-		Queue:       s.embeddingQueueName,
-		MaxAttempts: s.embeddingMaxAttempts,
-	})
-	if err != nil {
-		return fmt.Errorf("enqueue taxonomy embedding after translation write: %w", err)
-	}
+	return func(ctx context.Context, dbTx pgx.Tx, written, previous *models.FeedbackRecord) error {
+		owed := event
+		owed.Data = written
 
-	return nil
+		if changedFields != nil {
+			owed.ChangedFields = changedFields(previous)
+			if len(owed.ChangedFields) == 0 {
+				return nil
+			}
+		}
+
+		return s.embeddingEnqueuer.EnqueueTx(ctx, dbTx, owed)
+	}
 }
 
 // backfillTranslationsPaged enqueues a translation job for every target produced by

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,36 +20,49 @@ var ErrEmbeddingReconcileInserterUnset = errors.New("embedding reconcile: insert
 
 const embeddingRepairPriority = 4
 
-// EmbeddingReconcileRepository is the data boundary needed by the taxonomy embedding sweep.
+// EmbeddingReconcileRepository is the data boundary needed by the embedding repair sweep.
 type EmbeddingReconcileRepository interface {
-	ListPendingTaxonomyEmbeddingIDs(
-		ctx context.Context, model string, retryBefore time.Time, limit int,
+	ListPendingEmbeddingIDs(
+		ctx context.Context, model string, inputKind models.EmbeddingInputKind, retryBefore time.Time, limit int,
 	) ([]uuid.UUID, error)
 	CountRunnableEmbeddingJobs(ctx context.Context, queue string) (int, error)
 }
 
+// EmbeddingReconcileTarget is one embedding the sweep keeps complete: a model and the input kind
+// its vectors are built from.
+type EmbeddingReconcileTarget struct {
+	Model     string
+	InputKind models.EmbeddingInputKind
+}
+
 // EmbeddingReconcileService keeps the low-priority repair lane topped up without materializing the
-// complete deployment backlog or crowding live embedding work.
+// complete deployment backlog or crowding live embedding work. It repairs missing, stale and
+// orphaned vectors for every target (see ListPendingEmbeddingIDs).
 type EmbeddingReconcileService struct {
 	repo        EmbeddingReconcileRepository
 	inserter    RiverBatchInserter
-	model       string
+	targets     []EmbeddingReconcileTarget
 	targetDepth int
 	maxAttempts int
 	retryAfter  time.Duration
+	// first rotates which target is served first, so a lane that hovers one short of its target
+	// depth cannot hand its single slot to the same target every time.
+	mu    sync.Mutex
+	first int
 }
 
-// NewEmbeddingReconcileService creates a level-triggered taxonomy embedding reconciler.
+// NewEmbeddingReconcileService creates a level-triggered embedding reconciler for targets, in
+// sweep order.
 func NewEmbeddingReconcileService(
 	repo EmbeddingReconcileRepository,
-	model string,
+	targets []EmbeddingReconcileTarget,
 	targetDepth int,
 	maxAttempts int,
 	retryAfter time.Duration,
 ) *EmbeddingReconcileService {
 	return &EmbeddingReconcileService{
 		repo:        repo,
-		model:       model,
+		targets:     targets,
 		targetDepth: targetDepth,
 		maxAttempts: maxAttempts,
 		retryAfter:  retryAfter,
@@ -68,9 +82,14 @@ type EmbeddingReconcileResult struct {
 	AtTarget bool
 }
 
-// Sweep tops the repair queue up to targetDepth with records that are still missing their current
-// taxonomy embedding. The query excludes active jobs across all queues and terminal failures,
-// and cools transient failures before making them eligible again.
+// Sweep tops the repair queue up to targetDepth with records whose vectors are missing, stale or
+// orphaned. The query excludes active jobs across all queues and terminal failures, and cools
+// transient failures before making them eligible again.
+//
+// The room is shared max-min fairly (see shareRepairRoom): targets with backlog split it evenly,
+// and whatever a target cannot use goes to the others, so the lane fills whenever there is work
+// for it. The first target rotates between sweeps. So a large taxonomy backlog cannot starve
+// search-embedding repair, or the reverse, and one model's backlog alone gets the whole depth.
 func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconcileResult, error) {
 	result := EmbeddingReconcileResult{}
 	if s.inserter == nil {
@@ -91,47 +110,49 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 		return result, nil
 	}
 
-	ids, err := s.repo.ListPendingTaxonomyEmbeddingIDs(ctx, s.model, time.Now().Add(-s.retryAfter), room)
-	if err != nil {
-		return result, fmt.Errorf("list pending taxonomy embeddings: %w", err)
-	}
-
-	result.Found = len(ids)
-
-	if len(ids) == 0 {
+	if len(s.targets) == 0 {
 		return result, nil
 	}
 
-	params := make([]river.InsertManyParams, 0, len(ids))
-	for _, id := range ids {
-		params = append(params, river.InsertManyParams{
-			Args: FeedbackEmbeddingArgs{
-				FeedbackRecordID: id,
-				Model:            s.model,
-				InputKind:        models.EmbeddingInputKindTaxonomyTranslated,
-				ValueTextHash:    "reconcile",
-			},
-			InsertOpts: &river.InsertOpts{
-				Queue:       EmbeddingsReconcileQueueName,
-				Priority:    embeddingRepairPriority,
-				MaxAttempts: s.maxAttempts,
-				UniqueOpts: river.UniqueOpts{
-					ByArgs: true,
-					ByState: []rivertype.JobState{
-						rivertype.JobStateAvailable,
-						rivertype.JobStatePending,
-						rivertype.JobStateRetryable,
-						rivertype.JobStateRunning,
-						rivertype.JobStateScheduled,
-					},
-				},
-			},
-		})
+	retryBefore := time.Now().Add(-s.retryAfter)
+	first := s.nextFirstTarget()
+
+	// Each target is asked for up to the whole room, so a target can take what the others leave
+	// without a second scan. The overfetch is at most (targets-1) × room ids, bounded by the target
+	// depth, and the scan costs about the same either way: with no backlog it reads every candidate
+	// row whatever the limit.
+	ordered := make([]EmbeddingReconcileTarget, len(s.targets))
+	candidates := make([][]uuid.UUID, len(s.targets))
+
+	for i := range s.targets {
+		target := s.targets[(first+i)%len(s.targets)]
+		ordered[i] = target
+
+		ids, err := s.repo.ListPendingEmbeddingIDs(ctx, target.Model, target.InputKind, retryBefore, room)
+		if err != nil {
+			return result, fmt.Errorf("list pending embeddings for %s: %w", target.InputKind, err)
+		}
+
+		candidates[i] = ids
+	}
+
+	params := make([]river.InsertManyParams, 0, room)
+
+	for i, take := range shareRepairRoom(candidates, room) {
+		for _, id := range candidates[i][:take] {
+			params = append(params, s.repairJob(ordered[i], id))
+		}
+	}
+
+	result.Found = len(params)
+
+	if len(params) == 0 {
+		return result, nil
 	}
 
 	results, err := s.inserter.InsertMany(ctx, params)
 	if err != nil {
-		return result, fmt.Errorf("enqueue taxonomy embedding repairs: %w", err)
+		return result, fmt.Errorf("enqueue embedding repairs: %w", err)
 	}
 
 	for _, inserted := range results {
@@ -147,4 +168,96 @@ func (s *EmbeddingReconcileService) Sweep(ctx context.Context) (EmbeddingReconci
 	)
 
 	return result, nil
+}
+
+// shareRepairRoom splits room between targets max-min fairly: each round gives every target that
+// still has candidates an equal share of what is left, capped by what it has, until the room or the
+// candidates run out. A remainder smaller than one slot per target goes one slot each in order, so
+// with the order rotating between sweeps no target is favoured. It returns how many of each
+// target's candidates to take, never more than it has and never more than room in total.
+func shareRepairRoom(candidates [][]uuid.UUID, room int) []int {
+	take := make([]int, len(candidates))
+
+	for room > 0 {
+		open := 0
+
+		for i := range candidates {
+			if take[i] < len(candidates[i]) {
+				open++
+			}
+		}
+
+		if open == 0 {
+			break
+		}
+
+		share := max(room/open, 1)
+
+		for i := range candidates {
+			if room == 0 {
+				break
+			}
+
+			grant := min(share, len(candidates[i])-take[i], room)
+			take[i] += grant
+			room -= grant
+		}
+	}
+
+	return take
+}
+
+// nextFirstTarget returns the target this sweep serves first and advances the rotation.
+func (s *EmbeddingReconcileService) nextFirstTarget() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	first := s.first
+	s.first = (s.first + 1) % len(s.targets)
+
+	return first
+}
+
+// repairJob is one record's repair on the low-priority repair lane.
+func (s *EmbeddingReconcileService) repairJob(target EmbeddingReconcileTarget, id uuid.UUID) river.InsertManyParams {
+	return repairEmbeddingJob(id, target, EmbeddingsReconcileQueueName, embeddingRepairPriority, s.maxAttempts)
+}
+
+// repairEmbeddingJob is the one shape of a repair job, for the sweep and the operator backfill
+// alike. Both use ValueTextHashRepair and the in-flight-only unique options, so their jobs for the
+// same record are one River unique key (the queue is not part of it) and neither can queue a repair
+// the other already has in flight. priority 0 is River's default.
+func repairEmbeddingJob(
+	id uuid.UUID, target EmbeddingReconcileTarget, queue string, priority, maxAttempts int,
+) river.InsertManyParams {
+	return river.InsertManyParams{
+		Args: FeedbackEmbeddingArgs{
+			FeedbackRecordID: id,
+			Model:            target.Model,
+			InputKind:        models.NormalizeEmbeddingInputKind(target.InputKind),
+			ValueTextHash:    ValueTextHashRepair,
+		},
+		InsertOpts: &river.InsertOpts{
+			Queue:       queue,
+			Priority:    priority,
+			MaxAttempts: maxAttempts,
+			UniqueOpts:  inFlightUniqueOpts(),
+		},
+	}
+}
+
+// inFlightUniqueOpts dedupes a repair or backfill job against the same job still in flight, and
+// only that: a completed job must not swallow a later repair of the same record, which River's
+// default unique states (they include completed) would do for as long as the row is retained.
+func inFlightUniqueOpts() river.UniqueOpts {
+	return river.UniqueOpts{
+		ByArgs: true,
+		ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable,
+			rivertype.JobStatePending,
+			rivertype.JobStateRetryable,
+			rivertype.JobStateRunning,
+			rivertype.JobStateScheduled,
+		},
+	}
 }

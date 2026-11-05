@@ -295,7 +295,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		cfg.Embedding.MaxAttempts,
 		cfg.Translation.DefaultLanguage,
 	)
-	feedbackRecordsService.SetTaxonomyEmbeddingModel(taxonomyEmbeddingEnqueueModel)
 
 	// The eager-clear (nulling stale enrichment outputs on a value_text edit) fires only on this
 	// API PATCH path, so wire its counter here; the worker/backfill service instances leave it unset.
@@ -365,22 +364,21 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	)
 	messageManager.RegisterProvider(webhookProvider)
 
+	// Embedding jobs are enqueued inside the record write's transaction rather than through the
+	// best-effort event channel, so a crash or a full channel cannot lose them (ENG-2792).
 	if embeddingProviderName != "" {
 		docPrefix := service.EmbeddingPrefixForProvider(embeddingProviderName)
-		embeddingProv := service.NewEmbeddingProvider(
-			riverClient,
+		embeddingProviders := []*service.EmbeddingJobBuilder{service.NewEmbeddingJobBuilder(
 			embeddingModelForDB,
 			service.EmbeddingsQueueName,
 			cfg.Embedding.MaxAttempts,
 			docPrefix,
 			cfg.Embedding.MaxInputBytes,
 			embeddingMetrics,
-		)
-		messageManager.RegisterProvider(embeddingProv)
+		)}
 
 		if taxonomyEmbeddingEnqueueModel != "" {
-			taxonomyEmbeddingProv := service.NewEmbeddingProviderForInputKind(
-				riverClient,
+			embeddingProviders = append(embeddingProviders, service.NewEmbeddingJobBuilderForInputKind(
 				taxonomyEmbeddingEnqueueModel,
 				service.EmbeddingsQueueName,
 				cfg.Embedding.MaxAttempts,
@@ -388,9 +386,10 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 				cfg.Embedding.MaxInputBytes,
 				embeddingMetrics,
 				models.EmbeddingInputKindTaxonomyTranslated,
-			)
-			messageManager.RegisterProvider(taxonomyEmbeddingProv)
+			))
 		}
+
+		feedbackRecordsService.SetEmbeddingEnqueuer(service.NewEmbeddingEnqueuer(riverClient, embeddingProviders...))
 	}
 
 	webhooksService := service.NewWebhooksService(

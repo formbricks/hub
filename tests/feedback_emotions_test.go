@@ -44,7 +44,7 @@ func TestFeedbackRecords_EmotionsField(t *testing.T) {
 		ValueText:    &valueText,
 		TenantID:     testTenantID("emotions"),
 		SubmissionID: testTenantID("submission"),
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	// Fresh record: emotions is NULL until enriched.
@@ -119,7 +119,7 @@ func TestFeedbackEmotions_WorkerPipeline(t *testing.T) {
 			ValueText:    &valueText,
 			TenantID:     testTenantID("emotions-worker"),
 			SubmissionID: testTenantID("sub"),
-		})
+		}, nil)
 		require.NoError(t, createErr)
 
 		return rec

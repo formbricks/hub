@@ -114,18 +114,93 @@ to a service-account key path when running outside Google Cloud). A custom
 
 ### Embeddings
 
-| Variable                          | Default | Description                                                                                                                                                                     |
-| --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EMBEDDING_PROVIDER`              | -       | Embedding provider (`openai`, `google`, or `google-gemini`; legacy `google-vertex` maps to `google-gemini`). Set with `EMBEDDING_MODEL` to enable.                              |
-| `EMBEDDING_PROVIDER_API_KEY`      | -       | API key for `openai` / `google`.                                                                                                                                                |
-| `EMBEDDING_MODEL`                 | -       | Embedding model name.                                                                                                                                                           |
-| `EMBEDDING_BASE_URL`              | -       | OpenAI-compatible embeddings root URL. Use with `EMBEDDING_PROVIDER=openai` to target a self-hosted endpoint. See [Self-Hosted Embeddings](/guides/hub-self-hosted-embeddings). |
-| `EMBEDDING_MAX_CONCURRENT`        | `5`     | Max concurrent embedding jobs.                                                                                                                                                  |
-| `EMBEDDING_MAX_ATTEMPTS`          | `3`     | Max embedding attempts.                                                                                                                                                         |
-| `EMBEDDING_MAX_INPUT_BYTES`       | `12000` | Max bytes of a record sent to the embedding provider; over it the input is trimmed to its first N bytes, so an over-long record still gets a vector. `0` disables the cap.      |
-| `EMBEDDING_NORMALIZE`             | `false` | Whether to normalize embeddings before storage.                                                                                                                                 |
-| `EMBEDDING_GOOGLE_CLOUD_PROJECT`  | -       | Google Cloud project (for `google-gemini`).                                                                                                                                     |
-| `EMBEDDING_GOOGLE_CLOUD_LOCATION` | -       | Google Cloud location (for `google-gemini`).                                                                                                                                    |
+| Variable                                  | Default | Description                                                                                                                                                                                 |
+| ----------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EMBEDDING_PROVIDER`                      | -       | Embedding provider (`openai`, `google`, or `google-gemini`; legacy `google-vertex` maps to `google-gemini`). Set with `EMBEDDING_MODEL` to enable.                                          |
+| `EMBEDDING_PROVIDER_API_KEY`              | -       | API key for `openai` / `google`.                                                                                                                                                            |
+| `EMBEDDING_MODEL`                         | -       | Embedding model name.                                                                                                                                                                       |
+| `EMBEDDING_BASE_URL`                      | -       | OpenAI-compatible embeddings root URL. Use with `EMBEDDING_PROVIDER=openai` to target a self-hosted endpoint. See [Self-Hosted Embeddings](/guides/hub-self-hosted-embeddings).             |
+| `EMBEDDING_MAX_CONCURRENT`                | `5`     | Max concurrent embedding jobs.                                                                                                                                                              |
+| `EMBEDDING_MAX_ATTEMPTS`                  | `5`     | Max embedding attempts.                                                                                                                                                                     |
+| `EMBEDDING_JOB_TIMEOUT_SECONDS`           | `60`    | Deadline for one embedding job.                                                                                                                                                             |
+| `EMBEDDING_MAX_INPUT_BYTES`               | `12000` | Max bytes of a record sent to the embedding provider; over it the input is trimmed to its first N bytes, so an over-long record still gets a vector. `0` disables the cap.                  |
+| `EMBEDDING_NORMALIZE`                     | `false` | Whether to normalize embeddings before storage.                                                                                                                                             |
+| `EMBEDDING_GOOGLE_CLOUD_PROJECT`          | -       | Google Cloud project (for `google-gemini`).                                                                                                                                                 |
+| `EMBEDDING_GOOGLE_CLOUD_LOCATION`         | -       | Google Cloud location (for `google-gemini`).                                                                                                                                                |
+| `EMBEDDING_RECONCILE_ENABLED`             | `false` | Periodically repair embeddings on `hub-worker` (see [Embedding repair](#embedding-repair)). Opt in per deployment.                                                                          |
+| `EMBEDDING_RECONCILE_INTERVAL_SECONDS`    | `300`   | How often the repair sweep runs.                                                                                                                                                            |
+| `EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS` | `900`   | Cooldown before a record whose attempts ran out on a transient error is retried.                                                                                                            |
+| `EMBEDDING_RECONCILE_TARGET_DEPTH`        | `100`   | Each sweep tops the `embeddings_reconcile` queue up to this many runnable jobs, shared fairly between the search and taxonomy embeddings. See [How long recovery takes](#embedding-repair). |
+| `EMBEDDING_RECONCILE_MAX_CONCURRENT`      | `1`     | Worker concurrency reserved for repaired records, separate from live embedding work.                                                                                                        |
+
+#### Embedding repair
+
+`hub-api` queues a record's embedding jobs in the same transaction that writes it, so a crash
+cannot lose them; if the jobs cannot be queued, the write fails and the client can retry. What can
+still leave a record without a current vector is a job that runs out of attempts. With
+`EMBEDDING_RECONCILE_ENABLED=true` and an embedding provider configured, a sweep on `hub-worker`
+(on River's elected leader) re-queues every record whose vector is:
+
+- **missing**: the record has text but no vector for the current model;
+- **stale**: the text the vector was computed from has changed since (for the taxonomy embedding,
+  this includes the translation);
+- **orphaned**: the record no longer has any text. The repair deletes the vector without calling
+  the provider.
+
+This covers the search embedding always, and the taxonomy embedding when `TAXONOMY_SERVICE_URL`
+is set. A repair job that finds the vector already current (because a live job got there first)
+skips the provider. Records whose attempts ran out on a transient error are retried after
+`EMBEDDING_RECONCILE_RETRY_AFTER_SECONDS`. Records the provider rejected outright are not retried
+until the record is written again (the rejection is tied to the record's revision, so an edit, or
+an enrichment such as translation or sentiment landing on it, makes it eligible once more).
+
+Vectors written before Hub recorded what they were computed from are trusted as current. Changing
+the model's document prefix or `EMBEDDING_MAX_INPUT_BYTES` does not mark existing vectors stale
+either: those are deployment settings, not record content.
+
+**How long recovery takes.** This applies only with `EMBEDDING_RECONCILE_ENABLED=true`; without
+it, nothing repairs a record automatically. A record whose attempts ran out is re-queued at the
+first sweep after its cooldown. Each sweep tops the repair lane up to
+`EMBEDDING_RECONCILE_TARGET_DEPTH` jobs, shared between the search and taxonomy embeddings, so
+with both backlogged each model drains about `TARGET_DEPTH ÷ 2` records per sweep (with the
+defaults, 100 every 300 seconds: roughly 600 an hour per model); with only one model backlogged it
+gets the whole depth. The lane also runs only `EMBEDDING_RECONCILE_MAX_CONCURRENT` jobs at a time,
+so when a provider call takes longer than about `interval ÷ (TARGET_DEPTH ÷ MAX_CONCURRENT)` (three
+seconds with the defaults), worker throughput sets the pace instead. A job left `running` by a
+worker that died is not retried until River's stuck-job rescue (`RIVER_RESCUE_STUCK_JOBS_AFTER_SECONDS`,
+one hour when unset), and the sweep leaves that record alone until then; set it a little above
+`EMBEDDING_JOB_TIMEOUT_SECONDS` to shorten that. A provider answering `429` snoozes a job without
+using an attempt for up to an hour from when the job was created, then lets it fail normally. For a
+faster drain, use the backfill below.
+
+For incident recovery, `backfill-embeddings` queues the same work on demand, on the live
+embeddings queue so it drains at full worker concurrency. It selects what the sweep would, except
+that it does not wait out the transient-failure cooldown: it is meant to run once the provider has
+recovered. Records with a job already in flight (including the sweep's) and records the provider
+rejected outright are skipped, so running it twice queues nothing the second time.
+
+| Flag               | Description                                                                                                                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-tenant-id <id>`  | Restrict to one tenant (feedback directory). Without it the backfill runs across the deployment.                                                                                                 |
+| `-taxonomy`        | Backfill the taxonomy embedding instead of the search embedding.                                                                                                                                 |
+| `-max-records <n>` | Stop after `n` records, to run in bounded batches (for example 100, then 500 at a time).                                                                                                         |
+| `-count-only`      | Print how many records are owed work without queueing anything.                                                                                                                                  |
+| `-stale`           | Also re-embed vectors written before Hub recorded what they were computed from. Needs `-tenant-id`.                                                                                              |
+| `-retry-terminal`  | Also retry records the provider rejected outright, once the cause is fixed (say, a lower input cap). Needs `-tenant-id`.                                                                         |
+| `-cooldown <d>`    | Skip records whose attempts ran out on a transient error less than `d` ago (for example `24h`), to keep a record that keeps failing out of repeated batch runs. Default `0`: retry them at once. |
+
+Each run logs one line when it starts and one when it finishes, with its scope and counts, as the
+record of what was done.
+
+**Upgrading to the release that adds repair of stale vectors.** Vectors from before it carry no
+record of what they were computed from. While old and new `hub-worker` pods overlap during the
+rollout, an old pod can rewrite a vector without updating that record, so a record edited and then
+edited back inside the rollout window can keep the vector of its middle text. To rule this out,
+stop the old workers before the new ones start (or let the rollout finish first and then clear the
+record for vectors written during it: `UPDATE embeddings SET source_hash = NULL WHERE updated_at
+BETWEEN <rollout start> AND <rollout end>`, followed by `backfill-embeddings -tenant-id <id> -stale`
+for the affected tenants). Search-embedding failures are recorded for the repair sweep but do not
+appear in `hub_enrichment_failed_records`, which counts taxonomy embedding failures only.
 
 ### Translation
 

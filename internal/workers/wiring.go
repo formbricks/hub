@@ -25,7 +25,7 @@ type RiverDeps struct {
 	EmbeddingClient    service.EmbeddingClient
 	EmbeddingDocPrefix string
 	EmbeddingMetrics   observability.EmbeddingMetrics
-	// EmbeddingReconcileSweeper is non-nil only when automatic taxonomy embedding repair is enabled.
+	// EmbeddingReconcileSweeper is non-nil only when automatic embedding repair is enabled.
 	EmbeddingReconcileSweeper EmbeddingReconcileSweeper
 
 	// Translation worker (optional; if TranslationClient is nil, translation worker is not registered)

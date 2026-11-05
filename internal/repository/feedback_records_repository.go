@@ -113,17 +113,21 @@ func scanFeedbackRecord(row scanner) (*models.FeedbackRecord, error) {
 	return &record, nil
 }
 
-// Create inserts a new feedback record.
-func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+// Create inserts a new feedback record. hook (optional) runs inside the same transaction after the
+// insert, so the jobs it enqueues commit with the record or not at all (see RecordWriteHook).
+func (r *FeedbackRecordsRepository) Create(
+	ctx context.Context, req *models.CreateFeedbackRecordRequest, hook RecordWriteHook,
+) (*models.FeedbackRecord, error) {
 	collectedAt := time.Now()
 	if req.CollectedAt != nil {
 		collectedAt = *req.CollectedAt
 	}
 
 	// The tenant is known up front, so gate the insert on the shared tenant
-	// write lock in a single statement (held for this statement's implicit
-	// transaction): one round trip, same isolation against a tenant data purge.
-	// Zero rows means the lock was refused (purge in progress).
+	// write lock in the statement itself. Without a hook this is one round trip
+	// in the statement's implicit transaction; with one, the transaction-scoped
+	// lock is held until the hook's work commits too. Either way zero rows means
+	// the lock was refused (purge in progress).
 	const lockKeyParam = 20 // $20, after the 19 inserted columns
 
 	query := `
@@ -137,31 +141,63 @@ func (r *FeedbackRecordsRepository) Create(ctx context.Context, req *models.Crea
 		WHERE ` + tenantWriteLockGate(lockKeyParam) + `
 		RETURNING ` + feedbackRecordColumns
 
-	record, err := scanFeedbackRecord(r.db.QueryRow(ctx, query,
+	args := []any{
 		collectedAt, req.SourceType, req.SourceID, req.SourceName,
 		req.FieldID, req.FieldLabel, req.FieldType, req.FieldGroupID, req.FieldGroupLabel,
 		req.ValueText, req.ValueNumber, req.ValueBoolean, req.ValueDate,
 		req.Metadata, req.Language, req.UserID, req.TenantID, req.SubmissionID, req.ValueID,
 		TenantWriteLockKey(req.TenantID),
-	))
+	}
+
+	if hook == nil {
+		record, err := scanFeedbackRecord(r.db.QueryRow(ctx, query, args...))
+		if err != nil {
+			return nil, mapCreateError(err)
+		}
+
+		return record, nil
+	}
+
+	var record *models.FeedbackRecord
+
+	// No tenant IDs: the gated INSERT takes the shared lock itself, saving a round trip.
+	err := withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
+		created, err := scanFeedbackRecord(dbTx.QueryRow(ctx, query, args...))
+		if err != nil {
+			return mapCreateError(err)
+		}
+
+		if err := runRecordWriteHook(ctx, dbTx, hook, created, nil); err != nil {
+			return err
+		}
+
+		record = created
+
+		return nil
+	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
-			return nil, huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
-		}
-
-		if errors.As(err, &pgErr) && pgErr.Code == numericOverflowSQLState {
-			return nil, huberrors.NewValidationError("metadata", numericOverflowMessage)
-		}
-
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, huberrors.NewTenantWriteConflictError("tenant data purge in progress for this tenant; retry later")
-		}
-
-		return nil, fmt.Errorf("failed to create feedback record: %w", err)
+		return nil, err
 	}
 
 	return record, nil
+}
+
+// mapCreateError translates a failed gated INSERT into the API's error vocabulary.
+func mapCreateError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
+		return huberrors.NewConflictError("a feedback record with this tenant_id, submission_id, and field_id already exists")
+	}
+
+	if errors.As(err, &pgErr) && pgErr.Code == numericOverflowSQLState {
+		return huberrors.NewValidationError("metadata", numericOverflowMessage)
+	}
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return huberrors.NewTenantWriteConflictError("tenant data purge in progress for this tenant; retry later")
+	}
+
+	return fmt.Errorf("failed to create feedback record: %w", err)
 }
 
 // resolveFeedbackRecordTenant reads the tenant boundary of a feedback record
@@ -286,9 +322,12 @@ func guardValueTextCurrent(
 // translation (or clear) was computed from; a mismatch returns ErrTranslationSuperseded so a job
 // that read older text cannot land its result last and clobber a newer job's write (see
 // guardValueTextCurrent). nil ⇒ no content guard.
+//
+// hook (optional) runs in the same transaction once the write has landed (never when it was
+// superseded), with nil written/previous records; see RecordWriteHook.
 func (r *FeedbackRecordsRepository) SetTranslation(
 	ctx context.Context, feedbackRecordID uuid.UUID, translated *string, langKey, defaultLang string,
-	stillCurrent func(valueText *string) bool,
+	stillCurrent func(valueText *string) bool, hook RecordWriteHook,
 ) error {
 	return withTenantWritePoolTx(ctx, r.db, nil, func(dbTx tenantWriteTx) error {
 		// Translation rides the feedback record's tenant boundary; resolve and lock
@@ -323,9 +362,13 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 				return err
 			}
 
-			return clearEnrichmentFailure(
+			if err := clearEnrichmentFailure(
 				ctx, dbTx, feedbackRecordID, models.EnrichmentNameTaxonomyEmbedding,
-			)
+			); err != nil {
+				return err
+			}
+
+			return runRecordWriteHook(ctx, dbTx, hook, nil, nil)
 		}
 
 		// Setting a translation persists only while langKey still equals the tenant's current
@@ -367,11 +410,15 @@ func (r *FeedbackRecordsRepository) SetTranslation(
 		}
 
 		// A new translation changes the taxonomy embedding input. Clear any terminal marker from
-		// the previous content so the new input is eligible for reconciliation if its direct
-		// enqueue is lost.
-		return clearEnrichmentFailure(
+		// the previous content so the new input is eligible for reconciliation if its re-embed
+		// job later exhausts its attempts.
+		if err := clearEnrichmentFailure(
 			ctx, dbTx, feedbackRecordID, models.EnrichmentNameTaxonomyEmbedding,
-		)
+		); err != nil {
+			return err
+		}
+
+		return runRecordWriteHook(ctx, dbTx, hook, nil, nil)
 	})
 }
 
@@ -972,8 +1019,11 @@ func joinOr(conds ...string) string {
 // caller can compute the fields that ACTUALLY changed against state consistent with this write:
 // the previous snapshot is read FOR UPDATE inside the same transaction as the write, so a
 // concurrent Update cannot change the row between the read and the write and make the diff stale.
+//
+// hook (optional) runs in the same transaction with the updated and previous rows; it is not
+// called when the request sets no fields (nothing is written). See RecordWriteHook.
 func (r *FeedbackRecordsRepository) Update(
-	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest,
+	ctx context.Context, id uuid.UUID, req *models.UpdateFeedbackRecordRequest, hook RecordWriteHook,
 ) (updated, previous *models.FeedbackRecord, err error) {
 	query, args, hasUpdates := buildUpdateQuery(req, id)
 	if !hasUpdates {
@@ -1017,6 +1067,10 @@ func (r *FeedbackRecordsRepository) Update(
 			}
 
 			return fmt.Errorf("failed to update feedback record: %w", scanErr)
+		}
+
+		if err := runRecordWriteHook(ctx, dbTx, hook, scanned, prev); err != nil {
+			return err
 		}
 
 		updated = scanned

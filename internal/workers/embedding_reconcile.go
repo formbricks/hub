@@ -19,7 +19,7 @@ type EmbeddingReconcileSweeper interface {
 	Sweep(ctx context.Context) (service.EmbeddingReconcileResult, error)
 }
 
-// EmbeddingReconcileWorker runs one bounded, level-triggered taxonomy embedding sweep.
+// EmbeddingReconcileWorker runs one bounded, level-triggered embedding repair sweep.
 type EmbeddingReconcileWorker struct {
 	river.WorkerDefaults[service.EmbeddingReconcileArgs]
 
