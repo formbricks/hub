@@ -327,7 +327,7 @@ config:
     EMBEDDING_MAX_ATTEMPTS: "5"
     EMBEDDING_JOB_TIMEOUT_SECONDS: "60"
     # Repairs missing, stale and orphaned embeddings: the search embedding always, the taxonomy
-    # embedding once TAXONOMY_SERVICE_URL/TOKEN are configured. Repair work uses a separate
+    # embedding once TAXONOMY_SERVICE_URL is set. Repair work uses a separate
     # low-priority, single-worker lane so it cannot delay live records.
     EMBEDDING_RECONCILE_ENABLED: "false"
     EMBEDDING_RECONCILE_INTERVAL_SECONDS: "300"

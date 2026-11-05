@@ -84,7 +84,8 @@ func run() int {
 	}
 
 	if *pruneStaleModels &&
-		(*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0 || *stale || *retryTerminal) {
+		(*taxonomyMode || *tenantID != "" || *countOnly || *maxRecords != 0 || *stale || *retryTerminal ||
+			*cooldown != 0) {
 		slog.Error("-prune-stale-models cannot be combined with backfill scope or preview flags")
 
 		return exitFailure
@@ -240,6 +241,9 @@ func run() int {
 
 		fmt.Printf("Found %d record(s) owed an embedding for model %q; %d would be selected.\n",
 			count, targetModel, selected)
+
+		// #nosec G706 -- values are structured log attributes
+		slog.Info("Embedding backfill complete", append(scope, "count", count, "selected", selected, "enqueued", 0)...)
 
 		return exitSuccess
 	}

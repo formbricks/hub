@@ -65,7 +65,8 @@ runtime configuration reference.
 `hub-api` queues the embedding jobs a record needs in the same database
 transaction that creates or edits it: one job per model when a record with
 text is created, and a re-embed when its `value_text` or `field_label`
-changes. When `hub-worker` writes a translation, it queues the taxonomy
+changes (for the taxonomy embedding, also when its `language` changes, since
+that clears the translation it reads). When `hub-worker` writes a translation, it queues the taxonomy
 re-embed in that same way. A record and its jobs are committed together or
 not at all, so a restart or crash cannot leave a record that nothing will
 embed. If the jobs cannot be queued, the write fails and the API returns an

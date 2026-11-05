@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -30,6 +31,21 @@ type failingTxInserter struct{}
 func (failingTxInserter) InsertManyTx(
 	context.Context, pgx.Tx, []river.InsertManyParams,
 ) ([]*rivertype.JobInsertResult, error) {
+	return nil, errEnqueueBoundary
+}
+
+// insertThenFailInserter queues the jobs for real, in the write's transaction, and then fails, as
+// a statement or a lost connection after the job insert would. Unlike failingTxInserter it proves
+// the jobs themselves roll back with the write, not only that nothing was inserted.
+type insertThenFailInserter struct{ inner service.RiverTxBatchInserter }
+
+func (i insertThenFailInserter) InsertManyTx(
+	ctx context.Context, tx pgx.Tx, params []river.InsertManyParams,
+) ([]*rivertype.JobInsertResult, error) {
+	if _, err := i.inner.InsertManyTx(ctx, tx, params); err != nil {
+		return nil, fmt.Errorf("insert embedding jobs: %w", err)
+	}
+
 	return nil, errEnqueueBoundary
 }
 
@@ -144,6 +160,17 @@ func (e *transactionalEnqueueEnv) jobs(t *testing.T, recordID uuid.UUID) []embed
 	return jobs
 }
 
+// modelJobs counts every job queued for this env's models, whatever record it is for.
+func (e *transactionalEnqueueEnv) modelJobs(t *testing.T) int {
+	t.Helper()
+
+	var count int
+	require.NoError(t, e.db.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM river_job WHERE args->>'model' IN ($1, $2)`, e.rawModel, e.taxModel).Scan(&count))
+
+	return count
+}
+
 func (e *transactionalEnqueueEnv) recordsWithSubmission(t *testing.T, submissionID string) int {
 	t.Helper()
 
@@ -185,7 +212,10 @@ func TestEmbeddingJobsCommitWithTheRecordWrite(t *testing.T) {
 		require.Len(t, publisher.events, 1)
 		eventID := publisher.events[0].ID.String()
 
-		for _, job := range env.jobs(t, record.ID) {
+		jobs := env.jobs(t, record.ID)
+		require.Len(t, jobs, 2, "a create owes one job per model")
+
+		for _, job := range jobs {
 			assert.Equal(t, eventID, job.eventID, "job %s must correlate with the published event", job.model)
 		}
 	})
@@ -202,6 +232,18 @@ func TestEmbeddingJobsCommitWithTheRecordWrite(t *testing.T) {
 		assert.Zero(t, env.recordsWithSubmission(t, req.SubmissionID),
 			"a record whose jobs could not be enqueued must not be committed")
 		assert.Empty(t, publisher.events, "nothing is published for a write that did not commit")
+	})
+
+	t.Run("jobs already queued roll back with a create that fails after them", func(t *testing.T) {
+		env := newTransactionalEnqueueEnv(t)
+		svc := env.service(insertThenFailInserter{inner: env.riverClient(t)}, nil)
+		req := env.createRequest("Very satisfied")
+
+		_, err := svc.CreateFeedbackRecord(t.Context(), req)
+		require.ErrorIs(t, err, errEnqueueBoundary)
+
+		assert.Zero(t, env.recordsWithSubmission(t, req.SubmissionID))
+		assert.Zero(t, env.modelJobs(t), "jobs inserted in the failed write's transaction must not survive it")
 	})
 
 	t.Run("content edit commits its jobs; metadata-only edit owes none", func(t *testing.T) {
@@ -263,6 +305,28 @@ func TestEmbeddingJobsCommitWithTheRecordWrite(t *testing.T) {
 		assert.Equal(t, "translation", jobs[2].hash)
 	})
 
+	t.Run("language change commits a taxonomy re-embed of the untranslated text", func(t *testing.T) {
+		env := newTransactionalEnqueueEnv(t)
+		svc := env.service(env.riverClient(t), nil)
+
+		record, err := svc.CreateFeedbackRecord(t.Context(), env.createRequest("Sehr zufrieden"))
+		require.NoError(t, err)
+
+		translated := "Very satisfied"
+		require.NoError(t, svc.SetTranslation(t.Context(), record.ID, &translated, "en-US", nil))
+		require.Len(t, env.jobs(t, record.ID), 3)
+
+		language := "fr"
+		updated, err := svc.UpdateFeedbackRecord(t.Context(), record.ID,
+			&models.UpdateFeedbackRecordRequest{Language: &language})
+		require.NoError(t, err)
+		require.Nil(t, updated.ValueTextTranslated, "a language change clears the translation")
+
+		jobs := env.jobs(t, record.ID)
+		require.Len(t, jobs, 4, "the search input ignores the translation and owes nothing")
+		assert.Equal(t, env.taxModel, jobs[3].model)
+	})
+
 	t.Run("failed enqueue rolls the translation back", func(t *testing.T) {
 		env := newTransactionalEnqueueEnv(t)
 
@@ -308,9 +372,6 @@ func TestEmbeddingJobsCommitWithTheRecordWrite(t *testing.T) {
 		release()
 		assert.Zero(t, env.recordsWithSubmission(t, req.SubmissionID))
 
-		var jobs int
-		require.NoError(t, env.db.QueryRow(t.Context(),
-			`SELECT COUNT(*) FROM river_job WHERE args->>'model' IN ($1, $2)`, env.rawModel, env.taxModel).Scan(&jobs))
-		assert.Zero(t, jobs)
+		assert.Zero(t, env.modelJobs(t))
 	})
 }

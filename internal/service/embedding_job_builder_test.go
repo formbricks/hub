@@ -186,6 +186,46 @@ func TestEmbeddingEnqueuer_EnqueueTx_FeedbackRecordUpdated_fieldLabelInChangedFi
 	assert.NotEmpty(t, inserter.insertCalls[0].args.ValueTextHash)
 }
 
+// TestEmbeddingEnqueuer_EnqueueTx_LanguageChange covers the one update that changes an embedding's
+// input without touching value_text or field_label: a language change clears the translation the
+// taxonomy input reads, so it owes a taxonomy re-embed, and nothing for the search embedding, whose
+// input ignores the translation.
+func TestEmbeddingEnqueuer_EnqueueTx_LanguageChange(t *testing.T) {
+	recordID := uuid.Must(uuid.NewV7())
+	event := Event{
+		ID:            uuid.Must(uuid.NewV7()),
+		Type:          datatypes.FeedbackRecordUpdated,
+		Timestamp:     time.Now(),
+		ChangedFields: []string{"language"},
+		Data: &models.FeedbackRecord{
+			ID:        recordID,
+			FieldType: models.FieldTypeText,
+			ValueText: new("La machine ne demarre pas"),
+		},
+	}
+
+	for _, testCase := range []struct {
+		kind models.EmbeddingInputKind
+		want int
+	}{
+		{models.EmbeddingInputKindRaw, 0},
+		{models.EmbeddingInputKindTaxonomyTranslated, 1},
+	} {
+		t.Run(string(testCase.kind), func(t *testing.T) {
+			inserter := &mockEmbeddingInserter{}
+			builder := NewEmbeddingJobBuilderForInputKind("model", "embeddings", 3, "", 0, nil, testCase.kind)
+
+			require.NoError(t, NewEmbeddingEnqueuer(inserter, builder).EnqueueTx(context.Background(), nil, event))
+			require.Len(t, inserter.insertCalls, testCase.want)
+
+			if testCase.want > 0 {
+				assert.Equal(t, recordID, inserter.insertCalls[0].args.FeedbackRecordID)
+				assert.Equal(t, testCase.kind, inserter.insertCalls[0].args.InputKind)
+			}
+		})
+	}
+}
+
 func TestEmbeddingEnqueuer_EnqueueTx_TaxonomyTranslatedPrefersTranslatedText(t *testing.T) {
 	inserter := &mockEmbeddingInserter{}
 	p := NewEmbeddingJobBuilderForInputKind(

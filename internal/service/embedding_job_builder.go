@@ -166,8 +166,17 @@ func (b *EmbeddingJobBuilder) insertOpts() *river.InsertOpts {
 	}
 }
 
+// hasEmbeddingRelevantChange reports whether an update can have changed this model's input. A
+// language change counts for an input that reads the translation: the same write clears
+// value_text_translated, so the vector no longer describes the record until it is re-embedded from
+// the untranslated text (and again once a new translation lands). If there was no translation to
+// clear, the worker finds the vector current and skips the provider.
 func (b *EmbeddingJobBuilder) hasEmbeddingRelevantChange(changedFields []string) bool {
-	return slices.Contains(changedFields, "value_text") || slices.Contains(changedFields, "field_label")
+	if slices.Contains(changedFields, "value_text") || slices.Contains(changedFields, "field_label") {
+		return true
+	}
+
+	return b.inputKind.ReadsTranslation() && slices.Contains(changedFields, "language")
 }
 
 func recordIDFromEventData(data any) uuid.UUID {

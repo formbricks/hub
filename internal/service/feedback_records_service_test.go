@@ -1223,14 +1223,24 @@ func TestFeedbackRecordsService_CreateTakesTheTransactionOnlyWhenEmbeddingsAreOw
 		}
 	}
 
-	text := "Great"
-	if _, err := svc.CreateFeedbackRecord(context.Background(), &models.CreateFeedbackRecordRequest{
-		TenantID: "tenant", FieldType: models.FieldTypeCategorical, ValueText: &text,
-	}); err != nil {
-		t.Fatalf("CreateFeedbackRecord() error = %v", err)
-	}
+	// Text decides, not the field type: a number record that carries text is embedded like any other.
+	for _, fieldType := range []models.FieldType{models.FieldTypeCategorical, models.FieldTypeNumber} {
+		inserter := &mockEmbeddingInserter{}
+		repo := &mockFeedbackRecordsRepo{}
+		svc := NewFeedbackRecordsService(repo, nil, "", nil, nil, "", 0, "")
+		svc.SetEmbeddingEnqueuer(
+			NewEmbeddingEnqueuer(inserter, NewEmbeddingJobBuilder("raw-model", "embeddings", 3, "", 0, nil)))
 
-	if !repo.createHookSet || len(inserter.insertCalls) != 1 {
-		t.Fatalf("hook set = %v, jobs = %d; want the transaction and one job", repo.createHookSet, len(inserter.insertCalls))
+		text := "Great"
+		if _, err := svc.CreateFeedbackRecord(context.Background(), &models.CreateFeedbackRecordRequest{
+			TenantID: "tenant", FieldType: fieldType, ValueText: &text,
+		}); err != nil {
+			t.Fatalf("CreateFeedbackRecord(%s) error = %v", fieldType, err)
+		}
+
+		if !repo.createHookSet || len(inserter.insertCalls) != 1 {
+			t.Fatalf("%s: hook set = %v, jobs = %d; want the transaction and one job",
+				fieldType, repo.createHookSet, len(inserter.insertCalls))
+		}
 	}
 }
