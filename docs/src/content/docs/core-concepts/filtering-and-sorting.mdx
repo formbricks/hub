@@ -44,6 +44,7 @@ which is read as one literal value:
 ```bash
 -d source_type=survey -d source_type=review   # ✅ two values
 -d "source_type=survey,review"                # ❌ one value, literally "survey,review"
+-d "source_type[0]=survey"                    # ❌ 400: the indexed form is not accepted
 ```
 
 <Aside type="note">
@@ -67,11 +68,52 @@ looks complete and is not.
 records whose source type is blank, and it is not an error:
 
 ```bash
--d source_type=          # no constraint — identical to leaving it out
+-d source_type=                          # no constraint — identical to leaving it out
+-d source_type= -d source_type=survey    # the same as source_type=survey alone
 ```
 
-This holds for every query parameter, not just the repeatable filters, so a UI that always emits its
-whole filter set does not have to strip the empty ones before sending.
+This holds for every filter, so a UI that always emits its whole filter set does not have to strip
+the empty ones before sending. It does not apply to `tenant_id`: an empty tenant is never read as "no
+tenant".
+
+<Aside type="caution">
+  Hub releases up to 0.14.1 read an empty value of `source_type`, `source_id`, `source_name`,
+  `field_id`, `field_group_id`, `value_id`, `user_id`, `submission_id` or `language` as a filter on
+  the empty string, matching only records where that field is blank.
+</Aside>
+
+### An unknown parameter is rejected
+
+A query parameter the endpoint does not take is a `400` naming it, never ignored. A misspelled
+filter would otherwise come back as a `200` with every record, which looks exactly like a filter
+that matched everything:
+
+```json
+{
+  "status": 400,
+  "code": "validation",
+  "invalid_params": [
+    { "name": "updatd_since", "reason": "is not a recognized query parameter for this operation" }
+  ]
+}
+```
+
+The count endpoint takes the list's filters but not `sort`, `order`, `limit` or `cursor`, which
+cannot change a total, so those are rejected there too.
+
+Two more shapes are rejected for the same reason, since the parser would otherwise read part of the
+request and drop the rest:
+
+- A parameter that takes one value (`tenant_id`, `sort`, `updated_since`, …) given more than once.
+  Only the repeatable filters above take several.
+- A query string that is not well formed, such as one using `;` as a separator or carrying a broken
+  percent escape. The whole request is rejected, under the name `query`.
+
+<Aside type="caution">
+  Hub releases up to 0.14.1 ignore a parameter they do not know. Against one of those, a filter
+  added in a later release is silently dropped: `updated_since` and `updated_until` sent to Hub 0.8.x
+  return every record. Check the Hub version before relying on a newer filter.
+</Aside>
 
 ### What this cannot express
 
@@ -118,6 +160,12 @@ The two diverge whenever historical data is imported: the feedback was *collecte
 to answer "what did people tell us in this period".
 
 ## Incremental extraction
+
+<Aside type="note">
+  `updated_since`, `updated_until` and `sort=updated_at` need Hub 0.9.0 or later. An older Hub
+  answers `sort=updated_at` with `400` (`must be one of: collected_at created_at`) and ignores the two
+  filters.
+</Aside>
 
 To keep a copy of a tenant's records in sync without re-reading everything, filter on
 `updated_since`. Hub stamps `updated_at` on every write to a record, so one filter picks up both

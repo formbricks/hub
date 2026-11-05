@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/formbricks/hub/internal/api/response"
+	"github.com/formbricks/hub/internal/api/validation"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/service"
 )
@@ -63,11 +64,20 @@ const (
 	maxSearchLimit     = 100
 )
 
+// searchQueryParams are the query parameters both search operations take.
+var searchQueryParams = []string{"limit", "cursor", "min_score"}
+
 // SemanticSearch handles POST /v1/feedback-records/search/semantic.
 func (h *SearchHandler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		response.RespondProblem(w, r, http.StatusMethodNotAllowed, "POST required")
+
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, searchQueryParams...); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}
@@ -124,6 +134,12 @@ func (h *SearchHandler) SimilarFeedback(w http.ResponseWriter, r *http.Request) 
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
 		response.RespondProblem(w, r, http.StatusMethodNotAllowed, "GET required")
+
+		return
+	}
+
+	if err := validation.RejectUnknownQueryParams(r, searchQueryParams...); err != nil {
+		response.RespondError(w, r, err)
 
 		return
 	}

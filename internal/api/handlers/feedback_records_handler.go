@@ -223,7 +223,9 @@ func (h *FeedbackRecordsHandler) DeleteByUser(w http.ResponseWriter, r *http.Req
 func (h *FeedbackRecordsHandler) Count(w http.ResponseWriter, r *http.Request) {
 	filters := &models.ListFeedbackRecordsFilters{}
 
-	if err := validation.ValidateAndDecodeQueryParams(r, filters); err != nil {
+	// Count shares the list filters but not their ordering and paging, which cannot change a total.
+	if err := validation.ValidateAndDecodeQueryParams(r, filters,
+		validation.WithoutQueryParams("sort", "order", "limit", "cursor")); err != nil {
 		response.RespondError(w, r, err)
 
 		return

@@ -132,10 +132,10 @@ type ListFeedbackRecordsFilters struct {
 
 	// Enrichment filters. The repeatable enum filters are validated twice on purpose: the decoder
 	// parses and deduplicates the plain repeated form (?sentiment=a&sentiment=b) for a good error
-	// message, and these dive tags re-check the decoded elements. The tags are what actually holds
-	// the invariant — the decoder's custom type funcs are skipped entirely for the indexed form
-	// (?sentiment[0]=a), which would otherwise assign the raw string unvalidated. The max caps
-	// bound that same path, where dedupe does not apply.
+	// message, and these dive tags re-check the decoded elements. The decoder's custom type funcs
+	// are skipped entirely for the indexed form (?sentiment[0]=a), which would assign the raw string
+	// unvalidated; the API refuses that form before decoding, and the tags and max caps hold the
+	// invariant regardless of how the struct was populated.
 	Sentiment []SentimentValue `form:"sentiment" validate:"omitempty,max=6,dive,sentiment"`
 	Emotions  []EmotionValue   `form:"emotions"  validate:"omitempty,max=6,dive,emotion"`
 
