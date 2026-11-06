@@ -68,6 +68,10 @@ const DefaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/test_db?
 
 const (
 	defaultEmbeddingJobTimeout          = 60 * time.Second
+	defaultEmbeddingPreflightTimeout    = 10 * time.Second
+	defaultEmbeddingPreflightInterval   = 60 * time.Second
+	defaultEmbeddingPreflightSuccessTTL = 120 * time.Second
+	defaultEmbeddingPreflightSnooze     = 30 * time.Second
 	defaultEmbeddingReconcileInterval   = 5 * time.Minute
 	defaultEmbeddingReconcileRetryAfter = 15 * time.Minute
 )
@@ -180,13 +184,17 @@ type MessagePublisherConfig struct {
 
 // EmbeddingConfig holds embedding provider and queue settings.
 type EmbeddingConfig struct {
-	ProviderAPIKey string      `env:"EMBEDDING_PROVIDER_API_KEY"`
-	Provider       string      `env:"EMBEDDING_PROVIDER"`
-	Model          string      `env:"EMBEDDING_MODEL"`
-	BaseURL        string      `env:"EMBEDDING_BASE_URL"`
-	MaxConcurrent  int         `env:"EMBEDDING_MAX_CONCURRENT"      env-default:"5"`
-	MaxAttempts    int         `env:"EMBEDDING_MAX_ATTEMPTS"        env-default:"5"`
-	JobTimeout     DurationSec `env:"EMBEDDING_JOB_TIMEOUT_SECONDS" env-default:"60"`
+	ProviderAPIKey      string      `env:"EMBEDDING_PROVIDER_API_KEY"`
+	Provider            string      `env:"EMBEDDING_PROVIDER"`
+	Model               string      `env:"EMBEDDING_MODEL"`
+	BaseURL             string      `env:"EMBEDDING_BASE_URL"`
+	MaxConcurrent       int         `env:"EMBEDDING_MAX_CONCURRENT"                env-default:"5"`
+	MaxAttempts         int         `env:"EMBEDDING_MAX_ATTEMPTS"                  env-default:"5"`
+	JobTimeout          DurationSec `env:"EMBEDDING_JOB_TIMEOUT_SECONDS"           env-default:"60"`
+	PreflightTimeout    DurationSec `env:"EMBEDDING_PREFLIGHT_TIMEOUT_SECONDS"     env-default:"10"`
+	PreflightInterval   DurationSec `env:"EMBEDDING_PREFLIGHT_INTERVAL_SECONDS"    env-default:"60"`
+	PreflightSuccessTTL DurationSec `env:"EMBEDDING_PREFLIGHT_SUCCESS_TTL_SECONDS" env-default:"120"`
+	PreflightSnooze     DurationSec `env:"EMBEDDING_PREFLIGHT_SNOOZE_SECONDS"      env-default:"30"`
 	// MaxInputBytes caps the text sent to the embedding provider, in UTF-8 bytes; 0 disables the
 	// cap. Over the cap the input is trimmed to its first N bytes, because a vector for the first
 	// part of a record beats no vector at all — an over-long input is a terminal provider failure,
@@ -553,6 +561,22 @@ func applyDefaults(cfg *Config) {
 
 	if cfg.Embedding.JobTimeout.Duration() <= 0 {
 		cfg.Embedding.JobTimeout = DurationSec(defaultEmbeddingJobTimeout)
+	}
+
+	if cfg.Embedding.PreflightTimeout.Duration() <= 0 {
+		cfg.Embedding.PreflightTimeout = DurationSec(defaultEmbeddingPreflightTimeout)
+	}
+
+	if cfg.Embedding.PreflightInterval.Duration() <= 0 {
+		cfg.Embedding.PreflightInterval = DurationSec(defaultEmbeddingPreflightInterval)
+	}
+
+	if cfg.Embedding.PreflightSuccessTTL.Duration() <= 0 {
+		cfg.Embedding.PreflightSuccessTTL = DurationSec(defaultEmbeddingPreflightSuccessTTL)
+	}
+
+	if cfg.Embedding.PreflightSnooze.Duration() <= 0 {
+		cfg.Embedding.PreflightSnooze = DurationSec(defaultEmbeddingPreflightSnooze)
 	}
 
 	if cfg.Embedding.BatchSize <= 0 {

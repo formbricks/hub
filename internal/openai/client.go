@@ -41,6 +41,8 @@ var (
 	ErrEmbeddingIndexInvalid = errors.New("openai: embedding response index invalid")
 	// ErrEmbeddingValueInvalid is returned when a response vector contains NaN or infinity.
 	ErrEmbeddingValueInvalid = errors.New("openai: embedding value is not finite")
+	// ErrEmbeddingModelMismatch rejects a provider response served by a different model.
+	ErrEmbeddingModelMismatch = errors.New("openai: embedding response model mismatch")
 	// ErrNoCompletionInResponse is returned when a chat completion response contains no usable text.
 	ErrNoCompletionInResponse = errors.New("openai: no completion in response")
 )
@@ -140,6 +142,10 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		return nil, wrapOpenAIError("openai embedding", err)
 	}
 
+	if resp.Model != c.model {
+		return nil, ErrEmbeddingModelMismatch
+	}
+
 	vectors, err := c.decodeEmbeddingResponse(resp.Data, 1)
 	if err != nil {
 		return nil, err
@@ -188,6 +194,10 @@ func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]flo
 
 	if err != nil {
 		return nil, wrapOpenAIError("openai embeddings batch", err)
+	}
+
+	if resp.Model != c.model {
+		return nil, ErrEmbeddingModelMismatch
 	}
 
 	return c.decodeEmbeddingResponse(resp.Data, len(trimmed))

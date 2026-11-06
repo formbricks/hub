@@ -39,6 +39,41 @@ func RegisterHNSWIterativeScanGauge(meter metric.Meter, degraded func() bool) er
 	return nil
 }
 
+// RegisterEmbeddingPreflightGauge reports the worker's provider readiness with only a bounded
+// reason label. The callback must never return provider error text, credentials, or input.
+func RegisterEmbeddingPreflightGauge(meter metric.Meter, state func() (bool, string)) error {
+	if meter == nil || state == nil {
+		return nil
+	}
+
+	_, err := meter.Int64ObservableGauge(MetricNameEmbeddingProviderReady,
+		metric.WithDescription("1 when the embedding worker may call its configured provider"),
+		metric.WithInt64Callback(func(_ context.Context, observer metric.Int64Observer) error {
+			ready, reason := state()
+			switch reason {
+			case "ready", "disabled", "invalid_config", "endpoint", "authentication", "permission",
+				"model", "dimension", "input", "rate_limited", "timeout", "provider":
+			default:
+				reason = "provider"
+			}
+
+			var value int64
+			if ready {
+				value = 1
+			}
+
+			observer.Observe(value, metric.WithAttributes(attribute.String("reason", reason)))
+
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("embedding preflight gauge: %w", err)
+	}
+
+	return nil
+}
+
 // EmbeddingMetrics records embedding pipeline metrics (provider, worker).
 // Backed by the shared enrichmentMetrics implementation.
 type EmbeddingMetrics interface {

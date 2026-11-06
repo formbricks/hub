@@ -23,8 +23,10 @@ type EmbeddingReconcileSweeper interface {
 type EmbeddingReconcileWorker struct {
 	river.WorkerDefaults[service.EmbeddingReconcileArgs]
 
-	sweeper EmbeddingReconcileSweeper
-	metrics observability.EmbeddingMetrics
+	sweeper   EmbeddingReconcileSweeper
+	metrics   observability.EmbeddingMetrics
+	preflight *service.EmbeddingPreflight
+	snooze    time.Duration
 }
 
 // NewEmbeddingReconcileWorker creates the periodic sweep worker.
@@ -33,6 +35,12 @@ func NewEmbeddingReconcileWorker(
 	metrics observability.EmbeddingMetrics,
 ) *EmbeddingReconcileWorker {
 	return &EmbeddingReconcileWorker{sweeper: sweeper, metrics: metrics}
+}
+
+// SetPreflight snoozes newly claimed reconcile jobs while provider readiness is false.
+func (w *EmbeddingReconcileWorker) SetPreflight(preflight *service.EmbeddingPreflight, snooze time.Duration) {
+	w.preflight = preflight
+	w.snooze = snooze
 }
 
 // Timeout gives the database scan and bounded insert batch its own deadline rather than inheriting
@@ -47,6 +55,10 @@ func (w *EmbeddingReconcileWorker) Work(
 	ctx context.Context,
 	_ *river.Job[service.EmbeddingReconcileArgs],
 ) error {
+	if w.preflight != nil && !w.preflight.Ready() {
+		return river.JobSnooze(w.snooze) //nolint:wrapcheck // River must receive the sentinel unwrapped
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, embeddingReconcileTimeout)
 	defer cancel()
 

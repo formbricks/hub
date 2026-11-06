@@ -26,6 +26,18 @@ func main() {
 }
 
 func run() int {
+	if len(os.Args) == 2 && os.Args[1] == "--check-embedding-readiness" {
+		if checkEmbeddingReadiness() {
+			return exitSuccess
+		}
+
+		return exitFailure
+	}
+
+	if err := setEmbeddingReadiness(false); err != nil {
+		return exitFailure
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		// Configure logging before reporting the failure, so a broken config still produces output.

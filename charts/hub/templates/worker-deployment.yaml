@@ -40,6 +40,21 @@ spec:
     spec:
       serviceAccountName: {{ include "hub.serviceAccountName" . }}
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds | default .Values.terminationGracePeriodSeconds }}
+      {{- if or .Values.worker.embeddingReadiness.enabled (and .Values.embeddingClient.enabled (eq .Values.embeddingClient.provider "google-gemini") .Values.embeddingClient.auth.googleCredentialsSecret) }}
+      volumes:
+        {{- if .Values.worker.embeddingReadiness.enabled }}
+        - name: embedding-readiness
+          emptyDir: {}
+        {{- end }}
+        {{- if and .Values.embeddingClient.enabled (eq .Values.embeddingClient.provider "google-gemini") .Values.embeddingClient.auth.googleCredentialsSecret }}
+        - name: embedding-google-credentials
+          secret:
+            secretName: {{ .Values.embeddingClient.auth.googleCredentialsSecret }}
+            items:
+              - key: {{ .Values.embeddingClient.auth.googleCredentialsKey }}
+                path: credentials.json
+        {{- end }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -75,6 +90,28 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - /app/hub-worker
+          {{- if or .Values.worker.embeddingReadiness.enabled (and .Values.embeddingClient.enabled (eq .Values.embeddingClient.provider "google-gemini") .Values.embeddingClient.auth.googleCredentialsSecret) }}
+          volumeMounts:
+            {{- if .Values.worker.embeddingReadiness.enabled }}
+            - name: embedding-readiness
+              mountPath: {{ dir .Values.worker.embeddingReadiness.path }}
+            {{- end }}
+            {{- if and .Values.embeddingClient.enabled (eq .Values.embeddingClient.provider "google-gemini") .Values.embeddingClient.auth.googleCredentialsSecret }}
+            - name: embedding-google-credentials
+              mountPath: /var/run/hub-google
+              readOnly: true
+            {{- end }}
+          {{- end }}
+          {{- if .Values.worker.embeddingReadiness.enabled }}
+          readinessProbe:
+            exec:
+              command:
+                - /app/hub-worker
+                - --check-embedding-readiness
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 1
+          {{- end }}
           {{- if or (and .Values.config.create (not .Values.config.existingConfigMap)) .Values.config.existingConfigMap (and .Values.secrets.create (not .Values.secrets.existingSecret) (not .Values.secrets.externalSecrets.enabled)) .Values.secrets.existingSecret .Values.secrets.externalSecrets.enabled .Values.extraEnvFrom .Values.worker.extraEnvFrom }}
           envFrom:
             {{- if or (and .Values.config.create (not .Values.config.existingConfigMap)) .Values.config.existingConfigMap }}
@@ -92,18 +129,31 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
-          {{- if or .Values.embeddings.enabled (gt (len .Values.extraEnv) 0) (gt (len .Values.worker.extraEnv) 0) }}
+          {{- if or .Values.embeddings.enabled .Values.embeddingClient.enabled .Values.worker.embeddingReadiness.enabled (gt (len .Values.extraEnv) 0) (gt (len .Values.worker.extraEnv) 0) }}
           env:
             {{- include "hub.embeddingEnv" . | nindent 12 }}
+            {{- include "hub.embeddingClientEnv" (dict "root" . "role" "worker") | nindent 12 }}
+            {{- if .Values.worker.embeddingReadiness.enabled }}
+            - name: HUB_EMBEDDING_READINESS_FILE
+              value: {{ .Values.worker.embeddingReadiness.path | quote }}
+            {{- end }}
+            - name: EMBEDDING_PREFLIGHT_TIMEOUT_SECONDS
+              value: {{ .Values.worker.embeddingPreflight.timeoutSeconds | quote }}
+            - name: EMBEDDING_PREFLIGHT_INTERVAL_SECONDS
+              value: {{ .Values.worker.embeddingPreflight.intervalSeconds | quote }}
+            - name: EMBEDDING_PREFLIGHT_SUCCESS_TTL_SECONDS
+              value: {{ .Values.worker.embeddingPreflight.successTTLSeconds | quote }}
+            - name: EMBEDDING_PREFLIGHT_SNOOZE_SECONDS
+              value: {{ .Values.worker.embeddingPreflight.snoozeSeconds | quote }}
             {{- range .Values.extraEnv }}
             {{- $name := .name | default "" }}
-            {{- if not (and $.Values.embeddings.enabled (include "hub.embeddingEnvManaged" (dict "key" $name))) }}
+            {{- if not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "key" $name "external" $.Values.embeddingClient.enabled))) }}
             {{- toYaml (list .) | nindent 12 }}
             {{- end }}
             {{- end }}
             {{- range .Values.worker.extraEnv }}
             {{- $name := .name | default "" }}
-            {{- if not (and $.Values.embeddings.enabled (include "hub.embeddingEnvManaged" (dict "key" $name))) }}
+            {{- if not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "key" $name "external" $.Values.embeddingClient.enabled))) }}
             {{- toYaml (list .) | nindent 12 }}
             {{- end }}
             {{- end }}

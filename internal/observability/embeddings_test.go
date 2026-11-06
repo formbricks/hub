@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,21 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
+
+func TestEmbeddingPreflightGaugeUsesOnlyBoundedReason(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	require.NoError(t, RegisterEmbeddingPreflightGauge(provider.Meter("test"), func() (bool, string) {
+		return false, "token=secret customer response at /v1/embeddings"
+	}))
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &collected))
+	serialized := fmt.Sprint(collected)
+	assert.NotContains(t, serialized, "secret")
+	assert.NotContains(t, serialized, "customer response")
+	assert.Contains(t, serialized, "provider")
+}
 
 func TestNewEmbeddingMetricsNilMeterDisabled(t *testing.T) {
 	metrics, err := NewEmbeddingMetrics(nil)

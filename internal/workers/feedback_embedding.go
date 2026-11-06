@@ -30,6 +30,8 @@ type FeedbackEmbeddingWorker struct {
 	failures         FailureRecorder
 	failureMetrics   observability.EnrichmentFailureMetrics
 	trimmedMetrics   observability.EnrichmentTrimmedMetrics
+	preflight        *service.EmbeddingPreflight
+	preflightSnooze  time.Duration
 }
 
 const defaultEmbeddingJobTimeout = 60 * time.Second
@@ -92,6 +94,13 @@ func NewFeedbackEmbeddingWorkerWithOptions(
 	}
 }
 
+// SetPreflight prevents a degraded provider from receiving newly claimed work. River snoozes
+// without consuming an attempt; in-flight calls are not interrupted by a later probe failure.
+func (w *FeedbackEmbeddingWorker) SetPreflight(preflight *service.EmbeddingPreflight, snooze time.Duration) {
+	w.preflight = preflight
+	w.preflightSnooze = snooze
+}
+
 // Timeout limits how long a single embedding job can run.
 func (w *FeedbackEmbeddingWorker) Timeout(*river.Job[service.FeedbackEmbeddingArgs]) time.Duration {
 	return w.jobTimeout
@@ -99,6 +108,10 @@ func (w *FeedbackEmbeddingWorker) Timeout(*river.Job[service.FeedbackEmbeddingAr
 
 // Work loads the record, generates or clears the embedding, and persists it.
 func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[service.FeedbackEmbeddingArgs]) error {
+	if w.preflight != nil && !w.preflight.Ready() {
+		return river.JobSnooze(w.preflightSnooze) //nolint:wrapcheck // River must receive the sentinel unwrapped
+	}
+
 	args := job.Args
 	start := time.Now()
 

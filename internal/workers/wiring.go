@@ -25,6 +25,7 @@ type RiverDeps struct {
 	EmbeddingClient    service.EmbeddingClient
 	EmbeddingDocPrefix string
 	EmbeddingMetrics   observability.EmbeddingMetrics
+	EmbeddingPreflight *service.EmbeddingPreflight
 	// EmbeddingReconcileSweeper is non-nil only when automatic embedding repair is enabled.
 	EmbeddingReconcileSweeper EmbeddingReconcileSweeper
 
@@ -128,6 +129,7 @@ func NewRiverWorkersAndQueues(
 			cfg.Embedding.MaxInputBytes,
 			deps.TrimmedMetrics,
 		)
+		embeddingWorker.SetPreflight(deps.EmbeddingPreflight, cfg.Embedding.PreflightSnooze.Duration())
 		river.AddWorker(workers, embeddingWorker)
 
 		queues[service.EmbeddingsQueueName] = river.QueueConfig{MaxWorkers: maxEmbedding}
@@ -138,8 +140,9 @@ func NewRiverWorkersAndQueues(
 		}
 
 		if deps.EmbeddingReconcileSweeper != nil {
-			river.AddWorker(workers, NewEmbeddingReconcileWorker(
-				deps.EmbeddingReconcileSweeper, deps.EmbeddingMetrics))
+			reconcileWorker := NewEmbeddingReconcileWorker(deps.EmbeddingReconcileSweeper, deps.EmbeddingMetrics)
+			reconcileWorker.SetPreflight(deps.EmbeddingPreflight, cfg.Embedding.PreflightSnooze.Duration())
+			river.AddWorker(workers, reconcileWorker)
 
 			queues[service.EmbeddingReconcileQueueName] = river.QueueConfig{MaxWorkers: 1}
 		}

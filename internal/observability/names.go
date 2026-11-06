@@ -49,6 +49,7 @@ const (
 	MetricNameEmbeddingBatchRequests  = "hub_embedding_batch_requests_total"
 	MetricNameEmbeddingBatchDuration  = "hub_embedding_batch_request_duration_seconds"
 	MetricNameEmbeddingBatchInFlight  = "hub_embedding_batch_requests_in_flight"
+	MetricNameEmbeddingProviderReady  = "hub_embedding_provider_ready"
 
 	// MetricNameTranslationJobsEnqueued and related translation pipeline metrics.
 	MetricNameTranslationJobsEnqueued   = "hub_translation_jobs_enqueued_total"
