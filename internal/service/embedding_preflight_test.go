@@ -151,7 +151,7 @@ func TestEmbeddingPreflightClassifiesProviderHTTPResponses(t *testing.T) {
 		{"endpoint", http.StatusNotFound, "not_found", PreflightEndpoint},
 		{"input", http.StatusBadRequest, "invalid_input", PreflightInput},
 		{"rate limit", http.StatusTooManyRequests, "rate_limit_exceeded", PreflightRateLimited},
-		{"server error", http.StatusServiceUnavailable, "unavailable", PreflightProvider},
+		{"server error", http.StatusServiceUnavailable, "unavailable", PreflightServer},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -199,11 +199,23 @@ func TestEmbeddingPreflightBatchAndExpiry(t *testing.T) {
 	assert.True(t, preflight.Ready(), "one transient failure retains the bounded last success")
 	assert.Equal(t, PreflightRateLimited, preflight.LastFailureReason())
 
+	client.err = &openaisdk.Error{StatusCode: http.StatusServiceUnavailable}
+
+	assert.Equal(t, PreflightServer, preflight.Probe(context.Background()))
+	assert.True(t, preflight.Ready())
+	assert.Equal(t, PreflightServer, preflight.LastFailureReason())
+
+	client.err = context.DeadlineExceeded
+
+	assert.Equal(t, PreflightTimeout, preflight.Probe(context.Background()))
+	assert.True(t, preflight.Ready())
+	assert.Equal(t, PreflightTimeout, preflight.LastFailureReason())
+
 	now = now.Add(25 * time.Millisecond)
 
 	assert.False(t, preflight.Ready())
 	assert.Equal(t, PreflightExpired, preflight.Reason())
-	assert.Equal(t, PreflightRateLimited, preflight.LastFailureReason())
+	assert.Equal(t, PreflightTimeout, preflight.LastFailureReason())
 	assert.NotContains(t, string(preflight.Reason()), "secret")
 
 	client.err = nil
@@ -254,7 +266,7 @@ func TestClassifyEmbeddingPreflightError(t *testing.T) {
 		{"input", huberrors.NewTerminalProviderError(huberrors.TerminalReasonLength, errors.New("secret input")), PreflightInput},
 		{"rate limit", huberrors.NewRateLimitError(time.Second, errors.New("overloaded")), PreflightRateLimited},
 		{"timeout", context.DeadlineExceeded, PreflightTimeout},
-		{"server error", &openaisdk.Error{StatusCode: 503}, PreflightProvider},
+		{"server error", &openaisdk.Error{StatusCode: 503}, PreflightServer},
 		{"connection reset is transient", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, PreflightProvider},
 		{"connection refused invalidates route", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, PreflightEndpoint},
 	}

@@ -36,6 +36,7 @@ const (
 	PreflightInput         EmbeddingPreflightReason = "input"
 	PreflightRateLimited   EmbeddingPreflightReason = "rate_limited"
 	PreflightTimeout       EmbeddingPreflightReason = "timeout"
+	PreflightServer        EmbeddingPreflightReason = "server_error"
 	PreflightProvider      EmbeddingPreflightReason = "provider"
 	PreflightExpired       EmbeddingPreflightReason = "expired"
 )
@@ -221,7 +222,7 @@ func (p *EmbeddingPreflight) setFailure(reason EmbeddingPreflightReason) {
 	p.mu.Lock()
 
 	p.reason = reason
-	if reason != PreflightRateLimited && reason != PreflightTimeout && reason != PreflightProvider {
+	if reason != PreflightRateLimited && reason != PreflightTimeout && reason != PreflightServer && reason != PreflightProvider {
 		p.lastSuccess = time.Time{}
 	}
 	p.mu.Unlock()
@@ -307,6 +308,10 @@ func classifyPreflightHTTP(status int, code string) EmbeddingPreflightReason {
 
 		return PreflightInput
 	default:
+		if status >= http.StatusInternalServerError && status <= 599 {
+			return PreflightServer
+		}
+
 		return PreflightProvider
 	}
 }
