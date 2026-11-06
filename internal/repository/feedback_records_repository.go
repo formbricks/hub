@@ -938,8 +938,8 @@ func buildUpdateQuery(
 	// Each output's trigger set MIRRORS its provider's `triggers` (internal/service/*_provider.go):
 	// sentiment and emotions depend on value_text alone; translation on value_text OR language.
 	// Keep the two in sync — TestBuildUpdateQuery_ClearsStaleEnrichmentOnContentChange guards it.
-	// The embedding is a separate search-index table, intentionally left to its worker's atomic
-	// overwrite (not cleared here).
+	// The embedding is a separate search-index table. Nonempty edits use the worker's atomic
+	// overwrite; empty answers are cleared synchronously after the update below.
 	var valueTextChanged, languageChanged string
 	if valueTextArg != 0 {
 		valueTextChanged = fmt.Sprintf(
@@ -1067,6 +1067,18 @@ func (r *FeedbackRecordsRepository) Update(
 			}
 
 			return fmt.Errorf("failed to update feedback record: %w", scanErr)
+		}
+
+		// A removed answer has no embeddable input. Clear its search and taxonomy vectors
+		// in this transaction, including when the embedding queue has not started because
+		// provider preflight is down. The worker's write-time source guard prevents an
+		// in-flight request from restoring a vector for the old text after this commit.
+		if req.ValueText != nil && strings.TrimSpace(*req.ValueText) == "" {
+			_, clearErr := dbTx.Exec(ctx, `DELETE FROM embeddings WHERE feedback_record_id = $1
+				AND EXISTS (SELECT 1 FROM feedback_records WHERE id = $1 AND tenant_id = $2)`, id, tenantID)
+			if clearErr != nil {
+				return fmt.Errorf("clear embeddings for empty feedback record: %w", clearErr)
+			}
 		}
 
 		if err := runRecordWriteHook(ctx, dbTx, hook, scanned, prev); err != nil {

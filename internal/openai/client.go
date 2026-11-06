@@ -41,18 +41,21 @@ var (
 	ErrEmbeddingIndexInvalid = errors.New("openai: embedding response index invalid")
 	// ErrEmbeddingValueInvalid is returned when a response vector contains NaN or infinity.
 	ErrEmbeddingValueInvalid = errors.New("openai: embedding value is not finite")
+	// ErrEmbeddingModelMismatch rejects a provider response served by a different model.
+	ErrEmbeddingModelMismatch = errors.New("openai: embedding response model mismatch")
 	// ErrNoCompletionInResponse is returned when a chat completion response contains no usable text.
 	ErrNoCompletionInResponse = errors.New("openai: no completion in response")
 )
 
 // Client calls the OpenAI embeddings API via the official SDK.
 type Client struct {
-	sdk               openaisdk.Client
-	baseURL           string
-	dimensions        int
-	model             string
-	normalize         bool
-	disableKeepAlives bool
+	sdk                   openaisdk.Client
+	baseURL               string
+	dimensions            int
+	model                 string
+	expectedResponseModel string
+	normalize             bool
+	disableKeepAlives     bool
 	// temperatureUnsupported latches once the configured model rejects the temperature
 	// parameter (reasoning models do), so later calls omit it instead of failing.
 	temperatureUnsupported atomic.Bool
@@ -140,6 +143,10 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		return nil, wrapOpenAIError("openai embedding", err)
 	}
 
+	if c.expectedResponseModel != "" && resp.Model != c.expectedResponseModel {
+		return nil, ErrEmbeddingModelMismatch
+	}
+
 	vectors, err := c.decodeEmbeddingResponse(resp.Data, 1)
 	if err != nil {
 		return nil, err
@@ -188,6 +195,10 @@ func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]flo
 
 	if err != nil {
 		return nil, wrapOpenAIError("openai embeddings batch", err)
+	}
+
+	if c.expectedResponseModel != "" && resp.Model != c.expectedResponseModel {
+		return nil, ErrEmbeddingModelMismatch
 	}
 
 	return c.decodeEmbeddingResponse(resp.Data, len(trimmed))
@@ -592,6 +603,12 @@ func WithModel(model string) ClientOption {
 	return func(c *Client) {
 		c.model = model
 	}
+}
+
+// WithExpectedResponseModel opts into validating the provider's reported model. Leave unset
+// for endpoints that omit the model or report an alias different from the request model.
+func WithExpectedResponseModel(model string) ClientOption {
+	return func(c *Client) { c.expectedResponseModel = model }
 }
 
 // WithBaseURL sets a custom OpenAI-compatible base URL (for example a self-hosted embeddings runtime).
