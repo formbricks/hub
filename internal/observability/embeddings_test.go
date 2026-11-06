@@ -16,8 +16,8 @@ import (
 func TestEmbeddingPreflightGaugeUsesOnlyBoundedReason(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	require.NoError(t, RegisterEmbeddingPreflightGauge(provider.Meter("test"), func() (bool, string) {
-		return false, "token=secret customer response at /v1/embeddings"
+	require.NoError(t, RegisterEmbeddingPreflightGauge(provider.Meter("test"), func() (bool, string, string) {
+		return false, "token=secret customer response at /v1/embeddings", "key=secret customer input"
 	}))
 
 	var collected metricdata.ResourceMetrics
@@ -31,13 +31,14 @@ func TestEmbeddingPreflightGaugeUsesOnlyBoundedReason(t *testing.T) {
 func TestEmbeddingPreflightGaugePreservesExpiredReason(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	require.NoError(t, RegisterEmbeddingPreflightGauge(provider.Meter("test"), func() (bool, string) {
-		return false, "expired"
+	require.NoError(t, RegisterEmbeddingPreflightGauge(provider.Meter("test"), func() (bool, string, string) {
+		return false, "expired", "rate_limited"
 	}))
 
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &collected))
 	assert.Contains(t, fmt.Sprint(collected), "expired")
+	assert.Contains(t, fmt.Sprint(collected), "rate_limited")
 }
 
 func TestNewEmbeddingMetricsNilMeterDisabled(t *testing.T) {

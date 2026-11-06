@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"syscall"
 	"testing"
 	"time"
 
@@ -107,7 +109,7 @@ func TestEmbeddingPreflightRejectsResponseFromWrongModel(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := openai.NewClient("synthetic-key", openai.WithBaseURL(server.URL),
-		openai.WithModel("configured-model"))
+		openai.WithModel("configured-model"), openai.WithExpectedResponseModel("configured-model"))
 	preflight := NewEmbeddingPreflight(client, 1, time.Second, time.Minute)
 	assert.Equal(t, PreflightModel, preflight.Probe(context.Background()))
 	assert.False(t, preflight.Ready())
@@ -129,7 +131,8 @@ func TestEmbeddingPreflightRejectsWrongBatchResponseModel(t *testing.T) {
 		}))
 	}))
 	t.Cleanup(server.Close)
-	client := openai.NewClient("synthetic-key", openai.WithBaseURL(server.URL), openai.WithModel("configured-model"))
+	client := openai.NewClient("synthetic-key", openai.WithBaseURL(server.URL),
+		openai.WithModel("configured-model"), openai.WithExpectedResponseModel("configured-model"))
 	preflight := NewEmbeddingPreflight(client, 2, time.Second, time.Minute)
 	assert.Equal(t, PreflightModel, preflight.Probe(context.Background()))
 	assert.False(t, preflight.Ready())
@@ -194,11 +197,13 @@ func TestEmbeddingPreflightBatchAndExpiry(t *testing.T) {
 
 	assert.Equal(t, PreflightRateLimited, preflight.Probe(context.Background()))
 	assert.True(t, preflight.Ready(), "one transient failure retains the bounded last success")
+	assert.Equal(t, PreflightRateLimited, preflight.LastFailureReason())
 
 	now = now.Add(25 * time.Millisecond)
 
 	assert.False(t, preflight.Ready())
 	assert.Equal(t, PreflightExpired, preflight.Reason())
+	assert.Equal(t, PreflightRateLimited, preflight.LastFailureReason())
 	assert.NotContains(t, string(preflight.Reason()), "secret")
 
 	client.err = nil
@@ -250,6 +255,8 @@ func TestClassifyEmbeddingPreflightError(t *testing.T) {
 		{"rate limit", huberrors.NewRateLimitError(time.Second, errors.New("overloaded")), PreflightRateLimited},
 		{"timeout", context.DeadlineExceeded, PreflightTimeout},
 		{"server error", &openaisdk.Error{StatusCode: 503}, PreflightProvider},
+		{"connection reset is transient", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, PreflightProvider},
+		{"connection refused invalidates route", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, PreflightEndpoint},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) { assert.Equal(t, test.reason, ClassifyEmbeddingPreflightError(test.err)) })

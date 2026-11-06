@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	openaisdk "github.com/openai/openai-go/v3"
@@ -207,6 +208,15 @@ func (p *EmbeddingPreflight) Reason() EmbeddingPreflightReason {
 	return p.reason
 }
 
+// LastFailureReason reports the latest bounded probe failure independently of the grace-period
+// readiness state. It distinguishes transient failures even while readiness still says ready or expired.
+func (p *EmbeddingPreflight) LastFailureReason() EmbeddingPreflightReason {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	return p.reason
+}
+
 func (p *EmbeddingPreflight) setFailure(reason EmbeddingPreflightReason) {
 	p.mu.Lock()
 
@@ -255,6 +265,12 @@ func ClassifyEmbeddingPreflightError(err error) EmbeddingPreflightReason {
 	if netErr, ok := errors.AsType[net.Error](err); ok {
 		if netErr.Timeout() {
 			return PreflightTimeout
+		}
+
+		// A reset during a provider restart is transient; an unreachable endpoint remains
+		// a deployment fault and invalidates the previous success immediately.
+		if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+			return PreflightProvider
 		}
 
 		return PreflightEndpoint

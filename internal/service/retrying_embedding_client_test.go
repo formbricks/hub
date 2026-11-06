@@ -29,5 +29,11 @@ func TestRetryingEmbeddingClientRecoversWithoutRestart(t *testing.T) {
 
 	_, err := client.CreateEmbedding(context.Background(), "record")
 	require.NoError(t, err)
+
+	batchClient := &RetryingBatchEmbeddingClient{RetryingEmbeddingClient: client}
+	vectors, err := batchClient.CreateEmbeddings(context.Background(), []string{"one", "two"})
+	require.NoError(t, err)
+	require.Len(t, vectors, 2)
+	assert.Equal(t, 1, underlying.batchCalls)
 	assert.Equal(t, 2, attempts)
 }

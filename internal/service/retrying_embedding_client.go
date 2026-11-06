@@ -55,6 +55,44 @@ func (c *RetryingEmbeddingClient) CreateEmbeddingForQuery(ctx context.Context, i
 	return vector, nil
 }
 
+// RetryingBatchEmbeddingClient advertises batching only for providers whose direct client
+// supports it, so a deferred setup does not enable batching for another provider by accident.
+type RetryingBatchEmbeddingClient struct{ *RetryingEmbeddingClient }
+
+// NewRetryingBatchEmbeddingClient retries setup while preserving the native batch capability.
+func NewRetryingBatchEmbeddingClient(cfg EmbeddingClientConfig) *RetryingBatchEmbeddingClient {
+	return &RetryingBatchEmbeddingClient{RetryingEmbeddingClient: NewRetryingEmbeddingClient(cfg)}
+}
+
+// CreateEmbeddings preserves the configured batch route after deferred provider setup recovers.
+func (c *RetryingBatchEmbeddingClient) CreateEmbeddings(ctx context.Context, inputs []string) ([][]float32, error) {
+	client, err := c.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if batch, ok := client.(BatchEmbeddingClient); ok {
+		vectors, err := batch.CreateEmbeddings(ctx, inputs)
+		if err != nil {
+			return nil, fmt.Errorf("embedding batch request: %w", err)
+		}
+
+		return vectors, nil
+	}
+
+	vectors := make([][]float32, 0, len(inputs))
+	for _, input := range inputs {
+		vector, err := client.CreateEmbedding(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("embedding request: %w", err)
+		}
+
+		vectors = append(vectors, vector)
+	}
+
+	return vectors, nil
+}
+
 func (c *RetryingEmbeddingClient) get(ctx context.Context) (EmbeddingClient, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -29,14 +29,23 @@ import (
 type WorkerApp struct {
 	cfg              *config.Config
 	db               *pgxpool.Pool
-	river            *river.Client[pgx.Tx]
-	embeddingRiver   *river.Client[pgx.Tx]
+	river            workerRiver
+	embeddingRiver   workerRiver
 	embeddingStarted atomic.Bool
 	preflight        *service.EmbeddingPreflight
 	riverLogs        *observability.SamplingHandler
 	embeddingBatch   *service.BatchingEmbeddingClient
 	meterProvider    *sdkmetric.MeterProvider
 	tracerProvider   *sdktrace.TracerProvider
+}
+
+// workerRiver keeps startup and shutdown testable without a database-backed River client.
+type workerRiver interface {
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	StopAndCancel(ctx context.Context) error
+	Stopped() <-chan struct{}
+	ID() string
 }
 
 // NewWorkerApp builds the River client with all workers and returns an app that runs only River.
@@ -156,10 +165,16 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	)
 	if providerName == "" && (cfg.Embedding.Provider != "" || cfg.Embedding.Model != "") {
 		preflight = service.NewFailedEmbeddingPreflight(service.PreflightInvalidConfig)
+		slog.Warn("embedding configuration invalid; embedding queues will remain paused", "reason", service.PreflightInvalidConfig)
+	}
+
+	if providerName != "" && !embeddingPreflightTimingValid(cfg) {
+		preflight = service.NewFailedEmbeddingPreflight(service.PreflightInvalidConfig)
+		slog.Warn("embedding preflight timing invalid; embedding queues will remain paused", "reason", service.PreflightInvalidConfig)
 	}
 
 	//nolint:nestif // keep provider validation, client creation, and job wiring in one guarded path
-	if providerName != "" {
+	if providerName != "" && preflight == nil {
 		embeddingCfg := service.EmbeddingClientConfig{
 			UsageRecorder:         genAIUsage,
 			Provider:              providerName,
@@ -179,6 +194,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			}
 
 			preflight = service.NewFailedEmbeddingPreflight(reason)
+			slog.Warn("embedding configuration invalid; embedding queues will remain paused", "reason", reason)
 		} else {
 			slog.Info("embedding worker configured",
 				"provider", providerName,
@@ -189,7 +205,11 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			if err != nil {
 				// Credential discovery can recover while this worker remains up. The preflight
 				// retries setup before any embedding queue begins consuming jobs.
-				embeddingClient = service.NewRetryingEmbeddingClient(embeddingCfg)
+				if providerName == service.EmbeddingProviderOpenAI {
+					embeddingClient = service.NewRetryingBatchEmbeddingClient(embeddingCfg)
+				} else {
+					embeddingClient = service.NewRetryingEmbeddingClient(embeddingCfg)
+				}
 
 				slog.Warn("embedding client initialization deferred", "reason", service.PreflightAuth)
 			}
@@ -372,12 +392,12 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	}
 
 	if meterProvider != nil {
-		if err := observability.RegisterEmbeddingPreflightGauge(meterProvider.Meter("hub"), func() (bool, string) {
+		if err := observability.RegisterEmbeddingPreflightGauge(meterProvider.Meter("hub"), func() (bool, string, string) {
 			if preflight == nil {
-				return true, "disabled"
+				return true, "disabled", "disabled"
 			}
 
-			return preflight.Ready(), string(preflight.Reason())
+			return preflight.Ready(), string(preflight.Reason()), string(preflight.LastFailureReason())
 		}); err != nil {
 			shutdownObservability(context.Background(), meterProvider, tracerProvider)
 
@@ -578,12 +598,15 @@ func embeddingProviderAndModel(cfg *config.Config) (provider, model string) {
 
 	providerCanonical := service.NormalizeEmbeddingProvider(cfg.Embedding.Provider)
 	if _, ok := service.SupportedEmbeddingProviders()[providerCanonical]; !ok {
-		slog.Warn("embedding provider configuration invalid", "reason", service.PreflightInvalidConfig)
-
 		return "", ""
 	}
 
 	return providerCanonical, cfg.Embedding.Model
+}
+
+func embeddingPreflightTimingValid(cfg *config.Config) bool {
+	return cfg.Embedding.PreflightInterval.Duration() > 0 &&
+		cfg.Embedding.PreflightInterval.Duration() < cfg.Embedding.PreflightSuccessTTL.Duration()
 }
 
 var (
@@ -605,7 +628,15 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 
 	//nolint:nestif // disabled and enabled readiness have distinct worker lifecycles
 	if a.preflight == nil {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-a.river.Stopped():
+			if ctx.Err() == nil {
+				a.stopRiverClients(ctx)
+
+				return errCoreRiverStopped
+			}
+		}
 	} else {
 		interval := a.cfg.Embedding.PreflightInterval.Duration()
 		if interval <= 0 {
@@ -616,12 +647,14 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 		defer ticker.Stop()
 
 		previous := service.EmbeddingPreflightReason("")
+		previousFailure := service.EmbeddingPreflightReason("")
 
 		var embeddingStopped <-chan struct{}
 
 		for ctx.Err() == nil {
 			a.preflight.Probe(ctx)
 			reason := a.preflight.Reason()
+			lastFailure := a.preflight.LastFailureReason()
 
 			ready := a.preflight.Ready()
 			if err := setEmbeddingReadiness(a.preflight.ExpiresAt()); err != nil {
@@ -630,9 +663,10 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 				ready = false
 			}
 
-			if reason != previous {
-				slog.Info("embedding provider readiness changed", "reason", reason, "ready", ready)
+			if reason != previous || lastFailure != previousFailure {
+				slog.Info("embedding provider readiness changed", "reason", reason, "last_failure", lastFailure, "ready", ready)
 				previous = reason
+				previousFailure = lastFailure
 			}
 
 			if ready && a.embeddingRiver != nil && !a.embeddingStarted.Load() {
@@ -691,7 +725,7 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 func (a *WorkerApp) stopRiverClients(ctx context.Context) {
 	var group sync.WaitGroup
 
-	stop := func(client *river.Client[pgx.Tx]) {
+	stop := func(client workerRiver) {
 		defer group.Done()
 
 		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.cfg.Server.ShutdownTimeout.Duration())

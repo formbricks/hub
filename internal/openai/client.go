@@ -143,7 +143,7 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		return nil, wrapOpenAIError("openai embedding", err)
 	}
 
-	if resp.Model != c.responseModel() {
+	if c.expectedResponseModel != "" && resp.Model != c.expectedResponseModel {
 		return nil, ErrEmbeddingModelMismatch
 	}
 
@@ -197,7 +197,7 @@ func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]flo
 		return nil, wrapOpenAIError("openai embeddings batch", err)
 	}
 
-	if resp.Model != c.responseModel() {
+	if c.expectedResponseModel != "" && resp.Model != c.expectedResponseModel {
 		return nil, ErrEmbeddingModelMismatch
 	}
 
@@ -605,18 +605,10 @@ func WithModel(model string) ClientOption {
 	}
 }
 
-// WithExpectedResponseModel permits an OpenAI-compatible endpoint to report its canonical
-// served model while requests continue to use the configured model alias.
+// WithExpectedResponseModel opts into validating the provider's reported model. Leave unset
+// for endpoints that omit the model or report an alias different from the request model.
 func WithExpectedResponseModel(model string) ClientOption {
 	return func(c *Client) { c.expectedResponseModel = model }
-}
-
-func (c *Client) responseModel() string {
-	if c.expectedResponseModel != "" {
-		return c.expectedResponseModel
-	}
-
-	return c.model
 }
 
 // WithBaseURL sets a custom OpenAI-compatible base URL (for example a self-hosted embeddings runtime).

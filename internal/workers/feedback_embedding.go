@@ -178,6 +178,9 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 		return w.handleEmptyText(ctx, job, record, log, start, stillCurrent)
 	}
 
+	// The record must be loaded first: empty edits clear stale vectors even while the provider is
+	// unavailable. Job args do not contain record text, and moving this gate above the read would
+	// leave those vectors searchable until provider recovery.
 	if w.preflight != nil && !w.preflight.Ready() {
 		return river.JobSnooze(w.preflightSnooze) //nolint:wrapcheck // River must receive the sentinel unwrapped
 	}
