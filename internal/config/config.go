@@ -187,6 +187,7 @@ type EmbeddingConfig struct {
 	ProviderAPIKey      string      `env:"EMBEDDING_PROVIDER_API_KEY"`
 	Provider            string      `env:"EMBEDDING_PROVIDER"`
 	Model               string      `env:"EMBEDDING_MODEL"`
+	ResponseModel       string      `env:"EMBEDDING_RESPONSE_MODEL"`
 	BaseURL             string      `env:"EMBEDDING_BASE_URL"`
 	MaxConcurrent       int         `env:"EMBEDDING_MAX_CONCURRENT"                env-default:"5"`
 	MaxAttempts         int         `env:"EMBEDDING_MAX_ATTEMPTS"                  env-default:"5"`

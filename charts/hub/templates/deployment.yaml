@@ -86,7 +86,7 @@ spec:
             {{- include "hub.embeddingClientEnv" (dict "root" . "role" "api") | nindent 12 }}
             {{- range .Values.extraEnv }}
             {{- $name := .name | default "" }}
-            {{- if not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "key" $name "external" $.Values.embeddingClient.enabled))) }}
+            {{- if not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "root" $ "role" "api" "key" $name "external" $.Values.embeddingClient.enabled))) }}
             {{- toYaml (list .) | nindent 12 }}
             {{- end }}
             {{- end }}

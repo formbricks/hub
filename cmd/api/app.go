@@ -131,14 +131,15 @@ func setupEmbeddingSearchHandler(
 	}
 
 	embeddingCfg := service.EmbeddingClientConfig{
-		Provider:            embeddingProviderName,
-		ProviderAPIKey:      cfg.Embedding.ProviderAPIKey,
-		Model:               embeddingModel,
-		BaseURL:             cfg.Embedding.BaseURL,
-		Normalize:           cfg.Embedding.Normalize,
-		GoogleCloudProject:  cfg.Embedding.GoogleCloudProject,
-		GoogleCloudLocation: cfg.Embedding.GoogleCloudLocation,
-		UsageRecorder:       genAIUsage,
+		Provider:              embeddingProviderName,
+		ProviderAPIKey:        cfg.Embedding.ProviderAPIKey,
+		Model:                 embeddingModel,
+		ExpectedResponseModel: cfg.Embedding.ResponseModel,
+		BaseURL:               cfg.Embedding.BaseURL,
+		Normalize:             cfg.Embedding.Normalize,
+		GoogleCloudProject:    cfg.Embedding.GoogleCloudProject,
+		GoogleCloudLocation:   cfg.Embedding.GoogleCloudLocation,
+		UsageRecorder:         genAIUsage,
 	}
 	if err := service.ValidateEmbeddingConfig(embeddingCfg); err != nil {
 		return nil, fmt.Errorf("embedding config: %w", err)

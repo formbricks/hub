@@ -165,6 +165,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 			Provider:              providerName,
 			ProviderAPIKey:        cfg.Embedding.ProviderAPIKey,
 			Model:                 embeddingModel,
+			ExpectedResponseModel: cfg.Embedding.ResponseModel,
 			BaseURL:               cfg.Embedding.BaseURL,
 			HTTPDisableKeepAlives: cfg.Embedding.HTTPDisableKeepAlives,
 			Normalize:             cfg.Embedding.Normalize,
@@ -186,74 +187,78 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 			embeddingClient, err := service.NewEmbeddingClient(context.Background(), embeddingCfg)
 			if err != nil {
-				preflight = service.NewFailedEmbeddingPreflight(service.PreflightAuth)
-			} else {
-				preflight = service.NewEmbeddingPreflight(
-					embeddingClient, cfg.Embedding.BatchSize,
-					cfg.Embedding.PreflightTimeout.Duration(), cfg.Embedding.PreflightSuccessTTL.Duration(),
+				// Credential discovery can recover while this worker remains up. The preflight
+				// retries setup before any embedding queue begins consuming jobs.
+				embeddingClient = service.NewRetryingEmbeddingClient(embeddingCfg)
+
+				slog.Warn("embedding client initialization deferred", "reason", service.PreflightAuth)
+			}
+
+			preflight = service.NewEmbeddingPreflight(
+				embeddingClient, cfg.Embedding.BatchSize,
+				cfg.Embedding.PreflightTimeout.Duration(), cfg.Embedding.PreflightSuccessTTL.Duration(),
+			)
+
+			if batchClient, enabled := service.NewBatchingEmbeddingClient(
+				embeddingClient,
+				service.EmbeddingBatchConfig{
+					BatchSize:   cfg.Embedding.BatchSize,
+					MaxWait:     time.Duration(cfg.Embedding.BatchMaxWaitMs) * time.Millisecond,
+					MaxInFlight: cfg.Embedding.BatchMaxInFlight,
+				},
+				embeddingMetrics,
+			); enabled {
+				embeddingClient = batchClient
+				embeddingBatch = batchClient
+
+				slog.Info("embedding document batching enabled",
+					"batch_size", cfg.Embedding.BatchSize,
+					"max_wait_ms", cfg.Embedding.BatchMaxWaitMs,
+					"max_in_flight", cfg.Embedding.BatchMaxInFlight,
 				)
+			} else if cfg.Embedding.BatchSize > 1 {
+				slog.Info("embedding document batching unavailable for provider; using single requests",
+					"provider", providerName)
+			}
 
-				if batchClient, enabled := service.NewBatchingEmbeddingClient(
-					embeddingClient,
-					service.EmbeddingBatchConfig{
-						BatchSize:   cfg.Embedding.BatchSize,
-						MaxWait:     time.Duration(cfg.Embedding.BatchMaxWaitMs) * time.Millisecond,
-						MaxInFlight: cfg.Embedding.BatchMaxInFlight,
-					},
-					embeddingMetrics,
-				); enabled {
-					embeddingClient = batchClient
-					embeddingBatch = batchClient
+			feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
+			embeddingsRepo := repository.NewEmbeddingsRepository(db)
+			feedbackRecordsService := service.NewFeedbackRecordsService(
+				feedbackRecordsRepo,
+				embeddingsRepo,
+				embeddingModel,
+				nil,
+				nil,
+				service.EmbeddingsQueueName,
+				cfg.Embedding.MaxAttempts,
+				"", // translation default unused: this service handles embeddings only
+			)
+			docPrefix := service.EmbeddingPrefixForProvider(providerName)
 
-					slog.Info("embedding document batching enabled",
-						"batch_size", cfg.Embedding.BatchSize,
-						"max_wait_ms", cfg.Embedding.BatchMaxWaitMs,
-						"max_in_flight", cfg.Embedding.BatchMaxInFlight,
-					)
-				} else if cfg.Embedding.BatchSize > 1 {
-					slog.Info("embedding document batching unavailable for provider; using single requests",
-						"provider", providerName)
-				}
+			deps.EmbeddingService = feedbackRecordsService
+			deps.EmbeddingClient = embeddingClient
+			deps.EmbeddingDocPrefix = docPrefix
+			deps.EmbeddingMetrics = embeddingMetrics
+			deps.EmbeddingPreflight = preflight
 
-				feedbackRecordsRepo := repository.NewFeedbackRecordsRepository(db)
-				embeddingsRepo := repository.NewEmbeddingsRepository(db)
-				feedbackRecordsService := service.NewFeedbackRecordsService(
-					feedbackRecordsRepo,
+			if embeddingReconcileConfigured(cfg) {
+				targets := embeddingReconcileTargets(cfg, embeddingModel, taxonomyEmbeddingModel)
+				embeddingReconcileService = service.NewEmbeddingReconcileService(
 					embeddingsRepo,
-					embeddingModel,
-					nil,
-					nil,
-					service.EmbeddingsQueueName,
+					targets,
+					cfg.Embedding.ReconcileTargetDepth,
 					cfg.Embedding.MaxAttempts,
-					"", // translation default unused: this service handles embeddings only
+					cfg.Embedding.ReconcileRetryAfter.Duration(),
 				)
-				docPrefix := service.EmbeddingPrefixForProvider(providerName)
+				deps.EmbeddingReconcileSweeper = embeddingReconcileService
 
-				deps.EmbeddingService = feedbackRecordsService
-				deps.EmbeddingClient = embeddingClient
-				deps.EmbeddingDocPrefix = docPrefix
-				deps.EmbeddingMetrics = embeddingMetrics
-				deps.EmbeddingPreflight = preflight
-
-				if embeddingReconcileConfigured(cfg) {
-					targets := embeddingReconcileTargets(cfg, embeddingModel, taxonomyEmbeddingModel)
-					embeddingReconcileService = service.NewEmbeddingReconcileService(
-						embeddingsRepo,
-						targets,
-						cfg.Embedding.ReconcileTargetDepth,
-						cfg.Embedding.MaxAttempts,
-						cfg.Embedding.ReconcileRetryAfter.Duration(),
-					)
-					deps.EmbeddingReconcileSweeper = embeddingReconcileService
-
-					slog.Info("embedding reconciliation configured",
-						"targets", len(targets),
-						"interval", cfg.Embedding.ReconcileInterval.Duration(),
-						"retry_after", cfg.Embedding.ReconcileRetryAfter.Duration(),
-						"target_depth", cfg.Embedding.ReconcileTargetDepth,
-						"max_concurrent", cfg.Embedding.ReconcileMaxConcurrent,
-					)
-				}
+				slog.Info("embedding reconciliation configured",
+					"targets", len(targets),
+					"interval", cfg.Embedding.ReconcileInterval.Duration(),
+					"retry_after", cfg.Embedding.ReconcileRetryAfter.Duration(),
+					"target_depth", cfg.Embedding.ReconcileTargetDepth,
+					"max_concurrent", cfg.Embedding.ReconcileMaxConcurrent,
+				)
 			}
 		}
 	}
@@ -383,7 +388,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 	riverWorkers, queues := workers.NewRiverWorkersAndQueues(cfg, deps)
 	coreQueues, embeddingQueues := splitEmbeddingQueues(queues)
 	riverCfg, riverLogs := newRiverConfig(cfg, riverWorkers, coreQueues,
-		reconcilePeriodicJobs(cfg, reconcileService != nil, false))
+		reconcilePeriodicJobs(cfg, reconcileService != nil, embeddingReconcileService != nil))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(db), riverCfg)
 	if err != nil {
@@ -398,7 +403,7 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 		embeddingCfg := *riverCfg
 		embeddingCfg.Queues = embeddingQueues
 
-		embeddingCfg.PeriodicJobs = reconcilePeriodicJobs(cfg, false, embeddingReconcileService != nil)
+		embeddingCfg.PeriodicJobs = reconcilePeriodicJobs(cfg, reconcileService != nil, embeddingReconcileService != nil)
 		if embeddingCfg.ID != "" {
 			embeddingCfg.ID += "-embeddings"
 		}
@@ -413,9 +418,9 @@ func NewWorkerApp(cfg *config.Config, db *pgxpool.Pool) (*WorkerApp, error) {
 
 	// A translation write enqueues its taxonomy re-embed in the same transaction (ENG-2792). Only
 	// the job's model, queue and attempts matter here: the worker reads the record's content.
-	if translationRecordsService != nil && taxonomyEmbeddingEnqueueModel != "" {
+	if translationRecordsService != nil && taxonomyEmbeddingEnqueueModel != "" && embeddingRiver != nil {
 		translationRecordsService.SetEmbeddingEnqueuer(service.NewEmbeddingEnqueuer(
-			riverClient,
+			embeddingRiver,
 			service.NewEmbeddingJobBuilderForInputKind(
 				taxonomyEmbeddingEnqueueModel,
 				service.EmbeddingsQueueName,
@@ -588,7 +593,7 @@ var (
 
 // Run starts unrelated queues immediately and embedding queues after a successful preflight.
 func (a *WorkerApp) Run(ctx context.Context) error {
-	if err := setEmbeddingReadiness(false); err != nil {
+	if err := setEmbeddingReadiness(time.Time{}); err != nil {
 		return fmt.Errorf("clear embedding readiness: %w", err)
 	}
 
@@ -600,12 +605,6 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 
 	//nolint:nestif // disabled and enabled readiness have distinct worker lifecycles
 	if a.preflight == nil {
-		if err := setEmbeddingReadiness(true); err != nil {
-			a.stopRiverClients(ctx)
-
-			return fmt.Errorf("set disabled-embedding readiness: %w", err)
-		}
-
 		<-ctx.Done()
 	} else {
 		interval := a.cfg.Embedding.PreflightInterval.Duration()
@@ -625,7 +624,7 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 			reason := a.preflight.Reason()
 
 			ready := a.preflight.Ready()
-			if err := setEmbeddingReadiness(ready); err != nil {
+			if err := setEmbeddingReadiness(a.preflight.ExpiresAt()); err != nil {
 				slog.Error("embedding readiness state write failed", "reason", "state_file")
 
 				ready = false
@@ -638,7 +637,7 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 
 			if ready && a.embeddingRiver != nil && !a.embeddingStarted.Load() {
 				if err := a.embeddingRiver.Start(ctx); err != nil {
-					_ = setEmbeddingReadiness(false)
+					_ = setEmbeddingReadiness(time.Time{})
 
 					a.stopRiverClients(ctx)
 
@@ -653,7 +652,7 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 			case <-ctx.Done():
 			case <-a.river.Stopped():
 				if ctx.Err() == nil {
-					_ = setEmbeddingReadiness(false)
+					_ = setEmbeddingReadiness(time.Time{})
 
 					a.stopRiverClients(ctx)
 
@@ -661,7 +660,7 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 				}
 			case <-embeddingStopped:
 				if ctx.Err() == nil {
-					_ = setEmbeddingReadiness(false)
+					_ = setEmbeddingReadiness(time.Time{})
 
 					a.stopRiverClients(ctx)
 
@@ -672,7 +671,7 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 		}
 	}
 
-	_ = setEmbeddingReadiness(false)
+	_ = setEmbeddingReadiness(time.Time{})
 
 	a.stopRiverClients(ctx)
 

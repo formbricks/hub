@@ -90,10 +90,11 @@ worker:
     path: /run/hub/embedding-ready
 
   embeddingPreflight:
-    timeoutSeconds: 10
-    intervalSeconds: 60
-    successTTLSeconds: 120
-    snoozeSeconds: 30
+    # Null uses the Hub defaults or values supplied through envFrom.
+    timeoutSeconds: null
+    intervalSeconds: null
+    successTTLSeconds: null
+    snoozeSeconds: null
 
   podAnnotations: {}
   podLabels: {}
@@ -149,6 +150,8 @@ embeddingClient:
   enabled: false
   provider: ""
   model: ""
+  # Optional canonical model returned by an OpenAI-compatible provider.
+  responseModel: ""
   baseUrl: ""
   apiBaseUrl: ""
   workerBaseUrl: ""

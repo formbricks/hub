@@ -36,6 +36,7 @@ const (
 	PreflightRateLimited   EmbeddingPreflightReason = "rate_limited"
 	PreflightTimeout       EmbeddingPreflightReason = "timeout"
 	PreflightProvider      EmbeddingPreflightReason = "provider"
+	PreflightExpired       EmbeddingPreflightReason = "expired"
 )
 
 const (
@@ -53,6 +54,7 @@ type EmbeddingPreflight struct {
 	batchSize  int
 	timeout    time.Duration
 	successTTL time.Duration
+	now        func() time.Time
 
 	mu          sync.RWMutex
 	lastSuccess time.Time
@@ -71,7 +73,7 @@ func NewEmbeddingPreflight(client EmbeddingClient, batchSize int, timeout, succe
 
 	preflight := &EmbeddingPreflight{
 		client: client, batchSize: batchSize, timeout: timeout, successTTL: successTTL,
-		reason: PreflightProvider,
+		reason: PreflightProvider, now: time.Now,
 	}
 	if batchSize > 1 {
 		preflight.batch, _ = client.(BatchEmbeddingClient)
@@ -83,7 +85,7 @@ func NewEmbeddingPreflight(client EmbeddingClient, batchSize int, timeout, succe
 // NewFailedEmbeddingPreflight keeps a misconfigured worker running for unrelated queues while
 // leaving embedding readiness false until the deployment configuration is corrected.
 func NewFailedEmbeddingPreflight(reason EmbeddingPreflightReason) *EmbeddingPreflight {
-	return &EmbeddingPreflight{reason: reason}
+	return &EmbeddingPreflight{reason: reason, now: time.Now}
 }
 
 // Probe calls the configured provider with synthetic text and validates its vector response.
@@ -92,19 +94,13 @@ func (p *EmbeddingPreflight) Probe(ctx context.Context) EmbeddingPreflightReason
 		return p.Reason()
 	}
 
-	if p.batchSize > 1 && p.batch == nil {
-		p.setFailure(PreflightInvalidConfig)
-
-		return PreflightInvalidConfig
-	}
-
 	probeCtx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
 	var err error
 
 	//nolint:nestif // the batch route validates both response count and each returned vector
-	if p.batchSize > 1 {
+	if p.batchSize > 1 && p.batch != nil {
 		var vectors [][]float32
 
 		vectors, err = p.batch.CreateEmbeddings(probeCtx, []string{embeddingPreflightInput, embeddingPreflightInput})
@@ -144,7 +140,7 @@ func (p *EmbeddingPreflight) Probe(ctx context.Context) EmbeddingPreflightReason
 	}
 
 	p.mu.Lock()
-	p.lastSuccess = time.Now()
+	p.lastSuccess = p.now()
 	p.reason = PreflightReady
 	p.mu.Unlock()
 
@@ -180,7 +176,19 @@ func (p *EmbeddingPreflight) Ready() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	return !p.lastSuccess.IsZero() && time.Since(p.lastSuccess) < p.successTTL
+	return !p.lastSuccess.IsZero() && p.now().Before(p.lastSuccess.Add(p.successTTL))
+}
+
+// ExpiresAt returns the deadline of the last successful probe, or zero if none is valid.
+func (p *EmbeddingPreflight) ExpiresAt() time.Time {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if p.lastSuccess.IsZero() {
+		return time.Time{}
+	}
+
+	return p.lastSuccess.Add(p.successTTL)
 }
 
 // Reason returns the current bounded readiness reason, including last-success validity.
@@ -188,8 +196,12 @@ func (p *EmbeddingPreflight) Reason() EmbeddingPreflightReason {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	if !p.lastSuccess.IsZero() && time.Since(p.lastSuccess) < p.successTTL {
-		return PreflightReady
+	if !p.lastSuccess.IsZero() {
+		if p.now().Before(p.lastSuccess.Add(p.successTTL)) {
+			return PreflightReady
+		}
+
+		return PreflightExpired
 	}
 
 	return p.reason
@@ -208,6 +220,10 @@ func (p *EmbeddingPreflight) setFailure(reason EmbeddingPreflightReason) {
 // ClassifyEmbeddingPreflightError maps provider errors to fixed labels. These errors are
 // deployment-level failures for a synthetic probe, not terminal errors for customer records.
 func ClassifyEmbeddingPreflightError(err error) EmbeddingPreflightReason {
+	if errors.Is(err, ErrEmbeddingClientInitialization) {
+		return PreflightAuth
+	}
+
 	if errors.Is(err, context.DeadlineExceeded) {
 		return PreflightTimeout
 	}

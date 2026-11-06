@@ -129,7 +129,14 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
-          {{- if or .Values.embeddings.enabled .Values.embeddingClient.enabled .Values.worker.embeddingReadiness.enabled (gt (len .Values.extraEnv) 0) (gt (len .Values.worker.extraEnv) 0) }}
+          {{- $preflight := .Values.worker.embeddingPreflight }}
+          {{- $timings := list (dict "key" "EMBEDDING_PREFLIGHT_TIMEOUT_SECONDS" "value" $preflight.timeoutSeconds) (dict "key" "EMBEDDING_PREFLIGHT_INTERVAL_SECONDS" "value" $preflight.intervalSeconds) (dict "key" "EMBEDDING_PREFLIGHT_SUCCESS_TTL_SECONDS" "value" $preflight.successTTLSeconds) (dict "key" "EMBEDDING_PREFLIGHT_SNOOZE_SECONDS" "value" $preflight.snoozeSeconds) }}
+          {{- $envNames := dict }}
+          {{- $workerNames := dict }}
+          {{- range .Values.extraEnv }}{{- $_ := set $envNames .name true }}{{- end }}
+          {{- range .Values.worker.extraEnv }}{{- $_ := set $envNames .name true }}{{- $_ := set $workerNames .name true }}{{- end }}
+          {{- $hasTimings := or (ne $preflight.timeoutSeconds nil) (ne $preflight.intervalSeconds nil) (ne $preflight.successTTLSeconds nil) (ne $preflight.snoozeSeconds nil) }}
+          {{- if or .Values.embeddings.enabled .Values.embeddingClient.enabled .Values.worker.embeddingReadiness.enabled $hasTimings (gt (len .Values.extraEnv) 0) (gt (len .Values.worker.extraEnv) 0) }}
           env:
             {{- include "hub.embeddingEnv" . | nindent 12 }}
             {{- include "hub.embeddingClientEnv" (dict "root" . "role" "worker") | nindent 12 }}
@@ -137,23 +144,21 @@ spec:
             - name: HUB_EMBEDDING_READINESS_FILE
               value: {{ .Values.worker.embeddingReadiness.path | quote }}
             {{- end }}
-            - name: EMBEDDING_PREFLIGHT_TIMEOUT_SECONDS
-              value: {{ .Values.worker.embeddingPreflight.timeoutSeconds | quote }}
-            - name: EMBEDDING_PREFLIGHT_INTERVAL_SECONDS
-              value: {{ .Values.worker.embeddingPreflight.intervalSeconds | quote }}
-            - name: EMBEDDING_PREFLIGHT_SUCCESS_TTL_SECONDS
-              value: {{ .Values.worker.embeddingPreflight.successTTLSeconds | quote }}
-            - name: EMBEDDING_PREFLIGHT_SNOOZE_SECONDS
-              value: {{ .Values.worker.embeddingPreflight.snoozeSeconds | quote }}
+            {{- range $timings }}
+            {{- if and (ne .value nil) (not (hasKey $envNames .key)) }}
+            - name: {{ .key }}
+              value: {{ .value | quote }}
+            {{- end }}
+            {{- end }}
             {{- range .Values.extraEnv }}
             {{- $name := .name | default "" }}
-            {{- if not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "key" $name "external" $.Values.embeddingClient.enabled))) }}
+            {{- if and (not (hasKey $workerNames $name)) (not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "root" $ "role" "worker" "key" $name "external" $.Values.embeddingClient.enabled)))) }}
             {{- toYaml (list .) | nindent 12 }}
             {{- end }}
             {{- end }}
             {{- range .Values.worker.extraEnv }}
             {{- $name := .name | default "" }}
-            {{- if not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "key" $name "external" $.Values.embeddingClient.enabled))) }}
+            {{- if not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "root" $ "role" "worker" "key" $name "external" $.Values.embeddingClient.enabled))) }}
             {{- toYaml (list .) | nindent 12 }}
             {{- end }}
             {{- end }}

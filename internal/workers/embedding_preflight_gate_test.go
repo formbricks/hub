@@ -48,8 +48,10 @@ func (c *blockingJobClient) CreateEmbeddingForQuery(ctx context.Context, text st
 
 func TestEmbeddingQueuesSnoozeBeforeProviderWork(t *testing.T) {
 	preflight := service.NewFailedEmbeddingPreflight(service.PreflightAuth)
-	feedback := &FeedbackEmbeddingWorker{preflight: preflight, preflightSnooze: 30 * time.Second}
-	err := feedback.Work(context.Background(), &river.Job[service.FeedbackEmbeddingArgs]{})
+	store := &mockEmbeddingService{record: textRecord("customer response")}
+	feedback := NewFeedbackEmbeddingWorker(store, nil, "", nil)
+	feedback.SetPreflight(preflight, 30*time.Second)
+	err := feedback.Work(context.Background(), embeddingJob())
 
 	var snooze *river.JobSnoozeError
 	require.ErrorAs(t, err, &snooze)
@@ -59,6 +61,15 @@ func TestEmbeddingQueuesSnoozeBeforeProviderWork(t *testing.T) {
 	err = reconcile.Work(context.Background(), &river.Job[service.EmbeddingReconcileArgs]{})
 	require.ErrorAs(t, err, &snooze)
 	assert.Equal(t, 30*time.Second, snooze.Duration)
+}
+
+func TestEmbeddingCleanupRunsDuringProviderOutage(t *testing.T) {
+	store := &mockEmbeddingService{record: textRecord("")}
+	worker := NewFeedbackEmbeddingWorker(store, nil, "", nil)
+	worker.SetPreflight(service.NewFailedEmbeddingPreflight(service.PreflightAuth), 30*time.Second)
+	require.NoError(t, worker.Work(context.Background(), embeddingJob()))
+	assert.Equal(t, 1, store.setCalls)
+	assert.True(t, store.setEmbeddingNil)
 }
 
 func TestEmbeddingPreflightDegradationLetsInFlightJobFinish(t *testing.T) {

@@ -75,14 +75,18 @@ func TestEmbeddingPreflightUsesExactEndpointAndModel(t *testing.T) {
 		vector := make([]float64, models.EmbeddingVectorDimensions)
 		vector[0] = 1
 		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"object": "list", "model": request.Model,
+			"object": "list", "model": "canonical-model",
 			"data":  []any{map[string]any{"object": "embedding", "index": 0, "embedding": vector}},
 			"usage": map[string]any{"prompt_tokens": 1, "total_tokens": 1},
 		}))
 	}))
 	t.Cleanup(server.Close)
-	client := openai.NewClient("synthetic-key", openai.WithBaseURL(server.URL+"/custom/v1"),
-		openai.WithModel("configured-model"))
+	client, err := NewEmbeddingClient(context.Background(), EmbeddingClientConfig{
+		Provider: EmbeddingProviderOpenAI, ProviderAPIKey: "synthetic-key", Model: "configured-model",
+		BaseURL: server.URL + "/custom/v1", ExpectedResponseModel: "canonical-model",
+	})
+	require.NoError(t, err)
+
 	preflight := NewEmbeddingPreflight(client, 1, time.Second, time.Minute)
 	require.Equal(t, PreflightReady, preflight.Probe(context.Background()))
 	assert.True(t, preflight.Ready())
@@ -105,6 +109,28 @@ func TestEmbeddingPreflightRejectsResponseFromWrongModel(t *testing.T) {
 	client := openai.NewClient("synthetic-key", openai.WithBaseURL(server.URL),
 		openai.WithModel("configured-model"))
 	preflight := NewEmbeddingPreflight(client, 1, time.Second, time.Minute)
+	assert.Equal(t, PreflightModel, preflight.Probe(context.Background()))
+	assert.False(t, preflight.Ready())
+}
+
+func TestEmbeddingPreflightRejectsWrongBatchResponseModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		vector := make([]float64, models.EmbeddingVectorDimensions)
+		vector[0] = 1
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"object": "list", "model": "other-model",
+			"data": []any{
+				map[string]any{"object": "embedding", "index": 0, "embedding": vector},
+				map[string]any{"object": "embedding", "index": 1, "embedding": vector},
+			},
+			"usage": map[string]any{"prompt_tokens": 2, "total_tokens": 2},
+		}))
+	}))
+	t.Cleanup(server.Close)
+	client := openai.NewClient("synthetic-key", openai.WithBaseURL(server.URL), openai.WithModel("configured-model"))
+	preflight := NewEmbeddingPreflight(client, 2, time.Second, time.Minute)
 	assert.Equal(t, PreflightModel, preflight.Probe(context.Background()))
 	assert.False(t, preflight.Ready())
 }
@@ -159,6 +185,8 @@ func TestEmbeddingPreflightClassifiesUnavailableEndpointAndTimeout(t *testing.T)
 func TestEmbeddingPreflightBatchAndExpiry(t *testing.T) {
 	client := &preflightClient{vector: testPreflightVector()}
 	preflight := NewEmbeddingPreflight(client, 4, time.Second, 20*time.Millisecond)
+	now := time.Now()
+	preflight.now = func() time.Time { return now }
 	require.Equal(t, PreflightReady, preflight.Probe(context.Background()))
 	assert.Equal(t, 1, client.batchCalls)
 	assert.Zero(t, client.singleCalls)
@@ -166,9 +194,11 @@ func TestEmbeddingPreflightBatchAndExpiry(t *testing.T) {
 
 	assert.Equal(t, PreflightRateLimited, preflight.Probe(context.Background()))
 	assert.True(t, preflight.Ready(), "one transient failure retains the bounded last success")
-	time.Sleep(25 * time.Millisecond)
+
+	now = now.Add(25 * time.Millisecond)
+
 	assert.False(t, preflight.Ready())
-	assert.Equal(t, PreflightRateLimited, preflight.Reason())
+	assert.Equal(t, PreflightExpired, preflight.Reason())
 	assert.NotContains(t, string(preflight.Reason()), "secret")
 
 	client.err = nil
@@ -177,14 +207,15 @@ func TestEmbeddingPreflightBatchAndExpiry(t *testing.T) {
 	assert.True(t, preflight.Ready())
 }
 
-func TestEmbeddingPreflightRejectsDimensionAndMissingBatch(t *testing.T) {
+func TestEmbeddingPreflightRejectsDimensionAndFallsBackToSingle(t *testing.T) {
 	client := &preflightClient{vector: make([]float32, models.EmbeddingVectorDimensions-1)}
 	preflight := NewEmbeddingPreflight(client, 1, time.Second, time.Minute)
 	assert.Equal(t, PreflightDimension, preflight.Probe(context.Background()))
 	assert.False(t, preflight.Ready())
 	preflight = NewEmbeddingPreflight(singleOnlyPreflightClient{client: client}, 2, time.Second, time.Minute)
-	assert.Equal(t, PreflightInvalidConfig, preflight.Probe(context.Background()))
+	assert.Equal(t, PreflightDimension, preflight.Probe(context.Background()))
 	assert.Zero(t, client.batchCalls)
+	assert.Equal(t, 2, client.singleCalls)
 }
 
 func TestEmbeddingPreflightRejectsInvalidVectorValues(t *testing.T) {

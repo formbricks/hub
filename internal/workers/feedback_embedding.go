@@ -108,10 +108,6 @@ func (w *FeedbackEmbeddingWorker) Timeout(*river.Job[service.FeedbackEmbeddingAr
 
 // Work loads the record, generates or clears the embedding, and persists it.
 func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[service.FeedbackEmbeddingArgs]) error {
-	if w.preflight != nil && !w.preflight.Ready() {
-		return river.JobSnooze(w.preflightSnooze) //nolint:wrapcheck // River must receive the sentinel unwrapped
-	}
-
 	args := job.Args
 	start := time.Now()
 
@@ -180,6 +176,10 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	if text == "" {
 		return w.handleEmptyText(ctx, job, record, log, start, stillCurrent)
+	}
+
+	if w.preflight != nil && !w.preflight.Ready() {
+		return river.JobSnooze(w.preflightSnooze) //nolint:wrapcheck // River must receive the sentinel unwrapped
 	}
 
 	// A repair or backfill job that lands after a live job already embedded this content, or a job

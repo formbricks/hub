@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const (
@@ -20,9 +23,9 @@ func embeddingReadinessFile() string {
 	return defaultEmbeddingReadinessFile
 }
 
-func setEmbeddingReadiness(ready bool) error {
+func setEmbeddingReadiness(expiresAt time.Time) error {
 	path := embeddingReadinessFile()
-	if !ready {
+	if expiresAt.IsZero() || !time.Now().Before(expiresAt) {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove embedding readiness file: %w", err)
 		}
@@ -42,7 +45,7 @@ func setEmbeddingReadiness(ready bool) error {
 		return fmt.Errorf("protect embedding readiness file: %w", err)
 	}
 
-	if _, err := temporary.WriteString("ready\n"); err != nil {
+	if _, err := temporary.WriteString(strconv.FormatInt(expiresAt.UnixNano(), 10) + "\n"); err != nil {
 		_ = temporary.Close()
 
 		return fmt.Errorf("write embedding readiness file: %w", err)
@@ -60,7 +63,15 @@ func setEmbeddingReadiness(ready bool) error {
 }
 
 func checkEmbeddingReadiness() bool {
-	info, err := os.Stat(embeddingReadinessFile())
+	data, err := os.ReadFile(embeddingReadinessFile())
+	if err != nil {
+		return false
+	}
 
-	return err == nil && info.Mode().IsRegular()
+	expiresNano, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return false
+	}
+
+	return time.Now().Before(time.Unix(0, expiresNano))
 }

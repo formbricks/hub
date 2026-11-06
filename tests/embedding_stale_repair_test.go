@@ -101,6 +101,36 @@ func unitVector() []float32 {
 	return vector
 }
 
+// An empty edit removes vectors in the record transaction, so a provider outage or a queue
+// waiting for its first successful preflight cannot leave an old answer searchable.
+func TestEmptyAnswerClearsEmbeddingsBeforeWorkerStarts(t *testing.T) {
+	ctx := context.Background()
+	fixtures := newStaleRepairFixtures(t)
+	otherTenant := newStaleRepairFixtures(t)
+	text := "before"
+	record := fixtures.seed(ctx, t, models.FieldTypeText, &text, nil)
+	other := otherTenant.seed(ctx, t, models.FieldTypeText, &text, nil)
+	model := "empty-edit-" + uuid.NewString()
+	embeddingsRepo := repository.NewEmbeddingsRepository(fixtures.db)
+
+	for _, id := range []uuid.UUID{record.ID, other.ID} {
+		for _, kind := range []models.EmbeddingInputKind{models.EmbeddingInputKindRaw, models.EmbeddingInputKindTaxonomyTranslated} {
+			require.NoError(t, embeddingsRepo.Upsert(ctx, id, model+string(kind), kind, unitVector(), nil))
+		}
+	}
+
+	empty := "  "
+	_, _, err := repository.NewFeedbackRecordsRepository(fixtures.db).Update(ctx, record.ID,
+		&models.UpdateFeedbackRecordRequest{ValueText: &empty}, nil)
+	require.NoError(t, err)
+
+	var count int
+	require.NoError(t, fixtures.db.QueryRow(ctx, `SELECT count(*) FROM embeddings WHERE feedback_record_id = $1`, record.ID).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, fixtures.db.QueryRow(ctx, `SELECT count(*) FROM embeddings WHERE feedback_record_id = $1`, other.ID).Scan(&count))
+	assert.Equal(t, 2, count, "another tenant's vectors remain untouched")
+}
+
 // TestListPendingEmbeddingIDsFindsStaleAndOrphanedVectors pins the repair selection for both the
 // search (raw) and the taxonomy embedding, for a text and a categorical record (ENG-2792): a vector
 // is owed repair when it is missing, when the content its input reads has changed since it was

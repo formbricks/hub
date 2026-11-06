@@ -49,12 +49,13 @@ var (
 
 // Client calls the OpenAI embeddings API via the official SDK.
 type Client struct {
-	sdk               openaisdk.Client
-	baseURL           string
-	dimensions        int
-	model             string
-	normalize         bool
-	disableKeepAlives bool
+	sdk                   openaisdk.Client
+	baseURL               string
+	dimensions            int
+	model                 string
+	expectedResponseModel string
+	normalize             bool
+	disableKeepAlives     bool
 	// temperatureUnsupported latches once the configured model rejects the temperature
 	// parameter (reasoning models do), so later calls omit it instead of failing.
 	temperatureUnsupported atomic.Bool
@@ -142,7 +143,7 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 		return nil, wrapOpenAIError("openai embedding", err)
 	}
 
-	if resp.Model != c.model {
+	if resp.Model != c.responseModel() {
 		return nil, ErrEmbeddingModelMismatch
 	}
 
@@ -196,7 +197,7 @@ func (c *Client) CreateEmbeddings(ctx context.Context, inputs []string) ([][]flo
 		return nil, wrapOpenAIError("openai embeddings batch", err)
 	}
 
-	if resp.Model != c.model {
+	if resp.Model != c.responseModel() {
 		return nil, ErrEmbeddingModelMismatch
 	}
 
@@ -602,6 +603,20 @@ func WithModel(model string) ClientOption {
 	return func(c *Client) {
 		c.model = model
 	}
+}
+
+// WithExpectedResponseModel permits an OpenAI-compatible endpoint to report its canonical
+// served model while requests continue to use the configured model alias.
+func WithExpectedResponseModel(model string) ClientOption {
+	return func(c *Client) { c.expectedResponseModel = model }
+}
+
+func (c *Client) responseModel() string {
+	if c.expectedResponseModel != "" {
+		return c.expectedResponseModel
+	}
+
+	return c.model
 }
 
 // WithBaseURL sets a custom OpenAI-compatible base URL (for example a self-hosted embeddings runtime).

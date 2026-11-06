@@ -52,7 +52,7 @@ func RegisterEmbeddingPreflightGauge(meter metric.Meter, state func() (bool, str
 			ready, reason := state()
 			switch reason {
 			case "ready", "disabled", "invalid_config", "endpoint", "authentication", "permission",
-				"model", "dimension", "input", "rate_limited", "timeout", "provider":
+				"model", "dimension", "input", "rate_limited", "timeout", "provider", "expired":
 			default:
 				reason = "provider"
 			}

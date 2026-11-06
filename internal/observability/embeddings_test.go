@@ -28,6 +28,18 @@ func TestEmbeddingPreflightGaugeUsesOnlyBoundedReason(t *testing.T) {
 	assert.Contains(t, serialized, "provider")
 }
 
+func TestEmbeddingPreflightGaugePreservesExpiredReason(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	require.NoError(t, RegisterEmbeddingPreflightGauge(provider.Meter("test"), func() (bool, string) {
+		return false, "expired"
+	}))
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &collected))
+	assert.Contains(t, fmt.Sprint(collected), "expired")
+}
+
 func TestNewEmbeddingMetricsNilMeterDisabled(t *testing.T) {
 	metrics, err := NewEmbeddingMetrics(nil)
 	require.NoError(t, err)
