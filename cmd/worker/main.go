@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 
@@ -26,6 +27,27 @@ func main() {
 }
 
 func run() int {
+	if len(os.Args) == 2 && os.Args[1] == "--check-embedding-readiness" {
+		cfg, err := config.Load()
+		if err != nil {
+			return exitFailure
+		}
+
+		if cfg.Embedding.Provider == "" && cfg.Embedding.Model == "" {
+			return exitSuccess
+		}
+
+		if checkEmbeddingReadiness() {
+			return exitSuccess
+		}
+
+		return exitFailure
+	}
+
+	if err := setEmbeddingReadiness(time.Time{}); err != nil {
+		return exitFailure
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		// Configure logging before reporting the failure, so a broken config still produces output.

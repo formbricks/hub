@@ -140,6 +140,7 @@ func run() int {
 		Provider:              providerCanonical,
 		ProviderAPIKey:        cfg.Embedding.ProviderAPIKey,
 		Model:                 embeddingModel,
+		ExpectedResponseModel: cfg.Embedding.ResponseModel,
 		BaseURL:               cfg.Embedding.BaseURL,
 		HTTPDisableKeepAlives: cfg.Embedding.HTTPDisableKeepAlives,
 		Normalize:             cfg.Embedding.Normalize,

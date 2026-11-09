@@ -1,6 +1,11 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -8,9 +13,196 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/formbricks/hub/internal/config"
+	"github.com/formbricks/hub/internal/huberrors"
 	"github.com/formbricks/hub/internal/models"
 	"github.com/formbricks/hub/internal/service"
 )
+
+type lifecycleRiver struct {
+	started chan struct{}
+	stopped chan struct{}
+	start   sync.Once
+	stop    sync.Once
+}
+
+func newLifecycleRiver() *lifecycleRiver {
+	return &lifecycleRiver{started: make(chan struct{}), stopped: make(chan struct{})}
+}
+
+func (r *lifecycleRiver) Start(context.Context) error {
+	r.start.Do(func() { close(r.started) })
+
+	return nil
+}
+
+func (r *lifecycleRiver) Stop(context.Context) error {
+	r.stop.Do(func() { close(r.stopped) })
+
+	return nil
+}
+
+func (r *lifecycleRiver) StopAndCancel(ctx context.Context) error { return r.Stop(ctx) }
+func (r *lifecycleRiver) Stopped() <-chan struct{}                { return r.stopped }
+func (r *lifecycleRiver) ID() string                              { return "test-river" }
+
+type lifecycleEmbeddingClient struct{ healthy atomic.Bool }
+
+func (c *lifecycleEmbeddingClient) CreateEmbedding(context.Context, string) ([]float32, error) {
+	if !c.healthy.Load() {
+		return nil, huberrors.NewRateLimitError(time.Second, errors.New("synthetic provider failure"))
+	}
+
+	vector := make([]float32, models.EmbeddingVectorDimensions)
+	vector[0] = 1
+
+	return vector, nil
+}
+
+func (c *lifecycleEmbeddingClient) CreateEmbeddingForQuery(ctx context.Context, input string) ([]float32, error) {
+	return c.CreateEmbedding(ctx, input)
+}
+
+func TestWorkerAppRunStartsEmbeddingRiverAfterPreflightAndStopsBoth(t *testing.T) {
+	t.Setenv("HUB_EMBEDDING_READINESS_FILE", t.TempDir()+"/ready")
+
+	core, embedding := newLifecycleRiver(), newLifecycleRiver()
+	provider := &lifecycleEmbeddingClient{}
+	preflight := service.NewEmbeddingPreflight(provider, 1, time.Second, 40*time.Millisecond)
+	app := &WorkerApp{
+		cfg: &config.Config{
+			Embedding: config.EmbeddingConfig{PreflightInterval: config.DurationSec(10 * time.Millisecond)},
+			Server:    config.ServerConfig{ShutdownTimeout: config.DurationSec(time.Second)},
+		},
+		river: core, embeddingRiver: embedding, preflight: preflight,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+
+	select {
+	case <-core.started:
+	case <-time.After(time.Second):
+		t.Fatal("core queues did not start")
+	}
+
+	select {
+	case <-embedding.started:
+		t.Fatal("embedding queues started before a successful preflight")
+	default:
+	}
+
+	provider.healthy.Store(true)
+
+	select {
+	case <-embedding.started:
+	case <-time.After(time.Second):
+		t.Fatal("embedding queues did not start after provider recovery")
+	}
+
+	assert.True(t, checkEmbeddingReadiness())
+	provider.healthy.Store(false)
+	require.Eventually(t, func() bool { return !preflight.Ready() }, time.Second, 10*time.Millisecond)
+	assert.Equal(t, service.PreflightRateLimited, preflight.LastFailureReason())
+	cancel()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("worker did not stop")
+	}
+
+	assert.False(t, checkEmbeddingReadiness())
+	assert.True(t, app.embeddingStarted.Load())
+}
+
+func TestWorkerAppRunStartsEmbeddingsWithoutWritableReadinessFile(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(*testing.T) string
+	}{
+		{"probe disabled", func(*testing.T) string { return "" }},
+		{"probe file unwritable", func(t *testing.T) string {
+			return filepath.Join(t.TempDir(), "missing", "ready")
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("HUB_EMBEDDING_READINESS_FILE", test.path(t))
+
+			core, embedding := newLifecycleRiver(), newLifecycleRiver()
+			provider := &lifecycleEmbeddingClient{}
+			provider.healthy.Store(true)
+			preflight := service.NewEmbeddingPreflight(provider, 1, time.Second, time.Minute)
+			app := &WorkerApp{
+				cfg: &config.Config{
+					Embedding: config.EmbeddingConfig{PreflightInterval: config.DurationSec(time.Second)},
+					Server:    config.ServerConfig{ShutdownTimeout: config.DurationSec(time.Second)},
+				},
+				river: core, embeddingRiver: embedding, preflight: preflight,
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+
+			done := make(chan error, 1)
+			go func() { done <- app.Run(ctx) }()
+
+			select {
+			case <-embedding.started:
+			case <-time.After(time.Second):
+				t.Fatal("healthy embedding queues did not start")
+			}
+
+			assert.True(t, preflight.Ready())
+			assert.False(t, checkEmbeddingReadiness())
+			cancel()
+
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(time.Second):
+				t.Fatal("worker did not stop")
+			}
+		})
+	}
+}
+
+func TestWorkerAppRunReportsUnexpectedCoreStopWithoutEmbeddings(t *testing.T) {
+	t.Setenv("HUB_EMBEDDING_READINESS_FILE", t.TempDir()+"/ready")
+
+	core := newLifecycleRiver()
+	app := &WorkerApp{cfg: &config.Config{Server: config.ServerConfig{
+		ShutdownTimeout: config.DurationSec(time.Second),
+	}}, river: core}
+
+	done := make(chan error, 1)
+	go func() { done <- app.Run(context.Background()) }()
+
+	<-core.started
+	require.NoError(t, core.Stop(context.Background()))
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, errCoreRiverStopped)
+	case <-time.After(time.Second):
+		t.Fatal("unexpected River stop was not reported")
+	}
+}
+
+func TestEmbeddingPreflightTimingValid(t *testing.T) {
+	cfg := &config.Config{Embedding: config.EmbeddingConfig{
+		PreflightInterval:   config.DurationSec(time.Minute),
+		PreflightSuccessTTL: config.DurationSec(2 * time.Minute),
+	}}
+	assert.True(t, embeddingPreflightTimingValid(cfg))
+	cfg.Embedding.PreflightSuccessTTL = cfg.Embedding.PreflightInterval
+	assert.False(t, embeddingPreflightTimingValid(cfg))
+	cfg.Embedding.PreflightSuccessTTL = config.DurationSec(30 * time.Second)
+	assert.False(t, embeddingPreflightTimingValid(cfg))
+}
 
 func TestEmbeddingReconcileConfigured(t *testing.T) {
 	base := func() *config.Config {

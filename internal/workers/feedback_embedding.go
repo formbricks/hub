@@ -30,6 +30,8 @@ type FeedbackEmbeddingWorker struct {
 	failures         FailureRecorder
 	failureMetrics   observability.EnrichmentFailureMetrics
 	trimmedMetrics   observability.EnrichmentTrimmedMetrics
+	preflight        *service.EmbeddingPreflight
+	preflightSnooze  time.Duration
 }
 
 const defaultEmbeddingJobTimeout = 60 * time.Second
@@ -90,6 +92,13 @@ func NewFeedbackEmbeddingWorkerWithOptions(
 		failureMetrics:   failureMetrics,
 		trimmedMetrics:   trimmedMetrics,
 	}
+}
+
+// SetPreflight prevents a degraded provider from receiving newly claimed work. River snoozes
+// without consuming an attempt; in-flight calls are not interrupted by a later probe failure.
+func (w *FeedbackEmbeddingWorker) SetPreflight(preflight *service.EmbeddingPreflight, snooze time.Duration) {
+	w.preflight = preflight
+	w.preflightSnooze = snooze
 }
 
 // Timeout limits how long a single embedding job can run.
@@ -167,6 +176,13 @@ func (w *FeedbackEmbeddingWorker) Work(ctx context.Context, job *river.Job[servi
 
 	if text == "" {
 		return w.handleEmptyText(ctx, job, record, log, start, stillCurrent)
+	}
+
+	// The record must be loaded first: empty edits clear stale vectors even while the provider is
+	// unavailable. Job args do not contain record text, and moving this gate above the read would
+	// leave those vectors searchable until provider recovery.
+	if w.preflight != nil && !w.preflight.Ready() {
+		return river.JobSnooze(w.preflightSnooze) //nolint:wrapcheck // River must receive the sentinel unwrapped
 	}
 
 	// A repair or backfill job that lands after a live job already embedded this content, or a job

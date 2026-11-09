@@ -179,12 +179,100 @@ self-hosted runtime is enabled so Hub API and Hub worker cannot drift.
 {{- end }}
 {{- end }}
 
+{{/* External embedding client settings, independent of the optional bundled TEI runtime. */}}
+{{- define "hub.embeddingClientEnv" -}}
+{{- $root := .root -}}
+{{- $cfg := $root.Values.embeddingClient -}}
+{{- if $cfg.enabled -}}
+{{- if $root.Values.embeddings.enabled -}}
+{{- fail "embeddingClient.enabled and embeddings.enabled cannot both be true" -}}
+{{- end -}}
+{{- $provider := required "embeddingClient.provider is required" $cfg.provider -}}
+{{- $model := required "embeddingClient.model is required" $cfg.model -}}
+{{- if not (has $provider (list "openai" "google" "google-gemini")) -}}
+{{- fail "embeddingClient.provider must be openai, google, or google-gemini" -}}
+{{- end -}}
+{{- $base := $cfg.baseUrl -}}
+{{- if eq .role "worker" -}}
+{{- $base = default $base $cfg.workerBaseUrl -}}
+{{- else -}}
+{{- $base = default $base $cfg.apiBaseUrl -}}
+{{- end -}}
+{{- if and (ne $provider "openai") $base -}}
+{{- fail "embeddingClient base URL is supported only for openai" -}}
+{{- end -}}
+- name: EMBEDDING_PROVIDER
+  value: {{ $provider | quote }}
+- name: EMBEDDING_MODEL
+  value: {{ $model | quote }}
+{{- if $cfg.responseModel }}
+- name: EMBEDDING_RESPONSE_MODEL
+  value: {{ $cfg.responseModel | quote }}
+{{- end }}
+{{- if $base }}
+- name: EMBEDDING_BASE_URL
+  value: {{ $base | quote }}
+{{- end }}
+{{- if ne $provider "google-gemini" }}
+- name: EMBEDDING_PROVIDER_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "embeddingClient.auth.existingSecret is required" $cfg.auth.existingSecret }}
+      key: {{ $cfg.auth.secretKey | quote }}
+{{- else }}
+- name: EMBEDDING_GOOGLE_CLOUD_PROJECT
+  value: {{ required "embeddingClient.googleCloudProject is required" $cfg.googleCloudProject | quote }}
+- name: EMBEDDING_GOOGLE_CLOUD_LOCATION
+  value: {{ required "embeddingClient.googleCloudLocation is required" $cfg.googleCloudLocation | quote }}
+{{- if $cfg.auth.googleCredentialsSecret }}
+- name: GOOGLE_APPLICATION_CREDENTIALS
+  value: /var/run/hub-google/credentials.json
+{{- end }}
+{{- end }}
+{{- if eq .role "worker" }}
+- name: EMBEDDING_MAX_CONCURRENT
+  value: {{ $cfg.maxConcurrent | quote }}
+- name: EMBEDDING_JOB_TIMEOUT_SECONDS
+  value: {{ $cfg.jobTimeoutSeconds | quote }}
+- name: EMBEDDING_BATCH_SIZE
+  value: {{ $cfg.batchSize | quote }}
+- name: EMBEDDING_BATCH_MAX_WAIT_MS
+  value: {{ $cfg.batchMaxWaitMs | quote }}
+- name: EMBEDDING_BATCH_MAX_IN_FLIGHT
+  value: {{ $cfg.batchMaxInFlight | quote }}
+{{- end }}
+- name: EMBEDDING_MAX_INPUT_BYTES
+  value: {{ $cfg.maxInputBytes | quote }}
+- name: EMBEDDING_NORMALIZE
+  value: {{ $cfg.normalize | quote }}
+{{- end -}}
+{{- end -}}
+
 {{/*
 Returns true when an env var is managed by embeddings and should not be rendered from extraEnv.
 */}}
 {{- define "hub.embeddingEnvManaged" -}}
 {{- $key := .key -}}
-{{- if has $key (list "EMBEDDING_PROVIDER" "EMBEDDING_MODEL" "EMBEDDING_BASE_URL" "EMBEDDING_PROVIDER_API_KEY" "EMBEDDING_MAX_CONCURRENT" "EMBEDDING_NORMALIZE") -}}
+{{- $root := .root -}}
+{{- $bundled := list "EMBEDDING_PROVIDER" "EMBEDDING_MODEL" "EMBEDDING_BASE_URL" "EMBEDDING_PROVIDER_API_KEY" "EMBEDDING_MAX_CONCURRENT" "EMBEDDING_NORMALIZE" -}}
+{{- $external := list "EMBEDDING_PROVIDER" "EMBEDDING_MODEL" "EMBEDDING_MAX_INPUT_BYTES" "EMBEDDING_NORMALIZE" -}}
+{{- $cfg := $root.Values.embeddingClient -}}
+{{- $base := $cfg.baseUrl -}}
+{{- if eq .role "worker" -}}
+  {{- $base = default $base $cfg.workerBaseUrl -}}
+  {{- $external = concat $external (list "EMBEDDING_MAX_CONCURRENT" "EMBEDDING_JOB_TIMEOUT_SECONDS" "EMBEDDING_BATCH_SIZE" "EMBEDDING_BATCH_MAX_WAIT_MS" "EMBEDDING_BATCH_MAX_IN_FLIGHT") -}}
+{{- else -}}
+  {{- $base = default $base $cfg.apiBaseUrl -}}
+{{- end -}}
+{{- if $base -}}{{- $external = append $external "EMBEDDING_BASE_URL" -}}{{- end -}}
+{{- if $cfg.responseModel -}}{{- $external = append $external "EMBEDDING_RESPONSE_MODEL" -}}{{- end -}}
+{{- if eq $cfg.provider "google-gemini" -}}
+  {{- $external = concat $external (list "EMBEDDING_GOOGLE_CLOUD_PROJECT" "EMBEDDING_GOOGLE_CLOUD_LOCATION") -}}
+  {{- if $cfg.auth.googleCredentialsSecret -}}{{- $external = append $external "GOOGLE_APPLICATION_CREDENTIALS" -}}{{- end -}}
+{{- else -}}
+  {{- $external = append $external "EMBEDDING_PROVIDER_API_KEY" -}}
+{{- end -}}
+{{- if has $key (ternary $external $bundled .external) -}}
 true
 {{- end -}}
 {{- end }}

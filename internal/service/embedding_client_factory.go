@@ -34,6 +34,7 @@ type EmbeddingClientConfig struct {
 	Provider              string
 	ProviderAPIKey        string // API key for openai/google providers; not logged or serialized
 	Model                 string
+	ExpectedResponseModel string
 	BaseURL               string
 	HTTPDisableKeepAlives bool
 	Normalize             bool
@@ -74,6 +75,7 @@ var embeddingDocPrefixes = map[string]string{}
 func openAIEmbeddingFactory(_ context.Context, cfg EmbeddingClientConfig) (EmbeddingClient, error) {
 	return openai.NewClient(cfg.ProviderAPIKey,
 		openai.WithModel(cfg.Model),
+		openai.WithExpectedResponseModel(cfg.ExpectedResponseModel),
 		openai.WithBaseURL(cfg.BaseURL),
 		openai.WithUsageRecorder(cfg.UsageRecorder),
 		openai.WithDisableKeepAlives(cfg.HTTPDisableKeepAlives),

@@ -83,6 +83,19 @@ worker:
     # 120 attempts * 5 seconds = 10 minutes.
     maxAttempts: 120
 
+  embeddingReadiness:
+    # Opt in after deploying a Hub image that supports --check-embedding-readiness.
+    enabled: false
+    # The worker writes this file only after its configured provider passes preflight.
+    path: /run/hub/embedding-ready
+
+  embeddingPreflight:
+    # Null uses the Hub defaults or values supplied through envFrom.
+    timeoutSeconds: null
+    intervalSeconds: null
+    successTTLSeconds: null
+    snoozeSeconds: null
+
   podAnnotations: {}
   podLabels: {}
   podSecurityContext: {}
@@ -130,6 +143,33 @@ worker:
   affinity: {}
   topologySpreadConstraints: []
   terminationGracePeriodSeconds: null
+
+embeddingClient:
+  # Provider-neutral configuration for an external endpoint. Keep disabled when using the
+  # bundled TEI runtime below; existing chart output is unchanged by default.
+  enabled: false
+  provider: ""
+  model: ""
+  # Optional canonical model returned by an OpenAI-compatible provider.
+  responseModel: ""
+  baseUrl: ""
+  apiBaseUrl: ""
+  workerBaseUrl: ""
+  googleCloudProject: ""
+  googleCloudLocation: ""
+  auth:
+    existingSecret: ""
+    secretKey: EMBEDDING_PROVIDER_API_KEY
+    # Optional ADC key for Vertex when the pod has no workload identity.
+    googleCredentialsSecret: ""
+    googleCredentialsKey: credentials.json
+  maxConcurrent: 5
+  maxInputBytes: 12000
+  jobTimeoutSeconds: 60
+  batchSize: 1
+  batchMaxWaitMs: 25
+  batchMaxInFlight: 1
+  normalize: false
 
 embeddings:
   # Optional self-hosted OpenAI-compatible embeddings runtime for Hub.

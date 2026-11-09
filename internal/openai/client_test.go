@@ -95,6 +95,63 @@ func TestCreateEmbedding_UsesExplicitBaseURLOverEnvironment(t *testing.T) {
 	assert.Equal(t, int32(1), explicitHits.Load())
 }
 
+func TestEmbeddingResponseModelValidationIsOptIn(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		reportedModel string
+		expectedModel string
+		wantMismatch  bool
+	}{
+		{"alias accepted by default", "served-alias", "", false},
+		{"omitted model accepted by default", "", "", false},
+		{"exact model accepted when configured", "served-alias", "served-alias", false},
+		{"different model rejected when configured", "other-model", "served-alias", true},
+		{"omitted model rejected when configured", "", "served-alias", true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request map[string]any
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+
+				data := []map[string]any{{"object": "embedding", "index": 0, "embedding": []float64{1, 2}}}
+				if _, batch := request["input"].([]any); batch {
+					data = append(data, map[string]any{"object": "embedding", "index": 1, "embedding": []float64{3, 4}})
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+
+				response := map[string]any{
+					"object": "list",
+					"data":   data,
+					"usage":  map[string]any{"prompt_tokens": 1, "total_tokens": 1},
+				}
+				if testCase.reportedModel != "" {
+					response["model"] = testCase.reportedModel
+				}
+
+				assert.NoError(t, json.NewEncoder(w).Encode(response))
+			}))
+			t.Cleanup(server.Close)
+			client := NewClient("sk-test", WithBaseURL(server.URL), WithModel("requested-model"),
+				WithDimensions(2), WithExpectedResponseModel(testCase.expectedModel))
+
+			_, err := client.CreateEmbeddingForQuery(context.Background(), "query")
+			if testCase.wantMismatch {
+				require.ErrorIs(t, err, ErrEmbeddingModelMismatch)
+			} else {
+				require.NoError(t, err)
+			}
+
+			_, err = client.CreateEmbeddings(context.Background(), []string{"first", "second"})
+			if testCase.wantMismatch {
+				require.ErrorIs(t, err, ErrEmbeddingModelMismatch)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestCreateEmbedding_UsesEnvironmentBaseURLWhenExplicitBaseURLIsUnset(t *testing.T) {
 	envServer, envHits := newEmbeddingServer(t, []float64{3, 4})
 

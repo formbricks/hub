@@ -36,6 +36,15 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "hub.serviceAccountName" . }}
+      {{- if and .Values.embeddingClient.enabled (eq .Values.embeddingClient.provider "google-gemini") .Values.embeddingClient.auth.googleCredentialsSecret }}
+      volumes:
+        - name: embedding-google-credentials
+          secret:
+            secretName: {{ .Values.embeddingClient.auth.googleCredentialsSecret }}
+            items:
+              - key: {{ .Values.embeddingClient.auth.googleCredentialsKey }}
+                path: credentials.json
+      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -47,6 +56,12 @@ spec:
         - name: hub
           image: {{ include "hub.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if and .Values.embeddingClient.enabled (eq .Values.embeddingClient.provider "google-gemini") .Values.embeddingClient.auth.googleCredentialsSecret }}
+          volumeMounts:
+            - name: embedding-google-credentials
+              mountPath: /var/run/hub-google
+              readOnly: true
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.containerPort }}
@@ -65,12 +80,13 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
-          {{- if or .Values.embeddings.enabled (gt (len .Values.extraEnv) 0) }}
+          {{- if or .Values.embeddings.enabled .Values.embeddingClient.enabled (gt (len .Values.extraEnv) 0) }}
           env:
             {{- include "hub.embeddingEnv" . | nindent 12 }}
+            {{- include "hub.embeddingClientEnv" (dict "root" . "role" "api") | nindent 12 }}
             {{- range .Values.extraEnv }}
             {{- $name := .name | default "" }}
-            {{- if not (and $.Values.embeddings.enabled (include "hub.embeddingEnvManaged" (dict "key" $name))) }}
+            {{- if not (and (or $.Values.embeddings.enabled $.Values.embeddingClient.enabled) (include "hub.embeddingEnvManaged" (dict "root" $ "role" "api" "key" $name "external" $.Values.embeddingClient.enabled))) }}
             {{- toYaml (list .) | nindent 12 }}
             {{- end }}
             {{- end }}

@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,34 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
+
+func TestEmbeddingPreflightGaugeUsesOnlyBoundedReason(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	require.NoError(t, RegisterEmbeddingPreflightGauge(provider.Meter("test"), func() (bool, string, string) {
+		return false, "token=secret customer response at /v1/embeddings", "key=secret customer input"
+	}))
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &collected))
+	serialized := fmt.Sprint(collected)
+	assert.NotContains(t, serialized, "secret")
+	assert.NotContains(t, serialized, "customer response")
+	assert.Contains(t, serialized, "provider")
+}
+
+func TestEmbeddingPreflightGaugePreservesExpiredReason(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	require.NoError(t, RegisterEmbeddingPreflightGauge(provider.Meter("test"), func() (bool, string, string) {
+		return false, "expired", "rate_limited"
+	}))
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &collected))
+	assert.Contains(t, fmt.Sprint(collected), "expired")
+	assert.Contains(t, fmt.Sprint(collected), "rate_limited")
+}
 
 func TestNewEmbeddingMetricsNilMeterDisabled(t *testing.T) {
 	metrics, err := NewEmbeddingMetrics(nil)
