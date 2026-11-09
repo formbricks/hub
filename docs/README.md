@@ -66,6 +66,13 @@ legacy paths in `legacy-stainless-routes.json`. The site has root-relative links
 so this URL can exercise navigation. The canonical origin remains
 `https://hub.formbricks.com` throughout the preview.
 
+This cutover accepts one known content gap: Stainless serves `/index.md` and
+`/quickstart/index.md` as raw Markdown today, but the Pages build will return
+404 for both. Confirm that behavior in the preview and record it in the cutover
+decision; these two URLs are accepted exceptions to this migration. Follow-up
+[ENG-2530](https://linear.app/formbricks/issue/ENG-2530/hub-docs-replace-the-ai-chat-dropped-with-the-stainless-migration)
+tracks whether and how to restore Markdown exports.
+
 The live `hub.formbricks.com` CNAME is Terraform-managed in `formbricks/infra`
 and currently points to `customers.stldocs.app`. Only after the Pages preview
 passes, attach `hub.formbricks.com` to the Pages project and change that CNAME
@@ -76,6 +83,8 @@ enough: Pages must recognize the custom domain. Verify Pages reports the domain
 active, HTTPS serves the correct certificate, and the live route checks pass.
 Keep the Stainless DNS target and verification TXT records for rollback.
 If needed, restore the Stainless CNAME through infra and verify the old site.
+Previously cached HTTP 301 responses can continue sending clients from legacy
+URLs to Pages destinations after a DNS rollback, so check those paths separately.
 
 `legacy-stainless-routes.json` records the API URLs served by Stainless at migration.
 Every entry must have a destination in `legacy-redirects.json`. The build generates
@@ -84,6 +93,4 @@ slash forms. Astro also emits HTML refresh pages for static-host fallbacks.
 `pnpm check:redirects` validates the mapping, generated rules, fallback pages,
 and destination pages.
 
-Stainless also serves `/index.md` and `/quickstart/index.md` as raw Markdown.
-Recreating Markdown exports across the new site is tracked in ENG-2530. The old
-`/api/index.md` currently returns 404.
+The old `/api/index.md` currently returns 404.
