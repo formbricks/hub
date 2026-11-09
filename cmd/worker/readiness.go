@@ -10,21 +10,19 @@ import (
 	"time"
 )
 
-const (
-	defaultEmbeddingReadinessFile = "/tmp/hub-embedding-ready"
-	embeddingReadinessMode        = 0o600
-)
+const embeddingReadinessMode = 0o600
 
 func embeddingReadinessFile() string {
-	if path := os.Getenv("HUB_EMBEDDING_READINESS_FILE"); path != "" {
-		return path
-	}
-
-	return defaultEmbeddingReadinessFile
+	return os.Getenv("HUB_EMBEDDING_READINESS_FILE")
 }
 
 func setEmbeddingReadiness(expiresAt time.Time) error {
 	path := embeddingReadinessFile()
+	// The exec probe is opt-in; without it, no filesystem write is needed.
+	if path == "" {
+		return nil
+	}
+
 	if expiresAt.IsZero() || !time.Now().Before(expiresAt) {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove embedding readiness file: %w", err)
@@ -63,7 +61,13 @@ func setEmbeddingReadiness(expiresAt time.Time) error {
 }
 
 func checkEmbeddingReadiness() bool {
-	data, err := os.ReadFile(embeddingReadinessFile())
+	path := embeddingReadinessFile()
+	if path == "" {
+		return false
+	}
+
+	//nolint:gosec // the readiness path comes from trusted worker configuration
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}

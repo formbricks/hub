@@ -29,6 +29,13 @@ func TestEmbeddingReadinessFile(t *testing.T) {
 	assert.False(t, checkEmbeddingReadiness())
 }
 
+func TestEmbeddingReadinessFileDisabled(t *testing.T) {
+	t.Setenv("HUB_EMBEDDING_READINESS_FILE", "")
+	assert.Empty(t, embeddingReadinessFile())
+	require.NoError(t, setEmbeddingReadiness(time.Now().Add(time.Minute)))
+	assert.False(t, checkEmbeddingReadiness())
+}
+
 func TestEmbeddingReadinessProbeUsesDotEnv(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("EMBEDDING_PROVIDER", "")

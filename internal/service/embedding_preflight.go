@@ -33,6 +33,7 @@ const (
 	PreflightPermission    EmbeddingPreflightReason = "permission"
 	PreflightModel         EmbeddingPreflightReason = "model"
 	PreflightDimension     EmbeddingPreflightReason = "dimension"
+	PreflightInvalidVector EmbeddingPreflightReason = "invalid_vector"
 	PreflightInput         EmbeddingPreflightReason = "input"
 	PreflightRateLimited   EmbeddingPreflightReason = "rate_limited"
 	PreflightTimeout       EmbeddingPreflightReason = "timeout"
@@ -158,7 +159,7 @@ func validatePreflightVector(vector []float32) EmbeddingPreflightReason {
 
 	for _, value := range vector {
 		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-			return PreflightProvider
+			return PreflightInvalidVector
 		}
 
 		if value != 0 {
@@ -167,7 +168,7 @@ func validatePreflightVector(vector []float32) EmbeddingPreflightReason {
 	}
 
 	if !nonzero {
-		return PreflightProvider
+		return PreflightInvalidVector
 	}
 
 	return PreflightReady

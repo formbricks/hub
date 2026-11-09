@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -236,10 +237,31 @@ func TestEmbeddingPreflightRejectsDimensionAndFallsBackToSingle(t *testing.T) {
 }
 
 func TestEmbeddingPreflightRejectsInvalidVectorValues(t *testing.T) {
-	client := &preflightClient{vector: make([]float32, models.EmbeddingVectorDimensions)}
-	preflight := NewEmbeddingPreflight(client, 1, time.Second, time.Minute)
-	assert.Equal(t, PreflightProvider, preflight.Probe(context.Background()), "zero vector is unusable for cosine search")
-	assert.False(t, preflight.Ready())
+	tests := []struct {
+		name      string
+		batchSize int
+		corrupt   func([]float32)
+	}{
+		{"zero vector", 1, func(vector []float32) { vector[0] = 0 }},
+		{"NaN vector", 1, func(vector []float32) { vector[0] = float32(math.NaN()) }},
+		{"infinite vector", 1, func(vector []float32) { vector[0] = float32(math.Inf(1)) }},
+		{"batch zero vector", 2, func(vector []float32) { vector[0] = 0 }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &preflightClient{vector: testPreflightVector()}
+			preflight := NewEmbeddingPreflight(client, test.batchSize, time.Second, time.Minute)
+			require.Equal(t, PreflightReady, preflight.Probe(context.Background()))
+			assert.True(t, preflight.Ready())
+
+			test.corrupt(client.vector)
+			assert.Equal(t, PreflightInvalidVector, preflight.Probe(context.Background()))
+			assert.False(t, preflight.Ready(), "invalid vector must invalidate the last success immediately")
+			assert.Equal(t, PreflightInvalidVector, preflight.Reason())
+			assert.Equal(t, PreflightInvalidVector, preflight.LastFailureReason())
+		})
+	}
 }
 
 type singleOnlyPreflightClient struct{ client *preflightClient }

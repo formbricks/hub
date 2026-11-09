@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -115,6 +116,58 @@ func TestWorkerAppRunStartsEmbeddingRiverAfterPreflightAndStopsBoth(t *testing.T
 
 	assert.False(t, checkEmbeddingReadiness())
 	assert.True(t, app.embeddingStarted.Load())
+}
+
+func TestWorkerAppRunStartsEmbeddingsWithoutWritableReadinessFile(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(*testing.T) string
+	}{
+		{"probe disabled", func(*testing.T) string { return "" }},
+		{"probe file unwritable", func(t *testing.T) string {
+			return filepath.Join(t.TempDir(), "missing", "ready")
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("HUB_EMBEDDING_READINESS_FILE", test.path(t))
+
+			core, embedding := newLifecycleRiver(), newLifecycleRiver()
+			provider := &lifecycleEmbeddingClient{}
+			provider.healthy.Store(true)
+			preflight := service.NewEmbeddingPreflight(provider, 1, time.Second, time.Minute)
+			app := &WorkerApp{
+				cfg: &config.Config{
+					Embedding: config.EmbeddingConfig{PreflightInterval: config.DurationSec(time.Second)},
+					Server:    config.ServerConfig{ShutdownTimeout: config.DurationSec(time.Second)},
+				},
+				river: core, embeddingRiver: embedding, preflight: preflight,
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+
+			done := make(chan error, 1)
+			go func() { done <- app.Run(ctx) }()
+
+			select {
+			case <-embedding.started:
+			case <-time.After(time.Second):
+				t.Fatal("healthy embedding queues did not start")
+			}
+
+			assert.True(t, preflight.Ready())
+			assert.False(t, checkEmbeddingReadiness())
+			cancel()
+
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(time.Second):
+				t.Fatal("worker did not stop")
+			}
+		})
+	}
 }
 
 func TestWorkerAppRunReportsUnexpectedCoreStopWithoutEmbeddings(t *testing.T) {

@@ -658,9 +658,8 @@ func (a *WorkerApp) Run(ctx context.Context) error {
 
 			ready := a.preflight.Ready()
 			if err := setEmbeddingReadiness(a.preflight.ExpiresAt()); err != nil {
+				// Provider readiness alone controls embedding consumption; the marker serves only the exec probe.
 				slog.Error("embedding readiness state write failed", "reason", "state_file")
-
-				ready = false
 			}
 
 			if reason != previous || lastFailure != previousFailure {
