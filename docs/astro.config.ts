@@ -9,7 +9,7 @@ import legacyRedirects from "./legacy-redirects.json";
 export default defineConfig({
   // Canonical origin. Required by @astrojs/sitemap, which Starlight enables.
   site: "https://hub.formbricks.com",
-  // GitHub Pages serves these as static HTML refresh pages, not HTTP 301s.
+  // Static HTML fallbacks for hosts without Cloudflare Pages' HTTP redirects.
   redirects: legacyRedirects,
   env: {
     schema: {

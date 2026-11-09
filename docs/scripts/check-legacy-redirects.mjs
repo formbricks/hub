@@ -10,6 +10,17 @@ const inventory = JSON.parse(
 const redirects = JSON.parse(readFileSync("legacy-redirects.json", "utf8"));
 const entries = Object.entries(redirects);
 const errors = [];
+const cloudflareRules = readFileSync(join(dist, "_redirects"), "utf8")
+  .trimEnd()
+  .split("\n");
+const expectedCloudflareRules = entries.flatMap(([source, destination]) => [
+  `${source} ${destination} 301`,
+  `${source}/ ${destination} 301`,
+]);
+
+if (cloudflareRules.join("\n") !== expectedCloudflareRules.join("\n")) {
+  errors.push("Cloudflare _redirects differs from legacy-redirects.json.");
+}
 
 if (new Set(inventory).size !== inventory.length) {
   errors.push("The legacy route inventory contains duplicate paths.");
@@ -52,5 +63,5 @@ if (errors.length) {
 }
 
 console.log(
-  `Verified ${entries.length} legacy redirects and their destinations.`,
+  `Verified ${entries.length} legacy redirects, Cloudflare 301 rules, and their destinations.`,
 );
