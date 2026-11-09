@@ -40,33 +40,49 @@ Starlight's [components](https://starlight.astro.build/components/using-componen
 
 The API reference is not hand-written. To change it, change `../openapi.yaml`.
 
-## GitHub Pages deployment
+## Cloudflare Pages deployment
 
-`.github/workflows/docs-build.yml` checks PRs and publishes the same checked `docs/dist/`
-artifact on changes to `docs/**` or `openapi.yaml` on `main`. It can also be run manually
-from `main`. The repository's Pages source must be **GitHub Actions**. The `github-pages`
-environment is used by the deploy job; no build secrets are required.
+`.github/workflows/docs-build.yml` checks PRs and `main` without build
+secrets. Its GitHub Pages deployment stays in place until the Cloudflare
+cutover is verified. Cloudflare Pages deploys through its GitHub integration.
+Configure one Pages project:
 
-The site uses root-relative URLs and has `https://hub.formbricks.com` as its canonical
-origin. For pre-cutover browser checks, set the Pages custom domain to
-`hub-docs-preview.formbricks.com` and point an unproxied CNAME there to
-`formbricks.github.io`. Check HTTPS, the homepage, guides, API pages, search, assets,
-`/sitemap-index.xml`, and every path in `legacy-stainless-routes.json` before
-switching the live domain. The default `formbricks.github.io/hub/` project URL cannot
-exercise root-relative links accurately.
+| Setting                | Value                                                                  |
+| ---------------------- | ---------------------------------------------------------------------- |
+| Repository             | `formbricks/hub`                                                       |
+| Production branch      | `main`                                                                 |
+| Root directory         | `docs`                                                                 |
+| Build command          | `pnpm check && pnpm build && pnpm check:links && pnpm check:redirects` |
+| Build output directory | `dist`                                                                 |
+| Environment variables  | `NODE_VERSION=24`, `PNPM_VERSION=12.10.1`                              |
 
-For cutover, set the Pages custom domain to `hub.formbricks.com` and update that
-hostname's unproxied CNAME from `customers.stldocs.app` to `formbricks.github.io` in
-the infra repository. Confirm GitHub Pages reports the domain and HTTPS as healthy,
-then check the same routes at the live hostname. Keep the old Stainless DNS target and
-verification TXT records available through the rollback window. To roll back, restore
-the former CNAME target in infra and verify the old site serves again.
+The build reads `../openapi.yaml` from the same Git checkout. It needs no build
+secrets. Keep production and pull-request deployments enabled so changes to the
+spec or docs get a preview and then publish from `main`.
+
+Before changing production DNS, verify the production `*.pages.dev` URL over HTTPS:
+homepage, guides, API reference, search, assets, `/sitemap-index.xml`, and the
+legacy paths in `legacy-stainless-routes.json`. The site has root-relative links,
+so this URL can exercise navigation. The canonical origin remains
+`https://hub.formbricks.com` throughout the preview.
+
+The live `hub.formbricks.com` CNAME is Terraform-managed in `formbricks/infra`
+and currently points to `customers.stldocs.app`. Only after the Pages preview
+passes, attach `hub.formbricks.com` to the Pages project and change that CNAME
+to the project's `*.pages.dev` hostname in a separate infra pull request.
+Cloudflare's custom-domain setup may offer to replace the DNS record itself;
+coordinate that confirmation with the Terraform change. A CNAME alone is not
+enough: Pages must recognize the custom domain. Verify Pages reports the domain
+active, HTTPS serves the correct certificate, and the live route checks pass.
+Keep the Stainless DNS target and verification TXT records for rollback.
+If needed, restore the Stainless CNAME through infra and verify the old site.
 
 `legacy-stainless-routes.json` records the API URLs served by Stainless at migration.
-Every entry must have a destination in `legacy-redirects.json`; the build check
-enforces this. GitHub Pages serves these old API paths as HTML refresh pages. They
-retain browser access and link destinations, but do not return HTTP 301. A true 301
-would require an additional redirect service in front of Pages.
+Every entry must have a destination in `legacy-redirects.json`. The build generates
+`dist/_redirects` from that map so Cloudflare Pages returns HTTP 301 for both
+slash forms. Astro also emits HTML refresh pages for static-host fallbacks.
+`pnpm check:redirects` validates the mapping, generated rules, fallback pages,
+and destination pages.
 
 Stainless also serves `/index.md` and `/quickstart/index.md` as raw Markdown.
 Recreating Markdown exports across the new site is tracked in ENG-2530. The old

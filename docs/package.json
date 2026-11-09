@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro build",
+    "build": "astro build && node scripts/build-cloudflare-redirects.mjs",
     "check:links": "node scripts/check-links.mjs",
     "check:redirects": "node scripts/check-legacy-redirects.mjs",
     "preview": "astro preview",
