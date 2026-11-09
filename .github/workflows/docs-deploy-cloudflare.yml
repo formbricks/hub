@@ -1,0 +1,65 @@
+name: Deploy Hub docs to Cloudflare Pages
+
+# workflow_run loads this workflow from main, including for a PR build. The
+# unprivileged Docs workflow builds and checks the static artifact first.
+on:
+  workflow_run:
+    workflows: [Docs]
+    types: [completed]
+
+permissions:
+  actions: read
+
+concurrency:
+  group: cloudflare-hub-docs-${{ github.event.workflow_run.event == 'push' && 'main' || github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy checked docs artifact
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == 'formbricks/hub' &&
+      ((github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') ||
+       github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download checked docs artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: hub-docs-cloudflare
+          path: docs/dist
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Do not check out the source here: this job has the Pages credential,
+      # and a PR can change files in the repository.
+      - name: Check deployment artifact
+        run: |
+          test -f docs/dist/index.html
+          test -f docs/dist/_redirects
+          test -f docs/dist/sitemap-index.xml
+          test ! -e docs/dist/_worker.js
+
+      - name: Install Wrangler without credentials
+        run: npm install --global wrangler@4.158.0
+
+      - name: Deploy production
+        if: github.event.workflow_run.event == 'push'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6bc0890b1bb5fa088eb89a3368d88929
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: wrangler pages deploy docs/dist --project-name=formbricks-hub-docs --branch=main --commit-hash="$SOURCE_SHA"
+
+      # A numeric run ID cannot inject shell syntax or collide with the main
+      # branch. Fork PRs are intentionally excluded by the job-level guard.
+      - name: Deploy preview
+        if: github.event.workflow_run.event == 'pull_request'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 6bc0890b1bb5fa088eb89a3368d88929
+          PREVIEW_BRANCH: pr-run-${{ github.event.workflow_run.id }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: wrangler pages deploy docs/dist --project-name=formbricks-hub-docs --branch="$PREVIEW_BRANCH" --commit-hash="$SOURCE_SHA"

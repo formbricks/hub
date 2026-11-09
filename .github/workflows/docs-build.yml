@@ -13,12 +13,14 @@ on:
       - "docs/**"
       - "openapi.yaml"
       - ".github/workflows/docs-build.yml"
+      - ".github/workflows/docs-deploy-cloudflare.yml"
   push:
     branches: [main]
     paths:
       - "docs/**"
       - "openapi.yaml"
       - ".github/workflows/docs-build.yml"
+      - ".github/workflows/docs-deploy-cloudflare.yml"
   workflow_dispatch:
 
 concurrency:
@@ -82,6 +84,18 @@ jobs:
 
       - name: Check legacy redirects
         run: pnpm check:redirects
+
+      # The deploy workflow runs from main after this job succeeds. It only
+      # downloads these static files, so the Cloudflare token is never present
+      # while PR-controlled code or dependency install scripts run.
+      - name: Upload checked Cloudflare artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hub-docs-cloudflare
+          path: docs/dist
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
 
       # Only a main-branch run can publish. PR builds have read-only permissions
       # and still exercise the exact same checks before merge.
