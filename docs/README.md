@@ -42,23 +42,27 @@ The API reference is not hand-written. To change it, change `../openapi.yaml`.
 
 ## Cloudflare Pages deployment
 
-`.github/workflows/docs-build.yml` checks PRs and `main` without build
-secrets. Its GitHub Pages deployment stays in place until the Cloudflare
-cutover is verified. Cloudflare Pages deploys through its GitHub integration.
-Configure one Pages project:
+`.github/workflows/docs-build.yml` checks PRs and `main` without build secrets.
+Its GitHub Pages deployment stays in place until the Cloudflare cutover is
+verified. The separate `.github/workflows/docs-deploy-cloudflare.yml` downloads
+the checked artifact and deploys it to the Direct Upload Pages project. It does
+not check out or build PR code while holding the Cloudflare token.
 
-| Setting                | Value                                                                  |
-| ---------------------- | ---------------------------------------------------------------------- |
-| Repository             | `formbricks/hub`                                                       |
-| Production branch      | `main`                                                                 |
-| Root directory         | `docs`                                                                 |
-| Build command          | `pnpm check && pnpm build && pnpm check:links && pnpm check:redirects` |
-| Build output directory | `dist`                                                                 |
-| Environment variables  | `NODE_VERSION=24`, `PNPM_VERSION=12.10.1`                              |
+| Setting               | Value                                                                   |
+| --------------------- | ----------------------------------------------------------------------- |
+| Cloudflare account    | Formbricks (`6bc0890b1bb5fa088eb89a3368d88929`)                         |
+| Pages project         | `formbricks-hub-docs`                                                   |
+| Production branch     | `main`                                                                  |
+| GitHub Actions secret | `CLOUDFLARE_API_TOKEN`, scoped to Cloudflare Pages Edit in this account |
 
-The build reads `../openapi.yaml` from the same Git checkout. It needs no build
-secrets. Keep production and pull-request deployments enabled so changes to the
-spec or docs get a preview and then publish from `main`.
+The build reads `../openapi.yaml` from the same Git checkout and uses Node 24
+and pnpm 12.10.1. It needs no build secrets. A successful `main` build deploys
+production. A successful same-repository PR build deploys a preview from the
+checked artifact under a `pr-run-<workflow-run-id>` branch. Fork PRs receive
+build checks but no Cloudflare deployment. The current user-owned token
+`hub-docs-github-actions` expires November 10, 2027. Rotate it before then;
+prefer an account-owned Pages Edit token when one can be created. Never commit
+the token or add it to the build job.
 
 Before changing production DNS, verify the production `*.pages.dev` URL over HTTPS:
 homepage, guides, API reference, search, assets, `/sitemap-index.xml`, and the
