@@ -51,12 +51,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/h
 # =============================================================================
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
-# Require the patched zlib even when the base image contains an older package (CVE-2026-85091).
+# Require the patched zlib even when the base image contains an older package (CVE-2026-85091, CVE-2026-4738).
 # Require the CA store that drops emSign ECC Root CA - G3 after the October 2026 eMudhra
 # intermediate CA compromise. Both packages are pinned: plain `apk add ca-certificates`
 # regenerates the bundle file but leaves the base image's older ca-certificates-bundle installed.
 # Require OpenSSL 3.5.9 (busybox wget's TLS and apk) over the base image's 3.5.8.
-RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.3.2-r1' \
+RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.4-r0' \
 	'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0' \
 	'libssl3>=3.5.9-r0' 'libcrypto3>=3.5.9-r0'
 
