@@ -9,7 +9,7 @@ run:
   timeout: 5m
   concurrency: 4
   modules-download-mode: readonly
-  go: "1.27.3"
+  go: "1.27.4"
   # Allow linting test files but suppress specific strict rules via exclusion below
   tests: true
 
@@ -91,6 +91,11 @@ linters:
     # Nesting: flag only very deep nesting (8); allows inline shutdown-and-log pattern in app.go
     nestif:
       min-complexity: 8
+    # wrapcheck v2.13 (golangci-lint v2.15) also reports custom error types from other packages.
+    # huberrors constructors build our own domain errors, so returning them unwrapped is intended.
+    wrapcheck:
+      extra-ignore-sigs:
+        - github.com/formbricks/hub/internal/huberrors.New
   enable:
     ## 1. Bugs & Logic
     - bodyclose     # Checks HTTP response bodies are closed

@@ -10,7 +10,7 @@
     "directory": "sdks/typescript"
   },
   "homepage": "https://hub.formbricks.com",
-  "packageManager": "pnpm@12.10.1",
+  "packageManager": "pnpm@12.18.0",
   "type": "module",
   "sideEffects": false,
   "engines": {
@@ -62,10 +62,10 @@
   },
   "devDependencies": {
     "@hey-api/openapi-ts": "0.99.0",
-    "prettier": "3.9.9",
-    "tsdown": "0.23.0",
+    "prettier": "3.9.10",
+    "tsdown": "0.23.7",
     "typescript": "6.0.3",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "publishConfig": {
     "access": "public"

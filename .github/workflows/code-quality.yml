@@ -30,7 +30,7 @@ jobs:
       - name: Set up Node (for Spectral)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: '26'
 
       - name: Lint OpenAPI spec
         run: npx --yes @stoplight/spectral-cli@6 lint openapi.yaml
@@ -39,7 +39,7 @@ jobs:
         id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
 
       - name: Cache Go modules
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -69,13 +69,13 @@ jobs:
           path: |
             ~/go/bin/golangci-lint
             ~/go/bin/govulncheck
-          key: ${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-lint2.14.0-vuln1.8.0
+          key: ${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-lint2.15.0-vuln1.9.0
 
       - name: Install development tools
         if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
-          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
       - name: Format check (make fmt)
         run: |

@@ -2,17 +2,17 @@
 # Stage 1: Build
 # =============================================================================
 # TARGETOS/TARGETARCH are set by Docker Buildx for multi-platform builds (e.g. linux/arm64 on Mac M1).
-FROM golang:1.27.3-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS builder
+FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
-ARG GOOSE_VERSION=v3.28.0
-ARG RIVER_VERSION=v0.49.0
+ARG GOOSE_VERSION=v3.30.0
+ARG RIVER_VERSION=v0.51.2
 ARG OTEL_VERSION=v1.47.0
-ARG GRPC_VERSION=v1.84.0
-ARG X_CRYPTO_VERSION=v0.57.0
-ARG X_NET_VERSION=v0.60.0
-ARG X_SYS_VERSION=v0.48.0
-ARG X_TEXT_VERSION=v0.42.0
+ARG GRPC_VERSION=v1.85.0
+ARG X_CRYPTO_VERSION=v0.58.0
+ARG X_NET_VERSION=v0.62.0
+ARG X_SYS_VERSION=v0.50.0
+ARG X_TEXT_VERSION=v0.44.0
 
 RUN apk add --no-cache git ca-certificates
 
@@ -49,14 +49,14 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /build/bin/h
 # =============================================================================
 # Stage 2: Runtime (default: hub-api)
 # =============================================================================
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
-# Require the patched zlib even when the base image contains an older package (CVE-2026-85091).
+# Require the patched zlib even when the base image contains an older package (CVE-2026-85091, CVE-2026-4738).
 # Require the CA store that drops emSign ECC Root CA - G3 after the October 2026 eMudhra
 # intermediate CA compromise. Both packages are pinned: plain `apk add ca-certificates`
 # regenerates the bundle file but leaves the base image's older ca-certificates-bundle installed.
 # Require OpenSSL 3.5.9 (busybox wget's TLS and apk) over the base image's 3.5.8.
-RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.3.2-r1' \
+RUN apk add --no-cache ca-certificates tzdata wget 'zlib>=1.4-r0' \
 	'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0' \
 	'libssl3>=3.5.9-r0' 'libcrypto3>=3.5.9-r0'
 
