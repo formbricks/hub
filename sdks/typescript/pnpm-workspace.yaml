@@ -1,0 +1,6 @@
+# @hey-api/json-schema-ref-parser (via @hey-api/openapi-ts, the SDK generator) pins js-yaml to
+# exactly 4.2.0, which is vulnerable to GHSA advisories fixed in 4.3.2 (ENG-7156). Upstream has not
+# re-released, so force the patched 4.x here, as docs/pnpm-workspace.yaml does for form-data.
+# The generator only parses this repo's own openapi.yaml.
+overrides:
+  js-yaml: ^4.3.2
