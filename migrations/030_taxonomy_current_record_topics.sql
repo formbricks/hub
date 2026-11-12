@@ -12,18 +12,24 @@
 -- The rules are GetFeedbackRecordTaxonomy's (internal/repository/taxonomy_repository.go): only the
 -- directory scope's active run counts, and a removed node anywhere on the path, root included,
 -- leaves the record unclassified, so it has no row here. That function walks the parents
--- recursively; this view uses fixed joins instead, because the taxonomy service only writes
--- five-level trees (root 0, branches 1-3, leaf 4), and fixed joins let the planner push a reader's
--- tenant and record predicates down into the scan. A tree of another depth (written before that
--- rule) yields no rows.
+-- recursively; this view uses fixed joins instead, because every tree is five levels deep (root 0,
+-- branches 1-3, leaf 4), and fixed joins let the planner push a reader's tenant and record
+-- predicates down into the scan, which a recursive query inside a view would block.
+--
+-- Two rules about the stored trees make the fixed joins exact. Each tree is five levels deep, and
+-- each cluster sits in exactly one leaf. The taxonomy service, the only writer of runs, has refused
+-- any other tree since before Hub had directory runs (validate_taxonomy_tree), and Hub checks both
+-- rules again when it stores a result (validateTaxonomyResultNodes, since 0.8.6). Renames and
+-- removals change neither. So no directory run of another shape exists for these joins to miss or
+-- to duplicate. The rules are enforced in code, not by a constraint: a reader that counts rows
+-- relies on them.
 --
 -- Outliers stay in: a record in the outlier cluster ("Uncategorized Feedback") has a row with
 -- is_outlier = true, as GetFeedbackRecordTaxonomy also reports it classified. Readers decide
 -- whether that counts as a topic; Cube's chart fields leave outliers out.
 --
 -- At most one row per (tenant_id, feedback_record_id): memberships are unique per run and record,
--- and the taxonomy service puts each cluster in exactly one leaf. That second rule is enforced in
--- Go, not by an index, so a reader that counts rows relies on it.
+-- and each cluster sits in exactly one leaf.
 --
 -- A plain view stores nothing, so it adds no write cost and needs no backfill. It does pin the
 -- columns it reads: a later migration that alters or drops one of them must drop this view first
