@@ -82,6 +82,38 @@ curl "http://localhost:8080/v1/taxonomy/runs/RUN_ID/record-counts?tenant_id=org-
 
 Each `record_count` is a **subtree total** of distinct records: a topic reports the count across all of its subtopics, and the root reports the run total. Join the `node_id`s with the tree to render a count next to each topic and subtopic.
 
+## Querying assignments in SQL
+
+Tools that read Hub's database directly — BI tools, or Formbricks' own chart layer — can join feedback to its current directory taxonomy through the `taxonomy_current_record_topics` view. It has one row per classified record in the tenant's active **directory** run:
+
+| Column                               | Meaning                                                                  |
+| ------------------------------------ | ------------------------------------------------------------------------ |
+| `tenant_id`, `feedback_record_id`    | The record. Always filter by `tenant_id`.                                |
+| `submission_id`                      | The record's submission, to join the other answers of the same response. |
+| `run_id`                             | The active directory run the assignment comes from.                      |
+| `topic_node_id`, `topic_label`       | The first level below the root.                                          |
+| `subtopic_node_id`, `subtopic_label` | The second level below the root.                                         |
+| `leaf_node_id`                       | The leaf that holds the record's cluster.                                |
+| `is_outlier`                         | `true` for the outlier cluster, labelled "Uncategorized Feedback".       |
+
+A directory tree has a fixed depth — the root, three levels of branches, then the leaves — and the view names its first two levels `topic` and `subtopic`.
+
+The view is resolved when it is read, with the same rules as `GET /v1/feedback-records/{id}/taxonomy`:
+
+- A rename shows up on the next read.
+- A removed node anywhere on a record's path, root included, leaves the record unclassified, so it has no row.
+- A newly activated run replaces the old assignments at once.
+- Records outside the active run, and runs of the `field` scope, have no rows.
+
+```sql
+-- Records per topic in a tenant's current directory taxonomy, outliers left out.
+SELECT topic_label, count(*) AS records
+FROM taxonomy_current_record_topics
+WHERE tenant_id = 'org-123' AND NOT is_outlier
+GROUP BY topic_label
+ORDER BY records DESC;
+```
+
 ## Enabling
 
 Taxonomy is available where the **deployment has both embeddings and the taxonomy service configured**:
