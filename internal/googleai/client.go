@@ -338,7 +338,9 @@ func terminalEmptyReason(resp *genai.GenerateContentResponse) (huberrors.Termina
 	switch firstFinishReason(resp) {
 	case genai.FinishReasonSafety, genai.FinishReasonProhibitedContent,
 		genai.FinishReasonBlocklist, genai.FinishReasonSPII,
-		genai.FinishReasonImageSafety, genai.FinishReasonImageProhibitedContent:
+		genai.FinishReasonImageSafety, genai.FinishReasonImageProhibitedContent,
+		// Provider-side policy filters: the text is why generation stopped.
+		genai.FinishReasonModelArmor, genai.FinishReasonEscalation:
 		return huberrors.TerminalReasonContentFilter, true
 	case genai.FinishReasonRecitation, genai.FinishReasonImageRecitation:
 		return huberrors.TerminalReasonRecitation, true
@@ -349,7 +351,11 @@ func terminalEmptyReason(resp *genai.GenerateContentResponse) (huberrors.Termina
 		genai.FinishReasonMalformedFunctionCall, genai.FinishReasonUnexpectedToolCall,
 		genai.FinishReasonTooManyToolCalls,
 		genai.FinishReasonNoImage, genai.FinishReasonImageOther,
-		genai.FinishReasonContinuation:
+		genai.FinishReasonContinuation,
+		// A missing thought signature, a malformed provider response and an account-level PUP
+		// block say nothing about this text, so a fresh call may still complete.
+		genai.FinishReasonMissingThoughtSignature, genai.FinishReasonMalformedResponse,
+		genai.FinishReasonPupLimitedDisabled:
 		// Deliberately retryable, listed rather than defaulted so the choice is reviewable.
 		// LANGUAGE is arguably permanent, but it is rare and abandoning a record wrongly is the
 		// worse error; the image and tool reasons cannot occur for the calls this client makes;
