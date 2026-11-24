@@ -377,6 +377,47 @@ func TestCompleteJSON_BlockAndFinishReasonAreSurfaced(t *testing.T) {
 	}
 }
 
+// terminalEmptyReason's switch lists every genai.FinishReason on purpose: the exhaustive linter
+// fails the build when the SDK adds one, so each new reason is classified rather than defaulted.
+func TestTerminalEmptyReason_NewFinishReasons(t *testing.T) {
+	tests := map[string]struct {
+		reason   genai.FinishReason
+		want     huberrors.TerminalReason
+		terminal bool
+	}{
+		"model armor filters the content": {
+			reason:   genai.FinishReasonModelArmor,
+			want:     huberrors.TerminalReasonContentFilter,
+			terminal: true,
+		},
+		"escalation rule filters the content": {
+			reason:   genai.FinishReasonEscalation,
+			want:     huberrors.TerminalReasonContentFilter,
+			terminal: true,
+		},
+		"missing thought signature says nothing about the text": {
+			reason: genai.FinishReasonMissingThoughtSignature,
+		},
+		"malformed provider response is retryable": {
+			reason: genai.FinishReasonMalformedResponse,
+		},
+		"account-level PUP block is retryable": {
+			reason: genai.FinishReasonPupLimitedDisabled,
+		},
+	}
+
+	for name, testCase := range tests {
+		t.Run(name, func(t *testing.T) {
+			reason, terminal := terminalEmptyReason(&genai.GenerateContentResponse{
+				Candidates: []*genai.Candidate{{FinishReason: testCase.reason}},
+			})
+
+			assert.Equal(t, testCase.want, reason)
+			assert.Equal(t, testCase.terminal, terminal)
+		})
+	}
+}
+
 func TestCreateEmbedding_RateLimitReturnsRateLimitError(t *testing.T) {
 	// The embedding path must map RESOURCE_EXHAUSTED like the generate-content path — a
 	// throttled backfill snoozes via RateLimitError instead of burning River attempts.
