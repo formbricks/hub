@@ -20,3 +20,6 @@ __pycache__/
 
 # Schemathesis run cache (crash fixtures, local runs only)
 .schemathesis/
+
+# Local agent tickets (see docs/agents/issue-tracker.md)
+.scratch/
