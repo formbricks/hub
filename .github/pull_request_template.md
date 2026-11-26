@@ -4,7 +4,7 @@
 
 <!-- Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change. -->
 
-Fixes #(issue)
+Fixes ENG-1234 <!-- or Ref ENG-1234: the Linear issue this PR closes or relates to -->
 
 <!-- For API behavior changes, include request/response examples or screenshots of Swagger UI to speed up reviews. -->
 

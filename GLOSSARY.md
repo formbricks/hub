@@ -15,15 +15,15 @@ programming concepts, and no implementation details.
 
 ## Tenancy
 
-**Tenant** — The isolation boundary for every tenant-owned resource, identified by `tenant_id`. Tenant-owned data is never read, enqueued, searched, embedded or deleted across tenants. _Avoid_: account, organization.
+**Tenant** — The isolation boundary for every tenant-owned resource, identified by `tenant_id`. Tenant-owned data is never read, enqueued, searched, embedded or deleted across tenants. The one exception is the documented GDPR erasure flow, which deletes one data subject's records in every tenant. _Avoid_: account, organization.
 
 **Tenant settings** — A tenant's persisted configuration, today the enrichment switches. Each setting falls back to a documented default when unset.
 
-**Purge** — Deleting all of a tenant's feedback records. It holds the tenant write lock exclusively, so no tenant-owned write runs alongside it.
+**Purge** — Deleting all of a tenant's feedback records. No other write to the tenant's data runs while a purge does.
 
 ## Enrichment
 
-**Enrichment** — A server-generated, read-only output derived from a feedback record's text: translation, sentiment, emotions or embedding. It is `NULL` until computed, and cleared and recomputed when the text changes.
+**Enrichment** — A server-generated, read-only output derived from a feedback record's text: translation, sentiment, emotions or embedding. It is empty until computed, and cleared and recomputed when the text changes.
 
 **Classify enrichment** — An enrichment that turns text into a structured result through an LLM: translation, sentiment and emotions. Embedding is not one.
 
