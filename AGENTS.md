@@ -166,3 +166,17 @@ landing page needs checking in light *and* dark mode.
 - Configure `API_KEY` and `DATABASE_URL` via `.env` or environment variables.
 - Enrichment providers and other runtime options are env-configured (`EMBEDDING_*`, `TRANSLATION_*`, `SENTIMENT_*`, `EMOTIONS_*`, `TENANT_SETTINGS_CACHE_*`, `OTEL_*`); `.env.example` is the full, documented set.
 - Do not commit `.env` or secrets; use `.env.example` as the base.
+
+## Agent skills
+
+### Issue tracker
+
+Linear, Engineering team (`ENG`); skills use the Linear MCP tools. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+No triage labels: the five roles map onto Linear workflow states. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` at the repo root and ADRs in `docs/adr/`. See `docs/agents/domain.md`.
