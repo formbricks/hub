@@ -43,6 +43,6 @@ programming concepts, and no implementation details.
 
 ## Delivery
 
-**Webhook** — A tenant-owned subscription that receives the Hub's events for its tenant. A webhook always has a tenant; an event without one matches none.
+**Webhook** — A tenant-owned subscription that receives the Hub's events for its tenant. A webhook is created with a tenant; legacy rows without one were disabled. An event without a tenant matches no webhook.
 
 **Event** — A change the Hub announces to webhooks, such as a feedback record created, updated or deleted.

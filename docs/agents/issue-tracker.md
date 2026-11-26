@@ -12,13 +12,13 @@ Hub work items live as Linear issues in the Engineering team (`ENG`), the same t
 - **Labels**: `addLabels` / `removeLabels`, using existing labels only. Don't create labels without asking.
 - **Close**: state `Done`; won't do → `Canceled`; duplicate → `duplicateOf`.
 - **Blocking**: `blocks` / `blockedBy` relations.
-- Never put unpublished exploit details or secrets in Linear.
+- Never put secrets (keys, passwords, tokens) in Linear. A vulnerability ticket holds everything needed to fix it, exploit detail included.
 
 ## Pull requests
 
-PRs link to issues through the template's ticket line (`Fixes ENG-1234` / `Ref ENG-1234`). PRs are not a triage surface.
+PRs link to issues through the template's ticket line (`Fixes ENG-1234` / `Ref ENG-1234`) and the branch name (`type/ENG-1234_feature`). PRs are not a triage surface.
 
-A PR built from a spec names the build's Linear issue on that line. The spec document and local tickets have no issue identifier, so the PR never references them.
+A PR built from a spec, including the draft PR `/implement-spec` opens, names the build's Linear issue on that line. The spec document and local tickets have no issue identifier, so the PR never references them.
 
 ## When a skill says "publish to the issue tracker"
 
