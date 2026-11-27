@@ -159,7 +159,7 @@ landing page needs checking in light *and* dark mode.
 ## Commit & Pull Request Guidelines
 - Always create a pull request for changes and don't commit directly to main.
 - Commit messages follow a Conventional Commits style (e.g., `chore: fix linting errors`).
-- PRs should describe the change, include test evidence (command + result), and link related issues when available.
+- Write the PR body by filling `.github/pull_request_template.md`, top to bottom. `gh pr create --body-file` and the API skip the template, so read the file and keep its headings and checkbox text verbatim. Tick exactly one door box, and put test evidence (command + result) in the Evidence table.
 - For API behavior changes, include request/response examples or screenshots of Swagger UI.
 
 ## Security & Configuration Tips

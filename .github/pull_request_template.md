@@ -1,40 +1,52 @@
-<!-- We require pull request titles to follow the Conventional Commits specification ( https://www.conventionalcommits.org/en/v1.0.0/#summary ). Please make sure your title follows these conventions -->
+<!-- Title: Conventional Commits. -->
 
-## What does this PR do?
+<!-- `Fixes` closes the ticket on merge; use `Ref` for partial work. No ticket: delete the line, say why. -->
 
-<!-- Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change. -->
+Fixes ENG-
 
-Fixes ENG-1234 <!-- or Ref ENG-1234: the Linear issue this PR closes or relates to -->
+## What & why
 
-<!-- For API behavior changes, include request/response examples or screenshots of Swagger UI to speed up reviews. -->
+**Was:** _how it behaved before, one sentence_
 
-## How should this be tested?
+**Now:** _how it behaves after this PR, one sentence_
 
-<!-- Please describe the tests that you ran to verify your changes. Provide instructions so we can reproduce. Please also list any relevant details for your test configuration (e.g. DATABASE_URL, API_KEY). -->
+<!-- The smallest visual that makes the point: a diff sketch, a call or file tree, or mermaid. -->
 
-- Test A
-- Test B
+## Where to look
 
-## Checklist
+<!-- 1–3 permalinks pinned to the head commit, ≤10 words each. Nothing risky? Say so. -->
 
-<!-- Please go through this checklist and tick off what you did. -->
+-
 
-### Required
+## Merge danger
 
-- [ ] Filled out the "How to test" section in this PR
-- [ ] Read [Repository Guidelines](https://github.com/formbricks/hub/blob/main/AGENTS.md)
-- [ ] Self-reviewed my own code
-- [ ] Commented on my code in hard-to-understand bits
-- [ ] Ran `make build`
-- [ ] Ran `make tests` (integration tests in `tests/`)
-- [ ] Ran `make fmt` and `make lint`; no new warnings
-- [ ] Removed debug prints / temporary logging
-- [ ] Merged the latest changes from main onto my branch with `git pull origin main`
-- [ ] If database schema changed: added migration in `migrations/` with goose annotations and ran `make migrate-validate`
+- [ ] This PR contains breaking changes
 
-### Appreciated
+Why: _one line on why it is, or is not, breaking_
 
-- [ ] If API changed: added or updated OpenAPI spec and ran contract tests (`make tests` or API contract workflow)
-- [ ] If API behavior changed: added request/response examples or Swagger UI screenshots to this PR
-- [ ] Updated docs in `docs/` if changes were necessary
-- [ ] Ran `make tests-coverage` for meaningful logic changes
+**Door** (tick one)
+
+- [ ] Two-way door: a revert undoes it
+- [ ] One-way door: a revert does not undo it
+
+**Blast radius:** _what nearby could break_
+
+**Migrations & env:** none
+
+<!-- Schema change: add a goose migration in `migrations/` and run `make migrate-validate`. API change: update `openapi.yaml` and run the contract tests. -->
+
+## Evidence
+
+Rerun: `make tests`
+
+**Coverage**
+
+| Behaviour | How | Outcome |
+| --- | --- | --- |
+|  |  |  |
+
+<!-- UI change: before/after screenshots here. No visual change: write "No UI change". -->
+
+**Open gaps**
+
+- none
