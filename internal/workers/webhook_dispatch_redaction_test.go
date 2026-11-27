@@ -23,6 +23,7 @@ import (
 // attempt the webhook's disabled_reason; none of them may carry the URL's path or query (ENG-3616).
 func TestWebhookDispatchWorker_Work_DoesNotLeakWebhookURL(t *testing.T) {
 	const (
+		maxAttempts = 3
 		secretPath  = "s3cretPathToken"
 		secretQuery = "s3cretQueryToken"
 	)
@@ -65,7 +66,7 @@ func TestWebhookDispatchWorker_Work_DoesNotLeakWebhookURL(t *testing.T) {
 		attempt int
 	}{
 		{name: "retry", attempt: 1},
-		{name: "final attempt", attempt: 3},
+		{name: "final attempt", attempt: maxAttempts},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			var logs bytes.Buffer
@@ -78,7 +79,7 @@ func TestWebhookDispatchWorker_Work_DoesNotLeakWebhookURL(t *testing.T) {
 			repo := &mockDispatchRepo{webhook: webhook}
 			worker := NewWebhookDispatchWorker(repo, sender, 5*time.Second, nil)
 			job := &river.Job[service.WebhookDispatchArgs]{
-				JobRow: &rivertype.JobRow{Attempt: testCase.attempt, MaxAttempts: 3},
+				JobRow: &rivertype.JobRow{Attempt: testCase.attempt, MaxAttempts: maxAttempts},
 				Args:   args,
 			}
 
@@ -98,7 +99,7 @@ func TestWebhookDispatchWorker_Work_DoesNotLeakWebhookURL(t *testing.T) {
 				assertNoSecret(t, "disabled_reason", *repo.update.DisabledReason)
 			}
 
-			if testCase.attempt == 3 && (repo.update == nil || repo.update.DisabledReason == nil) {
+			if testCase.attempt == maxAttempts && (repo.update == nil || repo.update.DisabledReason == nil) {
 				t.Error("final attempt should disable the webhook with a reason")
 			}
 		})
