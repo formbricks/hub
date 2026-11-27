@@ -155,6 +155,29 @@ func TestWebhookSenderImpl_Send_DoesNotLeakWebhookURL(t *testing.T) {
 		})
 	}
 
+	t.Run("malformed redirect Location", func(t *testing.T) {
+		logs := captureLogs(t)
+
+		// net/http parses Location before CheckRedirect runs, and quotes it in the error's cause.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Location", "/services/"+secretPath+"/%zz?token="+secretQuery)
+			w.WriteHeader(http.StatusFound)
+		}))
+		defer server.Close()
+
+		webhook := &models.Webhook{
+			ID: uuid.Must(uuid.NewV7()), URL: secretWebhookURL(server.URL), SigningKey: redactionTestSigningKey, Enabled: true,
+		}
+
+		err := newRedactionTestSender(&mockSenderRepo{}).Send(ctx, webhook, newRedactionTestPayload())
+		if err == nil {
+			t.Fatal("Send() error = nil, want a redirect parse error")
+		}
+
+		assertNoSecret(t, "returned error", err.Error())
+		assertNoSecret(t, "log output", logs.String())
+	})
+
 	t.Run("unparseable URL", func(t *testing.T) {
 		// url.Parse errors quote the whole input. Validation rejects such URLs at create/update,
 		// but a row written before that validation would still reach the sender.

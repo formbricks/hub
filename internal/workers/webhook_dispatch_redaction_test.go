@@ -29,25 +29,19 @@ func TestWebhookDispatchWorker_Work_DoesNotLeakWebhookURL(t *testing.T) {
 	)
 
 	// A closed server: the real sender's dial fails with a *url.Error that carries the URL.
-	server := httptest.NewServer(http.NotFoundHandler())
-	origin := server.URL
-	server.Close()
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedOrigin := closed.URL
+	closed.Close()
+
+	// A receiver answering with a malformed Location: net/http parses it before CheckRedirect runs
+	// and quotes it in the error's cause.
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "/services/"+secretPath+"/%zz?token="+secretQuery)
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer redirecting.Close()
 
 	tenantID := "org-123"
-	webhook := &models.Webhook{
-		ID:         uuid.Must(uuid.NewV7()),
-		Enabled:    true,
-		URL:        origin + "/services/T000/B000/" + secretPath + "?token=" + secretQuery,
-		SigningKey: "whsec_" + "abcdefghijklmnopqrstuvwxyz123456",
-		TenantID:   &tenantID,
-	}
-	args := service.WebhookDispatchArgs{
-		EventID:   uuid.Must(uuid.NewV7()),
-		EventType: "feedback_record.created",
-		Timestamp: time.Now(),
-		TenantID:  &tenantID,
-		WebhookID: webhook.ID,
-	}
 	sender := service.NewWebhookSenderImpl(nil, nil, service.SSRFPolicy{}, 5*time.Second,
 		&http.Client{Timeout: 5 * time.Second})
 
@@ -63,12 +57,30 @@ func TestWebhookDispatchWorker_Work_DoesNotLeakWebhookURL(t *testing.T) {
 
 	for _, testCase := range []struct {
 		name    string
+		origin  string
 		attempt int
 	}{
-		{name: "retry", attempt: 1},
-		{name: "final attempt", attempt: maxAttempts},
+		{name: "transport error, retry", origin: closedOrigin, attempt: 1},
+		{name: "transport error, final attempt", origin: closedOrigin, attempt: maxAttempts},
+		{name: "malformed redirect, retry", origin: redirecting.URL, attempt: 1},
+		{name: "malformed redirect, final attempt", origin: redirecting.URL, attempt: maxAttempts},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
+			webhook := &models.Webhook{
+				ID:         uuid.Must(uuid.NewV7()),
+				Enabled:    true,
+				URL:        testCase.origin + "/services/T000/B000/" + secretPath + "?token=" + secretQuery,
+				SigningKey: "whsec_" + "abcdefghijklmnopqrstuvwxyz123456",
+				TenantID:   &tenantID,
+			}
+			args := service.WebhookDispatchArgs{
+				EventID:   uuid.Must(uuid.NewV7()),
+				EventType: "feedback_record.created",
+				Timestamp: time.Now(),
+				TenantID:  &tenantID,
+				WebhookID: webhook.ID,
+			}
+
 			var logs bytes.Buffer
 
 			prev := slog.Default()
