@@ -651,8 +651,7 @@ func TestFeedbackRecordsHandler_ValueNumberBounds(t *testing.T) {
 			handler.Create(rec, req)
 
 			if bound.reject {
-				assert.Equal(t, http.StatusBadRequest, rec.Code)
-				assert.Contains(t, rec.Body.String(), "value_number")
+				assertRejectsValueNumber(t, rec)
 			} else {
 				assert.Equal(t, http.StatusCreated, rec.Code)
 			}
@@ -672,11 +671,21 @@ func TestFeedbackRecordsHandler_ValueNumberBounds(t *testing.T) {
 			handler.Update(rec, req)
 
 			if bound.reject {
-				assert.Equal(t, http.StatusBadRequest, rec.Code)
-				assert.Contains(t, rec.Body.String(), "value_number")
+				assertRejectsValueNumber(t, rec)
 			} else {
 				assert.Equal(t, http.StatusOK, rec.Code)
 			}
 		})
 	}
+}
+
+func assertRejectsValueNumber(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var problem response.ProblemDetails
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &problem))
+	require.Len(t, problem.InvalidParams, 1)
+	assert.Equal(t, "value_number", problem.InvalidParams[0].Name)
 }
