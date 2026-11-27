@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -24,6 +25,34 @@ var (
 	ErrWebhookGone   = errors.New("webhook returned 410 Gone (endpoint disabled)")
 	ErrWebhookNon2xx = errors.New("webhook returned non-2xx status")
 )
+
+// redactedWebhookURL stands in for a webhook URL that cannot be parsed, so not even its origin is known.
+const redactedWebhookURL = "[redacted webhook url]"
+
+// RedactWebhookURL returns only the scheme and host (with port) of a webhook URL, for logs and errors.
+// For many receivers (Slack, Discord, Teams, Zapier, anything with a ?token= parameter) the path,
+// query or userinfo is the credential, and logs reach more people than the tenant's webhook config.
+// The webhook_id is the identifier to log; the origin is kept only to tell endpoints apart at a glance.
+func RedactWebhookURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return redactedWebhookURL
+	}
+
+	return u.Scheme + "://" + u.Host
+}
+
+// redactURLError replaces the URL in the *url.Error that url.Parse and http.Client.Do return (its
+// Error() quotes the full URL) with the redacted form. Op and the cause are kept, so errors.Is,
+// errors.As and Timeout() behave as before. Any other error is returned unchanged.
+func redactURLError(err error) error {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err
+	}
+
+	return &url.Error{Op: urlErr.Op, URL: RedactWebhookURL(urlErr.URL), Err: urlErr.Err}
+}
 
 // WebhookSender sends a single webhook payload to an endpoint (Standard Webhooks: signing, headers, 410 handling).
 type WebhookSender interface {
@@ -125,7 +154,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, bytes.NewReader(payloadJSON))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create request: %w", redactURLError(err))
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -135,7 +164,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 
 	resp, err := s.httpClient.Do(req) // #nosec G704 -- URL validated at create/update and in DialContext (DNS rebinding)
 	if err != nil {
-		return fmt.Errorf("send webhook: %w", err)
+		return fmt.Errorf("send webhook: %w", redactURLError(err))
 	}
 
 	defer func() {
@@ -161,17 +190,17 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 		if updateErr != nil {
 			slog.Error("failed to disable webhook after 410 Gone",
 				"webhook_id", webhook.ID,
-				"url", webhook.URL,
+				"url", RedactWebhookURL(webhook.URL),
 				"error", updateErr,
 			)
 		} else {
 			slog.Info("webhook disabled after 410 Gone (endpoint no longer accepts delivery)",
 				"webhook_id", webhook.ID,
-				"url", webhook.URL,
+				"url", RedactWebhookURL(webhook.URL),
 			)
 		}
 
-		return fmt.Errorf("%w: %s", ErrWebhookGone, webhook.URL)
+		return fmt.Errorf("%w: %s", ErrWebhookGone, RedactWebhookURL(webhook.URL))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

@@ -215,7 +215,7 @@ func (w *WebhookDispatchWorker) Work(ctx context.Context, job *river.Job[service
 	slog.Warn("webhook delivery failed, will retry",
 		"message_id", args.EventID.String(),
 		"webhook_id", webhook.ID,
-		"url", webhook.URL,
+		"url", service.RedactWebhookURL(webhook.URL),
 		"event_type", args.EventType,
 		"error", err,
 	)
