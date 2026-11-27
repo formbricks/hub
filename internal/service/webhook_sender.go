@@ -125,7 +125,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, bytes.NewReader(payloadJSON))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create request: %w", redactURLError(err))
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -135,7 +135,7 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 
 	resp, err := s.httpClient.Do(req) // #nosec G704 -- URL validated at create/update and in DialContext (DNS rebinding)
 	if err != nil {
-		return fmt.Errorf("send webhook: %w", err)
+		return fmt.Errorf("send webhook: %w", redactURLError(err))
 	}
 
 	defer func() {
@@ -161,17 +161,17 @@ func (s *WebhookSenderImpl) Send(ctx context.Context, webhook *models.Webhook, p
 		if updateErr != nil {
 			slog.Error("failed to disable webhook after 410 Gone",
 				"webhook_id", webhook.ID,
-				"url", webhook.URL,
+				"url", RedactWebhookURL(webhook.URL),
 				"error", updateErr,
 			)
 		} else {
 			slog.Info("webhook disabled after 410 Gone (endpoint no longer accepts delivery)",
 				"webhook_id", webhook.ID,
-				"url", webhook.URL,
+				"url", RedactWebhookURL(webhook.URL),
 			)
 		}
 
-		return fmt.Errorf("%w: %s", ErrWebhookGone, webhook.URL)
+		return fmt.Errorf("%w: %s", ErrWebhookGone, RedactWebhookURL(webhook.URL))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
