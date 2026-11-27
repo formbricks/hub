@@ -493,7 +493,7 @@ type CreateFeedbackRecordRequest struct {
 	FieldGroupLabel *string         `json:"field_group_label,omitempty" validate:"omitempty,no_null_bytes,max=2048"`
 	ValueText       *string         `json:"value_text,omitempty"        validate:"omitempty,no_null_bytes,max=30000"`
 	ValueID         *string         `json:"value_id,omitempty"          validate:"omitempty,no_null_bytes,max=255"`
-	ValueNumber     *float64        `json:"value_number,omitempty"`
+	ValueNumber     *float64        `json:"value_number,omitempty"      validate:"omitempty,gte=-1e15,lte=1e15"`
 	ValueBoolean    *bool           `json:"value_boolean,omitempty"`
 	ValueDate       *time.Time      `json:"value_date,omitempty"`
 	Metadata        json.RawMessage `json:"metadata,omitempty"          validate:"omitempty,storable_json"`
@@ -515,7 +515,7 @@ type TranslationBackfillTarget struct {
 type UpdateFeedbackRecordRequest struct {
 	ValueText    *string         `json:"value_text,omitempty"    validate:"omitempty,no_null_bytes,max=30000"`
 	ValueID      *string         `json:"value_id,omitempty"      validate:"omitempty,no_null_bytes,max=255"`
-	ValueNumber  *float64        `json:"value_number,omitempty"`
+	ValueNumber  *float64        `json:"value_number,omitempty"  validate:"omitempty,gte=-1e15,lte=1e15"`
 	ValueBoolean *bool           `json:"value_boolean,omitempty"`
 	ValueDate    *time.Time      `json:"value_date,omitempty"`
 	Metadata     json.RawMessage `json:"metadata,omitempty"      validate:"omitempty,storable_json"`
