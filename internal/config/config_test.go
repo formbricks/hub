@@ -140,6 +140,10 @@ func setOrUnsetEnv(t *testing.T, key, value string, set bool) {
 	})
 }
 
+// enrichmentEnvPrefixes names the env prefix of each enrichment type with its own Google Cloud
+// project and location.
+var enrichmentEnvPrefixes = []string{"EMBEDDING", "TRANSLATION", "SENTIMENT", "EMOTIONS"}
+
 // unsetEnv clears keys for the duration of the test, so a test that asserts a default or a
 // fallback does not inherit a value from the developer's environment or .env (ENG-2277).
 func unsetEnv(t *testing.T, keys ...string) {
@@ -623,7 +627,11 @@ func TestLoad_TenantDataPurgeLockTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setOrUnsetEnv(t, "TENANT_PURGE_LOCK_TIMEOUT_SECONDS", tt.value, tt.set)
+			if tt.set {
+				t.Setenv("TENANT_PURGE_LOCK_TIMEOUT_SECONDS", tt.value)
+			} else {
+				unsetEnv(t, "TENANT_PURGE_LOCK_TIMEOUT_SECONDS")
+			}
 
 			cfg, err := Load()
 			if err != nil {
@@ -1016,7 +1024,7 @@ func TestLoad_GoogleCloudFallbackCoversAllEnrichments(t *testing.T) {
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "fallback-project")
 	t.Setenv("GOOGLE_CLOUD_LOCATION", "europe-west3")
 
-	for _, prefix := range []string{"EMBEDDING", "TRANSLATION", "SENTIMENT", "EMOTIONS"} {
+	for _, prefix := range enrichmentEnvPrefixes {
 		unsetEnv(t, prefix+"_GOOGLE_CLOUD_PROJECT", prefix+"_GOOGLE_CLOUD_LOCATION")
 	}
 
@@ -1257,7 +1265,7 @@ func TestLoad_TestsIgnoreAmbientEnv(t *testing.T) {
 		"TENANT_SETTINGS_CACHE_SIZE":        "7",
 		"TENANT_PURGE_LOCK_TIMEOUT_SECONDS": "7",
 	}
-	for _, prefix := range []string{"EMBEDDING", "TRANSLATION", "SENTIMENT", "EMOTIONS"} {
+	for _, prefix := range enrichmentEnvPrefixes {
 		ambient[prefix+"_GOOGLE_CLOUD_PROJECT"] = "ambient-project"
 		ambient[prefix+"_GOOGLE_CLOUD_LOCATION"] = "ambient-location"
 	}
