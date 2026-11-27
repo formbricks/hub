@@ -140,6 +140,16 @@ func setOrUnsetEnv(t *testing.T, key, value string, set bool) {
 	})
 }
 
+// unsetEnv clears keys for the duration of the test, so a test that asserts a default or a
+// fallback does not inherit a value from the developer's environment or .env (ENG-2277).
+func unsetEnv(t *testing.T, keys ...string) {
+	t.Helper()
+
+	for _, key := range keys {
+		setOrUnsetEnv(t, key, "", false)
+	}
+}
+
 // TestLoadAlwaysReturnsNilError cannot use t.Parallel() because it uses t.Setenv (Go restriction).
 func TestLoadAlwaysReturnsNilError(t *testing.T) {
 	cfg, err := Load()
@@ -154,6 +164,8 @@ func TestLoadAlwaysReturnsNilError(t *testing.T) {
 
 func TestLoad_WebhookDeliveryMaxAttempts(t *testing.T) {
 	t.Run("default is 3 when unset", func(t *testing.T) {
+		unsetEnv(t, "WEBHOOK_DELIVERY_MAX_ATTEMPTS")
+
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
@@ -214,6 +226,7 @@ func TestLoad_TenantSettingsCacheSize(t *testing.T) {
 
 	t.Run("unset applies the default", func(t *testing.T) {
 		t.Setenv("API_KEY", "test-api-key")
+		unsetEnv(t, "TENANT_SETTINGS_CACHE_SIZE")
 
 		cfg, err := Load()
 		if err != nil {
@@ -321,6 +334,7 @@ func TestLoad_EmbeddingGoogleCloudProject(t *testing.T) {
 func TestLoad_EmbeddingGoogleCloudProject_fallback(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "fallback-project")
+	unsetEnv(t, "EMBEDDING_GOOGLE_CLOUD_PROJECT")
 
 	cfg, err := Load()
 	if err != nil {
@@ -355,6 +369,7 @@ func TestLoad_Sentiment(t *testing.T) {
 	t.Run("disabled when model is unset", func(t *testing.T) {
 		t.Setenv("API_KEY", "test-api-key")
 		t.Setenv("SENTIMENT_PROVIDER", "openai")
+		unsetEnv(t, "SENTIMENT_MODEL")
 
 		cfg, err := Load()
 		if err != nil {
@@ -384,6 +399,7 @@ func TestLoad_EmbeddingGoogleCloudLocation(t *testing.T) {
 func TestLoad_EmbeddingGoogleCloudLocation_fallback(t *testing.T) {
 	t.Setenv("API_KEY", "test-api-key")
 	t.Setenv("GOOGLE_CLOUD_LOCATION", "europe-west1")
+	unsetEnv(t, "EMBEDDING_GOOGLE_CLOUD_LOCATION")
 
 	cfg, err := Load()
 	if err != nil {
@@ -607,9 +623,7 @@ func TestLoad_TenantDataPurgeLockTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.set {
-				t.Setenv("TENANT_PURGE_LOCK_TIMEOUT_SECONDS", tt.value)
-			}
+			setOrUnsetEnv(t, "TENANT_PURGE_LOCK_TIMEOUT_SECONDS", tt.value, tt.set)
 
 			cfg, err := Load()
 			if err != nil {
@@ -1002,6 +1016,10 @@ func TestLoad_GoogleCloudFallbackCoversAllEnrichments(t *testing.T) {
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "fallback-project")
 	t.Setenv("GOOGLE_CLOUD_LOCATION", "europe-west3")
 
+	for _, prefix := range []string{"EMBEDDING", "TRANSLATION", "SENTIMENT", "EMOTIONS"} {
+		unsetEnv(t, prefix+"_GOOGLE_CLOUD_PROJECT", prefix+"_GOOGLE_CLOUD_LOCATION")
+	}
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -1187,6 +1205,8 @@ func TestCIDRSetSetValue_MasksHostBits(t *testing.T) {
 
 func TestLoad_WebhookAllowedCIDRs(t *testing.T) {
 	t.Run("empty when unset", func(t *testing.T) {
+		unsetEnv(t, "WEBHOOK_ALLOWED_CIDRS")
+
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
@@ -1223,4 +1243,39 @@ func TestLoad_WebhookAllowedCIDRs(t *testing.T) {
 			t.Fatal("Load() error = nil, want error for a malformed WEBHOOK_ALLOWED_CIDRS")
 		}
 	})
+}
+
+// TestLoad_TestsIgnoreAmbientEnv replays the tests that assert a default or a fallback with every
+// variable they depend on set in the environment, as `make tests` and `make check-coverage` do
+// when they source a developer's .env (ENG-2277). Each replayed test must clear what it asserts
+// is unset rather than inherit it.
+func TestLoad_TestsIgnoreAmbientEnv(t *testing.T) {
+	ambient := map[string]string{
+		"SENTIMENT_MODEL":                   "ambient-model",
+		"WEBHOOK_DELIVERY_MAX_ATTEMPTS":     "7",
+		"WEBHOOK_ALLOWED_CIDRS":             "10.0.0.0/8",
+		"TENANT_SETTINGS_CACHE_SIZE":        "7",
+		"TENANT_PURGE_LOCK_TIMEOUT_SECONDS": "7",
+	}
+	for _, prefix := range []string{"EMBEDDING", "TRANSLATION", "SENTIMENT", "EMOTIONS"} {
+		ambient[prefix+"_GOOGLE_CLOUD_PROJECT"] = "ambient-project"
+		ambient[prefix+"_GOOGLE_CLOUD_LOCATION"] = "ambient-location"
+	}
+
+	for key, value := range ambient {
+		t.Setenv(key, value)
+	}
+
+	for name, test := range map[string]func(*testing.T){
+		"Sentiment":                               TestLoad_Sentiment,
+		"WebhookDeliveryMaxAttempts":              TestLoad_WebhookDeliveryMaxAttempts,
+		"WebhookAllowedCIDRs":                     TestLoad_WebhookAllowedCIDRs,
+		"TenantSettingsCacheSize":                 TestLoad_TenantSettingsCacheSize,
+		"TenantDataPurgeLockTimeout":              TestLoad_TenantDataPurgeLockTimeout,
+		"EmbeddingGoogleCloudProjectFallback":     TestLoad_EmbeddingGoogleCloudProject_fallback,
+		"EmbeddingGoogleCloudLocationFallback":    TestLoad_EmbeddingGoogleCloudLocation_fallback,
+		"GoogleCloudFallbackCoversAllEnrichments": TestLoad_GoogleCloudFallbackCoversAllEnrichments,
+	} {
+		t.Run(name, test)
+	}
 }
