@@ -615,3 +615,68 @@ func TestFeedbackRecordsHandler_Count(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
 }
+
+// value_number is documented in openapi.yaml as bounded to ±1e15 (below 2^53, so every integer
+// in range round-trips through float64 exactly). Create and update must both enforce it.
+func TestFeedbackRecordsHandler_ValueNumberBounds(t *testing.T) {
+	cases := []struct {
+		name   string
+		value  string
+		reject bool
+	}{
+		{name: "above max", value: "1000000000000001", reject: true},
+		{name: "below min", value: "-1000000000000001", reject: true},
+		{name: "far above max", value: "1e300", reject: true},
+		{name: "at max", value: "1000000000000000"},
+		{name: "at min", value: "-1000000000000000"},
+		{name: "zero", value: "0"},
+		{name: "fraction", value: "7.5"},
+	}
+
+	for _, bound := range cases {
+		t.Run("create "+bound.name, func(t *testing.T) {
+			mock := &mockFeedbackRecordsService{
+				createFunc: func(_ context.Context, req *models.CreateFeedbackRecordRequest) (*models.FeedbackRecord, error) {
+					return &models.FeedbackRecord{TenantID: req.TenantID, ValueNumber: req.ValueNumber}, nil
+				},
+			}
+			handler := NewFeedbackRecordsHandler(mock)
+
+			body := []byte(`{"source_type":"survey","field_id":"q1","field_type":"number",` +
+				`"tenant_id":"t","submission_id":"s","value_number":` + bound.value + `}`)
+			req := httptest.NewRequestWithContext(
+				context.Background(), http.MethodPost, "http://test/v1/feedback-records", bytes.NewReader(body))
+			rec := httptest.NewRecorder()
+
+			handler.Create(rec, req)
+
+			if bound.reject {
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
+				assert.Contains(t, rec.Body.String(), "value_number")
+			} else {
+				assert.Equal(t, http.StatusCreated, rec.Code)
+			}
+		})
+
+		t.Run("update "+bound.name, func(t *testing.T) {
+			handler := NewFeedbackRecordsHandler(&mockFeedbackRecordsService{})
+			id := uuid.Must(uuid.NewV7()).String()
+
+			req := httptest.NewRequestWithContext(
+				context.Background(), http.MethodPatch, "http://test/v1/feedback-records/"+id,
+				bytes.NewReader([]byte(`{"value_number":`+bound.value+`}`)))
+			req.SetPathValue("id", id)
+
+			rec := httptest.NewRecorder()
+
+			handler.Update(rec, req)
+
+			if bound.reject {
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
+				assert.Contains(t, rec.Body.String(), "value_number")
+			} else {
+				assert.Equal(t, http.StatusOK, rec.Code)
+			}
+		})
+	}
+}
